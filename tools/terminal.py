@@ -1,21 +1,50 @@
+import locale
 import subprocess
 
+from security.workspace import resolve_workspace_path
 
-def run_command(command: str, cwd: str | None = None) -> str:
-    """Run a shell command and return stdout/stderr."""
+
+def run_command(
+    command: str,
+    cwd: str | None = ".",
+) -> str:
+    """Execute PowerShell command inside the authorized workspace."""
+
+    working_directory = resolve_workspace_path(
+        cwd or "."
+    )
+
     result = subprocess.run(
-        command,
-        cwd=cwd,
-        shell=True,
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            command,
+        ],
+        cwd=str(working_directory),
         capture_output=True,
-        text=True,
-        encoding="utf-8",
+        text=False,
+    )
+
+    encoding = locale.getpreferredencoding(False)
+
+    stdout = result.stdout.decode(
+        encoding,
         errors="replace",
     )
 
-    output = result.stdout
+    stderr = result.stderr.decode(
+        encoding,
+        errors="replace",
+    )
 
-    if result.stderr:
-        output += "\n" + result.stderr
+    output = stdout
 
-    return f"exit_code={result.returncode}\n{output}"
+    if stderr:
+        output += "\n" + stderr
+
+    return (
+        f"exit_code={result.returncode}\n"
+        f"{output}"
+    )
