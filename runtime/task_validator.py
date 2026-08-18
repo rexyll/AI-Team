@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from typing import Any
+
+
 VALID_ROLES = {
     "architect",
     "developer",
@@ -5,49 +10,185 @@ VALID_ROLES = {
     "reviewer",
 }
 
+PLAN_REQUIRED_FIELDS = {
+    "project",
+    "summary",
+    "tasks",
+}
 
-def validate_plan(plan: dict) -> None:
-    """Validate task structure, roles, dependencies, and dependency cycles."""
+PLAN_ALLOWED_FIELDS = PLAN_REQUIRED_FIELDS
+
+TASK_REQUIRED_FIELDS = {
+    "id",
+    "title",
+    "description",
+    "role",
+    "dependencies",
+}
+
+TASK_ALLOWED_FIELDS = TASK_REQUIRED_FIELDS
+
+
+def _require_non_empty_string(
+    value: Any,
+    field_name: str,
+) -> None:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be a string"
+        )
+
+    if not value.strip():
+        raise ValueError(
+            f"{field_name} cannot be empty"
+        )
+
+
+def _validate_exact_fields(
+    data: dict[str, Any],
+    required_fields: set[str],
+    allowed_fields: set[str],
+    object_name: str,
+) -> None:
+    missing = required_fields - data.keys()
+
+    if missing:
+        raise ValueError(
+            f"{object_name} missing required fields: "
+            + ", ".join(sorted(missing))
+        )
+
+    unknown = set(data.keys()) - allowed_fields
+
+    if unknown:
+        raise ValueError(
+            f"{object_name} contains unknown fields: "
+            + ", ".join(sorted(unknown))
+        )
+
+
+def validate_task_schema(
+    task: dict[str, Any],
+) -> None:
+    """
+    Validate the schema of a single Planner task.
+
+    This validates structure and types only. Dependency existence
+    and dependency cycles are validated by validate_plan().
+    """
+    if not isinstance(task, dict):
+        raise ValueError("Each task must be an object")
+
+    task_id = task.get("id", "<unknown>")
+
+    _validate_exact_fields(
+        task,
+        TASK_REQUIRED_FIELDS,
+        TASK_ALLOWED_FIELDS,
+        f"Task {task_id}",
+    )
+
+    _require_non_empty_string(
+        task["id"],
+        f"Task {task_id} id",
+    )
+
+    _require_non_empty_string(
+        task["title"],
+        f"Task {task_id} title",
+    )
+
+    _require_non_empty_string(
+        task["description"],
+        f"Task {task_id} description",
+    )
+
+    role = task["role"]
+
+    if not isinstance(role, str):
+        raise ValueError(
+            f"Task {task_id} role must be a string"
+        )
+
+    if role not in VALID_ROLES:
+        raise ValueError(
+            f"Invalid role '{role}' for task {task_id}"
+        )
+
+    dependencies = task["dependencies"]
+
+    if not isinstance(dependencies, list):
+        raise ValueError(
+            f"Dependencies of {task_id} must be a list"
+        )
+
+    for dependency in dependencies:
+        if not isinstance(dependency, str):
+            raise ValueError(
+                f"Dependency of {task_id} must be a string"
+            )
+
+        if not dependency.strip():
+            raise ValueError(
+                f"Dependency of {task_id} cannot be empty"
+            )
+
+
+def validate_plan(plan: dict[str, Any]) -> None:
+    """
+    Validate the complete Planner output.
+
+    Validation includes:
+    - Plan schema
+    - Task schema
+    - task ID uniqueness
+    - dependency existence
+    - self dependency
+    - direct/indirect dependency cycles
+    """
     if not isinstance(plan, dict):
         raise ValueError("Plan must be a dictionary")
 
-    if not plan.get("project"):
-        raise ValueError("Plan missing project")
+    _validate_exact_fields(
+        plan,
+        PLAN_REQUIRED_FIELDS,
+        PLAN_ALLOWED_FIELDS,
+        "Plan",
+    )
 
-    if "tasks" not in plan:
-        raise ValueError("Plan missing tasks")
+    _require_non_empty_string(
+        plan["project"],
+        "Plan project",
+    )
+
+    _require_non_empty_string(
+        plan["summary"],
+        "Plan summary",
+    )
 
     tasks = plan["tasks"]
+
     if not isinstance(tasks, list):
         raise ValueError("tasks must be a list")
+
     if not tasks:
         raise ValueError("tasks cannot be empty")
 
-    task_ids = set()
+    task_ids: set[str] = set()
 
     for task in tasks:
-        if not isinstance(task, dict):
-            raise ValueError("Each task must be an object")
+        validate_task_schema(task)
 
-        task_id = task.get("id")
-        if not task_id:
-            raise ValueError("Task missing id")
+        task_id = task["id"]
 
         if task_id in task_ids:
-            raise ValueError(f"Duplicate task id: {task_id}")
-        task_ids.add(task_id)
-
-        for field in ("title", "description", "role"):
-            if not task.get(field):
-                raise ValueError(f"Task {task_id} missing {field}")
-
-        role = task["role"]
-        if role not in VALID_ROLES:
             raise ValueError(
-                f"Invalid role '{role}' for task {task_id}"
+                f"Duplicate task id: {task_id}"
             )
 
-    graph = {}
+        task_ids.add(task_id)
+
+    graph: dict[str, list[str]] = {}
 
     for task in tasks:
         task_id = task["id"]
@@ -59,7 +200,27 @@ def validate_plan(plan: dict) -> None:
             )
 
         graph[task_id] = []
+
+        seen_dependencies = set()
+
         for dependency in dependencies:
+            if not isinstance(dependency, str):
+                raise ValueError(
+                    f"Dependencies of {task_id} must contain only strings"
+                )
+
+            if not dependency.strip():
+                raise ValueError(
+                    f"Task {task_id} contains an empty dependency id"
+                )
+
+            if dependency in seen_dependencies:
+                raise ValueError(
+                    f"Task {task_id} contains duplicate dependency {dependency}"
+                )
+
+            seen_dependencies.add(dependency)
+
             if dependency not in task_ids:
                 raise ValueError(
                     f"Task {task_id} depends on unknown task {dependency}"
@@ -72,17 +233,29 @@ def validate_plan(plan: dict) -> None:
 
             graph[task_id].append(dependency)
 
-    # Detect indirect dependency cycles using DFS coloring.
-    # 0 = unvisited, 1 = visiting, 2 = fully visited.
-    colors = {task_id: 0 for task_id in graph}
+    # Detect direct and indirect dependency cycles using DFS coloring.
+    #
+    # 0 = unvisited
+    # 1 = visiting
+    # 2 = fully visited
+    colors = {
+        task_id: 0
+        for task_id in graph
+    }
 
-    def visit(task_id: str, path: list[str]) -> None:
+    def visit(
+        task_id: str,
+        path: list[str],
+    ) -> None:
         color = colors[task_id]
+
         if color == 2:
             return
+
         if color == 1:
             cycle_start = path.index(task_id)
             cycle = path[cycle_start:] + [task_id]
+
             raise ValueError(
                 "Circular task dependency detected: "
                 + " -> ".join(cycle)
@@ -90,11 +263,19 @@ def validate_plan(plan: dict) -> None:
 
         colors[task_id] = 1
         path.append(task_id)
+
         for dependency in graph[task_id]:
-            visit(dependency, path)
+            visit(
+                dependency,
+                path,
+            )
+
         path.pop()
         colors[task_id] = 2
 
     for task_id in graph:
         if colors[task_id] == 0:
-            visit(task_id, [])
+            visit(
+                task_id,
+                [],
+            )
