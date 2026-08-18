@@ -4,7 +4,6 @@ from typing import Any
 
 @dataclass
 class Task:
-
     id: str
     title: str
     description: str
@@ -14,18 +13,8 @@ class Task:
     error: str | None = None
     review_round: int = 0
 
-    dependencies: list[str] = field(
-        default_factory=list
-    )
-
-    result: dict[str, Any] = field(
-        default_factory=dict
-    )
-
-    context: dict[str, Any] = field(
-        default_factory=dict
-    )
-
-    review_result: dict[str, Any] = field(
-        default_factory=dict
-    )
+    dependencies: list[str] = field(default_factory=list)
+    result: dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
+    review_result: dict[str, Any] = field(default_factory=dict)
+    review_history: list[dict[str, Any]] = field(default_factory=list)
