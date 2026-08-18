@@ -21,7 +21,7 @@ class Orchestrator:
         print("=" * 60)
 
         while not self.task_manager.is_finished():
-            ready_tasks = self.task_manager.get_ready_tasks()
+            ready_tasks = self._get_executable_tasks()
 
             if not ready_tasks:
                 self._handle_no_ready_tasks()
@@ -37,6 +37,24 @@ class Orchestrator:
             else "AI TEAM STOPPED"
         )
         print("=" * 60)
+
+    def _get_executable_tasks(self):
+        """Return tasks that are already ready plus newly promoted tasks."""
+        promoted_tasks = self.task_manager.get_ready_tasks()
+        already_ready = [
+            task
+            for task in self.task_manager.get_all_tasks()
+            if task.status == "ready"
+        ]
+
+        # Preserve task-manager order while avoiding duplicates.
+        executable = []
+        seen = set()
+        for task in [*promoted_tasks, *already_ready]:
+            if task.id not in seen:
+                executable.append(task)
+                seen.add(task.id)
+        return executable
 
     def _execute_task(self, task) -> None:
         print("\n" + "-" * 60)
