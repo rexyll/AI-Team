@@ -61,27 +61,42 @@ class TaskWorkflow:
             # ------------------------------------------------------------
             # 2. Tester quality gate
             #
-            # Reviewer MUST NOT run unless Tester explicitly returns
-            # status == "passed".
+            # New workflow:
+            #     Developer -> Tester -> Reviewer
+            #
+            # Legacy workflow:
+            #     Developer -> Reviewer
+            #
+            # When tester is None, skip the Tester quality gate entirely.
             # ------------------------------------------------------------
-            tester_passed = self._run_tester(task)
+            if self.tester is not None:
+                tester_passed = self._run_tester(task)
 
-            if not tester_passed:
-                # Invalid tester results and tester exceptions are terminal
-                # failures. _run_tester has already marked the task failed.
-                if task.status == "failed":
-                    return task
+                if not tester_passed:
+                    # Invalid tester results and tester exceptions are
+                    # terminal failures. _run_tester has already marked
+                    # the task as failed.
+                    if task.status == "failed":
+                        return task
 
-                # A legitimate TEST_FAILED result is a revision request.
-                # Preserve the tester feedback and send the task back to the
-                # Developer. Do not enter Reviewer.
-                task.context["tester_feedback"] = task.test_result
-                task.status = "running"
-                task.error = None
-                continue
+                    # A legitimate TEST_FAILED result is recoverable.
+                    # Preserve tester feedback and send the task back
+                    # to Developer for another implementation round.
+                    task.context["tester_feedback"] = task.test_result
+
+                    task.status = "running"
+                    task.error = None
+
+                    continue
 
             # ------------------------------------------------------------
             # 3. Reviewer
+            #
+            # If Tester exists:
+            #     Reviewer is reached only when Tester returns "passed".
+            #
+            # If Tester does not exist:
+            #     Developer goes directly to Reviewer.
             # ------------------------------------------------------------
             self.task_manager.mark_reviewing(task_id)
 
