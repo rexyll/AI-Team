@@ -36,6 +36,21 @@ class MockReviewer:
         }
 
 
+class MockTester:
+    role = "tester"
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, task):
+        self.calls += 1
+        return {
+            "status": "passed",
+            "agent": "tester",
+            "task_id": task.id,
+            "message": "TEST_PASSED",
+        }
+
 def test_orchestrator_routes_developer_through_review_workflow():
     task = Task(
         id="TASK-ORCH-001",
@@ -47,8 +62,11 @@ def test_orchestrator_routes_developer_through_review_workflow():
 
     developer = MockDeveloper()
     reviewer = MockReviewer()
+    tester = MockTester()
+    
     router = AgentRouter()
     router.register("developer", developer)
+    router.register("tester", tester)
     router.register("reviewer", reviewer)
 
     manager = TaskManager([task])
@@ -59,4 +77,8 @@ def test_orchestrator_routes_developer_through_review_workflow():
     assert task.status == "completed"
     assert developer.calls == 1
     assert reviewer.calls == 1
+    assert tester.calls == 1
+    assert task.test_result["status"] == "passed"
     assert task.review_result["status"] == "approved"
+
+

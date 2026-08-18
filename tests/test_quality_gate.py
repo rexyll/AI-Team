@@ -33,12 +33,9 @@ class FakeTester:
         if self.results:
             return self.results.pop(0)
 
-        return {
-            "status": "passed",
-            "agent": "tester",
-            "task_id": task.id,
-            "message": "TEST_PASSED",
-        }
+        raise AssertionError(
+            "FakeTester has no scripted result for this test"
+        )
 
 
 class FakeReviewer:
@@ -159,7 +156,7 @@ def test_tester_pass_allows_reviewer():
     assert reviewer.calls == 1
 
 
-def test_tester_failure_must_not_enter_reviewer():
+def test_tester_failure_requires_developer_revision_before_reviewer():
     developer = FakeDeveloper()
 
     tester = FakeTester(
@@ -169,7 +166,13 @@ def test_tester_failure_must_not_enter_reviewer():
                 "agent": "tester",
                 "task_id": "TASK-QG-001",
                 "message": "缺少边界测试",
-            }
+            },
+            {
+                "status": "passed",
+                "agent": "tester",
+                "task_id": "TASK-QG-001",
+                "message": "TEST_PASSED",
+            },
         ]
     )
 
@@ -183,9 +186,21 @@ def test_tester_failure_must_not_enter_reviewer():
 
     result = workflow.execute(task.id)
 
-    assert result.status != "completed"
-    assert tester.calls == 1
-    assert reviewer.calls == 0
+    assert result.status == "completed"
+
+    # Tester 第一次失败后，Developer 必须重新执行
+    assert developer.calls == 2
+
+    # Tester 必须重新测试
+    assert tester.calls == 2
+
+    # 最终只有 Tester PASSED 后才能进入 Reviewer
+    assert reviewer.calls == 1
+
+    # Tester 的失败反馈必须被保存
+    assert len(task.test_history) == 2
+    assert task.test_history[0]["status"] == "failed"
+    assert task.test_history[1]["status"] == "passed"
 
 
 def test_tester_failure_feedback_is_available_to_next_developer_round():

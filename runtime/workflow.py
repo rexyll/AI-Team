@@ -13,10 +13,10 @@ class TaskWorkflow:
         self,
         task_manager: TaskManager,
         developer,
-        tester,
         reviewer,
         agent_router: AgentRouter,
         max_review_rounds: int = MAX_REVIEW_ROUNDS,
+        tester = None
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
