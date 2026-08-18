@@ -1,7 +1,7 @@
 from agents.base import BaseAgent
 from config.model import ask_ai
 from runtime.task import Task
-
+from runtime.agent_result import AgentResult
 
 SYSTEM_PROMPT = """
 你是一名专业的软件代码 Reviewer。
@@ -101,30 +101,15 @@ class ReviewerAgent(BaseAgent):
             system_prompt=SYSTEM_PROMPT,
         )
 
-        normalized_result = result.strip().upper()
-
-        if "REVISION_REQUIRED" in normalized_result:
-            status = "revision"
-        elif "APPROVED" in normalized_result:
-            status = "approved"
-        else:
-            status = "revision"
-
         decision = self._parse_review_result(result)
 
-        return {
-            "status": decision,
-            "agent": self.role,
-            "task_id": task.id,
-            "message": result,
-        }
+        return AgentResult(
+            status=decision,
+            agent=self.role,
+            task_id=task.id,
+            message=result,
+        )
         
-        # return {
-        #     "status": status,
-        #     "agent": self.role,
-        #     "task_id": task.id,
-        #     "message": result,
-        # }
         
     def _parse_review_result(self, result: str) -> str:
 

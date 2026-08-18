@@ -6,7 +6,7 @@ from tools.registry import TOOLS
 from agents.base import BaseAgent
 from runtime.task import Task
 from security.tool_guard import validate_tool_arguments
-
+from runtime.agent_result import AgentResult
 
 MAX_TOOL_ITERATIONS = 50
 
@@ -70,14 +70,14 @@ class DeveloperAgent(BaseAgent):
         reviewer_feedback = task.context.get("reviewer_feedback")
         if reviewer_feedback:
             context_text += """
-====================
-PREVIOUS REVIEW FEEDBACK
-====================
+            ====================
+            PREVIOUS REVIEW FEEDBACK
+            ====================
 
-以下是上一轮 Reviewer 给出的修改意见。
-本轮必须认真处理这些意见，并在最终结果中说明如何解决。
+            以下是上一轮 Reviewer 给出的修改意见。
+            本轮必须认真处理这些意见，并在最终结果中说明如何解决。
 
-"""
+            """
             context_text += json.dumps(
                 reviewer_feedback,
                 ensure_ascii=False,
@@ -85,24 +85,24 @@ PREVIOUS REVIEW FEEDBACK
             )
 
         prompt = f"""
-====================
-CURRENT TASK
-====================
-Task ID: {task.id}
-Role: {task.role}
-Title: {task.title}
-Description: {task.description}
-Dependencies: {task.dependencies}
-{context_text}
+        ====================
+        CURRENT TASK
+        ====================
+        Task ID: {task.id}
+        Role: {task.role}
+        Title: {task.title}
+        Description: {task.description}
+        Dependencies: {task.dependencies}
+        {context_text}
 
-====================
-EXECUTION REQUIREMENT
-====================
-请完成当前开发任务。
-开始工作前先检查工作区并阅读相关代码。
-完成修改后运行相关测试。如果测试失败，请继续分析和修复。
-最终给出简洁的开发结果报告。
-"""
+        ====================
+        EXECUTION REQUIREMENT
+        ====================
+        请完成当前开发任务。
+        开始工作前先检查工作区并阅读相关代码。
+        完成修改后运行相关测试。如果测试失败，请继续分析和修复。
+        最终给出简洁的开发结果报告。
+        """
 
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -129,12 +129,12 @@ EXECUTION REQUIREMENT
             message = response.choices[0].message
 
             if not message.tool_calls:
-                return {
-                    "status": "developer_completed",
-                    "agent": self.role,
-                    "task_id": task.id,
-                    "message": message.content or "",
-                }
+                return AgentResult(
+                    status="completed",
+                    agent="developer",
+                    task_id=task.id,
+                    message=message,
+                )
 
             messages.append(
                 {

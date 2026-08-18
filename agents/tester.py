@@ -1,7 +1,7 @@
 from agents.base import BaseAgent
 from config.model import ask_ai
 from runtime.task import Task
-
+from runtime.agent_result import AgentResult
 
 SYSTEM_PROMPT = """
 你是一名专业的软件测试工程师（Tester Agent）。
@@ -38,44 +38,44 @@ class TesterAgent(BaseAgent):
             )
 
         prompt = f"""
-请测试下面的软件开发任务。
+        请测试下面的软件开发任务。
 
-====================
-TASK
-====================
-Task ID: {task.id}
-Title: {task.title}
-Description: {task.description}
+        ====================
+        TASK
+        ====================
+        Task ID: {task.id}
+        Title: {task.title}
+        Description: {task.description}
 
-====================
-DEVELOPER RESULT
-====================
-{task.result}
+        ====================
+        DEVELOPER RESULT
+        ====================
+        {task.result}
 
-====================
-CONTEXT
-====================
-{task.context}
+        ====================
+        CONTEXT
+        ====================
+        {task.context}
 
-请根据已有测试证据分析实现是否满足任务要求。
-不要声称执行了没有证据表明执行过的测试。
+        请根据已有测试证据分析实现是否满足任务要求。
+        不要声称执行了没有证据表明执行过的测试。
 
-最终必须输出：
-TEST_PASSED
-或
-TEST_FAILED
-并说明原因。
-"""
+        最终必须输出：
+        TEST_PASSED
+        或
+        TEST_FAILED
+        并说明原因。
+        """
 
         result = ask_ai(prompt=prompt, system_prompt=SYSTEM_PROMPT)
         decision = self._parse_result(result)
 
-        return {
-            "status": decision,
-            "agent": self.role,
-            "task_id": task.id,
-            "message": result,
-        }
+        return AgentResult(
+            status=decision,
+            agent=self.role,
+            task_id=task.id,
+            message=result,
+        )
 
     @staticmethod
     def _parse_result(result: str) -> str:
