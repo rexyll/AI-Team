@@ -1,37 +1,38 @@
 from security.workspace import resolve_workspace_path
 
+def test_sandbox():
 
-tests = [
-    ".",
-    "test.py",
-    "calculator/main.py",
-    "..",
-    "../ai-dev-team",
-    "C:/Windows",
-    "/",
-]
+    tests = [
+        ".",
+        "test.py",
+        "calculator/main.py",
+        "..",
+        "../ai-dev-team",
+        "C:/Windows",
+        "/",
+    ]
 
 
-for path in tests:
+    for path in tests:
 
-    try:
+        try:
 
-        result = resolve_workspace_path(path)
+            result = resolve_workspace_path(path)
 
-        print(
-            f"[ALLOW] {path}"
-        )
+            print(
+                f"[ALLOW] {path}"
+            )
 
-        print(
-            f"        -> {result}"
-        )
+            print(
+                f"        -> {result}"
+            )
 
-    except Exception as e:
+        except Exception as e:
 
-        print(
-            f"[DENY]  {path}"
-        )
+            print(
+                f"[DENY]  {path}"
+            )
 
-        print(
-            f"        -> {type(e).__name__}: {e}"
-        )
+            print(
+                f"        -> {type(e).__name__}: {e}"
+            )

@@ -1,9 +1,14 @@
 import json
+# import inspect
 
 from config.model import client, AGNES_MODEL
 from config.tools_schema import TOOLS_SCHEMA
 from tools.registry import TOOLS
-
+from agents.base import BaseAgent
+from runtime.task import Task
+from security.tool_guard import (
+    validate_tool_arguments,
+)
 
 SYSTEM_PROMPT = """
 你是一名专业的 AI 软件开发工程师。
@@ -110,8 +115,6 @@ mv
 - 注册表
 - 系统配置
 
-不要删除工作区之外的任何内容。
-
 不要执行危险的系统级命令。
 
 如果一个操作超出工作区权限，应停止并向用户说明。
@@ -123,20 +126,22 @@ mv
 
 执行开发任务时：
 
-1. 理解需求
-2. 检查工作区
-3. 找到相关项目
-4. 阅读相关代码
-5. 分析问题
-6. 制定最小修改方案
-7. 修改代码
-8. 运行测试
-9. 检查测试结果
-10. 汇报最终结果
+1. 理解任务
+2. 阅读 Architect 提供的设计
+3. 检查工作区
+4. 找到相关项目
+5. 阅读相关代码
+6. 分析问题
+7. 制定最小修改方案
+8. 修改代码
+9. 运行测试
+10. 检查测试结果
+11. 如果测试失败，分析并修复
+12. 最后汇报完成情况
 
 不要猜测文件内容。
 
-修改代码之前先读取相关文件。
+修改代码之前必须先读取相关文件。
 
 修改之后尽可能运行测试。
 
@@ -150,49 +155,214 @@ mv
 
 
 ====================
+Architect 协作规则
+====================
+
+Architect 的设计是重要的上游输入。
+
+你必须认真阅读 Architect 提供的设计。
+
+但是：
+
+Architect 的设计不是绝对正确的。
+
+如果发现：
+
+- 明显的技术错误
+- 设计矛盾
+- 不合理的实现方式
+- 与现有代码冲突
+
+应该在最终结果中明确指出。
+
+不要盲目照搬错误设计。
+
+
+====================
+代码修改原则
+====================
+
+遵循：
+
+- 正确性优先
+- 简单优先
+- 最小修改
+- 不进行无关重构
+- 不修改无关文件
+- 不引入不必要的依赖
+- 保持现有代码风格
+
+
+====================
 最终回答
 ====================
 
-汇报时使用逻辑上的工作区概念。
+最终回答应该说明：
+
+1. 完成了什么
+2. 修改了哪些文件
+3. 运行了哪些测试
+4. 测试结果
+5. 是否存在遗留问题
 
 不要输出工作区的 Windows 物理路径。
-
-例如：
-
-正确：
-
-"当前工作区为空。"
-
-错误：
-
-"当前工作区是 F:\\workspace\\..."
 """
 
 
-class DeveloperAgent:
+class DeveloperAgent(BaseAgent):
 
-    def __init__(self):
-        self.messages = [
+    @property
+    def role(self) -> str:
+        return "developer"
+
+    def _build_messages(self, task: Task):
+
+        context_text = ""
+
+        if task.context:
+
+            context_text = """
+            ====================
+            UPSTREAM AGENT CONTEXT
+            ====================
+
+            以下内容来自上游 Agent。
+
+            这些内容是当前任务的重要输入。
+
+            如果上游 Agent 是 Architect：
+
+            - 必须认真阅读架构设计
+            - 优先按照架构设计实现
+            - 不要无理由改变架构
+            - 如果发现架构与现有代码冲突，应该分析后再决定
+            - 如果必须偏离架构设计，应在最终报告中明确说明原因
+
+            """
+
+            for task_id, data in task.context.items():
+
+                context_text += f"""
+                --------------------
+                Dependency: {task_id}
+                Role: {data.get("role", "")}
+                Title: {data.get("title", "")}
+                --------------------
+
+                """
+
+                result = data.get("result", {})
+
+                if isinstance(result, dict):
+
+                    architecture = result.get(
+                        "architecture"
+                    )
+
+                    if architecture:
+                        context_text += (
+                            "Architect Architecture Design:\n\n"
+                        )
+                        context_text += str(architecture)
+                    else:
+                        context_text += (
+                            json.dumps(
+                                result,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                        )
+
+                else:
+                    context_text += str(result)
+
+                context_text += "\n\n"
+
+        if task.review:
+            context_text += """
+            ====================
+            PREVIOUS REVIEW
+            ====================
+
+            上一次 Reviewer 的审核结果：
+
+            """
+
+            context_text += json.dumps(
+                task.review,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+            context_text += "\n\n"
+        
+        prompt = f"""
+        ====================
+        CURRENT TASK
+        ====================
+
+        Task ID:
+        {task.id}
+
+        Role:
+        {task.role}
+
+        Title:
+        {task.title}
+
+        Description:
+        {task.description}
+
+        Dependencies:
+        {task.dependencies}
+
+        {context_text}
+
+        ====================
+        EXECUTION REQUIREMENT
+        ====================
+
+        请完成当前开发任务。
+
+        你拥有文件操作和命令执行工具。
+
+        开始工作前先检查工作区并阅读相关代码。
+
+        不要猜测文件内容。
+
+        完成修改后运行相关测试。
+
+        如果测试失败，请继续分析和修复。
+
+        最终给出简洁的开发结果报告。
+        """
+
+        return [
             {
                 "role": "system",
                 "content": SYSTEM_PROMPT,
-            }
-        ]
-
-    def run(self, task: str) -> str:
-
-        self.messages.append(
+            },
             {
                 "role": "user",
-                "content": task,
-            }
-        )
+                "content": prompt,
+            },
+        ]
+
+    def run(self, task: Task):
+
+        if not isinstance(task, Task):
+            raise TypeError(
+                "DeveloperAgent.run() expects Task, "
+                f"got {type(task).__name__}"
+            )
+        
+        messages = self._build_messages(task)
 
         while True:
 
             response = client.chat.completions.create(
                 model=AGNES_MODEL,
-                messages=self.messages,
+                messages=messages,
                 tools=TOOLS_SCHEMA,
                 tool_choice="auto",
             )
@@ -201,9 +371,32 @@ class DeveloperAgent:
 
             if not message.tool_calls:
 
-                return message.content or ""
+                result = message.content or ""
 
-            self.messages.append(message)
+                return {
+                    "status": "developer_completed",
+                    "agent": self.role,
+                    "task_id": task.id,
+                    "message": result,
+                }
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
+                        }
+                        for tool_call in message.tool_calls
+                    ],
+                }
+            )
 
             for tool_call in message.tool_calls:
 
@@ -222,38 +415,29 @@ class DeveloperAgent:
                 )
 
                 if tool_name not in TOOLS:
+
                     result = (
                         f"Unknown tool: {tool_name}"
                     )
+
                 else:
+
                     try:
-                        import inspect
 
                         tool_function = TOOLS[tool_name]
 
-                        signature = inspect.signature(
-                            tool_function
+                        filtered_arguments, ignored_arguments = (
+                            validate_tool_arguments(
+                                tool_function,
+                                arguments,
+                            )
                         )
-
-                        allowed_arguments = set(
-                            signature.parameters.keys()
-                        )
-
-                        filtered_arguments = {
-                            key: value
-                            for key, value in arguments.items()
-                            if key in allowed_arguments
-                        }
-
-                        ignored_arguments = {
-                            key: value
-                            for key, value in arguments.items()
-                            if key not in allowed_arguments
-                        }
 
                         if ignored_arguments:
+
                             print(
-                                f"[Ignored Args] {ignored_arguments}"
+                                f"[Ignored Args] "
+                                f"{ignored_arguments}"
                             )
 
                         result = tool_function(
@@ -271,7 +455,7 @@ class DeveloperAgent:
                     f"[Result]\n{result}"
                 )
 
-                self.messages.append(
+                messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
