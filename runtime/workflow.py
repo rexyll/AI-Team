@@ -110,3 +110,31 @@ class TaskWorkflow:
             )
 
         return task
+
+    def _run_tester(self, task: Task) -> bool:
+        try:
+            result = self.tester.run(task)
+        except Exception as exc:
+            task.status = "failed"
+            task.error = f"Tester failed: {type(exc).__name__}: {exc}"
+            raise
+
+        if not isinstance(result, dict):
+            task.status = "failed"
+            task.error = "Tester returned invalid result type"
+            return False
+
+        status = result.get("status")
+
+        if status not in {"passed", "failed"}:
+            task.status = "failed"
+            task.error = f"Tester returned invalid status: {status}"
+            return False
+
+        task.test_result = result
+        task.test_history.append(result)
+
+        if status == "passed":
+            return True
+
+        return False
