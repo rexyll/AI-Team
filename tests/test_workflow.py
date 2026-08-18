@@ -10,11 +10,15 @@ class MockDeveloper:
 
     def __init__(self):
         self.calls = 0
+        self.received_feedback = []
 
     def run(self, task):
 
         self.calls += 1
-
+        self.received_feedback.append(
+            task.context.get("reviewer_feedback")
+        )
+        
         return {
             "status": "developer_completed",
             "agent": "developer",
@@ -133,7 +137,7 @@ def test_review_approved_completes_task():
         review_result,
     )
 
-    assert task.status == "reviewing"
+    assert task.status == "completed"
 
     assert task.review_result == review_result
 
@@ -386,7 +390,11 @@ def test_reviewer_result_is_available_to_next_developer_round():
 
     assert result.review_round == 2
 
+    assert developer.calls == 2
+
+    assert developer.received_feedback[0] is None
+
     assert (
         "需要增加单元测试"
-        in result.review_result["message"]
+        in result.context["reviewer_feedback"]["message"]
     )

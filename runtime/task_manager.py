@@ -178,6 +178,7 @@ class TaskManager:
 
         if review_result is not None:
             task.review_result = review_result
+            task.result["review"] = review_result
             task.review_round += 1
 
             task.context["reviewer_feedback"] = review_result
@@ -309,8 +310,11 @@ class TaskManager:
                     "review_result must be a dict"
                 )
 
-            task.result["review"] = review_result
+        task.review_result = review_result
+        task.result["review"] = review_result
+        task.review_round += 1
 
+        task.status = "completed"
         task.error = None
     
     def apply_review_result(

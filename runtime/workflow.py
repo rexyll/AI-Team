@@ -137,7 +137,7 @@ class TaskWorkflow:
             # 5. 保存 Reviewer 结果
             # --------------------------------------------------------
 
-            task.review_result = review_result
+            # task.review_result = review_result
 
             # task.review_round += 1
 
