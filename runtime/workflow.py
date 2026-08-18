@@ -25,6 +25,7 @@ class TaskWorkflow:
         self.developer = developer
         self.reviewer = reviewer
         self.max_review_rounds = max_review_rounds
+        self.tester = tester
 
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.get_task(task_id)
