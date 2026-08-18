@@ -18,3 +18,5 @@ class Task:
     context: dict[str, Any] = field(default_factory=dict)
     review_result: dict[str, Any] = field(default_factory=dict)
     review_history: list[dict[str, Any]] = field(default_factory=list)
+    test_result: dict[str, Any] = field(default_factory=dict)
+    test_history: list[dict[str, Any]] = field(default_factory=list)

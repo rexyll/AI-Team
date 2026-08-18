@@ -13,6 +13,7 @@ class TaskWorkflow:
         self,
         task_manager: TaskManager,
         developer,
+        tester,
         reviewer,
         agent_router: AgentRouter,
         max_review_rounds: int = MAX_REVIEW_ROUNDS,
