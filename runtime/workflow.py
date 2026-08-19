@@ -3,9 +3,27 @@ from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 from runtime.result_normalizer import normalize_agent_result
 from runtime.context_builder import build_task_context
+from enum import Enum
+from dataclasses import dataclass
+from typing import Any
+
+
 
 MAX_REVIEW_ROUNDS = 3
-
+@dataclass(frozen=True)
+class StageOutcome:
+    stage: WorkflowStage
+    status: str
+    result: dict[str, Any]
+    
+    
+class WorkflowStage(str, Enum):
+    DEVELOPER = "developer"
+    TESTER = "tester"
+    REVIEWER = "reviewer"
+    
+    
+    
 
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations."""
@@ -47,7 +65,17 @@ class TaskWorkflow:
             # ------------------------------------------------------------
             # 1. Developer
             # ------------------------------------------------------------
-            self._run_developer(task)
+            developer_outcome = self._run_developer(
+                task
+            )
+            
+            self._apply_developer_outcome(
+                task,
+                developer_outcome,
+            )
+            
+            if task.status == "failed":
+                return task
 
             # ------------------------------------------------------------
             # 2. Tester quality gate
@@ -61,16 +89,24 @@ class TaskWorkflow:
             # When tester is None, skip the Tester quality gate entirely.
             # ------------------------------------------------------------
             if self.tester is not None:
-                tester_passed = self._run_tester(task)
+                tester_outcome = self._run_tester(
+                    task
+                )
+
+                self._apply_tester_outcome(
+                    task,
+                    tester_outcome,
+                )
 
                 if not self._handle_tester_result(
                     task,
-                    tester_passed,
+                    tester_outcome,
                 ):
                     if task.status == "failed":
                         return task
 
-                    continue
+                    if tester_outcome.status != "passed":
+                        continue
 
             # ------------------------------------------------------------
             # 3. Reviewer
@@ -81,218 +117,234 @@ class TaskWorkflow:
             # If Tester does not exist:
             #     Developer goes directly to Reviewer.
             # ------------------------------------------------------------
-            review_status = self._run_reviewer(task)
-
-            result = self._handle_review_result(
-                task,
-                review_status,
+            review_outcome = self._run_reviewer(
+                task
             )
 
-            if result == "completed":
+            review_action = self._apply_reviewer_outcome(
+                task,
+                review_outcome,
+            )
+
+            if review_action == "completed":
                 return task
 
-            if result == "failed":
+            if review_action == "failed":
                 return task
 
-            # revision
-            continue
+            if review_action == "revision":
+                continue
 
         return task
 
-    def _run_tester(self, task: Task) -> bool:
-        """Run Tester and enforce the Tester quality gate.
 
-        Returns True only for an explicit ``passed`` result.
+    def _run_tester(
+        self,
+        task: Task,
+    ) -> StageOutcome:
 
-        A legitimate ``failed`` result is recoverable and handled by
-        execute() as a Developer revision.
-
-        Exceptions and malformed results are terminal workflow failures.
-        """
         try:
             raw_result = self.tester.run(task)
-            result = normalize_agent_result(raw_result)
+
+            result = normalize_agent_result(
+                raw_result
+            )
+
+            return StageOutcome(
+                stage=WorkflowStage.TESTER,
+                status=result.status,
+                result=result.to_dict(),
+            )
 
         except Exception as exc:
-            self.task_manager.mark_failed(
-                task.id,
-                f"Tester failed: {type(exc).__name__}: {exc}",
+            return StageOutcome(
+                stage=WorkflowStage.TESTER,
+                status="failed",
+                result={
+                    "status": "failed",
+                    "message": str(exc),
+                },
             )
-            raise
+    
+    
+    def _apply_tester_outcome(
+        self,
+        task: Task,
+        outcome: StageOutcome,
+    ) -> None:
 
-        
-        status = result.status
-
-        if status not in {"passed", "failed"}:
-            self.task_manager.mark_failed(
+        if outcome.status == "passed":
+            self.task_manager.record_test_result(
                 task.id,
-                f"Tester returned invalid status: {status}",
+                outcome.result,
             )
-            return False
-        result_dict = result.to_dict()
-        
-        self.task_manager.record_test_result(
-            task.id,
-            result_dict,
-        )
-        # task.test_history.append(result_dict)
-        
 
-        self.task_manager.set_feedback(
-            task.id,
-            "tester",
-            result_dict,
-        )
+            self.task_manager.set_feedback(
+                task.id,
+                "tester",
+                outcome.result,
+            )
 
-        return status == "passed"
+            return
+
+        self.task_manager.mark_tester_revision_required(
+            task.id,
+            outcome.result,
+        )
+    
     
     def _handle_tester_result(
         self,
         task: Task,
-        tester_passed: bool,
+        outcome: StageOutcome,
     ) -> bool:
-        """Handle Tester result.
 
-        Returns:
-            True when workflow should continue to Reviewer.
-            False when Developer must be executed again.
-        """
-        if tester_passed:
-            return True
-
-        if task.status == "failed":
-            return False
-
-        self.task_manager.mark_tester_revision_required(
-            task.id,
-            task.test_result,
+        self._apply_tester_outcome(
+            task,
+            outcome,
         )
 
-        return False
+        return outcome.status == "passed"
 
-    # def _normalize_developer_result(
-    #     self,
-    #     result,
-    #     task: Task,
-    # ):
-    #     if isinstance(result, dict):
-    #         result = dict(result)
+    def _run_developer(
+        self,
+        task: Task,
+    ) -> StageOutcome:
 
-    #         result.setdefault(
-    #             "agent",
-    #             "developer",
-    #         )
-
-    #         result.setdefault(
-    #             "task_id",
-    #             task.id,
-    #         )
-
-    #     return normalize_agent_result(result)
-
-    def _run_developer(self, task: Task) -> bool:
-        """Run Developer and persist the implementation result.
-
-        Returns:
-            True when Developer completed successfully.
-
-        Raises:
-            Exception:
-                Re-raises the original Developer exception after marking
-                the task as failed.
-        """
         try:
             raw_result = self.developer.run(task)
 
-            developer_result = normalize_agent_result(raw_result)
-
-            self.task_manager.mark_developer_completed(
-                task.id,
-                developer_result,
+            result = normalize_agent_result(
+                raw_result
             )
 
-            return True
+            return StageOutcome(
+                stage=WorkflowStage.DEVELOPER,
+                status=result.status,
+                result=result.to_dict(),
+            )
 
         except Exception as exc:
-            self.task_manager.mark_failed(
-                task.id,
-                f"Developer execution failed: "
-                f"{type(exc).__name__}: {exc}",
+            return StageOutcome(
+                stage=WorkflowStage.DEVELOPER,
+                status="failed",
+                result={
+                    "status": "failed",
+                    "message": str(exc),
+                },
             )
-            raise
         
-    def _run_reviewer(self, task: Task) -> str:
-        """Run Reviewer and return the review decision.
+    def _apply_developer_outcome(
+        self,
+        task: Task,
+        outcome: StageOutcome,
+    ) -> None:
 
-        Returns:
-            ``approved`` or ``revision``.
+        if outcome.status == "completed":
+            self.task_manager.mark_developer_completed(
+                task.id,
+                outcome.result,
+            )
+            return
 
-        Raises:
-            Exception:
-                Re-raises Reviewer execution failures.
-        """
-        self.task_manager.mark_reviewing(task.id)
+        self.task_manager.mark_failed(
+            task.id,
+            outcome.result.get(
+                "message",
+                "Developer execution failed",
+            ),
+        )
+    
+    
+    def _run_reviewer(
+        self,
+        task: Task,
+    ) -> StageOutcome:
 
         try:
             raw_result = self.reviewer.run(task)
-            review_result = normalize_agent_result(raw_result)
+
+            result = normalize_agent_result(
+                raw_result
+            )
+
+            return StageOutcome(
+                stage=WorkflowStage.REVIEWER,
+                status=result.status,
+                result=result.to_dict(),
+            )
 
         except Exception as exc:
-            self.task_manager.mark_failed(
-                task.id,
-                f"Reviewer execution failed: "
-                f"{type(exc).__name__}: {exc}",
+            return StageOutcome(
+                stage=WorkflowStage.REVIEWER,
+                status="failed",
+                result={
+                    "status": "failed",
+                    "message": str(exc),
+                },
             )
-            raise
+    
+    def _apply_reviewer_outcome(
+        self,
+        task: Task,
+        outcome: StageOutcome,
+    ) -> str:
 
-        review_status = review_result.status
-        review_data = review_result.to_dict()
+        if outcome.status == "approved":
 
-        if review_status == "approved":
             self.task_manager.mark_review_approved(
                 task.id,
-                review_data,
+                outcome.result,
             )
-            return "approved"
 
-        if review_status == "revision":
+            return "completed"
+
+        if outcome.status == "revision":
+
             self.task_manager.mark_review_revision_required(
                 task.id,
-                review_data,
+                outcome.result,
             )
+
+            if task.review_round >= self.max_review_rounds:
+                self.task_manager.mark_failed(
+                    task.id,
+                    (
+                        f"Task failed review after "
+                        f"{self.max_review_rounds} rounds"
+                    ),
+                )
+
+                return "failed"
+
             return "revision"
 
         self.task_manager.mark_failed(
             task.id,
-            f"Unknown reviewer status: {review_status}",
+            (
+                "Unknown reviewer status: "
+                f"{outcome.status}"
+            ),
         )
 
         return "failed"
     
+    
+    
+    
     def _handle_review_result(
         self,
         task: Task,
-        review_status: str,
+        outcome: StageOutcome,
     ) -> str:
-        """Handle Reviewer result.
 
-        Returns:
-            ``completed``:
-                Workflow finished successfully.
-
-            ``failed``:
-                Workflow finished with failure.
-
-            ``revision``:
-                Developer must execute another round.
-        """
-        if review_status == "approved":
+        if outcome.status == "approved":
             return "completed"
 
-        if review_status == "failed":
+        if outcome.status == "failed":
             return "failed"
 
-        if review_status == "revision":
+        if outcome.status == "revision":
             if task.review_round >= self.max_review_rounds:
                 self.task_manager.mark_failed(
                     task.id,
@@ -305,7 +357,8 @@ class TaskWorkflow:
 
         self.task_manager.mark_failed(
             task.id,
-            f"Unknown review status: {review_status}",
+            f"Unknown review status: "
+            f"{outcome.status}",
         )
 
         return "failed"
