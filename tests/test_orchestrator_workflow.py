@@ -13,7 +13,7 @@ class MockDeveloper:
     def run(self, task):
         self.calls += 1
         return {
-            "status": "developer_completed",
+            "status": "completed",
             "agent": "developer",
             "task_id": task.id,
             "message": "implemented",

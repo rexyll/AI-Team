@@ -18,7 +18,12 @@ class FailingReviewer:
 
 class SuccessfulDeveloper:
     def run(self, task):
-        return {"status": "developer_completed", "message": "ok"}
+        return {
+            "status": "completed",
+            "agent": "developer",
+            "task_id": task.id,
+            "message": "ok",
+        }
 
 
 def _workflow(task, developer, reviewer):

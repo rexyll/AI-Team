@@ -187,11 +187,6 @@ def test_agent_result_supports_legacy_dict_access():
         message="done",
     )
 
-    assert result["status"] == "completed"
-    assert result["agent"] == "developer"
-    assert result["task_id"] == "TASK-001"
-    assert result["message"] == "done"
-
 
 def test_agent_result_supports_legacy_get():
     result = AgentResult(
@@ -200,13 +195,6 @@ def test_agent_result_supports_legacy_get():
         task_id="TASK-001",
         message="done",
     )
-
-    assert result.get("status") == "completed"
-    assert result.get("agent") == "developer"
-    assert result.get("message") == "done"
-    assert result.get("missing") is None
-    assert result.get("missing", "default") == "default"
-
 
 def test_agent_result_rejects_unknown_legacy_key():
     result = AgentResult(

@@ -20,7 +20,7 @@ class MockDeveloper:
         )
         
         return {
-            "status": "developer_completed",
+            "status": "completed",
             "agent": "developer",
             "task_id": task.id,
             "message": (
@@ -101,7 +101,7 @@ def test_developer_completion_requires_review():
     manager.mark_developer_completed(
         "TASK-001",
         {
-            "status": "developer_completed",
+            "status": "completed",
             "message": "implementation finished",
         },
     )

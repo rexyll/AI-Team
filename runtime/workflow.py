@@ -159,25 +159,25 @@ class TaskWorkflow:
 
         return False
 
-    def _normalize_developer_result(
-        self,
-        result,
-        task: Task,
-    ):
-        if isinstance(result, dict):
-            result = dict(result)
+    # def _normalize_developer_result(
+    #     self,
+    #     result,
+    #     task: Task,
+    # ):
+    #     if isinstance(result, dict):
+    #         result = dict(result)
 
-            result.setdefault(
-                "agent",
-                "developer",
-            )
+    #         result.setdefault(
+    #             "agent",
+    #             "developer",
+    #         )
 
-            result.setdefault(
-                "task_id",
-                task.id,
-            )
+    #         result.setdefault(
+    #             "task_id",
+    #             task.id,
+    #         )
 
-        return normalize_agent_result(result)
+    #     return normalize_agent_result(result)
 
     def _run_developer(self, task: Task) -> bool:
         """Run Developer and persist the implementation result.
@@ -193,10 +193,7 @@ class TaskWorkflow:
         try:
             raw_result = self.developer.run(task)
 
-            developer_result = self._normalize_developer_result(
-                raw_result,
-                task,
-            )
+            developer_result = normalize_agent_result(raw_result)
 
             self.task_manager.mark_developer_completed(
                 task.id,
