@@ -342,46 +342,7 @@ def test_reviewer_result_is_available_to_next_developer_round():
         in result.context["reviewer_feedback"]["message"]
     )
     
-def test_review_approved_on_final_allowed_round_completes():
-    task = create_task("ready")
 
-    developer = MockDeveloper()
-
-    reviewer = MockReviewer(
-        [
-            {
-                "status": "revision",
-                "agent": "reviewer",
-                "task_id": task.id,
-                "message": "REVISION_REQUIRED",
-            },
-            {
-                "status": "revision",
-                "agent": "reviewer",
-                "task_id": task.id,
-                "message": "REVISION_REQUIRED",
-            },
-            {
-                "status": "approved",
-                "agent": "reviewer",
-                "task_id": task.id,
-                "message": "LGTM",
-            },
-        ]
-    )
-
-    manager, workflow = create_workflow(
-        task,
-        developer,
-        reviewer,
-        max_review_rounds=3,
-    )
-
-    result = workflow.execute(task.id)
-
-    assert result.status == "completed"
-    assert result.review_round == 3
-    assert len(result.review_history) == 3
     
     
 def test_review_fails_after_max_rounds():
@@ -444,3 +405,52 @@ def test_review_fails_after_max_rounds():
     )
 
 
+def test_review_approved_on_final_allowed_round_completes():
+
+    task = Task(
+        id="TASK-007",
+        title="最终审核通过",
+        description="测试最大审核轮次内最终通过",
+        role="developer",
+        status="ready",
+    )
+
+    developer = MockDeveloper()
+
+    reviewer = MockReviewer(
+        [
+            {
+                "status": "revision",
+                "agent": "reviewer",
+                "task_id": "TASK-007",
+                "message": "REVISION_REQUIRED",
+            },
+            {
+                "status": "revision",
+                "agent": "reviewer",
+                "task_id": "TASK-007",
+                "message": "REVISION_REQUIRED",
+            },
+            {
+                "status": "approved",
+                "agent": "reviewer",
+                "task_id": "TASK-007",
+                "message": "LGTM",
+            },
+        ]
+    )
+
+    manager, workflow = create_workflow(
+        task,
+        developer,
+        reviewer,
+        max_review_rounds=3,
+    )
+
+    result = workflow.execute(
+        "TASK-007"
+    )
+
+    assert result.status == "completed"
+    assert result.review_round == 3
+    assert len(result.review_history) == 3
