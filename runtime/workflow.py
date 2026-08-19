@@ -108,7 +108,11 @@ class TaskWorkflow:
             self.task_manager.mark_reviewing(task_id)
 
             try:
-                review_result = self.reviewer.run(task)
+                raw_review_result = self.reviewer.run(task)
+
+                review_result = normalize_agent_result(
+                    raw_review_result
+                )
             except Exception as exc:
                 self.task_manager.mark_failed(
                     task_id,
@@ -116,26 +120,21 @@ class TaskWorkflow:
                 )
                 raise
 
-            if not isinstance(review_result, dict):
-                self.task_manager.mark_failed(
-                    task_id,
-                    "Reviewer returned a non-dict result",
-                )
-                return task
 
-            review_status = review_result.get("status")
-
+            review_status = review_result.status
+            review_data = review_result.to_dict()
+            
             if review_status == "approved":
                 self.task_manager.mark_review_approved(
                     task_id,
-                    review_result,
+                    review_data,
                 )
                 return task
 
             if review_status == "revision":
                 self.task_manager.mark_review_revision_required(
                     task_id,
-                    review_result,
+                    review_data,
                 )
 
                 if task.review_round >= self.max_review_rounds:
@@ -172,7 +171,8 @@ class TaskWorkflow:
         Exceptions and malformed results are terminal workflow failures.
         """
         try:
-            result = self.tester.run(task)
+            raw_result = self.tester.run(task)
+            result = normalize_agent_result(raw_result)
 
         except Exception as exc:
             self.task_manager.mark_failed(
@@ -181,14 +181,8 @@ class TaskWorkflow:
             )
             raise
 
-        if not isinstance(result, dict):
-            self.task_manager.mark_failed(
-                task.id,
-                "Tester returned invalid result type",
-            )
-            return False
-
-        status = result.get("status")
+        
+        status = result.status
 
         if status not in {"passed", "failed"}:
             self.task_manager.mark_failed(
@@ -196,10 +190,11 @@ class TaskWorkflow:
                 f"Tester returned invalid status: {status}",
             )
             return False
-
-        task.test_result = result
-        task.test_history.append(result)
-        task.context["tester_feedback"] = result
+        result_dict = result.to_dict()
+        
+        task.test_result = result_dict
+        task.test_history.append(result_dict)
+        task.context["tester_feedback"] = result_dict
 
         return status == "passed"
 
