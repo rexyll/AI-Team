@@ -360,3 +360,66 @@ def test_record_error():
     )
 
     assert task.error == "database connection failed"
+    
+    
+def test_mark_completed_records_result():
+    task = create_task("running")
+
+    manager = TaskManager([task])
+
+    result = {
+        "status": "completed",
+        "message": "done",
+    }
+
+    manager.mark_completed(
+        task.id,
+        result,
+    )
+
+    assert task.result == result
+    
+    
+def test_review_revision_records_one_history_entry():
+    task = create_task("reviewing")
+
+    manager = TaskManager([task])
+
+    review = {
+        "status": "revision",
+        "message": "fix DAO",
+    }
+
+    manager.mark_review_revision_required(
+        task.id,
+        review,
+    )
+
+    assert task.review_result == review
+    assert task.review_history == [review]
+    assert task.review_round == 1
+    assert task.context["reviewer_feedback"] == review
+    
+def test_tester_revision_does_not_duplicate_test_history():
+    task = create_task("review_pending")
+
+    manager = TaskManager([task])
+
+    test_result = {
+        "status": "failed",
+        "message": "DAO test failed",
+    }
+
+    manager.record_test_result(
+        task.id,
+        test_result,
+    )
+
+    manager.mark_tester_revision_required(
+        task.id,
+        test_result,
+    )
+
+    assert task.test_result == test_result
+    assert task.test_history == [test_result]
+    assert task.context["tester_feedback"] == test_result

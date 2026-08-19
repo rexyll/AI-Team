@@ -106,22 +106,26 @@ class TaskManager:
         return ready
 
     def mark_ready(self, task_id: str) -> None:
-        task = self.get_task(task_id)
-
         self.transition(
-            task.id,
+            task_id,
             TaskStatus.READY,
         )
 
-        task.error = None
+        self.record_error(
+            task_id,
+            None,
+        )
 
     def mark_running(self, task_id: str) -> None:
-        task = self.transition(
+        self.transition(
             task_id,
             TaskStatus.RUNNING,
         )
 
-        task.error = None
+        self.record_error(
+            task_id,
+            None,
+        )
 
     def mark_developer_completed(
         self,
@@ -133,7 +137,10 @@ class TaskManager:
             TaskStatus.REVIEW_PENDING,
         )
 
-        task.error = None
+        self.record_error(
+            task_id,
+            None,
+        )
 
         if result is not None:
             self.record_result(
@@ -172,9 +179,16 @@ class TaskManager:
                 task.id,
                 review_result,
             )
-            task.context["reviewer_feedback"] = review_result
+            self.set_feedback(
+                task.id,
+                "reviewer",
+                review_result,
+            )
 
-        task.error = None
+        self.record_error(
+            task.id,
+            None,
+        )
 
     def mark_review_approved(
         self,
@@ -196,46 +210,31 @@ class TaskManager:
             review_result,
         )
 
-        task.error = None
+        self.record_error(
+            task_id,
+            None,
+        )
 
     def mark_completed(
         self,
         task_id: str,
-        result: dict | None = None,
+        result: dict | Any | None = None,
     ) -> None:
         task = self.transition(
             task_id,
             TaskStatus.COMPLETED,
         )
 
-        task.error = None
-
-        if result is not None:
-            task.result = result
-
-    def mark_failed(
-        self,
-        task_id: str,
-        error: str,
-    ) -> None:
-        task = self.get_task(task_id)
-
-        if task.status not in {
-            TaskStatus.RUNNING.value,
-            TaskStatus.REVIEWING.value,
-            TaskStatus.REVIEW_PENDING.value,
-        }:
-            raise ValueError(
-                f"Task {task_id} cannot be failed "
-                f"from status {task.status}"
-            )
-
-        self.transition(
+        self.record_error(
             task_id,
-            TaskStatus.FAILED,
+            None,
         )
 
-        task.error = error
+        if result is not None:
+            self.record_result(
+                task_id,
+                result,
+            )
 
     # Backward-compatible API. New workflow code uses the explicit review methods.
     # Legacy compatibility API.
@@ -259,16 +258,30 @@ class TaskManager:
         elif task.status == "completed":
             if review_result is not None:
                 if not isinstance(review_result, dict):
-                    raise TypeError("review_result must be a dict")
-                task.review_result = review_result
-                task.review_history.append(review_result)
-                task.context["reviewer_feedback"] = review_result
-            # task.status = "pending"
+                    raise TypeError(
+                        "review_result must be a dict"
+                    )
+
+                self.record_review_result(
+                    task_id,
+                    review_result,
+                )
+
+                self.set_feedback(
+                    task_id,
+                    "reviewer",
+                    review_result,
+                )
+
             self.transition(
-                task.id,
+                task_id,
                 TaskStatus.PENDING,
             )
-            task.error = error
+
+            self.record_error(
+                task_id,
+                error,
+            )
         else:
             raise ValueError(
                 f"Task {task_id} cannot require revision from status {task.status}"
@@ -329,14 +342,26 @@ class TaskManager:
                 "test_result must be a dict"
             )
 
-        task = self.transition(
+        self.transition(
             task_id,
             TaskStatus.RUNNING,
         )
 
-        task.test_result = test_result
-        task.context["tester_feedback"] = test_result
-        task.error = None
+        self.record_test_result(
+            task_id,
+            test_result,
+        )
+
+        self.set_feedback(
+            task_id,
+            "tester",
+            test_result,
+        )
+
+        self.record_error(
+            task_id,
+            None,
+        )
 
     def ensure_executable(self, task_id: str) -> Task:
         """Validate that a task can enter workflow execution."""
@@ -386,6 +411,9 @@ class TaskManager:
     ) -> Task:
         """
         Record the latest tester result and append it to test history.
+
+        Re-recording the same result is idempotent and does not
+        create a duplicate history entry.
         """
         if not isinstance(test_result, dict):
             raise TypeError(
@@ -395,7 +423,9 @@ class TaskManager:
         task = self.get_task(task_id)
 
         task.test_result = test_result
-        task.test_history.append(test_result)
+
+        if not task.test_history or task.test_history[-1] != test_result:
+            task.test_history.append(test_result)
 
         return task
     
@@ -460,11 +490,11 @@ class TaskManager:
     def record_error(
         self,
         task_id: str,
-        error: str,
+        error: str | None,
     ) -> Task:
-        if not isinstance(error, str):
+        if error is not None and not isinstance(error, str):
             raise TypeError(
-                "error must be a string"
+                "error must be a string or None"
             )
 
         task = self.get_task(task_id)
