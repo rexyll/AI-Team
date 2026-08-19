@@ -7,6 +7,8 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Any
 
+from runtime.task_status import TaskStatus
+
 
 
 MAX_REVIEW_ROUNDS = 3
@@ -117,6 +119,10 @@ class TaskWorkflow:
             # If Tester does not exist:
             #     Developer goes directly to Reviewer.
             # ------------------------------------------------------------
+            self.task_manager.mark_reviewing(
+                task.id
+            )
+
             review_outcome = self._run_reviewer(
                 task
             )
@@ -290,8 +296,12 @@ class TaskWorkflow:
         outcome: StageOutcome,
     ) -> str:
 
-        if outcome.status == "approved":
+        if task.status == TaskStatus.REVIEW_PENDING.value:
+            self.task_manager.mark_reviewing(
+                task.id
+            )
 
+        if outcome.status == "approved":
             self.task_manager.mark_review_approved(
                 task.id,
                 outcome.result,
@@ -300,7 +310,6 @@ class TaskWorkflow:
             return "completed"
 
         if outcome.status == "revision":
-
             self.task_manager.mark_review_revision_required(
                 task.id,
                 outcome.result,
@@ -329,8 +338,7 @@ class TaskWorkflow:
 
         return "failed"
     
-    
-    
+ 
     
     def _handle_review_result(
         self,
