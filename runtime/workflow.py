@@ -271,10 +271,7 @@ class TaskWorkflow:
         if outcome.status == "failed":
             self.task_manager.mark_tester_revision_required(
                 task.id,
-                outcome.result_dict.get(
-                    "message",
-                    "Tester returned failed",
-                ),
+                outcome.result_dict,
             )
 
             return

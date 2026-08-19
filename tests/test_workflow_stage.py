@@ -1,6 +1,7 @@
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
+from runtime.agent_result import AgentResult
 from runtime.workflow import (
     TaskWorkflow,
     WorkflowStage,
@@ -271,22 +272,22 @@ def test_run_developer_returns_agent_result_inside_stage_outcome():
     assert outcome.stage == WorkflowStage.DEVELOPER
     assert outcome.status == "completed"
 
-    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
-    assert outcome.result == {
+    # StageOutcome.result 必须是 canonical AgentResult
+    assert isinstance(outcome.result, AgentResult)
+
+    assert outcome.result.status == "completed"
+    assert outcome.result.agent == "developer"
+    assert outcome.result.task_id == task.id
+    assert outcome.result.message == "implementation complete"
+    assert outcome.result.data == {}
+
+    # result_dict 是 AgentResult 的 canonical dictionary
+    assert outcome.result_dict == {
         "status": "completed",
         "agent": "developer",
         "task_id": task.id,
         "message": "implementation complete",
         "data": {},
-    }
-
-    # 验证结果确实是 AgentResult 的 canonical schema
-    assert set(outcome.result.keys()) == {
-        "status",
-        "agent",
-        "task_id",
-        "message",
-        "data",
     }
 
     # _run_developer() 只负责执行 Agent，
@@ -322,22 +323,22 @@ def test_run_tester_returns_agent_result_inside_stage_outcome():
     assert outcome.stage == WorkflowStage.TESTER
     assert outcome.status == "passed"
 
-    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
-    assert outcome.result == {
+    # StageOutcome.result 必须是 canonical AgentResult
+    assert isinstance(outcome.result, AgentResult)
+
+    assert outcome.result.status == "passed"
+    assert outcome.result.agent == "tester"
+    assert outcome.result.task_id == task.id
+    assert outcome.result.message == "all tests passed"
+    assert outcome.result.data == {}
+
+    # result_dict 是 AgentResult 的 canonical dictionary
+    assert outcome.result_dict == {
         "status": "passed",
         "agent": "tester",
         "task_id": task.id,
         "message": "all tests passed",
         "data": {},
-    }
-
-    # 验证结果确实是 AgentResult 的 canonical schema
-    assert set(outcome.result.keys()) == {
-        "status",
-        "agent",
-        "task_id",
-        "message",
-        "data",
     }
 
     # _run_tester() 只负责执行 Tester，
@@ -374,22 +375,22 @@ def test_run_reviewer_returns_agent_result_inside_stage_outcome():
     assert outcome.stage == WorkflowStage.REVIEWER
     assert outcome.status == "approved"
 
-    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
-    assert outcome.result == {
+    # StageOutcome.result 必须是 canonical AgentResult
+    assert isinstance(outcome.result, AgentResult)
+
+    assert outcome.result.status == "approved"
+    assert outcome.result.agent == "reviewer"
+    assert outcome.result.task_id == task.id
+    assert outcome.result.message == "LGTM"
+    assert outcome.result.data == {}
+
+    # result_dict 是 AgentResult 的 canonical dictionary
+    assert outcome.result_dict == {
         "status": "approved",
         "agent": "reviewer",
         "task_id": task.id,
         "message": "LGTM",
         "data": {},
-    }
-
-    # 验证结果确实是 AgentResult 的 canonical schema
-    assert set(outcome.result.keys()) == {
-        "status",
-        "agent",
-        "task_id",
-        "message",
-        "data",
     }
 
     # _run_reviewer() 只负责执行 Reviewer，
