@@ -45,25 +45,7 @@ class TaskWorkflow:
             # ------------------------------------------------------------
             # 1. Developer
             # ------------------------------------------------------------
-            try:
-                raw_developer_result = self.developer.run(task)
-
-                developer_result = self._normalize_developer_result(
-                    raw_developer_result,
-                    task,
-                )
-
-                self.task_manager.mark_developer_completed(
-                    task_id,
-                    developer_result,
-                )
-
-            except Exception as exc:
-                self.task_manager.mark_failed(
-                    task_id,
-                    f"Developer execution failed: {type(exc).__name__}: {exc}",
-                )
-                raise
+            self._run_developer(task)
 
             # ------------------------------------------------------------
             # 2. Tester quality gate
@@ -105,52 +87,21 @@ class TaskWorkflow:
             # If Tester does not exist:
             #     Developer goes directly to Reviewer.
             # ------------------------------------------------------------
-            self.task_manager.mark_reviewing(task_id)
+            review_status = self._run_reviewer(task)
 
-            try:
-                raw_review_result = self.reviewer.run(task)
-
-                review_result = normalize_agent_result(
-                    raw_review_result
-                )
-            except Exception as exc:
-                self.task_manager.mark_failed(
-                    task_id,
-                    f"Reviewer execution failed: {type(exc).__name__}: {exc}",
-                )
-                raise
-
-
-            review_status = review_result.status
-            review_data = review_result.to_dict()
-            
             if review_status == "approved":
-                self.task_manager.mark_review_approved(
-                    task_id,
-                    review_data,
-                )
                 return task
 
-            if review_status == "revision":
-                self.task_manager.mark_review_revision_required(
+            if review_status == "failed":
+                return task
+
+            if task.review_round >= self.max_review_rounds:
+                self.task_manager.mark_failed(
                     task_id,
-                    review_data,
+                    f"Task failed review after "
+                    f"{self.max_review_rounds} rounds",
                 )
-
-                if task.review_round >= self.max_review_rounds:
-                    self.task_manager.mark_failed(
-                        task_id,
-                        f"Task failed review after {self.max_review_rounds} rounds",
-                    )
-                    return task
-
-                continue
-
-            self.task_manager.mark_failed(
-                task_id,
-                f"Unknown reviewer status: {review_status}",
-            )
-            return task
+                return task
 
         if task.status != "completed":
             self.task_manager.mark_failed(
@@ -217,3 +168,85 @@ class TaskWorkflow:
             )
 
         return normalize_agent_result(result)
+
+    def _run_developer(self, task: Task) -> bool:
+        """Run Developer and persist the implementation result.
+
+        Returns:
+            True when Developer completed successfully.
+
+        Raises:
+            Exception:
+                Re-raises the original Developer exception after marking
+                the task as failed.
+        """
+        try:
+            raw_result = self.developer.run(task)
+
+            developer_result = self._normalize_developer_result(
+                raw_result,
+                task,
+            )
+
+            self.task_manager.mark_developer_completed(
+                task.id,
+                developer_result,
+            )
+
+            return True
+
+        except Exception as exc:
+            self.task_manager.mark_failed(
+                task.id,
+                f"Developer execution failed: "
+                f"{type(exc).__name__}: {exc}",
+            )
+            raise
+        
+    def _run_reviewer(self, task: Task) -> str:
+        """Run Reviewer and return the review decision.
+
+        Returns:
+            ``approved`` or ``revision``.
+
+        Raises:
+            Exception:
+                Re-raises Reviewer execution failures.
+        """
+        self.task_manager.mark_reviewing(task.id)
+
+        try:
+            raw_result = self.reviewer.run(task)
+            review_result = normalize_agent_result(raw_result)
+
+        except Exception as exc:
+            self.task_manager.mark_failed(
+                task.id,
+                f"Reviewer execution failed: "
+                f"{type(exc).__name__}: {exc}",
+            )
+            raise
+
+        review_status = review_result.status
+        review_data = review_result.to_dict()
+
+        if review_status == "approved":
+            self.task_manager.mark_review_approved(
+                task.id,
+                review_data,
+            )
+            return "approved"
+
+        if review_status == "revision":
+            self.task_manager.mark_review_revision_required(
+                task.id,
+                review_data,
+            )
+            return "revision"
+
+        self.task_manager.mark_failed(
+            task.id,
+            f"Unknown reviewer status: {review_status}",
+        )
+
+        return "failed"
