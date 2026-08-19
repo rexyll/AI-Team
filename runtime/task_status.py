@@ -30,6 +30,7 @@ VALID_STATUS_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.REVISION,
     },
     TaskStatus.REVIEW_PENDING: {
+        TaskStatus.RUNNING,
         TaskStatus.REVIEWING,
         TaskStatus.FAILED,
     },
