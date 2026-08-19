@@ -6,19 +6,6 @@ from runtime.task_status import (
     validate_transition,
 )
 
-# VALID_STATUSES = {
-#     "pending",
-#     "ready",
-#     "running",
-#     "review_pending",
-#     "reviewing",
-#     "revision",
-#     "completed",
-#     "failed",
-#     "blocked",
-# }
-
-
 class TaskManager:
     """Own task state transitions and task lifecycle data."""
 
@@ -255,12 +242,14 @@ class TaskManager:
         task.error = error
 
     # Backward-compatible API. New workflow code uses the explicit review methods.
+    # Legacy compatibility API.
     def mark_revision(self, task_id: str, review: dict) -> None:
         task = self.get_task(task_id)
         if task.status != "reviewing":
             raise ValueError(f"Task {task_id} is not reviewing")
         self.mark_review_revision_required(task_id, review)
 
+    # Legacy compatibility API.
     def mark_revision_required(
         self,
         task_id: str,
@@ -289,6 +278,12 @@ class TaskManager:
                 f"Task {task_id} cannot require revision from status {task.status}"
             )
 
+    # Legacy compatibility API.
+    # The current workflow uses:
+    #
+    #     reviewing -> running
+    #
+    # for Reviewer revision, so new workflow code should not call this method.
     def retry_revision(self, task_id: str) -> None:
         task = self.get_task(task_id)
         if task.status != "revision":
@@ -380,3 +375,23 @@ class TaskManager:
 
         # 清除之前可能存在的错误状态
         task.error = None
+
+    def ensure_executable(self, task_id: str) -> Task:
+        """Validate that a task can enter workflow execution."""
+        task = self.get_task(task_id)
+
+        if task.status == "pending":
+            self.get_ready_tasks()
+
+        task = self.get_task(task_id)
+
+        if task.status not in {
+            "ready",
+            "running",
+        }:
+            raise ValueError(
+                f"Task {task_id} is not executable from status "
+                f"{task.status}"
+            )
+
+        return task

@@ -28,16 +28,16 @@ class TaskWorkflow:
         self.max_review_rounds = max_review_rounds
 
     def execute(self, task_id: str) -> Task:
-        task = self.task_manager.get_task(task_id)
+        task = self.task_manager.ensure_executable(task_id)
 
         for _ in range(self.max_review_rounds):
-            if task.status == "pending":
-                self.task_manager.get_ready_tasks()
+            # if task.status == "pending":
+            #     self.task_manager.mark_ready(task_id)
 
-            if task.status not in {"ready", "running"}:
-                raise ValueError(
-                    f"Task {task_id} is not ready or running: {task.status}"
-                )
+            # if task.status not in {"ready", "running"}:
+            #     raise ValueError(
+            #         f"Task {task_id} is not ready or running: {task.status}"
+            #     )
 
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
@@ -59,15 +59,7 @@ class TaskWorkflow:
             # When tester is None, skip the Tester quality gate entirely.
             # ------------------------------------------------------------
             if self.tester is not None:
-                tester_passed = self._run_tester(task)
-
-                if not self._handle_tester_result(
-                    task,
-                    tester_passed,
-                ):
-                    if task.status == "failed":
-                        return task
-
+                if not self._run_tester_round(task):
                     continue
 
             # ------------------------------------------------------------
