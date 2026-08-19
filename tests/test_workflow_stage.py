@@ -249,3 +249,155 @@ def test_stage_outcome_reviewer():
     assert outcome.status == "revision"
     
     
+def test_run_developer_returns_agent_result_inside_stage_outcome():
+    task = Task(
+        id="TASK-DEV-001",
+        title="Developer stage test",
+        description="Test developer stage outcome",
+        role="developer",
+        status="running",
+    )
+
+    manager, workflow = create_stage_workflow(task)
+
+    original_status = task.status
+    original_result = task.result.copy()
+    original_error = task.error
+
+    outcome = workflow._run_developer(task)
+
+    assert isinstance(outcome, StageOutcome)
+
+    assert outcome.stage == WorkflowStage.DEVELOPER
+    assert outcome.status == "completed"
+
+    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
+    assert outcome.result == {
+        "status": "completed",
+        "agent": "developer",
+        "task_id": task.id,
+        "message": "implementation complete",
+        "data": {},
+    }
+
+    # 验证结果确实是 AgentResult 的 canonical schema
+    assert set(outcome.result.keys()) == {
+        "status",
+        "agent",
+        "task_id",
+        "message",
+        "data",
+    }
+
+    # _run_developer() 只负责执行 Agent，
+    # 不应该直接修改 Task 生命周期。
+    assert task.status == original_status
+    assert task.result == original_result
+    assert task.error == original_error
+
+    assert workflow.developer.calls == 1
+    
+    
+    
+def test_run_tester_returns_agent_result_inside_stage_outcome():
+    task = Task(
+        id="TASK-TEST-001",
+        title="Tester stage test",
+        description="Test tester stage outcome",
+        role="developer",
+        status="review_pending",
+    )
+
+    manager, workflow = create_stage_workflow(task)
+
+    original_status = task.status
+    original_test_result = task.test_result.copy()
+    original_test_history = list(task.test_history)
+    original_error = task.error
+
+    outcome = workflow._run_tester(task)
+
+    assert isinstance(outcome, StageOutcome)
+
+    assert outcome.stage == WorkflowStage.TESTER
+    assert outcome.status == "passed"
+
+    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
+    assert outcome.result == {
+        "status": "passed",
+        "agent": "tester",
+        "task_id": task.id,
+        "message": "all tests passed",
+        "data": {},
+    }
+
+    # 验证结果确实是 AgentResult 的 canonical schema
+    assert set(outcome.result.keys()) == {
+        "status",
+        "agent",
+        "task_id",
+        "message",
+        "data",
+    }
+
+    # _run_tester() 只负责执行 Tester，
+    # 不应该直接修改 Task 生命周期。
+    assert task.status == original_status
+    assert task.test_result == original_test_result
+    assert task.test_history == original_test_history
+    assert task.error == original_error
+
+    assert workflow.tester.calls == 1
+    
+    
+def test_run_reviewer_returns_agent_result_inside_stage_outcome():
+    task = Task(
+        id="TASK-REVIEW-001",
+        title="Reviewer stage test",
+        description="Test reviewer stage outcome",
+        role="developer",
+        status="review_pending",
+    )
+
+    manager, workflow = create_stage_workflow(task)
+
+    original_status = task.status
+    original_review_result = task.review_result.copy()
+    original_review_history = list(task.review_history)
+    original_review_round = task.review_round
+    original_error = task.error
+
+    outcome = workflow._run_reviewer(task)
+
+    assert isinstance(outcome, StageOutcome)
+
+    assert outcome.stage == WorkflowStage.REVIEWER
+    assert outcome.status == "approved"
+
+    # StageOutcome.result 应该是 canonical AgentResult.to_dict()
+    assert outcome.result == {
+        "status": "approved",
+        "agent": "reviewer",
+        "task_id": task.id,
+        "message": "LGTM",
+        "data": {},
+    }
+
+    # 验证结果确实是 AgentResult 的 canonical schema
+    assert set(outcome.result.keys()) == {
+        "status",
+        "agent",
+        "task_id",
+        "message",
+        "data",
+    }
+
+    # _run_reviewer() 只负责执行 Reviewer，
+    # 不应该直接修改 Task 生命周期。
+    assert task.status == original_status
+    assert task.review_result == original_review_result
+    assert task.review_history == original_review_history
+    assert task.review_round == original_review_round
+    assert task.error == original_error
+
+    assert workflow.reviewer.calls == 1

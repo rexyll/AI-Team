@@ -8,16 +8,49 @@ from dataclasses import dataclass
 from typing import Any
 
 from runtime.task_status import TaskStatus
-
+from runtime.agent_result import AgentResult
 
 
 MAX_REVIEW_ROUNDS = 3
+
+
 @dataclass(frozen=True)
 class StageOutcome:
     stage: WorkflowStage
     status: str
-    result: dict[str, Any]
+    result: AgentResult | None = None
     exception: Exception | None = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.exception is None
+
+    @property
+    def failed(self) -> bool:
+        return self.exception is not None
+
+    @property
+    def result_dict(self) -> dict[str, Any]:
+        if self.result is None:
+            return {}
+
+        return self.result.to_dict()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage.value,
+            "status": self.status,
+            "result": (
+                self.result.to_dict()
+                if self.result is not None
+                else None
+            ),
+            "exception": (
+                str(self.exception)
+                if self.exception is not None
+                else None
+            ),
+        }
     
     
 class WorkflowStage(str, Enum):
@@ -155,7 +188,7 @@ class TaskWorkflow:
             return StageOutcome(
                 stage=WorkflowStage.TESTER,
                 status=result.status,
-                result=result.to_dict(),
+                result=result,
             )
 
         except Exception as exc:
@@ -182,7 +215,7 @@ class TaskWorkflow:
         if outcome.status == "passed":
             self.task_manager.record_test_result(
                 task.id,
-                outcome.result,
+                outcome.result_dict,
             )
 
             self.task_manager.set_feedback(
@@ -209,12 +242,12 @@ class TaskWorkflow:
         if outcome.exception is not None:
             self.task_manager.record_test_result(
                 task.id,
-                outcome.result,
+                outcome.result_dict,
             )
 
             self.task_manager.mark_failed(
                 task.id,
-                outcome.result.get(
+                outcome.result_dict.get(
                     "message",
                     "Tester execution failed",
                 ),
@@ -238,7 +271,10 @@ class TaskWorkflow:
         if outcome.status == "failed":
             self.task_manager.mark_tester_revision_required(
                 task.id,
-                outcome.result,
+                outcome.result_dict.get(
+                    "message",
+                    "Tester returned failed",
+                ),
             )
 
             return
@@ -293,7 +329,7 @@ class TaskWorkflow:
             return StageOutcome(
                 stage=WorkflowStage.DEVELOPER,
                 status=result.status,
-                result=result.to_dict(),
+                result=result,
             )
 
         except Exception as exc:
@@ -312,7 +348,7 @@ class TaskWorkflow:
         if outcome.status == "completed":
             self.task_manager.mark_developer_completed(
                 task.id,
-                outcome.result,
+                outcome.result_dict,
             )
             return
 
@@ -343,7 +379,7 @@ class TaskWorkflow:
             return StageOutcome(
                 stage=WorkflowStage.REVIEWER,
                 status=result.status,
-                result=result.to_dict(),
+                result=result,
             )
 
         except Exception as exc:
@@ -367,7 +403,7 @@ class TaskWorkflow:
         if outcome.status == "approved":
             self.task_manager.mark_review_approved(
                 task.id,
-                outcome.result,
+                outcome.result_dict,
             )
 
             return "completed"
@@ -375,7 +411,7 @@ class TaskWorkflow:
         if outcome.status == "revision":
             self.task_manager.mark_review_revision_required(
                 task.id,
-                outcome.result,
+                outcome.result_dict,
             )
 
             if task.review_round >= self.max_review_rounds:
