@@ -12,11 +12,16 @@ class TaskManager:
     def __init__(self, tasks: list[Task]):
         self.tasks = {task.id: task for task in tasks}
         
-    def _transition(
+    def transition(
         self,
         task_id: str,
         target_status: str | TaskStatus,
-    ) -> None:
+    ) -> Task:
+        """
+        Transition a task to a new lifecycle state.
+
+        All Task status mutations must go through this method.
+        """
         task = self.get_task(task_id)
 
         validate_transition(
@@ -24,11 +29,19 @@ class TaskManager:
             target_status,
         )
 
-        task.status = (
+        new_status = (
             target_status.value
             if isinstance(target_status, TaskStatus)
             else target_status
         )
+        task.status_history.append({
+            "from": task.status,
+            "to": new_status,
+        })
+
+        task.status = new_status
+
+        return task
 
     def get_task(self, task_id: str) -> Task:
         return self.tasks[task_id]
@@ -52,7 +65,7 @@ class TaskManager:
 
             if missing_dependencies:
                 # task.status = "blocked"
-                self._transition(
+                self.transition(
                     task.id,
                     TaskStatus.BLOCKED,
                 )
@@ -70,7 +83,7 @@ class TaskManager:
 
             if failed_dependencies:
                 # task.status = "blocked"
-                self._transition(
+                self.transition(
                     task.id,
                     TaskStatus.BLOCKED,
                 )
@@ -84,7 +97,7 @@ class TaskManager:
                 self.tasks[dependency_id].status == "completed"
                 for dependency_id in task.dependencies
             ):
-                self._transition(
+                self.transition(
                     task.id,
                     TaskStatus.READY,
                 )
@@ -94,21 +107,16 @@ class TaskManager:
 
     def mark_ready(self, task_id: str) -> None:
         task = self.get_task(task_id)
-        if task.status != "pending":
-            raise ValueError(
-                f"Task {task_id} cannot become ready from status {task.status}"
-            )
-        # task.status = "ready"
-        self._transition(
+
+        self.transition(
             task.id,
             TaskStatus.READY,
         )
+
         task.error = None
 
     def mark_running(self, task_id: str) -> None:
-        task = self.get_task(task_id)
-
-        self._transition(
+        task = self.transition(
             task_id,
             TaskStatus.RUNNING,
         )
@@ -120,15 +128,7 @@ class TaskManager:
         task_id: str,
         result: dict | Any | None = None,
     ) -> None:
-        """running -> review_pending; Developer completion is not task completion."""
-        task = self.get_task(task_id)
-
-        if task.status != "running":
-            raise ValueError(
-                f"Task {task_id} is not running"
-            )
-
-        self._transition(
+        task = self.transition(
             task_id,
             TaskStatus.REVIEW_PENDING,
         )
@@ -136,15 +136,10 @@ class TaskManager:
         task.error = None
 
         if result is not None:
-            if hasattr(result, "to_dict"):
-                result = result.to_dict()
-
-            if not isinstance(result, dict):
-                raise TypeError(
-                    "Developer result must be a dict or support to_dict()"
-                )
-
-            task.result = result
+            self.record_result(
+                task_id,
+                result,
+            )
 
     def mark_review_pending(
         self,
@@ -154,10 +149,7 @@ class TaskManager:
         self.mark_developer_completed(task_id, result)
 
     def mark_reviewing(self, task_id: str) -> None:
-        task = self.get_task(task_id)
-        if task.status != "review_pending":
-            raise ValueError(f"Task {task_id} is not review_pending")
-        self._transition(
+        self.transition(
             task_id,
             TaskStatus.REVIEWING,
         )
@@ -167,24 +159,21 @@ class TaskManager:
         task_id: str,
         review_result: dict | None = None,
     ) -> None:
-        """reviewing -> running and preserve feedback for the next Developer round."""
-        task = self.get_task(task_id)
-        if task.status != "reviewing":
-            raise ValueError(f"Task {task_id} is not reviewing")
-
-        if review_result is not None and not isinstance(review_result, dict):
-            raise TypeError("review_result must be a dict")
-
-        if review_result is not None:
-            task.review_result = review_result
-            task.review_history.append(review_result)
-            task.review_round += 1
-            task.context["reviewer_feedback"] = review_result
-
-        self._transition(
-            task.id,
+        task = self.transition(
+            task_id,
             TaskStatus.RUNNING,
         )
+
+        if review_result is not None:
+            if not isinstance(review_result, dict):
+                raise TypeError("review_result must be a dict")
+
+            self.record_review_result(
+                task.id,
+                review_result,
+            )
+            task.context["reviewer_feedback"] = review_result
+
         task.error = None
 
     def mark_review_approved(
@@ -192,21 +181,21 @@ class TaskManager:
         task_id: str,
         review_result: dict,
     ) -> None:
-        """reviewing -> completed."""
-        task = self.get_task(task_id)
-        if task.status != "reviewing":
-            raise ValueError(f"Task {task_id} is not reviewing")
-
         if not isinstance(review_result, dict):
-            raise TypeError("review_result must be a dict")
+            raise TypeError(
+                "review_result must be a dict"
+            )
 
-        task.review_result = review_result
-        task.review_history.append(review_result)
-        task.review_round += 1
-        self._transition(
+        task = self.transition(
             task_id,
             TaskStatus.COMPLETED,
         )
+
+        self.record_review_result(
+            task_id,
+            review_result,
+        )
+
         task.error = None
 
     def mark_completed(
@@ -214,31 +203,38 @@ class TaskManager:
         task_id: str,
         result: dict | None = None,
     ) -> None:
-        """Complete a non-review workflow task."""
-        task = self.get_task(task_id)
-        if task.status != "running":
-            raise ValueError(f"Task {task_id} is not running")
-
-        # task.status = "completed"
-        self._transition(
-            task.id,
+        task = self.transition(
+            task_id,
             TaskStatus.COMPLETED,
         )
+
         task.error = None
+
         if result is not None:
             task.result = result
 
-    def mark_failed(self, task_id: str, error: str) -> None:
-        """Fail a task from any active execution state."""
+    def mark_failed(
+        self,
+        task_id: str,
+        error: str,
+    ) -> None:
         task = self.get_task(task_id)
-        if task.status not in {"running", "reviewing", "review_pending"}:
+
+        if task.status not in {
+            TaskStatus.RUNNING.value,
+            TaskStatus.REVIEWING.value,
+            TaskStatus.REVIEW_PENDING.value,
+        }:
             raise ValueError(
-                f"Task {task_id} cannot be failed from status {task.status}"
+                f"Task {task_id} cannot be failed "
+                f"from status {task.status}"
             )
-        self._transition(
+
+        self.transition(
             task_id,
             TaskStatus.FAILED,
         )
+
         task.error = error
 
     # Backward-compatible API. New workflow code uses the explicit review methods.
@@ -268,7 +264,7 @@ class TaskManager:
                 task.review_history.append(review_result)
                 task.context["reviewer_feedback"] = review_result
             # task.status = "pending"
-            self._transition(
+            self.transition(
                 task.id,
                 TaskStatus.PENDING,
             )
@@ -289,7 +285,7 @@ class TaskManager:
         if task.status != "revision":
             raise ValueError(f"Task {task_id} is not in revision")
         # task.status = "ready"
-        self._transition(
+        self.transition(
             task.id,
             TaskStatus.READY,
         )
@@ -328,52 +324,18 @@ class TaskManager:
         task_id: str,
         test_result: dict,
     ) -> None:
-        """
-        Tester failed -> send task back to Developer.
-
-        State transition:
-
-            review_pending -> running
-
-        Tester feedback is preserved so the next Developer round can
-        inspect the failure reason through task.context["tester_feedback"].
-        """
-        task = self.get_task(task_id)
-
-        if task.status != "review_pending":
-            raise ValueError(
-                f"Task {task_id} is not review_pending"
-            )
-
         if not isinstance(test_result, dict):
             raise TypeError(
                 "test_result must be a dict"
             )
 
-       # 保存本次 Tester 结果。
-        #
-        # test_history 已经由 TaskWorkflow._run_tester() 统一记录，
-        # 这里不能再次 append，否则一次 Tester 执行会产生两条历史记录。
-        task.test_result = test_result
-
-        # 将 Tester 的失败反馈传递给下一轮 Developer。
-        task.context["tester_feedback"] = test_result
-
-        # Tester 失败是可恢复错误：
-        #
-        #   Developer
-        #       ↓
-        #   Tester FAILED
-        #       ↓
-        #   Developer revision
-        #
-        # 因此直接回到 RUNNING，让 workflow 下一轮重新执行 Developer。
-        self._transition(
+        task = self.transition(
             task_id,
             TaskStatus.RUNNING,
         )
 
-        # 清除之前可能存在的错误状态
+        task.test_result = test_result
+        task.context["tester_feedback"] = test_result
         task.error = None
 
     def ensure_executable(self, task_id: str) -> Task:
@@ -395,3 +357,146 @@ class TaskManager:
             )
 
         return task
+    
+    def is_terminal(self, task_id: str) -> bool:
+        task = self.get_task(task_id)
+
+        return task.status in {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.BLOCKED.value,
+        }
+        
+    
+    def is_active(self, task_id: str) -> bool:
+        task = self.get_task(task_id)
+
+        return task.status in {
+            TaskStatus.READY.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.REVIEW_PENDING.value,
+            TaskStatus.REVIEWING.value,
+            TaskStatus.REVISION.value,
+        }
+        
+    def record_test_result(
+        self,
+        task_id: str,
+        test_result: dict,
+    ) -> Task:
+        """
+        Record the latest tester result and append it to test history.
+        """
+        if not isinstance(test_result, dict):
+            raise TypeError(
+                "test_result must be a dict"
+            )
+
+        task = self.get_task(task_id)
+
+        task.test_result = test_result
+        task.test_history.append(test_result)
+
+        return task
+    
+    def record_review_result(
+        self,
+        task_id: str,
+        review_result: dict,
+        *,
+        increment_round: bool = True,
+    ) -> Task:
+        if not isinstance(review_result, dict):
+            raise TypeError(
+                "review_result must be a dict"
+            )
+
+        task = self.get_task(task_id)
+
+        task.review_result = review_result
+        task.review_history.append(review_result)
+
+        if increment_round:
+            task.review_round += 1
+
+        return task
+    
+    def set_feedback(
+        self,
+        task_id: str,
+        source: str,
+        feedback: dict | str,
+    ) -> Task:
+        task = self.get_task(task_id)
+
+        if not isinstance(source, str) or not source:
+            raise ValueError(
+                "feedback source must be a non-empty string"
+            )
+
+        task.context[f"{source}_feedback"] = feedback
+
+        return task
+    
+    def record_result(
+        self,
+        task_id: str,
+        result: dict | Any,
+    ) -> Task:
+        task = self.get_task(task_id)
+
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "result must be a dict or support to_dict()"
+            )
+
+        task.result = result
+
+        return task
+    
+    def record_error(
+        self,
+        task_id: str,
+        error: str,
+    ) -> Task:
+        if not isinstance(error, str):
+            raise TypeError(
+                "error must be a string"
+            )
+
+        task = self.get_task(task_id)
+
+        task.error = error
+
+        return task
+    
+    
+    def mark_failed(
+        self,
+        task_id: str,
+        error: str,
+    ) -> None:
+        task = self.get_task(task_id)
+
+        if task.status not in {
+            TaskStatus.RUNNING.value,
+            TaskStatus.REVIEWING.value,
+            TaskStatus.REVIEW_PENDING.value,
+        }:
+            raise ValueError(
+                f"Task {task_id} cannot be failed "
+                f"from status {task.status}"
+            )
+
+        self.transition(
+            task_id,
+            TaskStatus.FAILED,
+        )
+
+        self.record_error(
+            task_id,
+            error,
+        )

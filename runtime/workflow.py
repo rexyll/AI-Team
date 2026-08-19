@@ -131,9 +131,18 @@ class TaskWorkflow:
             return False
         result_dict = result.to_dict()
         
-        task.test_result = result_dict
-        task.test_history.append(result_dict)
-        task.context["tester_feedback"] = result_dict
+        self.task_manager.record_test_result(
+            task.id,
+            result_dict,
+        )
+        # task.test_history.append(result_dict)
+        
+
+        self.task_manager.set_feedback(
+            task.id,
+            "tester",
+            result_dict,
+        )
 
         return status == "passed"
     

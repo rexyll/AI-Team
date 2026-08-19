@@ -10,6 +10,9 @@ class Task:
     role: str
 
     status: str = "pending"
+    status_history: list[dict[str, Any]] = field(
+        default_factory=list
+    )
     error: str | None = None
     review_round: int = 0
 
