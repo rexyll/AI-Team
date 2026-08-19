@@ -46,13 +46,18 @@ class TaskWorkflow:
             # 1. Developer
             # ------------------------------------------------------------
             try:
-                developer_result = normalize_agent_result(
-                    self.developer.run(task)
+                raw_developer_result = self.developer.run(task)
+
+                developer_result = self._normalize_developer_result(
+                    raw_developer_result,
+                    task,
                 )
+
                 self.task_manager.mark_developer_completed(
                     task_id,
                     developer_result,
                 )
+
             except Exception as exc:
                 self.task_manager.mark_failed(
                     task_id,
@@ -159,28 +164,37 @@ class TaskWorkflow:
     def _run_tester(self, task: Task) -> bool:
         """Run Tester and enforce the Tester quality gate.
 
-        Returns True only for an explicit ``passed`` result. A legitimate
-        ``failed`` result is recoverable and is handled by execute() as a
-        Developer revision. Exceptions and malformed results are terminal
-        workflow failures.
+        Returns True only for an explicit ``passed`` result.
+
+        A legitimate ``failed`` result is recoverable and handled by
+        execute() as a Developer revision.
+
+        Exceptions and malformed results are terminal workflow failures.
         """
         try:
             result = self.tester.run(task)
+
         except Exception as exc:
-            task.status = "failed"
-            task.error = f"Tester failed: {type(exc).__name__}: {exc}"
+            self.task_manager.mark_failed(
+                task.id,
+                f"Tester failed: {type(exc).__name__}: {exc}",
+            )
             raise
 
         if not isinstance(result, dict):
-            task.status = "failed"
-            task.error = "Tester returned invalid result type"
+            self.task_manager.mark_failed(
+                task.id,
+                "Tester returned invalid result type",
+            )
             return False
 
         status = result.get("status")
 
         if status not in {"passed", "failed"}:
-            task.status = "failed"
-            task.error = f"Tester returned invalid status: {status}"
+            self.task_manager.mark_failed(
+                task.id,
+                f"Tester returned invalid status: {status}",
+            )
             return False
 
         task.test_result = result
@@ -188,3 +202,23 @@ class TaskWorkflow:
         task.context["tester_feedback"] = result
 
         return status == "passed"
+
+    def _normalize_developer_result(
+        self,
+        result,
+        task: Task,
+    ):
+        if isinstance(result, dict):
+            result = dict(result)
+
+            result.setdefault(
+                "agent",
+                "developer",
+            )
+
+            result.setdefault(
+                "task_id",
+                task.id,
+            )
+
+        return normalize_agent_result(result)

@@ -1,3 +1,5 @@
+from typing import Any
+
 from runtime.task import Task
 from runtime.task_status import (
     TaskStatus,
@@ -129,19 +131,32 @@ class TaskManager:
     def mark_developer_completed(
         self,
         task_id: str,
-        result: dict | None = None,
+        result: dict | Any | None = None,
     ) -> None:
         """running -> review_pending; Developer completion is not task completion."""
         task = self.get_task(task_id)
+
         if task.status != "running":
-            raise ValueError(f"Task {task_id} is not running")
+            raise ValueError(
+                f"Task {task_id} is not running"
+            )
 
         self._transition(
             task_id,
             TaskStatus.REVIEW_PENDING,
         )
+
         task.error = None
+
         if result is not None:
+            if hasattr(result, "to_dict"):
+                result = result.to_dict()
+
+            if not isinstance(result, dict):
+                raise TypeError(
+                    "Developer result must be a dict or support to_dict()"
+                )
+
             task.result = result
 
     def mark_review_pending(
@@ -180,10 +195,9 @@ class TaskManager:
             task.review_round += 1
             task.context["reviewer_feedback"] = review_result
 
-        # task.status = "running"
         self._transition(
             task.id,
-            TaskStatus.running,
+            TaskStatus.RUNNING,
         )
         task.error = None
 
@@ -322,6 +336,16 @@ class TaskManager:
         task_id: str,
         test_result: dict,
     ) -> None:
+        """
+        Tester failed -> send task back to Developer.
+
+        State transition:
+
+            review_pending -> running
+
+        Tester feedback is preserved so the next Developer round can
+        inspect the failure reason through task.context["tester_feedback"].
+        """
         task = self.get_task(task_id)
 
         if task.status != "review_pending":
@@ -334,13 +358,26 @@ class TaskManager:
                 "test_result must be a dict"
             )
 
+        # 保存本次 Tester 结果
         task.test_result = test_result
         task.test_history.append(test_result)
+
+        # 将 Tester 的失败反馈传递给下一轮 Developer
         task.context["tester_feedback"] = test_result
 
+        # Tester 失败是可恢复错误：
+        #
+        #   Developer
+        #       ↓
+        #   Tester FAILED
+        #       ↓
+        #   Developer revision
+        #
+        # 因此直接回到 RUNNING，让 workflow 下一轮重新执行 Developer。
         self._transition(
             task_id,
             TaskStatus.RUNNING,
         )
 
+        # 清除之前可能存在的错误状态
         task.error = None
