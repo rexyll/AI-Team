@@ -1,67 +1,98 @@
+from runtime.context_builder import build_task_context
 from runtime.task import Task
 
 
 def test_context_builder_builds_agent_context():
+    dependency = Task(
+        id="TASK-DEP-001",
+        title="dependency task",
+        description="dependency task",
+        role="developer",
+        status="completed",
+        result={
+            "status": "completed",
+            "agent": "developer",
+            "task_id": "TASK-DEP-001",
+            "message": "dependency completed",
+        },
+    )
+
     task = Task(
         id="TASK-001",
         title="demo",
         description="test task",
         role="developer",
         status="running",
+        dependencies=["TASK-DEP-001"],
     )
 
-    context = ContextBuilder().build(task)
-
-    assert context.task_id == "TASK-001"
-    assert context.task_title == "demo"
-    assert context.task_description == "test task"
-    assert context.role == "developer"
-    assert context.status == "running"
-    
-    
-def test_context_contains_tester_feedback():
-    task = Task(
-        id="TASK-001",
-        title="demo",
-        description="test task",
-        role="developer",
-        status="running",
+    context = build_task_context(
+        task,
+        {
+            dependency.id: dependency,
+            task.id: task,
+        },
     )
 
-    task.test_result = {
-        "status": "failed",
-        "agent": "tester",
-        "task_id": "TASK-001",
-        "message": "missing boundary tests",
-    }
+    assert "TASK-DEP-001" in context
 
-    context = ContextBuilder().build(task)
+    assert context["TASK-DEP-001"]["title"] == "dependency task"
+    assert context["TASK-DEP-001"]["role"] == "developer"
 
-    assert context.tester_feedback["status"] == "failed"
-    assert context.tester_feedback["message"] == "missing boundary tests"
-    
-    
-    
-def test_context_contains_reviewer_feedback():
-    task = Task(
-        id="TASK-001",
-        title="demo",
-        description="test task",
-        role="developer",
-        status="revision",
-    )
-
-    task.review_result = {
-        "status": "revision",
-        "agent": "reviewer",
-        "task_id": "TASK-001",
-        "message": "improve error handling",
-    }
-
-    context = ContextBuilder().build(task)
-
-    assert context.reviewer_feedback["status"] == "revision"
     assert (
-        context.reviewer_feedback["message"]
-        == "improve error handling"
+        context["TASK-DEP-001"]["result"]["message"]
+        == "dependency completed"
     )
+
+
+def test_context_builder_ignores_incomplete_dependency():
+    dependency = Task(
+        id="TASK-DEP-001",
+        title="dependency task",
+        description="dependency task",
+        role="developer",
+        status="running",
+        result={
+            "status": "completed",
+            "message": "not actually completed",
+        },
+    )
+
+    task = Task(
+        id="TASK-001",
+        title="demo",
+        description="test task",
+        role="developer",
+        status="running",
+        dependencies=["TASK-DEP-001"],
+    )
+
+    context = build_task_context(
+        task,
+        {
+            dependency.id: dependency,
+            task.id: task,
+        },
+    )
+
+    assert context == {}
+
+
+def test_context_builder_ignores_missing_dependency():
+    task = Task(
+        id="TASK-001",
+        title="demo",
+        description="test task",
+        role="developer",
+        status="running",
+        dependencies=["TASK-NOT-EXIST"],
+    )
+
+    context = build_task_context(
+        task,
+        {
+            task.id: task,
+        },
+    )
+
+    assert context == {}

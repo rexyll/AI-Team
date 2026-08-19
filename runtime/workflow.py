@@ -2,6 +2,7 @@ from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 from runtime.result_normalizer import normalize_agent_result
+from runtime.context_builder import build_task_context
 
 MAX_REVIEW_ROUNDS = 3
 
@@ -42,6 +43,7 @@ class TaskWorkflow:
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
 
+            self._build_context(task)
             # ------------------------------------------------------------
             # 1. Developer
             # ------------------------------------------------------------
@@ -298,3 +300,19 @@ class TaskWorkflow:
         )
 
         return "failed"
+    
+    
+    def _build_context(self, task: Task) -> None:
+        """Build and persist dependency context for the current task."""
+
+        all_tasks = {
+            item.id: item
+            for item in self.task_manager.get_all_tasks()
+        }
+
+        dependency_context = build_task_context(
+            task,
+            all_tasks,
+        )
+
+        task.context["dependencies"] = dependency_context
