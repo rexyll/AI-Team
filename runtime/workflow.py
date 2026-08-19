@@ -59,7 +59,15 @@ class TaskWorkflow:
             # When tester is None, skip the Tester quality gate entirely.
             # ------------------------------------------------------------
             if self.tester is not None:
-                if not self._run_tester_round(task):
+                tester_passed = self._run_tester(task)
+
+                if not self._handle_tester_result(
+                    task,
+                    tester_passed,
+                ):
+                    if task.status == "failed":
+                        return task
+
                     continue
 
             # ------------------------------------------------------------
