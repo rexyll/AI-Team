@@ -251,41 +251,33 @@ class TaskManager:
         review_result: dict | None = None,
         error: str | None = None,
     ) -> None:
-        """Legacy compatibility wrapper; prefer mark_review_revision_required."""
+        """
+        Legacy compatibility wrapper.
+
+        New code should use mark_review_revision_required().
+        """
         task = self.get_task(task_id)
-        if task.status == "reviewing":
-            self.mark_review_revision_required(task_id, review_result)
-        elif task.status == "completed":
-            if review_result is not None:
-                if not isinstance(review_result, dict):
-                    raise TypeError(
-                        "review_result must be a dict"
-                    )
 
-                self.record_review_result(
-                    task_id,
-                    review_result,
-                )
-
-                self.set_feedback(
-                    task_id,
-                    "reviewer",
-                    review_result,
-                )
-
-            self.transition(
-                task_id,
-                TaskStatus.PENDING,
-            )
-
-            self.record_error(
-                task_id,
-                error,
-            )
-        else:
+        if task.status not in {
+            TaskStatus.REVIEWING.value,
+            TaskStatus.COMPLETED.value,
+        }:
             raise ValueError(
-                f"Task {task_id} cannot require revision from status {task.status}"
+                f"Task {task_id} cannot require revision "
+                f"from status {task.status}"
             )
+
+        if task.status == TaskStatus.REVIEWING.value:
+            self.mark_review_revision_required(
+                task_id,
+                review_result,
+            )
+            return
+
+        raise ValueError(
+            f"Task {task_id} cannot require revision "
+            f"from terminal status {task.status}"
+        )
 
     # Legacy compatibility API.
     # The current workflow uses:
@@ -444,10 +436,17 @@ class TaskManager:
         task = self.get_task(task_id)
 
         task.review_result = review_result
-        task.review_history.append(review_result)
 
-        if increment_round:
-            task.review_round += 1
+        is_new_review = (
+            not task.review_history
+            or task.review_history[-1] != review_result
+        )
+
+        if is_new_review:
+            task.review_history.append(review_result)
+
+            if increment_round:
+                task.review_round += 1
 
         return task
     
