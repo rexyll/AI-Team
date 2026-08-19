@@ -17,6 +17,7 @@ class StageOutcome:
     stage: WorkflowStage
     status: str
     result: dict[str, Any]
+    exception: Exception | None = None
     
     
 class WorkflowStage(str, Enum):
@@ -95,11 +96,6 @@ class TaskWorkflow:
                     task
                 )
 
-                self._apply_tester_outcome(
-                    task,
-                    tester_outcome,
-                )
-
                 if not self._handle_tester_result(
                     task,
                     tester_outcome,
@@ -170,6 +166,7 @@ class TaskWorkflow:
                     "status": "failed",
                     "message": str(exc),
                 },
+                exception=exc,
             )
     
     
@@ -238,6 +235,7 @@ class TaskWorkflow:
                     "status": "failed",
                     "message": str(exc),
                 },
+                exception=exc,
             )
         
     def _apply_developer_outcome(
@@ -260,6 +258,9 @@ class TaskWorkflow:
                 "Developer execution failed",
             ),
         )
+
+        if outcome.exception is not None:
+            raise outcome.exception
     
     
     def _run_reviewer(
@@ -288,6 +289,7 @@ class TaskWorkflow:
                     "status": "failed",
                     "message": str(exc),
                 },
+                exception=exc,
             )
     
     def _apply_reviewer_outcome(
@@ -336,7 +338,19 @@ class TaskWorkflow:
             ),
         )
 
-        return "failed"
+        if outcome.status == "failed":
+            self.task_manager.mark_failed(
+                task.id,
+                outcome.result.get(
+                    "message",
+                    "Reviewer execution failed",
+                ),
+            )
+
+            if outcome.exception is not None:
+                raise outcome.exception
+
+            return "failed"
     
  
     
