@@ -436,17 +436,10 @@ class TaskManager:
         task = self.get_task(task_id)
 
         task.review_result = review_result
+        task.review_history.append(review_result)
 
-        is_new_review = (
-            not task.review_history
-            or task.review_history[-1] != review_result
-        )
-
-        if is_new_review:
-            task.review_history.append(review_result)
-
-            if increment_round:
-                task.review_round += 1
+        if increment_round:
+            task.review_round += 1
 
         return task
     

@@ -284,6 +284,106 @@ def test_developer_reviewer_revision_then_approved():
     )
 
 
+
+
+
+def test_reviewer_result_is_available_to_next_developer_round():
+
+    task = Task(
+        id="TASK-007",
+        title="Reviewer 上下文传递",
+        description="测试审核结果保存",
+        role="developer",
+        status="ready",
+    )
+
+    developer = MockDeveloper()
+
+    reviewer = MockReviewer(
+        [
+            {
+                "status": "revision",
+                "agent": "reviewer",
+                "task_id": "TASK-007",
+                "message": (
+                    "REVISION_REQUIRED\n"
+                    "需要增加单元测试"
+                ),
+            },
+            {
+                "status": "approved",
+                "agent": "reviewer",
+                "task_id": "TASK-007",
+                "message": "APPROVED",
+            },
+        ]
+    )
+
+    manager, workflow = create_workflow(
+        task,
+        developer,
+        reviewer,
+    )
+
+    result = workflow.execute(
+        "TASK-007"
+    )
+
+    assert result.status == "completed"
+
+    assert result.review_round == 2
+
+    assert developer.calls == 2
+
+    assert developer.received_feedback[0] is None
+
+    assert (
+        "需要增加单元测试"
+        in result.context["reviewer_feedback"]["message"]
+    )
+    
+def test_review_approved_on_final_allowed_round_completes():
+    task = create_task("ready")
+
+    developer = MockDeveloper()
+
+    reviewer = MockReviewer(
+        [
+            {
+                "status": "revision",
+                "agent": "reviewer",
+                "task_id": task.id,
+                "message": "REVISION_REQUIRED",
+            },
+            {
+                "status": "revision",
+                "agent": "reviewer",
+                "task_id": task.id,
+                "message": "REVISION_REQUIRED",
+            },
+            {
+                "status": "approved",
+                "agent": "reviewer",
+                "task_id": task.id,
+                "message": "LGTM",
+            },
+        ]
+    )
+
+    manager, workflow = create_workflow(
+        task,
+        developer,
+        reviewer,
+        max_review_rounds=3,
+    )
+
+    result = workflow.execute(task.id)
+
+    assert result.status == "completed"
+    assert result.review_round == 3
+    assert len(result.review_history) == 3
+    
+    
 def test_review_fails_after_max_rounds():
 
     task = Task(
@@ -344,57 +444,3 @@ def test_review_fails_after_max_rounds():
     )
 
 
-def test_reviewer_result_is_available_to_next_developer_round():
-
-    task = Task(
-        id="TASK-007",
-        title="Reviewer 上下文传递",
-        description="测试审核结果保存",
-        role="developer",
-        status="ready",
-    )
-
-    developer = MockDeveloper()
-
-    reviewer = MockReviewer(
-        [
-            {
-                "status": "revision",
-                "agent": "reviewer",
-                "task_id": "TASK-007",
-                "message": (
-                    "REVISION_REQUIRED\n"
-                    "需要增加单元测试"
-                ),
-            },
-            {
-                "status": "approved",
-                "agent": "reviewer",
-                "task_id": "TASK-007",
-                "message": "APPROVED",
-            },
-        ]
-    )
-
-    manager, workflow = create_workflow(
-        task,
-        developer,
-        reviewer,
-    )
-
-    result = workflow.execute(
-        "TASK-007"
-    )
-
-    assert result.status == "completed"
-
-    assert result.review_round == 2
-
-    assert developer.calls == 2
-
-    assert developer.received_feedback[0] is None
-
-    assert (
-        "需要增加单元测试"
-        in result.context["reviewer_feedback"]["message"]
-    )

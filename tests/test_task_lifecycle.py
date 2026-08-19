@@ -424,31 +424,6 @@ def test_tester_revision_does_not_duplicate_test_history():
     assert task.test_history == [test_result]
     assert task.context["tester_feedback"] == test_result
     
-def test_duplicate_review_result_does_not_increment_round():
-    task = create_task("reviewing")
-
-    manager = TaskManager([task])
-
-    review = {
-        "status": "revision",
-        "message": "Fix DAO transaction handling",
-    }
-
-    manager.record_review_result(
-        task.id,
-        review,
-    )
-
-    manager.record_review_result(
-        task.id,
-        review,
-    )
-
-    assert task.review_result == review
-    assert task.review_history == [review]
-    assert task.review_round == 1
-    
-    
     
 def test_review_revision_returns_to_running():
     task = create_task("reviewing")
@@ -471,5 +446,29 @@ def test_review_revision_returns_to_running():
     assert task.review_round == 1
     assert task.context["reviewer_feedback"] == review
     
+    
+def test_same_review_result_still_counts_as_new_round():
+    task = create_task("reviewing")
+
+    manager = TaskManager([task])
+
+    review = {
+        "status": "revision",
+        "message": "REVISION_REQUIRED",
+    }
+
+    manager.record_review_result(
+        task.id,
+        review,
+    )
+
+    manager.record_review_result(
+        task.id,
+        review,
+    )
+
+    assert task.review_result == review
+    assert task.review_history == [review, review]
+    assert task.review_round == 2
     
     
