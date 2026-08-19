@@ -205,3 +205,112 @@ def test_agent_result_rejects_unknown_legacy_key():
 
     with pytest.raises(KeyError):
         _ = result["unknown"]
+        
+def test_agent_result_normalizes_legacy_status():
+    result = AgentResult(
+        status="architect_completed",
+        agent="architect",
+        task_id="TASK-001",
+    )
+
+    assert result.status == "completed"
+    
+    
+def test_agent_result_preserves_legacy_architecture_payload():
+    result = AgentResult.from_dict(
+        {
+            "status": "architect_completed",
+            "agent": "architect",
+            "task_id": "TASK-001",
+            "architecture": "SQLite schema design",
+        }
+    )
+
+    assert result.status == "completed"
+
+    assert result.data == {
+        "architecture": "SQLite schema design",
+    }
+    
+    
+def test_agent_result_preserves_multiple_legacy_fields():
+    result = AgentResult.from_dict(
+        {
+            "status": "architect_completed",
+            "agent": "architect",
+            "task_id": "TASK-001",
+            "architecture": "SQLite",
+            "risk": "REAL precision",
+            "decision": "Use INTEGER cents",
+        }
+    )
+
+    assert result.data == {
+        "architecture": "SQLite",
+        "risk": "REAL precision",
+        "decision": "Use INTEGER cents",
+    }
+    
+    
+def test_agent_result_preserves_existing_data():
+    result = AgentResult.from_dict(
+        {
+            "status": "completed",
+            "agent": "developer",
+            "task_id": "TASK-001",
+            "data": {
+                "files": [
+                    "main.py",
+                ]
+            },
+            "files": [
+                "legacy.py",
+            ],
+        }
+    )
+
+    assert result.data == {
+        "files": [
+            "main.py",
+        ]
+    }
+    
+    
+@pytest.mark.parametrize(
+    "legacy_status, expected_status",
+    [
+        ("architect_completed", "completed"),
+        ("developer_completed", "completed"),
+        ("tester_passed", "passed"),
+        ("tester_failed", "failed"),
+        ("reviewer_approved", "approved"),
+        ("reviewer_revision", "revision"),
+    ],
+)
+def test_agent_result_normalizes_legacy_statuses(
+    legacy_status,
+    expected_status,
+):
+    result = AgentResult(
+        status=legacy_status,
+        agent="test-agent",
+        task_id="TASK-001",
+    )
+
+    assert result.status == expected_status
+    
+    
+def test_normalize_result_status_preserves_unknown_status():
+    from runtime.agent_result import normalize_result_status
+
+    assert (
+        normalize_result_status("custom_status")
+        == "custom_status"
+    )
+    
+    
+def test_normalize_result_status_rejects_empty_status():
+    from runtime.agent_result import normalize_result_status
+
+    with pytest.raises(ValueError):
+        normalize_result_status("")
