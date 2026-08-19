@@ -89,8 +89,18 @@ def build_task_context(
 
         build_task_context(task, all_tasks)
 
-    while new code should prefer:
+    The legacy API returns only completed dependency context:
+
+        {
+            "TASK-001": {
+                "title": "...",
+                "role": "...",
+                "result": {...},
+            }
+        }
+
+    New code should prefer:
 
         ContextBuilder(all_tasks).build(task)
     """
-    return ContextBuilder(all_tasks).build(task)
+    return ContextBuilder(all_tasks).build(task)["dependencies"]

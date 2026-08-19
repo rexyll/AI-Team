@@ -186,16 +186,40 @@ def test_context_builder_does_not_mutate_task():
 def test_legacy_build_task_context_api_still_works():
     from runtime.context_builder import build_task_context
 
+    dependency = Task(
+        id="TASK-DEP-001",
+        title="dependency",
+        description="dependency task",
+        role="architect",
+        status="completed",
+        result={
+            "status": "completed",
+            "architecture": "database schema",
+        },
+    )
+
     task = Task(
         id="TASK-001",
         title="demo",
         description="test task",
         role="developer",
         status="running",
+        dependencies=["TASK-DEP-001"],
     )
 
-    context = build_task_context(task, {})
+    context = build_task_context(
+        task,
+        {
+            dependency.id: dependency,
+            task.id: task,
+        },
+    )
 
-    assert context["dependencies"] == {}
-    assert context["tester_feedback"] is None
-    assert context["reviewer_feedback"] is None
+    assert "TASK-DEP-001" in context
+
+    assert context["TASK-DEP-001"]["title"] == "dependency"
+    assert context["TASK-DEP-001"]["role"] == "architect"
+    assert (
+        context["TASK-DEP-001"]["result"]["architecture"]
+        == "database schema"
+    )
