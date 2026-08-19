@@ -1,7 +1,7 @@
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
-
+from runtime.result_normalizer import normalize_agent_result
 
 MAX_REVIEW_ROUNDS = 3
 
@@ -46,7 +46,9 @@ class TaskWorkflow:
             # 1. Developer
             # ------------------------------------------------------------
             try:
-                developer_result = self.developer.run(task)
+                developer_result = normalize_agent_result(
+                    self.developer.run(task)
+                )
                 self.task_manager.mark_developer_completed(
                     task_id,
                     developer_result,
@@ -82,10 +84,10 @@ class TaskWorkflow:
                     # A legitimate TEST_FAILED result is recoverable.
                     # Preserve tester feedback and send the task back
                     # to Developer for another implementation round.
-                    task.context["tester_feedback"] = task.test_result
-
-                    task.status = "running"
-                    task.error = None
+                    self.task_manager.mark_tester_revision_required(
+                        task_id,
+                        task.test_result,
+                    )
 
                     continue
 

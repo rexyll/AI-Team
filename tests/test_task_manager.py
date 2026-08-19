@@ -88,6 +88,7 @@
 #         f"{task.title}"
 #     )
 
+import pytest
 
 
 from runtime.task import Task
@@ -159,3 +160,32 @@ def test_missing_dependency_blocks_task():
     assert task.status == "blocked"
 
     assert "TASK-999" in task.error
+    
+def test_task_manager_uses_valid_status_transitions():
+    task = Task(
+        id="TASK-STATE-001",
+        title="state",
+        description="state",
+        role="developer",
+        status="ready",
+    )
+
+    manager = TaskManager([task])
+
+    manager.mark_running(task.id)
+
+    assert task.status == "running"
+    
+def test_task_manager_rejects_invalid_transition():
+    task = Task(
+        id="TASK-STATE-002",
+        title="state",
+        description="state",
+        role="developer",
+        status="ready",
+    )
+
+    manager = TaskManager([task])
+
+    with pytest.raises(ValueError):
+        manager.mark_reviewing(task.id)

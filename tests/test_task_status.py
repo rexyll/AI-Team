@@ -107,3 +107,4 @@ def test_terminal_failed_state_has_no_outgoing_transition():
         TaskStatus.FAILED,
         TaskStatus.RUNNING,
     )
+    
