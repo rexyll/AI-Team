@@ -176,6 +176,13 @@ class TaskWorkflow:
         outcome: StageOutcome,
     ) -> None:
 
+        # ------------------------------------------------------------
+        # 1. Tester passed
+        #
+        # 正常质量门禁通过：
+        #
+        #     Developer -> Tester -> Reviewer
+        # ------------------------------------------------------------
         if outcome.status == "passed":
             self.task_manager.record_test_result(
                 task.id,
@@ -190,9 +197,75 @@ class TaskWorkflow:
 
             return
 
-        self.task_manager.mark_tester_revision_required(
+        # ------------------------------------------------------------
+        # 2. Tester execution exception
+        #
+        # 这是 Agent 执行失败，而不是测试发现代码问题。
+        #
+        # 例如：
+        #
+        #     tester.run()
+        #         ↓
+        #     RuntimeError
+        #
+        # 必须进入 FAILED，而不是 Developer revision。
+        # ------------------------------------------------------------
+        if outcome.exception is not None:
+            self.task_manager.record_test_result(
+                task.id,
+                outcome.result,
+            )
+
+            self.task_manager.mark_failed(
+                task.id,
+                outcome.result.get(
+                    "message",
+                    "Tester execution failed",
+                ),
+            )
+
+            return
+
+        # ------------------------------------------------------------
+        # 3. Tester returned "failed"
+        #
+        # 这是正常的 Quality Gate failure。
+        #
+        # 含义：
+        #
+        #     测试发现代码问题
+        #         ↓
+        #     Developer revision
+        #
+        # 不能把 task 标记成 FAILED。
+        # ------------------------------------------------------------
+        if outcome.status == "failed":
+            self.task_manager.mark_tester_revision_required(
+                task.id,
+                outcome.result,
+            )
+
+            return
+
+        # ------------------------------------------------------------
+        # 4. Unknown / invalid Tester status
+        #
+        # 例如：
+        #
+        #     status == "invalid"
+        #     status == "unknown"
+        #     status == "foo"
+        #
+        # 这不是正常 Quality Gate failure。
+        #
+        # 属于 AgentResult contract violation。
+        # ------------------------------------------------------------
+        self.task_manager.mark_failed(
             task.id,
-            outcome.result,
+            (
+                "Invalid tester result status: "
+                f"{outcome.status}"
+            ),
         )
     
     

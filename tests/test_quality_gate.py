@@ -292,3 +292,37 @@ def test_invalid_tester_result_fails_task():
 
     assert result.status == "failed"
     assert reviewer.calls == 0
+    
+    
+def test_tester_failed_requires_developer_revision():
+    developer = FakeDeveloper()
+
+    tester = FakeTester(
+        [
+            {
+                "status": "failed",
+                "agent": "tester",
+                "task_id": "TASK-QG-001",
+                "message": "需要修复边界条件",
+            },
+            {
+                "status": "passed",
+                "agent": "tester",
+                "task_id": "TASK-QG-001",
+                "message": "TEST_PASSED",
+            },
+        ]
+    )
+
+    reviewer = FakeReviewer()
+
+    task, workflow = create_workflow(
+        developer,
+        tester,
+        reviewer,
+    )
+
+    result = workflow.execute(task.id)
+
+    assert result.status == "completed"
+    assert len(task.test_history) == 2
