@@ -190,7 +190,6 @@ class TaskManager:
 
         if review_result is not None:
             task.review_result = review_result
-            task.result["review"] = review_result
             task.review_history.append(review_result)
             task.review_round += 1
             task.context["reviewer_feedback"] = review_result
@@ -215,7 +214,6 @@ class TaskManager:
             raise TypeError("review_result must be a dict")
 
         task.review_result = review_result
-        task.result["review"] = review_result
         task.review_history.append(review_result)
         task.review_round += 1
         self._transition(
@@ -237,7 +235,7 @@ class TaskManager:
         # task.status = "completed"
         self._transition(
             task.id,
-            TaskStatus.completed,
+            TaskStatus.COMPLETED,
         )
         task.error = None
         if result is not None:
@@ -278,13 +276,12 @@ class TaskManager:
                 if not isinstance(review_result, dict):
                     raise TypeError("review_result must be a dict")
                 task.review_result = review_result
-                task.result["review"] = review_result
                 task.review_history.append(review_result)
                 task.context["reviewer_feedback"] = review_result
             # task.status = "pending"
             self._transition(
                 task.id,
-                TaskStatus.pending,
+                TaskStatus.PENDING,
             )
             task.error = error
         else:
@@ -299,7 +296,7 @@ class TaskManager:
         # task.status = "ready"
         self._transition(
             task.id,
-            TaskStatus.ready,
+            TaskStatus.READY,
         )
         task.error = None
 
