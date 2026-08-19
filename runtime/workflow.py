@@ -61,20 +61,12 @@ class TaskWorkflow:
             if self.tester is not None:
                 tester_passed = self._run_tester(task)
 
-                if not tester_passed:
-                    # Invalid tester results and tester exceptions are
-                    # terminal failures. _run_tester has already marked
-                    # the task as failed.
+                if not self._handle_tester_result(
+                    task,
+                    tester_passed,
+                ):
                     if task.status == "failed":
                         return task
-
-                    # A legitimate TEST_FAILED result is recoverable.
-                    # Preserve tester feedback and send the task back
-                    # to Developer for another implementation round.
-                    self.task_manager.mark_tester_revision_required(
-                        task_id,
-                        task.test_result,
-                    )
 
                     continue
 
@@ -89,25 +81,19 @@ class TaskWorkflow:
             # ------------------------------------------------------------
             review_status = self._run_reviewer(task)
 
-            if review_status == "approved":
-                return task
-
-            if review_status == "failed":
-                return task
-
-            if task.review_round >= self.max_review_rounds:
-                self.task_manager.mark_failed(
-                    task_id,
-                    f"Task failed review after "
-                    f"{self.max_review_rounds} rounds",
-                )
-                return task
-
-        if task.status != "completed":
-            self.task_manager.mark_failed(
-                task_id,
-                "Task workflow ended without successful review",
+            result = self._handle_review_result(
+                task,
+                review_status,
             )
+
+            if result == "completed":
+                return task
+
+            if result == "failed":
+                return task
+
+            # revision
+            continue
 
         return task
 
@@ -148,6 +134,30 @@ class TaskWorkflow:
         task.context["tester_feedback"] = result_dict
 
         return status == "passed"
+    
+    def _handle_tester_result(
+        self,
+        task: Task,
+        tester_passed: bool,
+    ) -> bool:
+        """Handle Tester result.
+
+        Returns:
+            True when workflow should continue to Reviewer.
+            False when Developer must be executed again.
+        """
+        if tester_passed:
+            return True
+
+        if task.status == "failed":
+            return False
+
+        self.task_manager.mark_tester_revision_required(
+            task.id,
+            task.test_result,
+        )
+
+        return False
 
     def _normalize_developer_result(
         self,
@@ -247,6 +257,47 @@ class TaskWorkflow:
         self.task_manager.mark_failed(
             task.id,
             f"Unknown reviewer status: {review_status}",
+        )
+
+        return "failed"
+    
+    def _handle_review_result(
+        self,
+        task: Task,
+        review_status: str,
+    ) -> str:
+        """Handle Reviewer result.
+
+        Returns:
+            ``completed``:
+                Workflow finished successfully.
+
+            ``failed``:
+                Workflow finished with failure.
+
+            ``revision``:
+                Developer must execute another round.
+        """
+        if review_status == "approved":
+            return "completed"
+
+        if review_status == "failed":
+            return "failed"
+
+        if review_status == "revision":
+            if task.review_round >= self.max_review_rounds:
+                self.task_manager.mark_failed(
+                    task.id,
+                    f"Task failed review after "
+                    f"{self.max_review_rounds} rounds",
+                )
+                return "failed"
+
+            return "revision"
+
+        self.task_manager.mark_failed(
+            task.id,
+            f"Unknown review status: {review_status}",
         )
 
         return "failed"
