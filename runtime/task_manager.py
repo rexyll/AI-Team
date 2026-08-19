@@ -358,11 +358,13 @@ class TaskManager:
                 "test_result must be a dict"
             )
 
-        # 保存本次 Tester 结果
+       # 保存本次 Tester 结果。
+        #
+        # test_history 已经由 TaskWorkflow._run_tester() 统一记录，
+        # 这里不能再次 append，否则一次 Tester 执行会产生两条历史记录。
         task.test_result = test_result
-        task.test_history.append(test_result)
 
-        # 将 Tester 的失败反馈传递给下一轮 Developer
+        # 将 Tester 的失败反馈传递给下一轮 Developer。
         task.context["tester_feedback"] = test_result
 
         # Tester 失败是可恢复错误：
