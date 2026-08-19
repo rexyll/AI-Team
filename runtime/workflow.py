@@ -159,15 +159,11 @@ class TaskWorkflow:
             )
 
         except Exception as exc:
-            return StageOutcome(
-                stage=WorkflowStage.TESTER,
-                status="failed",
-                result={
-                    "status": "failed",
-                    "message": str(exc),
-                },
-                exception=exc,
+            self.task_manager.mark_failed(
+                task.id,
+                f"Tester execution failed: {exc}",
             )
+            raise
     
     
     def _apply_tester_outcome(
@@ -301,15 +297,11 @@ class TaskWorkflow:
             )
 
         except Exception as exc:
-            return StageOutcome(
-                stage=WorkflowStage.DEVELOPER,
-                status="failed",
-                result={
-                    "status": "failed",
-                    "message": str(exc),
-                },
-                exception=exc,
+            self.task_manager.mark_failed(
+                task.id,
+                f"Developer execution failed: {exc}",
             )
+            raise
         
     def _apply_developer_outcome(
         self,
@@ -355,15 +347,11 @@ class TaskWorkflow:
             )
 
         except Exception as exc:
-            return StageOutcome(
-                stage=WorkflowStage.REVIEWER,
-                status="failed",
-                result={
-                    "status": "failed",
-                    "message": str(exc),
-                },
-                exception=exc,
+            self.task_manager.mark_failed(
+                task.id,
+                f"Reviewer execution failed: {exc}",
             )
+            raise
     
     def _apply_reviewer_outcome(
         self,
