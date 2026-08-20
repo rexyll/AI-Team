@@ -12,12 +12,14 @@ class FakePlanner:
         return {
             "plan": {
                 "project": "Personal Expense Manager",
+                "summary": "开发一个基于 SQLite 的个人记账软件",
                 "tasks": [
                     {
                         "id": "TASK-001",
                         "title": "数据库设计",
                         "description": "设计 SQLite 数据库",
                         "role": "architect",
+                        "dependencies": [],
                     },
                     {
                         "id": "TASK-002",
@@ -62,8 +64,7 @@ class FakeOrchestrator:
         self.run_called = True
 
         for task in self.task_manager.get_all_tasks():
-            if task.status == "ready":
-                task.status = "completed"
+            task.status = "completed"
 
 
 def create_test_router():
