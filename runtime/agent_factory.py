@@ -30,6 +30,10 @@ def _default_agent_configs() -> dict[str, AgentConfig]:
             role="reviewer",
             model="default",
         ),
+        "planner": AgentConfig(
+            role="planner",
+            model="default",
+        )
     }
 
 
@@ -102,6 +106,11 @@ def create_agent_router(
     router.register(
         "reviewer",
         ReviewerAgent(configs["reviewer"]),
+    )
+    
+    router.register(
+        "planner",
+        PlannerAgent(configs["planner"]),
     )
 
     return router
