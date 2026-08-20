@@ -10,9 +10,14 @@
 最新用户验收：
 
 ```text
+pytest tests/test_workflow_llm_independence.py -q
+3 passed in 0.60s
+
 pytest -q
-448 passed in 0.92s
+451 passed in 0.95s
 ```
+
+**Phase 4.4 Workflow → LLM-independent 已完成。**
 
 工作树：由用户本地确认；上一节点已同步且 clean。
 
@@ -91,44 +96,50 @@ ProviderLLM 只负责：
 5. 保持 `run(Task) -> AgentResult`、AgentContext access policy 和 Workflow 行为不变。
 6. Developer 的 tool-calling loop 暂不强行迁移到普通文本 `BaseLLM`，保留独立 tool-capable adapter 边界。
 
-新增/完成的验证重点：
-
-- Agent LLM injection contract
-- Architect / Tester / Reviewer injected execution
-- 默认 ProviderLLM
-- BaseLLM 类型边界
-
-最新用户验收：
-
-```text
-pytest -q
-448 passed in 0.92s
-```
-
 **结论：4.3.2 Agent LLM injection 已完成。**
 
-## ☐ 4.4 Workflow → LLM-independent
+## <span style="color:green">√</span> 4.4 Workflow → LLM-independent
 
-目标：Workflow / Orchestrator 只依赖 Agent execution contract，不感知具体 LLM provider、`ask_ai` 或 `ProviderLLM`。
+已完成 Workflow LLM-independence：Workflow / Orchestrator 只依赖 Agent execution contract，不感知具体 LLM provider、`ask_ai` 或 `ProviderLLM`。
 
-本节点已加入第一批 contract tests：
+新增 contract tests：
 
 ```text
 tests/test_workflow_llm_independence.py
 ```
 
-验证方向：
+已验证：
 
 - `runtime/workflow.py` 不直接 import provider LLM 或 `ask_ai`
 - Workflow 可以执行没有 `.llm` 属性的最小 Agent 实现
 - Workflow 依赖 Agent 的 `run(task)` / result contract，而不是具体模型实现
 - 保留 Tester quality gate 与 legacy no-Tester workflow 行为
 
-**下一步：用户 Pull 后先运行专项测试，再运行全量 pytest；专项和全量均通过后正式标记 4.4 完成。**
+用户最终验收：
+
+```text
+pytest tests/test_workflow_llm_independence.py -q
+3 passed in 0.60s
+
+pytest -q
+451 passed in 0.95s
+```
+
+**结论：4.4 Workflow → LLM-independent 已完成。**
 
 ## ☐ 4.5 Provider/config 可替换
 
-4.4 完成后，将进一步验证 provider/config 的可替换性：同一 Workflow / Agent execution path 可以通过 `BaseLLM` 注入不同实现，而无需修改 Workflow 代码。
+目标：验证并固化 provider/config 的可替换性：同一 Workflow / Agent execution path 可以通过 `BaseLLM` 注入不同实现，而无需修改 Workflow 代码。
+
+本节点重点：
+
+1. 明确 LLM provider configuration 与 Agent execution 的边界。
+2. 为不同 `BaseLLM` 实现建立统一注入契约。
+3. 验证同一 Agent / Workflow 可在 MockLLM 与 ProviderLLM-compatible fake 之间切换。
+4. 禁止 Workflow 根据 provider 名称、model 名称或配置类型分支。
+5. 确保默认配置仍保持现有运行路径兼容。
+
+**下一步：先新增 4.5 provider/config substitution contract tests；专项测试通过后运行全量 pytest，再正式关闭 4.5。**
 
 # Phase 5 — Tool / Sandbox Architecture
 
@@ -188,7 +199,8 @@ tests/test_workflow_llm_independence.py
 | √ | `1a65e57` | Phase 3.4.5 completion docs |
 | √ | `eb53804` | Legacy Task.context usage inventory |
 | √ | `18a9bb4` | Workflow LLM-independence contract tests |
-| ☐ | — | 4.4 user validation pending |
+| √ | `—` | 4.4 user validation: 451 passed |
+| ☐ | — | 4.5 Provider/config 可替换 |
 
 ---
 
@@ -207,25 +219,27 @@ tests/test_workflow_llm_independence.py
 11. Developer 的 tool-calling loop 与普通文本 generation 是不同能力边界，不能为了接口统一而丢失工具调用能力。
 12. Workflow 的职责是编排 Agent execution，不应持有或理解具体 LLM provider 生命周期。
 13. LLM 可替换性应通过 Agent dependency injection 实现，而不是通过 Workflow provider 分支实现。
+14. Provider/config substitution 必须通过 BaseLLM contract 验证，而不是在 Workflow 中增加 provider-specific 分支。
 
 ---
 
 # 当前下一动作
 
-**4.4 Workflow → LLM-independent**
+**4.5 Provider/config 可替换**
 
 执行路径：
 
 ```text
-Workflow / Orchestrator
-        ↓
-Agent execution contract
-        ↓
-Agent
-        ↓
-BaseLLM
-   ↙          ↘
-MockLLM    ProviderLLM
+Configuration
+      ↓
+BaseLLM implementation
+   ↙             ↘
+MockLLM       ProviderLLM
+      \          /
+       \        /
+          Agent
+            ↓
+         Workflow
 ```
 
-当前已加入 Workflow LLM-independence contract tests。用户 Pull 后验证专项测试和全量测试；通过后正式关闭 4.4，再进入 **4.5 Provider/config 可替换**。
+下一步：建立 `tests/test_provider_config_substitution.py`，先验证同一 Agent / Workflow execution path 可以替换不同 `BaseLLM` 实现，同时确保 Workflow 完全不感知 provider/config。
