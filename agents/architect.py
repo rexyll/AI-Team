@@ -115,8 +115,8 @@ ARCHITECTURE REQUIREMENTS
         messages = self._build_messages(context)
         prompt = messages[1]["content"]
 
-        result = ask_ai(
-            prompt=prompt,
+        result = self.llm.generate(
+            prompt,
             system_prompt=SYSTEM_PROMPT,
         )
 
