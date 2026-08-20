@@ -10,15 +10,17 @@
 最新用户本地 / 远程同步 HEAD：
 
 ```text
-73756eb (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
-fix: preserve AgentContext history serialization compatibility
+ae ce0d2 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
+fix: enforce AgentContext access policy projections
 ```
+
+> 注：上面的 SHA 在代码仓库中为 `aece0d2`，此处保持标准 7 位短 SHA：`aece0d2`。
 
 最新全量测试：
 
 ```text
 pytest -q
-392 passed in 17.69s
+397 passed in 29.26s
 ```
 
 ---
@@ -162,8 +164,69 @@ tests/test_agent_context_history.py
 
 # Phase 3.4 — Context Lifecycle / Access Policy
 
-## ☐ 3.4.1 Context field access policy
+## <span style="color:green">√</span> 3.4.1 Context field access policy
+
+已完成 AgentContext 的 role-specific context projection，并建立 Agent-specific field access boundary。
+
+核心原则：
+
+```text
+AgentContext
+     │
+     ▼
+context_view(context, role)
+     │
+     ├── Architect  → architecture/task/dependency context
+     ├── Developer  → implementation/dependency/test/review context
+     ├── Tester     → task/result/test evidence
+     └── Reviewer   → task/developer/test/dependency/review context
+```
+
+本节点完成：
+
+- `context_view()` 按 Agent role 返回允许字段的 deep-copy projection。
+- Runtime access projection 不再依赖 `AgentContext.to_dict()` 的可选序列化字段。
+- 保持 `to_dict()` 的 legacy serialization compatibility，不因 Access Policy 改变空字段序列化行为。
+- Architect 不暴露 Tester / Reviewer execution feedback。
+- Tester 不暴露 metadata、review/internal execution state。
+- Reviewer 按 policy 获取 upstream `dependency_context`、review context 与 metadata。
+- Developer 正确消费 `dependency_context` 的语义化 upstream snapshot。
+- 建立并修正 Access Policy Contract Tests，覆盖允许字段、禁止字段以及 dependency context 的语义化渲染。
+- 保持 `run(Task) -> AgentResult` 外部兼容入口。
+
+本节点相关 commits：
+
+- `458f8ed` — `fix: enforce Architect AgentContext access policy`
+- `47d8f4e` — `fix: enforce Developer AgentContext access policy`
+- `4cb4ef6` — `fix: enforce Tester AgentContext access policy`
+- `dcce73d` — `fix: enforce Reviewer AgentContext access policy`
+- `aece0d2` — `fix: enforce AgentContext access policy projections`
+
+最终用户 Push SHA：
+
+- `aece0d2` — `fix: enforce AgentContext access policy projections`
+
+验收：
+
+```text
+pytest -q
+397 passed in 29.26s
+```
+
+**结论：Phase 3.4.1 Context field access policy 已完成。Agent prompt 的 Context 输入现在经过 role-specific projection；Context 运行时投影与序列化兼容职责已经解耦。**
+
 ## ☐ 3.4.2 Agent-specific context visibility
+
+下一节点：审计四类 Agent 的完整 Context 消费路径，确认不存在绕过 `context_view()` 的隐式字段读取或 prompt 泄露。
+
+重点检查：
+
+- Architect / Developer / Tester / Reviewer 的 prompt 构建入口。
+- `AgentContext.to_dict()` 是否被 Agent execution path 直接调用。
+- `metadata`、`history`、`test_history`、`review_history`、`tester_feedback`、`reviewer_feedback` 是否存在越权读取。
+- `dependency_context` 是否存在绕过 Access Policy 的泄露路径。
+- 只有 Contract Test 暴露真实缺口时才修改生产代码。
+
 ## ☐ 3.4.3 Read-only execution context convention
 ## ☐ 3.4.4 Legacy Task context retirement plan
 
@@ -261,6 +324,7 @@ DevPlan √
 | <span style="color:green">√</span> | `2237e65` | Tester / Reviewer → AgentContext |
 | <span style="color:green">√</span> | `ad786e8` | Context Snapshot isolation contract |
 | <span style="color:green">√</span> | `73756eb` | Context History contract + snapshot |
+| <span style="color:green">√</span> | `aece0d2` | Context field access policy |
 
 ---
 
@@ -277,6 +341,9 @@ DevPlan √
 9. Phase 3.2 已用 Contract Tests 证明 snapshot isolation，不为了产生生产 commit 而改 Runtime。
 10. Phase 3.3 已统一 lifecycle / test / review History Contract，并保持序列化兼容。
 11. 新增 Context 字段必须先建立 Contract Test，再进行最小 Runtime 修改。
+12. Context Access Policy 必须通过 role-specific projection 实现，不能让 Agent 依赖 `to_dict()` 的序列化字段存在性。
+13. Runtime projection 与 persistence serialization 必须保持职责分离，避免 legacy compatibility 反向限制运行时访问控制。
+14. Access Policy 测试应验证语义字段是否暴露，而不是绑定具体 dict 字符串序列化格式。
 
 ---
 
@@ -284,4 +351,4 @@ DevPlan √
 
 **Phase 3.4 — Context Lifecycle / Access Policy。**
 
-下一步先做 **GitHub 原始代码审计 + Access Policy Contract Tests**，不直接修改生产代码。
+下一步执行 **3.4.2 Agent-specific context visibility：GitHub 原始代码审计 + Contract Tests**，重点确认 Agent execution path 不存在绕过 `context_view()` 的 Context 字段访问。
