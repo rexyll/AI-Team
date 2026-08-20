@@ -6,6 +6,7 @@ from config.tools_schema import TOOLS_SCHEMA
 from tools.registry import TOOLS
 from agents.base import BaseAgent
 from runtime.task import Task
+from runtime.agent_context import AgentContext
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -58,19 +59,18 @@ class DeveloperAgent(BaseAgent):
     def role(self) -> str:
         return "developer"
 
-    def _build_messages(self, task: Task):
+    def _build_messages(self, context: AgentContext):
         context_text = ""
 
-        if task.context:
+        if context.dependency_context:
             context_text += (
                 "\n====================\n"
                 "UPSTREAM AGENT CONTEXT\n"
                 "====================\n"
             )
 
-            for context_key, data in task.context.items():
-
-                if context_key == "reviewer_feedback":
+            for context_key, data in context.dependency_context.items():
+                if not isinstance(data, dict):
                     continue
 
                 context_text += (
@@ -82,7 +82,6 @@ class DeveloperAgent(BaseAgent):
                 result = data.get("result", {})
 
                 if isinstance(result, dict):
-
                     architecture = result.get("architecture")
 
                     if architecture:
@@ -96,18 +95,12 @@ class DeveloperAgent(BaseAgent):
                             ensure_ascii=False,
                             indent=2,
                         )
-
                 else:
                     context_text += str(result)
 
                 context_text += "\n"
 
-        reviewer_feedback = task.context.get(
-            "reviewer_feedback"
-        )
-
-        if reviewer_feedback:
-
+        if context.reviewer_feedback:
             context_text += """
             ====================
             PREVIOUS REVIEW FEEDBACK
@@ -119,7 +112,7 @@ class DeveloperAgent(BaseAgent):
             """
 
             context_text += json.dumps(
-                reviewer_feedback,
+                context.reviewer_feedback,
                 ensure_ascii=False,
                 indent=2,
             )
@@ -129,11 +122,26 @@ class DeveloperAgent(BaseAgent):
         CURRENT TASK
         ====================
 
-        Task ID: {task.id}
-        Role: {task.role}
-        Title: {task.title}
-        Description: {task.description}
-        Dependencies: {task.dependencies}
+        Task ID: {context.task_id}
+        Role: {context.role}
+        Title: {context.task_title}
+        Description: {context.task_description}
+        Dependencies: {context.dependencies}
+
+        Current Task Result:
+        {context.task_result}
+
+        Tester Feedback:
+        {context.tester_feedback}
+
+        Review Round:
+        {context.review_round}
+
+        Execution History:
+        {context.history}
+
+        Metadata:
+        {context.metadata}
 
         {context_text}
 
@@ -171,21 +179,23 @@ class DeveloperAgent(BaseAgent):
         ]
 
     def run(self, task: Task) -> AgentResult:
-
         if not isinstance(task, Task):
             raise TypeError(
                 "DeveloperAgent.run() expects Task, "
                 f"got {type(task).__name__}"
             )
 
-        messages = self._build_messages(task)
+        # Phase 3.1c migration boundary:
+        # external workflow contract remains run(Task), while all prompt
+        # input is now sourced from the isolated AgentContext snapshot.
+        context = self.build_context(task)
+        messages = self._build_messages(context)
 
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
         tool_calls: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
-
             response = client.chat.completions.create(
                 model=AGNES_MODEL,
                 messages=messages,
@@ -196,7 +206,6 @@ class DeveloperAgent(BaseAgent):
             message = response.choices[0].message
 
             if not message.tool_calls:
-
                 content = message.content or ""
 
                 data = self._build_result_data(
@@ -209,7 +218,7 @@ class DeveloperAgent(BaseAgent):
                 return AgentResult(
                     status="completed",
                     agent=self.role,
-                    task_id=task.id,
+                    task_id=context.task_id,
                     message=content,
                     data=data,
                 )
@@ -224,9 +233,7 @@ class DeveloperAgent(BaseAgent):
                             "type": "function",
                             "function": {
                                 "name": tool_call.function.name,
-                                "arguments": (
-                                    tool_call.function.arguments
-                                ),
+                                "arguments": tool_call.function.arguments,
                             },
                         }
                         for tool_call in message.tool_calls
@@ -235,21 +242,13 @@ class DeveloperAgent(BaseAgent):
             )
 
             for tool_call in message.tool_calls:
-
                 tool_name = tool_call.function.name
 
                 print(f"\n[Tool] {tool_name}")
 
                 try:
-                    arguments = json.loads(
-                        tool_call.function.arguments
-                    )
-
-                except (
-                    TypeError,
-                    json.JSONDecodeError,
-                ) as exc:
-
+                    arguments = json.loads(tool_call.function.arguments)
+                except (TypeError, json.JSONDecodeError) as exc:
                     result = (
                         "Tool error: invalid JSON arguments: "
                         f"{type(exc).__name__}: {exc}"
@@ -262,7 +261,6 @@ class DeveloperAgent(BaseAgent):
                             "content": result,
                         }
                     )
-
                     continue
 
                 print(f"[Args] {arguments}")
@@ -275,18 +273,10 @@ class DeveloperAgent(BaseAgent):
                 )
 
                 if tool_name not in TOOLS:
-
-                    result = (
-                        f"Unknown tool: {tool_name}"
-                    )
-
+                    result = f"Unknown tool: {tool_name}"
                 else:
-
                     try:
-
-                        tool_function = TOOLS[
-                            tool_name
-                        ]
+                        tool_function = TOOLS[tool_name]
 
                         (
                             filtered_arguments,
@@ -302,9 +292,7 @@ class DeveloperAgent(BaseAgent):
                                 f"{ignored_arguments}"
                             )
 
-                        result = tool_function(
-                            **filtered_arguments
-                        )
+                        result = tool_function(**filtered_arguments)
 
                         self._record_tool_evidence(
                             tool_name=tool_name,
@@ -313,9 +301,7 @@ class DeveloperAgent(BaseAgent):
                             changed_files=changed_files,
                             command_results=command_results,
                         )
-
                     except Exception as exc:
-
                         result = (
                             "Tool error: "
                             f"{type(exc).__name__}: {exc}"
@@ -345,30 +331,16 @@ class DeveloperAgent(BaseAgent):
         changed_files: list[str],
         command_results: list[dict[str, Any]],
     ) -> None:
-        """
-        Record factual execution evidence from Developer tool calls.
-
-        This method intentionally records only evidence that can be
-        observed from the actual tool invocation.
-
-        The LLM is never trusted to invent changed files or test
-        execution evidence.
-        """
+        """Record factual execution evidence from Developer tool calls."""
 
         if tool_name == "write_file":
-
             path = arguments.get("path")
-
-            if isinstance(path, str) and path:
-                if path not in changed_files:
-                    changed_files.append(path)
+            if isinstance(path, str) and path and path not in changed_files:
+                changed_files.append(path)
 
         if tool_name == "run_command":
-
             command = arguments.get("command")
-
             if isinstance(command, str) and command:
-
                 command_results.append(
                     {
                         "command": command,
@@ -384,14 +356,7 @@ class DeveloperAgent(BaseAgent):
         command_results: list[dict[str, Any]],
         tool_calls: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """
-        Build the structured Developer Result payload.
-
-        ``report`` always preserves the original final LLM response.
-
-        ``files_changed`` and ``tests`` are derived from actual tool
-        execution evidence.
-        """
+        """Build the structured Developer Result payload."""
 
         return {
             "summary": content.strip(),
@@ -399,12 +364,8 @@ class DeveloperAgent(BaseAgent):
             "tests": list(command_results),
             "validation": {
                 "tool_call_count": len(tool_calls),
-                "test_command_count": len(
-                    command_results
-                ),
-                "files_changed_count": len(
-                    changed_files
-                ),
+                "test_command_count": len(command_results),
+                "files_changed_count": len(changed_files),
             },
             "report": content,
         }
