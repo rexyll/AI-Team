@@ -14,24 +14,25 @@
 
 ```text
 pytest -q
-357 passed in 25.49s
+362 passed in 21.11s
 ```
 
-**当前基线：357 passed / 0 failed。**
+**当前基线：362 passed / 0 failed。**
 
 最近稳定节点：
 
 - `8f2ee6d` — `test: fix agent context deepcopy import`
 - `5bc0575` — `feat: standardize tester and reviewer agent results`
 - `7bb371b` — `fix: complete AgentResult compatibility contract`
+- `2786309` — `feat: add BaseAgent AgentContext compatibility bridge`
 
 ## 1.2 当前阶段
 
 **Phase 3 — AgentContext 正式化。**
 
-Phase 0/1 已建立并稳定 Task Lifecycle、Developer → Tester → Reviewer Quality Gate、Review Loop、Dependency、ContextBuilder、Project Execution；Phase 2 已完成 AgentResult 统一契约；现在进入 AgentContext 正式迁移。
+Phase 0/1 已建立并稳定 Task Lifecycle、Developer → Tester → Reviewer Quality Gate、Review Loop、Dependency、ContextBuilder、Project Execution；Phase 2 已完成 AgentResult 统一契约；Phase 3.1a 已完成 BaseAgent 到 AgentContext 的兼容桥接，现在进入 ArchitectAgent 的第一轮迁移。
 
-**当前节点：Phase 3.1a — BaseAgent AgentContext compatibility bridge。**
+**当前节点：Phase 3.1b — ArchitectAgent → AgentContext 迁移。**
 
 ---
 
@@ -240,15 +241,11 @@ AgentContext 已具备字段校验、deep-copy snapshot、`to_dict()`、`from_di
 
 - `8f2ee6d` — fix agent context deepcopy import
 
-最新全量：**357 passed / 0 failed**。
-
 ---
 
 # 5. Phase 3 — AgentContext 正式化
 
-## 当前节点：Phase 3.1a — BaseAgent AgentContext compatibility bridge
-
-### ☐ 3.1a BaseAgent Context Bridge
+### <span style="color:green">√</span> 3.1a BaseAgent AgentContext compatibility bridge
 
 目标：在不破坏现有 `agent.run(task)` 调用链的情况下建立：
 
@@ -256,25 +253,57 @@ AgentContext 已具备字段校验、deep-copy snapshot、`to_dict()`、`from_di
 Task → ContextBuilder → AgentContext
 ```
 
-本节点修改范围：
+已完成：
 
 - `agents/base.py` 增加 `build_context()`。
 - `build_context()` 自动使用 Agent 的 `role`。
 - 支持 `all_tasks`，保留 dependency snapshot。
-- 不修改现有 `run(Task)` 行为。
-- 不修改 Workflow 顺序。
-- 不改变 Task 生命周期。
+- 保持现有 `run(Task)` 兼容入口不变。
 - 增加 BaseAgent context bridge contract tests。
+- AgentContext 与 Task 保持 snapshot 隔离。
 
-验收要求：
+实现 commits：
 
-- `pytest -q` 保持 357+ passed / 0 failed。
-- 新测试验证 AgentContext 与 Task 的 snapshot 隔离。
-- 测试通过后才标记本节点完成并记录最终 commit SHA。
+- `0118003` — update DevPlan and enter Phase 3.1a
+- `8d0745b` — add BaseAgent context bridge contract tests
+- `2786309` — `feat: add BaseAgent AgentContext compatibility bridge`
 
-### ☐ 3.1b Architect 迁移
+验收结果：
 
-Architect 内部改为消费 AgentContext，保留 `run(Task)` 兼容入口。
+```text
+pytest -q
+362 passed in 21.11s
+```
+
+**Phase 3.1a 正式完成。**
+
+### ☐ 3.1b ArchitectAgent → AgentContext 迁移
+
+目标：Architect 保留 `run(Task) -> AgentResult` 外部兼容契约，但内部不再直接从 Task 拼装执行 prompt，而是通过：
+
+```text
+Task
+ ↓
+BaseAgent.build_context()
+ ↓
+AgentContext
+ ↓
+Architect prompt
+ ↓
+AgentResult
+```
+
+本节点只允许修改 ArchitectAgent 与对应 contract tests，不修改 Workflow、TaskManager、Task 生命周期和 ContextBuilder 核心逻辑。
+
+验收重点：
+
+- Architect 必须调用 `build_context()`。
+- Prompt 使用 AgentContext 的 task_id / task_title / task_description / role / status / dependencies。
+- Architect 结果继续返回 canonical `AgentResult`。
+- `data["architecture"]` 保持现有兼容语义。
+- `run(Task)` 对外接口保持不变。
+- 不允许 Agent 修改 Task。
+- 全量 `pytest -q` 必须保持通过。
 
 ### ☐ 3.1c Developer 迁移
 
@@ -352,6 +381,8 @@ Developer 最终消费 task_id、task_title、task_description、dependencies、
 3. **AgentContext 必须是 snapshot。** 使用 deep copy，避免 Task 后续变化污染已创建 context。
 4. **测试失败先判断来源。** `8f2ee6d` 是测试文件缺少 `deepcopy` import，而非业务代码错误。
 5. **架构节点必须小步推进。** 一次只修改一个边界；用户本地全量测试通过后再 push；然后更新 DevPlan。
+6. **AgentContext 迁移必须先保留 Task 兼容入口。** 先建立 `BaseAgent.build_context()`，再逐 Agent 迁移内部逻辑，避免一次性改动 Workflow 和生命周期。
+7. **Architect 是 AgentContext 迁移的第一个业务 Agent。** Architect 无 Tool Loop、无质量门禁副作用，适合作为低风险迁移样板；其成功后再迁移 Developer。
 
 ---
 
@@ -367,7 +398,10 @@ Developer 最终消费 task_id、task_title、task_description、dependencies、
 | <span style="color:green">√</span> | `7bb371b` | AgentResult compatibility contract |
 | <span style="color:green">√</span> | `5bc0575` | tester/reviewer AgentResult standardization |
 | <span style="color:green">√</span> | `8f2ee6d` | agent context deepcopy test fix |
-| ☐ | **pending** | Phase 3.1a BaseAgent Context Bridge |
+| <span style="color:green">√</span> | `0118003` | record Phase 3.1a and enter Architect migration |
+| <span style="color:green">√</span> | `8d0745b` | BaseAgent context bridge contract tests |
+| <span style="color:green">√</span> | `2786309` | BaseAgent AgentContext compatibility bridge |
+| ☐ | **pending** | Phase 3.1b ArchitectAgent → AgentContext migration |
 
 ---
 
@@ -375,11 +409,21 @@ Developer 最终消费 task_id、task_title、task_description、dependencies、
 
 ### Phase 3.1a
 
-- [ ] 更新 `agents/base.py`
-- [ ] 增加 BaseAgent context bridge tests
-- [ ] 保证现有 Agent / Workflow 行为不变
-- [ ] 用户执行 `pytest -q`
-- [ ] 测试通过后形成正式完成 commit
-- [ ] DevPlan 记录最终 commit SHA
+- [x] 更新 `agents/base.py`
+- [x] 增加 BaseAgent context bridge tests
+- [x] 保证现有 Agent / Workflow 行为不变
+- [x] 用户执行 `pytest -q`
+- [x] 记录 Phase 3.1a commits
 
-**当前开发入口：Phase 3.1a — BaseAgent AgentContext compatibility bridge。**
+### Phase 3.1b
+
+- [ ] 读取并修改 `agents/architect.py`
+- [ ] 增加 Architect AgentContext contract tests
+- [ ] 保持 `run(Task) -> AgentResult` 兼容入口
+- [ ] 保持 `data["architecture"]` 兼容语义
+- [ ] 用户执行专项测试
+- [ ] 用户执行 `pytest -q`
+- [ ] 测试通过后由用户创建正式 commit
+- [ ] 再次更新 DevPlan 记录最终 commit SHA
+
+**当前开发入口：Phase 3.1b — ArchitectAgent → AgentContext 迁移。**
