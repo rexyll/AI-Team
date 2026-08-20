@@ -5,133 +5,68 @@ from typing import Any
 
 @dataclass
 class AgentContext:
-    """
-    Immutable-in-practice execution snapshot passed to an Agent.
-
-    AgentContext intentionally separates Agent execution input from the
-    runtime Task object.
-
-    The context contains only data required by an Agent during execution.
-    Mutable nested values are deep-copied so later Task mutations cannot
-    silently modify an already-built AgentContext.
-    """
+    """Immutable-in-practice execution snapshot passed to an Agent."""
 
     task_id: str
     task_title: str
     task_description: str
-
     role: str
-
     status: str
-
     review_round: int = 0
-
-    # Dependency IDs are retained as the compact compatibility view.
     dependencies: list[str] = field(default_factory=list)
-
-    # Completed dependency snapshots are the canonical AgentContext view
-    # for Agents that need upstream results (for example Developer needs
-    # Architect's architecture output).
     dependency_context: dict[str, Any] = field(default_factory=dict)
-
     task_result: dict[str, Any] = field(default_factory=dict)
-
     tester_feedback: dict[str, Any] = field(default_factory=dict)
-
     reviewer_feedback: dict[str, Any] = field(default_factory=dict)
-
     history: list[dict[str, Any]] = field(default_factory=list)
-
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """
-        Validate and isolate the context snapshot.
-        """
-
         if not isinstance(self.task_id, str) or not self.task_id.strip():
-            raise ValueError(
-                "AgentContext task_id must be a non-empty string"
-            )
-
+            raise ValueError("AgentContext task_id must be a non-empty string")
         if not isinstance(self.task_title, str) or not self.task_title.strip():
-            raise ValueError(
-                "AgentContext task_title must be a non-empty string"
-            )
-
+            raise ValueError("AgentContext task_title must be a non-empty string")
         if not isinstance(self.task_description, str):
-            raise ValueError(
-                "AgentContext task_description must be a string"
-            )
-
+            raise ValueError("AgentContext task_description must be a string")
         if not isinstance(self.role, str) or not self.role.strip():
-            raise ValueError(
-                "AgentContext role must be a non-empty string"
-            )
-
+            raise ValueError("AgentContext role must be a non-empty string")
         if not isinstance(self.status, str) or not self.status.strip():
-            raise ValueError(
-                "AgentContext status must be a non-empty string"
-            )
-
+            raise ValueError("AgentContext status must be a non-empty string")
         if not isinstance(self.review_round, int):
-            raise ValueError(
-                "AgentContext review_round must be an integer"
-            )
-
+            raise ValueError("AgentContext review_round must be an integer")
         if self.review_round < 0:
-            raise ValueError(
-                "AgentContext review_round must be >= 0"
-            )
-
+            raise ValueError("AgentContext review_round must be >= 0")
         if not isinstance(self.dependencies, list):
-            raise ValueError(
-                "AgentContext dependencies must be a list"
-            )
-
+            raise ValueError("AgentContext dependencies must be a list")
         if not all(
             isinstance(dependency_id, str) and dependency_id.strip()
             for dependency_id in self.dependencies
         ):
             raise ValueError(
-                "AgentContext dependencies must contain "
-                "non-empty strings"
+                "AgentContext dependencies must contain non-empty strings"
             )
-
         if not isinstance(self.dependency_context, dict):
             raise ValueError(
                 "AgentContext dependency_context must be a dictionary"
             )
-
         if not isinstance(self.task_result, dict):
-            raise ValueError(
-                "AgentContext task_result must be a dictionary"
-            )
-
+            raise ValueError("AgentContext task_result must be a dictionary")
         if not isinstance(self.tester_feedback, dict):
             raise ValueError(
                 "AgentContext tester_feedback must be a dictionary"
             )
-
         if not isinstance(self.reviewer_feedback, dict):
             raise ValueError(
                 "AgentContext reviewer_feedback must be a dictionary"
             )
-
         if not isinstance(self.history, list):
-            raise ValueError(
-                "AgentContext history must be a list"
-            )
-
+            raise ValueError("AgentContext history must be a list")
         if not all(isinstance(entry, dict) for entry in self.history):
             raise ValueError(
                 "AgentContext history must contain dictionaries"
             )
-
         if not isinstance(self.metadata, dict):
-            raise ValueError(
-                "AgentContext metadata must be a dictionary"
-            )
+            raise ValueError("AgentContext metadata must be a dictionary")
 
         self.dependencies = deepcopy(self.dependencies)
         self.dependency_context = deepcopy(self.dependency_context)
@@ -142,8 +77,13 @@ class AgentContext:
         self.metadata = deepcopy(self.metadata)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the AgentContext into a detached dictionary snapshot."""
-        return {
+        """
+        Convert to a detached dictionary.
+
+        ``dependency_context`` is emitted only when populated so the
+        pre-3.1c serialized AgentContext shape remains backward compatible.
+        """
+        result = {
             "task_id": self.task_id,
             "task_title": self.task_title,
             "task_description": self.task_description,
@@ -151,7 +91,6 @@ class AgentContext:
             "status": self.status,
             "review_round": self.review_round,
             "dependencies": deepcopy(self.dependencies),
-            "dependency_context": deepcopy(self.dependency_context),
             "task_result": deepcopy(self.task_result),
             "tester_feedback": deepcopy(self.tester_feedback),
             "reviewer_feedback": deepcopy(self.reviewer_feedback),
@@ -159,9 +98,15 @@ class AgentContext:
             "metadata": deepcopy(self.metadata),
         }
 
+        if self.dependency_context:
+            result["dependency_context"] = deepcopy(
+                self.dependency_context
+            )
+
+        return result
+
     @classmethod
     def from_dict(cls, context: dict[str, Any]) -> "AgentContext":
-        """Construct an AgentContext from a dictionary."""
         if not isinstance(context, dict):
             raise ValueError("AgentContext input must be a dictionary")
 
@@ -174,7 +119,6 @@ class AgentContext:
         )
 
         missing = [field for field in required_fields if field not in context]
-
         if missing:
             raise ValueError(
                 "AgentContext missing required fields: " + ", ".join(missing)
@@ -197,6 +141,9 @@ class AgentContext:
         )
 
     def __getitem__(self, key: str) -> Any:
+        if key == "dependency_context":
+            return self.dependency_context
+
         values = self.to_dict()
         if key not in values:
             raise KeyError(key)
