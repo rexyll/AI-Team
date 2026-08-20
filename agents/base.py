@@ -6,9 +6,9 @@ from runtime.task import Task
 
 class BaseAgent(ABC):
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig | None = None):
         self.config = config
-        
+
     @property
     @abstractmethod
     def role(self) -> str:
