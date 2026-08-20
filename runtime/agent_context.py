@@ -19,6 +19,8 @@ class AgentContext:
     tester_feedback: dict[str, Any] = field(default_factory=dict)
     reviewer_feedback: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
+    test_history: list[dict[str, Any]] = field(default_factory=list)
+    review_history: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -65,6 +67,18 @@ class AgentContext:
             raise ValueError(
                 "AgentContext history must contain dictionaries"
             )
+        if not isinstance(self.test_history, list):
+            raise ValueError("AgentContext test_history must be a list")
+        if not all(isinstance(entry, dict) for entry in self.test_history):
+            raise ValueError(
+                "AgentContext test_history must contain dictionaries"
+            )
+        if not isinstance(self.review_history, list):
+            raise ValueError("AgentContext review_history must be a list")
+        if not all(isinstance(entry, dict) for entry in self.review_history):
+            raise ValueError(
+                "AgentContext review_history must contain dictionaries"
+            )
         if not isinstance(self.metadata, dict):
             raise ValueError("AgentContext metadata must be a dictionary")
 
@@ -74,6 +88,8 @@ class AgentContext:
         self.tester_feedback = deepcopy(self.tester_feedback)
         self.reviewer_feedback = deepcopy(self.reviewer_feedback)
         self.history = deepcopy(self.history)
+        self.test_history = deepcopy(self.test_history)
+        self.review_history = deepcopy(self.review_history)
         self.metadata = deepcopy(self.metadata)
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +111,8 @@ class AgentContext:
             "tester_feedback": deepcopy(self.tester_feedback),
             "reviewer_feedback": deepcopy(self.reviewer_feedback),
             "history": deepcopy(self.history),
+            "test_history": deepcopy(self.test_history),
+            "review_history": deepcopy(self.review_history),
             "metadata": deepcopy(self.metadata),
         }
 
@@ -137,6 +155,8 @@ class AgentContext:
             tester_feedback=context.get("tester_feedback", {}),
             reviewer_feedback=context.get("reviewer_feedback", {}),
             history=context.get("history", []),
+            test_history=context.get("test_history", []),
+            review_history=context.get("review_history", []),
             metadata=context.get("metadata", {}),
         )
 
