@@ -14,11 +14,22 @@ from runtime.agent_result import AgentResult
 MAX_REVIEW_ROUNDS = 3
 
 
-@dataclass(frozen=True)
+@dataclass
 class StageOutcome:
+    """
+    Unified outcome of a workflow stage.
+
+    A StageOutcome represents the execution boundary between
+    TaskWorkflow and an individual Agent.
+
+    The business result is normalized into AgentResult.
+
+    Legacy dictionaries are still accepted for compatibility.
+    """
+
     stage: WorkflowStage
     status: str
-    result: AgentResult | dict[str, Any] | None = None
+    result: AgentResult | None = None
     exception: Exception | None = None
 
     def __post_init__(self) -> None:
@@ -55,26 +66,116 @@ class StageOutcome:
             and not isinstance(self.result, AgentResult)
         ):
             raise TypeError(
-                "result must be an AgentResult, dict, or None"
+                "result must be an AgentResult, dict or None"
             )
-            
-    
-    
+
+        if self.exception is not None:
+            self.status = "failed"
+
+        elif isinstance(self.result, AgentResult):
+            self.status = self.result.status
+
+    @staticmethod
+    def _normalize_result(
+        result: dict[str, Any],
+    ) -> AgentResult:
+        """
+        Normalize legacy stage result dictionaries into AgentResult.
+
+        Older workflow tests and integrations may provide only:
+
+            {
+                "status": "completed",
+                "message": "..."
+            }
+
+        AgentResult itself requires ``agent`` and ``task_id``.
+        Those fields are therefore synthesized here when missing.
+        """
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "StageOutcome result must be a dictionary"
+            )
+
+        normalized = dict(result)
+
+        normalized.setdefault(
+            "agent",
+            "workflow",
+        )
+
+        normalized.setdefault(
+            "task_id",
+            "unknown",
+        )
+
+        return AgentResult.from_dict(
+            normalized
+        )
+
+    @classmethod
+    def success(
+        cls,
+        stage: WorkflowStage,
+        result: AgentResult | dict[str, Any],
+    ) -> "StageOutcome":
+        """
+        Create a successful stage outcome.
+        """
+
+        if isinstance(result, dict):
+            result = cls._normalize_result(
+                result
+            )
+
+        if not isinstance(result, AgentResult):
+            raise TypeError(
+                "result must be an AgentResult or dict"
+            )
+
+        return cls(
+            stage=stage,
+            status=result.status,
+            result=result,
+            exception=None,
+        )
+
+    @classmethod
+    def failure(
+        cls,
+        stage: WorkflowStage,
+        exception: Exception,
+    ) -> "StageOutcome":
+        """
+        Create a failed stage outcome.
+        """
+
+        if not isinstance(exception, Exception):
+            raise TypeError(
+                "exception must be an Exception"
+            )
+
+        return cls(
+            stage=stage,
+            status="failed",
+            result=None,
+            exception=exception,
+        )
 
     @property
-    def succeeded(self) -> bool:
-        return self.exception is None
+    def is_success(self) -> bool:
+        return (
+            self.exception is None
+            and self.status != "failed"
+        )
 
     @property
-    def failed(self) -> bool:
-        return self.exception is not None
-
-    @property
-    def result_dict(self) -> dict[str, Any]:
-        if self.result is None:
-            return {}
-
-        return self.result.to_dict()
+    def is_failure(self) -> bool:
+        return (
+            self.exception is not None
+            or self.status == "failed"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,7 +183,10 @@ class StageOutcome:
             "status": self.status,
             "result": (
                 self.result.to_dict()
-                if self.result is not None
+                if isinstance(
+                    self.result,
+                    AgentResult,
+                )
                 else None
             ),
             "exception": (
@@ -92,73 +196,12 @@ class StageOutcome:
             ),
         }
     
-    
-  
-    @classmethod
-    def success(
-        cls,
-        stage: WorkflowStage,
-        result: AgentResult | dict[str, Any],
-    ) -> "StageOutcome":
-        status = (
-            result.status
-            if isinstance(result, AgentResult)
-            else result.get("status", "completed")
-        )
-
-        return cls(
-            stage=stage,
-            status=status,
-            result=result,
-        )
-  
-    
-    @classmethod
-    def failure(
-        cls,
-        stage: WorkflowStage,
-        exception: Exception,
-    ) -> "StageOutcome":
-        return cls(
-            stage=stage,
-            status="failed",
-            result=None,
-            exception=exception,
-        )
-    
 class WorkflowStage(str, Enum):
     DEVELOPER = "developer"
     TESTER = "tester"
     REVIEWER = "reviewer"
     
-def normalize_stage_result(
-        stage: WorkflowStage,
-        task: Task,
-        result: dict[str, Any] | AgentResult,
-    ) -> AgentResult:
-
-        if isinstance(result, AgentResult):
-            return result
-
-        if not isinstance(result, dict):
-            raise TypeError(
-                "stage result must be AgentResult or dict"
-            )
-
-        payload = dict(result)
-
-        payload.setdefault(
-            "agent",
-            stage.value,
-        )
-
-        payload.setdefault(
-            "task_id",
-            task.id,
-        )
-
-        return AgentResult.from_dict(payload)    
-    
+   
 
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations."""
