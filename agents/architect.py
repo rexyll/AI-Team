@@ -2,6 +2,7 @@ from agents.base import BaseAgent
 from config.model import ask_ai
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
+from runtime.context_view import context_view
 from runtime.task import Task
 
 
@@ -31,6 +32,8 @@ class ArchitectAgent(BaseAgent):
         self,
         context: AgentContext,
     ) -> list[dict[str, str]]:
+        view = context_view(context, self.role)
+
         prompt = f"""
 请分析下面的软件开发任务，并给出架构设计。
 
@@ -39,40 +42,34 @@ TASK CONTEXT
 ====================
 
 任务 ID：
-{context.task_id}
+{view['task_id']}
 
 任务名称：
-{context.task_title}
+{view['task_title']}
 
 任务描述：
-{context.task_description}
+{view['task_description']}
 
 Agent Role：
-{context.role}
+{view['role']}
 
 当前状态：
-{context.status}
+{view['status']}
 
 任务依赖：
-{context.dependencies}
+{view['dependencies']}
+
+Dependency Context：
+{view['dependency_context']}
 
 当前任务已有结果：
-{context.task_result}
-
-Tester Feedback：
-{context.tester_feedback}
-
-Reviewer Feedback：
-{context.reviewer_feedback}
-
-Review Round：
-{context.review_round}
+{view['task_result']}
 
 Execution History：
-{context.history}
+{view['history']}
 
 Metadata：
-{context.metadata}
+{view['metadata']}
 
 ====================
 ARCHITECTURE REQUIREMENTS
@@ -91,6 +88,7 @@ ARCHITECTURE REQUIREMENTS
 
 请优先复用现有项目架构，避免无必要的复杂设计。
 
+请不要输出当前 AgentContext 中未提供的执行反馈或审核结果。
 不要编写具体业务代码。
 不要修改任何文件。
 """
@@ -114,9 +112,7 @@ ARCHITECTURE REQUIREMENTS
             )
 
         context = self.build_context(task)
-
         messages = self._build_messages(context)
-
         prompt = messages[1]["content"]
 
         result = ask_ai(
