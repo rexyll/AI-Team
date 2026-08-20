@@ -5,18 +5,18 @@
 
 ## 当前状态
 
-**Phase 4 — LLM Abstraction**
+**Phase 5 — Tool / Sandbox Architecture**
 
 最新用户验收：
 
 ```text
 pytest -q
-456 passed in 0.95s
+463 passed in 0.96s
 ```
 
-**Phase 4.5 Provider/config 可替换已完成。**
+**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。**
 
-工作树：用户本地已完成全量测试并确认通过；本节点已提交 GitHub，等待用户 Pull 后进入下一节点。
+工作树：用户本地已完成全量测试并确认通过；本节点文档更新已提交 GitHub，等待用户 Pull 后进入 5.2。
 
 ---
 
@@ -152,8 +152,42 @@ tests/test_provider_config_substitution.py
 
 # Phase 5 — Tool / Sandbox Architecture
 
-## ☐ 5.1 Tool Contract
+## <span style="color:green">√</span> 5.1 Tool Contract
+
+已完成现有 Tool 能力的最小 provider-independent contract 冻结，并新增 `tests/test_tool_contract.py`。
+
+当前契约覆盖：
+
+1. Registry tool name 与 implementation 一一对应。
+2. 每个 registered tool 都是稳定 callable，并具有可检查的 execution signature / return annotation。
+3. Tool Schema 与 Registry 使用完全一致的 tool names。
+4. Schema 保持标准 function-call 结构：`type=function`、`name`、`description`、`parameters`。
+5. `required` 参数必须属于 `properties`，避免 schema 自相矛盾。
+6. Tool contract 不允许嵌入 OpenAI / Agnes / API key / model / provider 等 LLM-specific configuration。
+7. Registry 中必须是独立 function/builtin，不绑定 Workflow 对象。
+8. 现有工具的基础类型边界继续由 implementation 自身承担，5.1 不提前引入复杂 validation framework。
+
+用户最终验收：
+
+```text
+pytest -q
+463 passed in 0.96s
+```
+
+**结论：5.1 Tool Contract 已完成。**
+
 ## ☐ 5.2 Tool Registry Contract
+
+目标：将当前简单 `TOOLS` 映射提升为明确、可验证、provider-independent 的 Tool Registry 抽象。
+
+重点：
+
+1. 冻结注册 / 查询 / 枚举接口。
+2. 明确 duplicate name、unknown tool、invalid registration 的行为。
+3. Registry 输出 Tool Schema 时必须与 callable 保持一致。
+4. Developer tool-calling loop 只通过 Registry 获取 Tool，不直接依赖底层实现集合。
+5. 不在本节点引入 Sandbox、权限系统或复杂参数校验。
+
 ## ☐ 5.3 Tool Argument Validation
 ## ☐ 5.4 Workspace Sandbox
 ## ☐ 5.5 Tool Permission Policy
@@ -210,6 +244,7 @@ tests/test_provider_config_substitution.py
 | √ | `18a9bb4` | Workflow LLM-independence contract tests |
 | √ | `a8a05d0` | Provider/config substitution contract tests |
 | √ | `—` | 4.5 user validation: 456 passed |
+| √ | `—` | 5.1 Tool Contract user validation: 463 passed |
 
 ---
 
@@ -230,33 +265,35 @@ tests/test_provider_config_substitution.py
 13. LLM 可替换性应通过 Agent dependency injection 实现，而不是通过 Workflow provider 分支实现。
 14. Provider/config substitution 必须通过 BaseLLM contract 验证，而不是在 Workflow 中增加 provider-specific 分支。
 15. Tool architecture 应继续保持 provider-independent；Tool capability 不应反向污染 BaseLLM 文本生成契约。
+16. Tool Contract 先冻结 capability boundary，再逐步增加 Registry、参数校验、Sandbox、权限和错误语义；避免一次性重构所有 Tool 基础设施。
 
 ---
 
 # 当前下一动作
 
-**Phase 5.1 Tool Contract**
+**Phase 5.2 Tool Registry Contract**
 
-目标：建立统一、provider-independent 的 Tool 调用契约，为 Developer 的 tool-calling loop、Tool Registry、参数校验、权限和 Sandbox 奠定稳定边界。
+目标：把当前 `tools/registry.py` 中的简单 `TOOLS` 字典提升为正式 Registry abstraction，同时保持现有 Tool implementations 和 Developer tool-calling behavior 兼容。
 
-第一步只做 contract，不立即实现完整工具系统：
+执行顺序：
 
 ```text
-Agent
-  ↓
-Tool Contract
-  ↓
-Tool Registry
-  ↓
-Tool implementation
+现有 TOOLS mapping
+    ↓
+Registry contract tests
+    ↓
+ToolRegistry abstraction
+    ↓
+Developer / schema integration
 ```
 
-重点验证：
+第一步先增加 Registry contract tests，冻结：
 
-1. Tool 有稳定的 `name / description / input schema / execute` 边界。
-2. Tool execution result 使用统一结构，不直接泄漏底层异常类型或 provider-specific 数据。
-3. Tool contract 可以被 Developer 与未来 Tool Registry 共同消费。
-4. Tool 不应直接依赖 Workflow 或具体 LLM provider。
-5. 错误、参数和权限边界留到后续节点逐步收敛，不在 5.1 过度设计。
+1. `register()` / `get()` / `list()` 的最小语义。
+2. 重复注册必须有明确、稳定的错误行为。
+3. 查询不存在 Tool 必须有明确、稳定的错误行为。
+4. Registry 必须拒绝无效 Tool registration。
+5. Schema generation 必须来自 Registry，而不是维护第二份脱节的 Tool name 列表。
+6. 旧 `TOOLS` API 在迁移期间保持兼容，避免无必要的全局改动。
 
-下一步：先检查现有 `tools/`、Developer tool-calling loop 和相关测试，设计最小 `Tool` contract，并新增 contract tests；专项测试通过后再实现 Registry。
+专项测试通过后，再实现 Registry；最后运行全量 `pytest -q` 并记录最终结果。
