@@ -1,4 +1,7 @@
-class MockAgent:
+from agents.base import BaseAgent
+
+
+class MockAgent(BaseAgent):
 
     def __init__(self, agent_role: str):
         self._role = agent_role

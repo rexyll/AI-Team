@@ -1,78 +1,109 @@
-from agents.mock_agents import MockAgent
+import pytest
+
 from runtime.agent_router import AgentRouter
-from runtime.task import Task
+from agents.mock_agents import MockAgent
 
 
-router = AgentRouter()
+def test_register_agent():
+    router = AgentRouter()
 
-router.register(
-    "architect",
-    MockAgent("architect"),
-)
+    agent = MockAgent("developer")
 
-router.register(
-    "developer",
-    MockAgent("developer"),
-)
+    router.register(agent)
 
-router.register(
-    "tester",
-    MockAgent("tester"),
-)
-
-router.register(
-    "reviewer",
-    MockAgent("reviewer"),
-)
+    assert router.get_agent("developer") is agent
 
 
-tasks = [
-    Task(
-        id="TASK-001",
-        title="数据库设计",
-        description="设计数据库",
-        role="architect",
-    ),
-    Task(
-        id="TASK-002",
-        title="实现 API",
-        description="实现 API",
-        role="developer",
-    ),
-    Task(
-        id="TASK-003",
-        title="编写测试",
-        description="编写测试",
-        role="tester",
-    ),
-    Task(
-        id="TASK-004",
-        title="代码审查",
-        description="审查代码",
-        role="reviewer",
-    ),
-]
+def test_register_agent_with_legacy_role_argument():
+    router = AgentRouter()
+
+    agent = MockAgent("developer")
+
+    router.register("developer", agent)
+
+    assert router.get_agent("developer") is agent
 
 
-print()
-print("=" * 60)
-print("AGENT ROUTER TEST")
-print("=" * 60)
+def test_register_duplicate_role_fails():
+    router = AgentRouter()
+
+    router.register(MockAgent("developer"))
+
+    with pytest.raises(ValueError):
+        router.register(MockAgent("developer"))
 
 
-for task in tasks:
+def test_register_role_mismatch_fails():
+    router = AgentRouter()
 
-    agent = router.get_agent(task.role)
+    agent = MockAgent("reviewer")
 
-    print(
-        f"{task.id:<10}"
-        f"{task.role:<12}"
-        f"-> "
-        f"{agent.__class__.__name__}"
-    )
+    with pytest.raises(ValueError):
+        router.register("developer", agent)
 
-    result = agent.run(task)
 
-    print(
-        f"    result: {result}"
-    )
+def test_register_non_base_agent_fails():
+    router = AgentRouter()
+
+    class InvalidAgent:
+        @property
+        def role(self):
+            return "developer"
+
+        def run(self, task):
+            return {}
+
+    with pytest.raises(TypeError):
+        router.register(InvalidAgent())
+
+
+def test_get_unknown_agent_returns_none():
+    router = AgentRouter()
+
+    assert router.get_agent("developer") is None
+
+
+def test_has_agent():
+    router = AgentRouter()
+
+    router.register(MockAgent("developer"))
+
+    assert router.has_agent("developer")
+    assert not router.has_agent("reviewer")
+
+
+def test_list_agents():
+    router = AgentRouter()
+
+    developer = MockAgent("developer")
+    tester = MockAgent("tester")
+    reviewer = MockAgent("reviewer")
+
+    router.register(developer)
+    router.register(tester)
+    router.register(reviewer)
+
+    agents = router.list_agents()
+
+    assert agents["developer"] is developer
+    assert agents["tester"] is tester
+    assert agents["reviewer"] is reviewer
+
+
+def test_route_returns_registered_agent():
+    router = AgentRouter()
+
+    developer = MockAgent("developer")
+
+    router.register(developer)
+
+    agent = router.route("developer")
+
+    assert agent is developer
+
+
+def test_route_unknown_role_fails():
+    router = AgentRouter()
+
+    with pytest.raises(KeyError):
+        router.route("developer")
