@@ -10,15 +10,15 @@
 最新用户本地 / 远程同步 HEAD：
 
 ```text
-ad786e8 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
-test: add AgentContext snapshot isolation contract coverage
+73756eb (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
+fix: preserve AgentContext history serialization compatibility
 ```
 
 最新全量测试：
 
 ```text
 pytest -q
-383 passed in 18.29s
+392 passed in 17.69s
 ```
 
 ---
@@ -98,52 +98,94 @@ tests/test_agent_context_snapshot.py
 383 passed in 18.29s
 ```
 
-**结论：当前 AgentContext snapshot 核心实现已经满足隔离契约，不为制造 commit 而修改生产代码。只有 Contract Test 暴露真实缺口时才修改 Runtime。**
+**结论：当前 AgentContext snapshot 核心实现满足隔离契约。只有 Contract Test 暴露真实缺口时才修改 Runtime。**
 
 ---
 
 # Phase 3.3 — Context History
 
-## ☐ 3.3.1 History Contract
+## <span style="color:green">√</span> 3.3.1 History Contract + History Snapshot
+
+已完成 History Contract 定义及最小 Runtime 实现，统一以下三个独立历史流：
+
+```text
+AgentContext
+├── history          ← lifecycle history
+├── test_history     ← Tester execution history
+└── review_history   ← Reviewer execution history
+```
+
+同时保持当前结果与历史记录分离：
+
+```text
+tester_feedback  ← 当前 Tester Result
+reviewer_feedback ← 当前 Reviewer Result
+```
+
+已完成：
+
+- `Task.status_history` → `AgentContext.history`。
+- `Task.test_history` → `AgentContext.test_history`。
+- `Task.review_history` → `AgentContext.review_history`。
+- 三类 history 均进行 deep-copy snapshot isolation。
+- AgentContext → Task 不产生反向污染。
+- `to_dict()` / `from_dict()` 支持三类 history。
+- 新增 history 字段保持旧序列化格式兼容：空 history 不强制输出。
+- Developer revision / Tester / Reviewer execution history 保持独立语义。
+
+新增 Contract Tests：
+
+```text
+tests/test_agent_context_history.py
+```
+
+最终用户 Push SHA：
+
+- `73756eb` — `fix: preserve AgentContext history serialization compatibility`
+
+本节点相关实现 commits：
+
+- `97117c3` — `feat: add test and review history to AgentContext`
+- `7613388` — `feat: expose test and review history in AgentContext`
+- `73756eb` — `fix: preserve AgentContext history serialization compatibility`
+
+验收：
+
+```text
+392 passed in 17.69s
+0 warnings
+```
+
+**结论：Context History Contract 已完成并通过全量测试。AgentContext 现在具备独立的 lifecycle / test / review execution history snapshot。**
+
+---
+
+# Phase 3.4 — Context Lifecycle / Access Policy
+
+## ☐ 3.4.1 Context field access policy
+## ☐ 3.4.2 Agent-specific context visibility
+## ☐ 3.4.3 Read-only execution context convention
+## ☐ 3.4.4 Legacy Task context retirement plan
 
 ### 目标
 
-统一 AgentContext 中的 lifecycle / test / review history 语义，明确：
+Phase 3.4 不再继续增加 AgentContext 字段，而是开始治理 **Context 生命周期、字段访问权限以及 Legacy Task context 的退出路径**。
+
+严格要求：
+
+- Agent 不直接读取或修改 Task mutable state。
+- AgentContext 作为 execution snapshot 使用。
+- 明确不同 Agent 能读取哪些 Context 字段。
+- 明确 current result 与 history 的访问边界。
+- 明确 `task.context` compatibility bridge 的剩余使用点。
+- 只有 Contract Test 暴露真实缺口时才修改生产代码。
+
+验收流程仍保持：
 
 ```text
-Task 持久化历史
-        ≠
-AgentContext execution history snapshot
-```
-
-### 本节点第一步：只做 History Contract Audit / Tests
-
-必须先读取当前 GitHub 实现并确认：
-
-1. `history` 的 canonical schema。
-2. lifecycle history、test history、review history 的边界。
-3. Developer revision 后历史如何进入新的 AgentContext。
-4. Tester / Reviewer 各自需要读取哪些历史。
-5. history 是否保持 snapshot isolation。
-6. `to_dict()` / `from_dict()` 是否保持 history 结构及隔离。
-7. legacy history 字段如何兼容，避免重复记录或 schema 漂移。
-
-### 严格边界
-
-本节点禁止：
-
-- 为了迁移而修改 Workflow。
-- Agent 直接读取 `Task.status_history` 等 mutable state。
-- 引入第二套 history schema。
-- 用隐式兼容逻辑掩盖 schema 不一致。
-- 在没有失败 Contract Test 的情况下修改生产代码。
-
-### 验收门禁
-
-```text
-GitHub 原始 history 实现
+GitHub 原始代码审计
         ↓
-History Contract Tests
+Access Policy Contract Tests
         ↓
 专项测试
         ↓
@@ -159,15 +201,6 @@ DevPlan √
         ↓
 下一节点
 ```
-
----
-
-# Phase 3.4 — Context Lifecycle / Access Policy
-
-## ☐ 3.4.1 Context field access policy
-## ☐ 3.4.2 Agent-specific context visibility
-## ☐ 3.4.3 Read-only execution context convention
-## ☐ 3.4.4 Legacy Task context retirement plan
 
 ---
 
@@ -227,7 +260,7 @@ DevPlan √
 | <span style="color:green">√</span> | `483be86` | DeveloperAgent → AgentContext |
 | <span style="color:green">√</span> | `2237e65` | Tester / Reviewer → AgentContext |
 | <span style="color:green">√</span> | `ad786e8` | Context Snapshot isolation contract |
-| ☐ | **pending** | Phase 3.3 Context History |
+| <span style="color:green">√</span> | `73756eb` | Context History contract + snapshot |
 
 ---
 
@@ -242,12 +275,13 @@ DevPlan √
 7. Tester / Reviewer 迁移不得顺便修改 Workflow。
 8. pytest warning 应在测试侧最小修复，不污染生产代码。
 9. Phase 3.2 已用 Contract Tests 证明 snapshot isolation，不为了产生生产 commit 而改 Runtime。
-10. Phase 3.3 必须先统一 History Contract，再决定是否修改 ContextBuilder / AgentContext。
+10. Phase 3.3 已统一 lifecycle / test / review History Contract，并保持序列化兼容。
+11. 新增 Context 字段必须先建立 Contract Test，再进行最小 Runtime 修改。
 
 ---
 
 # 当前开发入口
 
-**Phase 3.3 — Context History / History Contract。**
+**Phase 3.4 — Context Lifecycle / Access Policy。**
 
-下一步先做 **GitHub 原始代码审计 + History Contract Tests**，不直接修改生产代码。
+下一步先做 **GitHub 原始代码审计 + Access Policy Contract Tests**，不直接修改生产代码。
