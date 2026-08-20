@@ -7,6 +7,7 @@ from tools.registry import TOOLS
 from agents.base import BaseAgent
 from runtime.task import Task
 from runtime.agent_context import AgentContext
+from runtime.context_view import context_view
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -60,16 +61,17 @@ class DeveloperAgent(BaseAgent):
         return "developer"
 
     def _build_messages(self, context: AgentContext):
+        view = context_view(context, self.role)
         context_text = ""
 
-        if context.dependency_context:
+        if view["dependency_context"]:
             context_text += (
                 "\n====================\n"
                 "UPSTREAM AGENT CONTEXT\n"
                 "====================\n"
             )
 
-            for context_key, data in context.dependency_context.items():
+            for context_key, data in view["dependency_context"].items():
                 if not isinstance(data, dict):
                     continue
 
@@ -100,7 +102,7 @@ class DeveloperAgent(BaseAgent):
 
                 context_text += "\n"
 
-        if context.reviewer_feedback:
+        if view["reviewer_feedback"]:
             context_text += """
             ====================
             PREVIOUS REVIEW FEEDBACK
@@ -112,7 +114,7 @@ class DeveloperAgent(BaseAgent):
             """
 
             context_text += json.dumps(
-                context.reviewer_feedback,
+                view["reviewer_feedback"],
                 ensure_ascii=False,
                 indent=2,
             )
@@ -122,26 +124,27 @@ class DeveloperAgent(BaseAgent):
         CURRENT TASK
         ====================
 
-        Task ID: {context.task_id}
-        Role: {context.role}
-        Title: {context.task_title}
-        Description: {context.task_description}
-        Dependencies: {context.dependencies}
+        Task ID: {view['task_id']}
+        Role: {view['role']}
+        Title: {view['task_title']}
+        Description: {view['task_description']}
+        Status: {view['status']}
+        Dependencies: {view['dependencies']}
 
         Current Task Result:
-        {context.task_result}
+        {view['task_result']}
 
         Tester Feedback:
-        {context.tester_feedback}
+        {view['tester_feedback']}
 
         Review Round:
-        {context.review_round}
+        {view['review_round']}
 
         Execution History:
-        {context.history}
+        {view['history']}
 
         Metadata:
-        {context.metadata}
+        {view['metadata']}
 
         {context_text}
 
@@ -185,9 +188,6 @@ class DeveloperAgent(BaseAgent):
                 f"got {type(task).__name__}"
             )
 
-        # Phase 3.1c migration boundary:
-        # external workflow contract remains run(Task), while all prompt
-        # input is now sourced from the isolated AgentContext snapshot.
         context = self.build_context(task)
         messages = self._build_messages(context)
 
@@ -332,7 +332,6 @@ class DeveloperAgent(BaseAgent):
         command_results: list[dict[str, Any]],
     ) -> None:
         """Record factual execution evidence from Developer tool calls."""
-
         if tool_name == "write_file":
             path = arguments.get("path")
             if isinstance(path, str) and path and path not in changed_files:
@@ -357,7 +356,6 @@ class DeveloperAgent(BaseAgent):
         tool_calls: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Build the structured Developer Result payload."""
-
         return {
             "summary": content.strip(),
             "files_changed": list(changed_files),
