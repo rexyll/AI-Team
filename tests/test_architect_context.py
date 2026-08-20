@@ -1,6 +1,7 @@
 from agents.architect import ArchitectAgent
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
+from runtime.llm.mock import MockLLM
 from runtime.task import Task
 
 
@@ -21,7 +22,7 @@ def make_task(**kwargs):
 def test_architect_builds_agent_context():
     task = make_task()
 
-    agent = ArchitectAgent()
+    agent = ArchitectAgent(llm=MockLLM())
 
     context = agent.build_context(task)
 
@@ -41,7 +42,7 @@ def test_architect_prompt_consumes_agent_context():
         description="Design SQLite database schema",
     )
 
-    agent = ArchitectAgent()
+    agent = ArchitectAgent(llm=MockLLM())
 
     context = AgentContext(
         task_id="TASK-ARCH-001",
@@ -99,36 +100,26 @@ def test_architect_prompt_consumes_agent_context():
     assert "AI-Team" in prompt
 
 
-def test_architect_run_returns_agent_result(monkeypatch):
-    task = make_task()
+def test_architect_run_returns_agent_result():
+    llm = MockLLM("SQLite architecture")
+    agent = ArchitectAgent(llm=llm)
 
-    agent = ArchitectAgent()
-
-    def fake_ask_ai(*, prompt, system_prompt):
-        assert "数据库 Schema 设计" in prompt
-        assert system_prompt
-        return "SQLite architecture"
-
-    monkeypatch.setattr(
-        "agents.architect.ask_ai",
-        fake_ask_ai,
-    )
-
-    result = agent.run(task)
+    result = agent.run(make_task())
 
     assert isinstance(result, AgentResult)
 
     assert result.status == "completed"
     assert result.agent == "architect"
-    assert result.task_id == task.id
+    assert result.task_id == "TASK-001"
     assert result.message == "SQLite architecture"
+    assert len(llm.calls) == 1
 
     assert result.data == {
         "architecture": "SQLite architecture",
     }
 
 
-def test_architect_run_does_not_mutate_task(monkeypatch):
+def test_architect_run_does_not_mutate_task():
     task = make_task()
 
     task.context = {
@@ -151,15 +142,7 @@ def test_architect_run_does_not_mutate_task(monkeypatch):
         },
     }
 
-    agent = ArchitectAgent()
-
-    def fake_ask_ai(*, prompt, system_prompt):
-        return "architecture"
-
-    monkeypatch.setattr(
-        "agents.architect.ask_ai",
-        fake_ask_ai,
-    )
+    agent = ArchitectAgent(llm=MockLLM("architecture"))
 
     agent.run(task)
 
@@ -168,7 +151,7 @@ def test_architect_run_does_not_mutate_task(monkeypatch):
 
 
 def test_architect_run_rejects_non_task():
-    agent = ArchitectAgent()
+    agent = ArchitectAgent(llm=MockLLM())
 
     try:
         agent.run("not-a-task")
