@@ -1,7 +1,7 @@
 from runtime.agent_context import AgentContext
 from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
-from agents.tester import TesterAgent
+from agents.tester import TesterAgent as RuntimeTesterAgent
 from agents.reviewer import ReviewerAgent
 
 
@@ -79,7 +79,9 @@ def make_context() -> AgentContext:
 
 def _prompt_for(agent):
     context = make_context()
-    if isinstance(agent, TesterAgent):
+    if isinstance(agent, RuntimeTesterAgent):
+        return agent._build_prompt(context)
+    if isinstance(agent, ReviewerAgent):
         return agent._build_prompt(context)
     return agent._build_messages(context)[1]["content"]
 
@@ -112,7 +114,7 @@ def test_developer_prompt_exposes_only_developer_context_fields():
 
 
 def test_tester_prompt_exposes_only_tester_context_fields():
-    prompt = _prompt_for(TesterAgent())
+    prompt = _prompt_for(RuntimeTesterAgent())
     for field, marker in MARKERS.items():
         marker_text = str(marker)
         if field in POLICY["tester"]:
