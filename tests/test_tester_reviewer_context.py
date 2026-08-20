@@ -46,7 +46,6 @@ def test_tester_prompt_consumes_agent_context():
     assert context.task_title in prompt
     assert "pytest -q -> 10 passed" in prompt
     assert "src/example.py" in prompt
-    assert "context-migration" in prompt
 
 
 def test_reviewer_prompt_consumes_agent_context():

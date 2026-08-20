@@ -74,9 +74,7 @@ def context_view(context: AgentContext, role: str) -> dict[str, Any]:
     except KeyError as exc:
         raise ValueError(f"Unsupported AgentContext role: {role}") from exc
 
-    source = context.to_dict()
     return {
-        field: deepcopy(source[field])
+        field: deepcopy(getattr(context, field))
         for field in allowed_fields
-        if field in source
     }

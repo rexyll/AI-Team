@@ -91,8 +91,11 @@ def test_architect_prompt_consumes_agent_context():
     assert "TASK-001" in prompt
     assert "TASK-002" in prompt
     assert "previous" in prompt
-    assert "passed" in prompt
-    assert "Improve transaction design" in prompt
+
+    # Architect must not receive execution feedback or review results.
+    assert "passed" not in prompt
+    assert "revision" not in prompt
+    assert "Improve transaction design" not in prompt
     assert "AI-Team" in prompt
 
 
