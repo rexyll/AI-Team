@@ -60,8 +60,8 @@ class TesterAgent(BaseAgent):
         context = self.build_context(task)
         prompt = self._build_prompt(context)
 
-        result = ask_ai(
-            prompt=prompt,
+        result = self.llm.generate(
+            prompt,
             system_prompt=SYSTEM_PROMPT,
         )
 
