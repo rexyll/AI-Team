@@ -5,23 +5,32 @@
 
 ## 当前状态
 
-**Phase 3 — AgentContext 正式化 / Context Lifecycle Governance**
+**Phase 4 — LLM Abstraction**
 
-最新用户本地 / 远程同步 HEAD：
+Phase 3 Context Lifecycle Governance 已完成主要退出边界；当前进入 LLM 抽象层建设。
+
+最新远程 HEAD：
 
 ```text
-eb53804 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
-test: add legacy Task.context usage inventory
+d72f59b72ce9541deb5b983097ac1277661e9c30
+test: define MockLLM deterministic contract
 ```
 
-最新全量测试：
+本轮此前完成：
+
+```text
+fa83b98d732ee651369babf19702d63edfb6db73
+test: define BaseLLM generation contract
+```
+
+用户最近一次全量验收（MockLLM 提交之前）：
 
 ```text
 pytest -q
-417 passed in 37.56s
+428 passed in 2.78s
 ```
 
-工作树：clean。
+当前 MockLLM 已提交，但尚未由用户执行最新全量验收；下一步必须先专项测试，再全量 pytest。
 
 ---
 
@@ -261,13 +270,6 @@ pytest -q
 409 passed in 21.37s
 ```
 
-随后 Legacy boundary Contract Tests 回归：
-
-```text
-pytest -q
-414 passed in 16.69s
-```
-
 **结论：Phase 3.4.3 已完成。**
 
 ## <span style="color:green">√</span> 3.4.4 Legacy Task.context retirement boundary
@@ -313,7 +315,7 @@ pytest -q
 414 passed in 16.69s
 ```
 
-**结论：Phase 3.4.4 第一阶段已完成。下一步继续审计并消除 runtime 中非必要的 legacy context 读取点。**
+**结论：Phase 3.4.4 第一阶段已完成。**
 
 ## <span style="color:green">√</span> 3.4.5 Legacy context usage inventory
 
@@ -332,7 +334,7 @@ D. dead / redundant usage → 删除
 
 | Runtime usage | 分类 | 决策 |
 |---|---|---|
-| `ContextBuilder._build_dependency_context()` | B | 暂时保留，限定为 declared dependency bridge |
+| `ContextBuilder._build_dependency_context()` | B | 仅允许通过 `LegacyDependencyBridge` |
 | `ContextBuilder._build_metadata()` | C | 保留非 reserved metadata compatibility |
 | `TaskWorkflow._build_context()` | B | 仅维护 dependency compatibility bridge |
 | canonical result/test/review/history 从 `Task.context` 读取 | A | 禁止 |
@@ -348,40 +350,135 @@ tests/test_legacy_task_context_inventory.py
 
 - `eb53804` — `test: add legacy Task.context usage inventory`
 
-专项 + 全量验收：
+验收：
 
 ```text
 pytest -q
 417 passed in 37.56s
 ```
 
-工作树：clean。
+**结论：Phase 3.4.5 已完成。**
 
-**结论：Phase 3.4.5 已完成。Legacy `Task.context` 的剩余 runtime 使用点已经被分类并受 Contract Test 约束；当前没有发现新的 canonical runtime state 读取点。**
+## <span style="color:green">√</span> 3.4.6 Legacy dependency bridge isolation
 
-## ☐ 3.4.6 Legacy dependency bridge isolation
+已将 Legacy dependency compatibility 收敛到独立 `LegacyDependencyBridge`，避免其他 runtime component 直接读取 dependency entries。
 
-下一节点目标：进一步隔离并最小化 `Task.context` dependency compatibility bridge。
+核心契约：
 
-计划：
+```text
+canonical all_tasks[dependency_id]
+        │
+        ├── completed → canonical snapshot
+        │
+        └── unavailable → legacy fallback
+                              │
+                              ▼
+                   LegacyDependencyBridge
+                              │
+                              ▼
+                 AgentContext.dependency_context
+```
 
-1. 明确 canonical completed dependency snapshot 与 legacy fallback 的优先级。
-2. 将 legacy dependency bridge 收敛到单一 compatibility adapter。
-3. 禁止 Workflow 之外的 runtime component 继续直接读取 dependency entries。
-4. Contract Test 固化 canonical-first / legacy-fallback 行为。
-5. 保持现有 `AgentContext.dependency_context` 对 Agent 的稳定接口。
-6. 专项测试通过后再运行全量 `pytest -q`。
+完成：
 
-**注意：3.4.6 不删除 `Task.context`；只收缩 dependency compatibility bridge 的入口。**
+- canonical completed dependency snapshot 始终优先
+- canonical dependency 存在但未 completed 时不错误回退到 legacy snapshot
+- legacy fallback 仅针对 `task.dependencies` 中声明的 dependency
+- legacy snapshot 必须包含 `title` / `role` / `result`
+- legacy dependency 数据统一 deep-copy
+- `ContextBuilder` 仅通过 bridge 获取 dependency context
+- 保持 `AgentContext.dependency_context` 稳定接口
+- 不删除 `Task.context`，继续保留最小 compatibility boundary
+
+当前实现：
+
+```text
+runtime/legacy_dependency_bridge.py
+```
+
+验收：
+
+```text
+pytest -q
+424 passed in 11.84s
+```
+
+**结论：Phase 3.4.6 已完成。Phase 3 Context Lifecycle Governance 的主要 runtime 退出边界完成，进入 Phase 4。**
 
 ---
 
 # Phase 4 — LLM Abstraction
 
-## ☐ 4.1 BaseLLM 完整实现
+## <span style="color:green">√</span> 4.1 BaseLLM Contract
+
+已冻结 provider-independent `BaseLLM.generate()` 契约，暂不绑定具体供应商实现。
+
+契约：
+
+```text
+BaseLLM.generate(
+    prompt: str,
+    *,
+    system_prompt: str = "",
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+) -> str
+```
+
+新增：
+
+```text
+tests/test_llm_base_contract.py
+```
+
+最终用户 Push SHA：
+
+- `fa83b98d732ee651369babf19702d63edfb6db73` — `test: define BaseLLM generation contract`
+
+验收：
+
+```text
+pytest -q
+428 passed in 2.78s
+```
+
+**结论：4.1 BaseLLM Contract 已完成。**
+
 ## ☐ 4.2 MockLLM
+
+目标：提供 deterministic、零外部网络依赖的 LLM 实现，用于单元测试、Agent 集成测试和后续 Workflow 测试。
+
+当前实现已提交，等待用户专项 + 全量验收：
+
+```text
+runtime/llm/mock.py
+tests/test_mock_llm.py
+```
+
+实现契约：
+
+- 默认 deterministic response
+- FIFO response queue
+- fallback response
+- invocation recording
+- remaining response count
+- reset call history
+- BaseLLM compatibility
+- 参数类型边界校验
+
+提交：
+
+- `e97132d2ffb6d2222932c6d4d2dff450d11b7cca` — `feat: add deterministic MockLLM implementation`
+- `d72f59b72ce9541deb5b983097ac1277661e9c30` — `test: define MockLLM deterministic contract`
+
+**下一步：先运行 `pytest tests/test_mock_llm.py -q`，通过后运行全量 `pytest -q`。**
+
 ## ☐ 4.3 Agent → BaseLLM
+
+下一节点：将 Agent 中当前直接依赖 provider/model helper 的调用方式收敛到可注入 `BaseLLM`，保持现有 `run(Task) -> AgentResult` 外部契约不变。
+
 ## ☐ 4.4 Workflow → LLM-independent
+
 ## ☐ 4.5 Provider/config 可替换
 
 # Phase 5 — Tool / Sandbox Architecture
@@ -436,6 +533,9 @@ pytest -q
 | <span style="color:green">√</span> | `8ef9e19` | AgentContext read-only execution contract |
 | <span style="color:green">√</span> | `9c8afc5` | Legacy Task.context retirement boundary |
 | <span style="color:green">√</span> | `eb53804` | Legacy Task.context usage inventory |
+| <span style="color:green">√</span> | `fa83b98d` | BaseLLM generation contract |
+| <span style="color:green">√</span> | `e97132d2` | MockLLM implementation |
+| <span style="color:green">√</span> | `d72f59b7` | MockLLM deterministic contract |
 
 ---
 
@@ -458,27 +558,27 @@ pytest -q
 15. Legacy `Task.context` 退出必须先定义兼容边界，再逐步清除非必要读取点，不能一次性删除导致隐式依赖回归。
 16. Canonical runtime state 必须优先于 legacy compatibility data；compatibility bridge 只能补充不能覆盖 canonical fields。
 17. Legacy usage inventory 必须成为 Contract Test，防止未来 runtime 修改重新扩大 `Task.context` 读取面。
+18. LLM abstraction 先冻结最小 provider-independent contract，再引入 deterministic MockLLM，避免 Agent / Workflow 在 provider 细节上继续耦合。
+19. MockLLM 必须零网络、可重复、可记录调用，才能成为后续 Agent / Workflow integration tests 的稳定基础。
 
 ---
 
 # 当前下一动作
 
-**3.4.6 Legacy dependency bridge isolation**
+**4.2 MockLLM Contract 验收**
 
 执行路径：
 
 ```text
-Task.context legacy dependency entries
+BaseLLM
+   ↓
+MockLLM
+   ├── deterministic response
+   ├── FIFO response queue
+   ├── invocation recording
+   └── type / contract validation
         ↓
-单一 compatibility adapter
-        ↓
-canonical completed Task snapshot 优先
-        ↓
-legacy fallback
-        ↓
-AgentContext.dependency_context
-        ↓
-role-specific context_view()
+Agent integration tests
 ```
 
-完成 3.4.6 后，再判断是否可以结束 Phase 3 Context Lifecycle Governance，并进入 **Phase 4 — LLM Abstraction**。
+用户完成 `tests/test_mock_llm.py` 专项测试及全量 `pytest -q` 后，再进入 **4.3 Agent → BaseLLM**。
