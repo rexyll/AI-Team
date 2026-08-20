@@ -12,6 +12,29 @@ class TaskManager:
     def __init__(self, tasks: list[Task]):
         self.tasks = {task.id: task for task in tasks}
         
+        
+    def _task_result_payload(
+        self,
+        result: dict | Any,
+    ) -> dict:
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "result must be a dict or support to_dict()"
+            )
+
+        payload = dict(result)
+
+        data = payload.get("data")
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                payload.setdefault(key, value)
+
+        return payload
+        
     def transition(
         self,
         task_id: str,
@@ -145,7 +168,7 @@ class TaskManager:
         if result is not None:
             self.record_result(
                 task_id,
-                result,
+                self._task_result_payload(result),
             )
 
     def mark_review_pending(
@@ -401,12 +424,6 @@ class TaskManager:
         task_id: str,
         test_result: dict,
     ) -> Task:
-        """
-        Record the latest tester result and append it to test history.
-
-        Re-recording the same result is idempotent and does not
-        create a duplicate history entry.
-        """
         if not isinstance(test_result, dict):
             raise TypeError(
                 "test_result must be a dict"
@@ -414,9 +431,16 @@ class TaskManager:
 
         task = self.get_task(task_id)
 
+        test_result = self._normalize_result_payload(
+            test_result
+        )
+
         task.test_result = test_result
 
-        if not task.test_history or task.test_history[-1] != test_result:
+        if (
+            not task.test_history
+            or task.test_history[-1] != test_result
+        ):
             task.test_history.append(test_result)
 
         return task
@@ -435,6 +459,10 @@ class TaskManager:
 
         task = self.get_task(task_id)
 
+        review_result = self._normalize_result_payload(
+            review_result
+        )
+
         task.review_result = review_result
         task.review_history.append(review_result)
 
@@ -447,13 +475,26 @@ class TaskManager:
         self,
         task_id: str,
         source: str,
-        feedback: dict | str,
+        feedback: dict | Any,
     ) -> Task:
-        task = self.get_task(task_id)
-
-        if not isinstance(source, str) or not source:
+        if not isinstance(source, str) or not source.strip():
             raise ValueError(
                 "feedback source must be a non-empty string"
+            )
+
+        task = self.get_task(task_id)
+
+        if hasattr(feedback, "to_dict"):
+            feedback = feedback.to_dict()
+
+        if isinstance(feedback, dict):
+            feedback = self._normalize_result_payload(
+                feedback
+            )
+        elif not isinstance(feedback, str):
+            raise TypeError(
+                "feedback must be a dict, string, "
+                "or support to_dict()"
             )
 
         task.context[f"{source}_feedback"] = feedback
@@ -522,3 +563,26 @@ class TaskManager:
             task_id,
             error,
         )
+        
+    
+    def _normalize_result_payload(
+        self,
+        result: dict | Any,
+    ) -> dict:
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "result must be a dict or support to_dict()"
+            )
+
+        normalized = dict(result)
+
+        data = normalized.get("data")
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                normalized.setdefault(key, value)
+
+        return normalized

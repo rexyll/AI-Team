@@ -145,7 +145,7 @@ class AgentResult:
         1. Canonical AgentResult dictionaries.
         2. Legacy Agent dictionaries.
 
-        Legacy Agent-specific fields are preserved inside ``data``.
+        Legacy Agent-specific payload fields are normalized into ``data``.
         """
         if not isinstance(result, dict):
             raise ValueError(
@@ -170,6 +170,9 @@ class AgentResult:
                 + ", ".join(missing)
             )
 
+        # ------------------------------------------------------------
+        # Canonical business payload
+        # ------------------------------------------------------------
         data = result.get("data", {})
 
         if not isinstance(data, dict):
@@ -179,12 +182,48 @@ class AgentResult:
 
         data = dict(data)
 
+        # ------------------------------------------------------------
+        # Legacy business payload
+        #
+        # Older agents may return:
+        #
+        # {
+        #     "status": "completed",
+        #     "agent": "developer",
+        #     "task_id": "TASK-002",
+        #     "result": {
+        #         "implementation": "..."
+        #     }
+        # }
+        #
+        # Normalize it into:
+        #
+        # {
+        #     "implementation": "..."
+        # }
+        # ------------------------------------------------------------
+        legacy_result = result.get("result")
+
+        if legacy_result is not None:
+            if isinstance(legacy_result, dict):
+                for key, value in legacy_result.items():
+                    data.setdefault(key, value)
+            else:
+                data.setdefault(
+                    "result",
+                    legacy_result,
+                )
+
+        # ------------------------------------------------------------
+        # Preserve other legacy Agent-specific fields.
+        # ------------------------------------------------------------
         reserved_fields = {
             "status",
             "agent",
             "task_id",
             "message",
             "data",
+            "result",
         }
 
         for key, value in result.items():

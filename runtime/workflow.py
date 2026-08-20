@@ -34,7 +34,7 @@ class StageOutcome:
         if self.result is None:
             return {}
 
-        return dict(self.result.data)
+        return self.result.to_dict()
 
     def to_dict(self) -> dict[str, Any]:
         return {
