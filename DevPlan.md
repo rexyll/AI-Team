@@ -1,7 +1,7 @@
 # AI-Team DevPlan
 
 > 分支：`refactor/runtime-architecture`  
-> 开发纪律：**GitHub 原始代码 → 小范围修改 → 专项测试 → 全量 pytest → 用户 Push → 记录最终 SHA → DevPlan √ → 下一节点**
+> 开发纪律：**GitHub 原始代码 → 小范围修改 → 专项测试 → 全量 pytest → 用户 Pull → 记录最终 SHA → DevPlan √ → 下一节点**
 
 ## 当前状态
 
@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-437 passed in 27.34s
+448 passed in 0.92s
 ```
 
-工作树：由用户本地确认。
+工作树：由用户本地确认；上一节点已同步且 clean。
 
 ---
 
@@ -23,12 +23,6 @@ pytest -q
 ## <span style="color:green">√</span> 3.4.6 Legacy dependency bridge isolation
 
 已将 Legacy dependency compatibility 收敛到独立 `LegacyDependencyBridge`，canonical completed dependency snapshot 优先，legacy fallback 仅作为兼容路径，并保持 `AgentContext.dependency_context` 稳定接口。
-
-验收基线：
-
-```text
-424 passed in 11.84s
-```
 
 **Phase 3 Context Lifecycle Governance 已完成。**
 
@@ -62,20 +56,6 @@ BaseLLM.generate(
 - BaseLLM compatibility
 - 参数边界校验
 
-相关 commits：
-
-- `e97132d2ffb6d2222c6d4d2dff450d11b7cca` — `feat: add deterministic MockLLM implementation`
-- `d72f59b72ce9541deb5b983097ac1277661e9c30` — `test: define MockLLM deterministic contract`
-
-用户全量验收：
-
-```text
-pytest -q
-437 passed in 27.34s
-```
-
-**结论：4.2 MockLLM 已完成。**
-
 ## <span style="color:green">√</span> 4.3.1 ProviderLLM adapter contract
 
 建立 provider-independent `BaseLLM` 与现有 OpenAI-compatible provider client 之间的最小适配层：
@@ -92,13 +72,6 @@ OpenAI-compatible client
 provider API
 ```
 
-新增：
-
-```text
-runtime/llm/provider.py
-tests/test_provider_llm.py
-```
-
 ProviderLLM 只负责：
 
 - 接收 `BaseLLM.generate()` 标准参数
@@ -107,26 +80,55 @@ ProviderLLM 只负责：
 - 返回纯文本结果
 - 不暴露 provider client 给 Agent
 
-提交：
+## <span style="color:green">√</span> 4.3.2 Agent LLM injection
 
-- `52ebb7d4d06ff5d401649401290432833e627154` — `feat: add provider BaseLLM adapter`
-- `b701fc6fef7d531eb8ca7cffcfcdc5275c7cd24d` — `test: define ProviderLLM adapter contract`
+已完成 Agent 侧 LLM dependency injection：
 
-**下一步：用户 Pull 后运行 `pytest tests/test_provider_llm.py -q`，再运行全量 `pytest -q`。**
+1. `BaseAgent` 支持注入 `BaseLLM`。
+2. Architect / Tester / Reviewer 使用 `self.llm.generate()`，不再直接依赖 `ask_ai`。
+3. 默认运行路径继续使用 `ProviderLLM`，保持现有 provider 配置兼容。
+4. `MockLLM` 可直接替换真实模型进行 deterministic 测试。
+5. 保持 `run(Task) -> AgentResult`、AgentContext access policy 和 Workflow 行为不变。
+6. Developer 的 tool-calling loop 暂不强行迁移到普通文本 `BaseLLM`，保留独立 tool-capable adapter 边界。
 
-## ☐ 4.3.2 Agent LLM injection
+新增/完成的验证重点：
 
-专项目标：
+- Agent LLM injection contract
+- Architect / Tester / Reviewer injected execution
+- 默认 ProviderLLM
+- BaseLLM 类型边界
 
-1. BaseAgent 增加可注入 `BaseLLM` 的 execution dependency。
-2. Architect / Tester / Reviewer 由 `ask_ai` 迁移到 `self.llm.generate()`。
-3. Developer 保持现有 tool-calling loop，不直接把 tool schema 粗暴塞进 BaseLLM；先定义其 provider/tool-capable adapter 边界。
-4. 默认运行路径继续使用 `ProviderLLM`，保持现有环境变量和 provider 配置兼容。
-5. `MockLLM` 可以直接替换 Agent 的真实模型进行测试。
-6. 保持 `run(Task) -> AgentResult`、AgentContext access policy 和 Workflow 行为不变。
+最新用户验收：
+
+```text
+pytest -q
+448 passed in 0.92s
+```
+
+**结论：4.3.2 Agent LLM injection 已完成。**
 
 ## ☐ 4.4 Workflow → LLM-independent
+
+目标：Workflow / Orchestrator 只依赖 Agent execution contract，不感知具体 LLM provider、`ask_ai` 或 `ProviderLLM`。
+
+本节点已加入第一批 contract tests：
+
+```text
+tests/test_workflow_llm_independence.py
+```
+
+验证方向：
+
+- `runtime/workflow.py` 不直接 import provider LLM 或 `ask_ai`
+- Workflow 可以执行没有 `.llm` 属性的最小 Agent 实现
+- Workflow 依赖 Agent 的 `run(task)` / result contract，而不是具体模型实现
+- 保留 Tester quality gate 与 legacy no-Tester workflow 行为
+
+**下一步：用户 Pull 后先运行专项测试，再运行全量 pytest；专项和全量均通过后正式标记 4.4 完成。**
+
 ## ☐ 4.5 Provider/config 可替换
+
+4.4 完成后，将进一步验证 provider/config 的可替换性：同一 Workflow / Agent execution path 可以通过 `BaseLLM` 注入不同实现，而无需修改 Workflow 代码。
 
 # Phase 5 — Tool / Sandbox Architecture
 
@@ -175,8 +177,18 @@ ProviderLLM 只负责：
 | √ | `eb53804` | Legacy Task.context usage inventory |
 | √ | `1a65e57` | Phase 3.4.5 completion docs |
 | √ | `9c8afc5` | Legacy Task.context retirement boundary |
-| √ | `52ebb7d4` | ProviderLLM adapter |
+| √ | `52ebb7d` | ProviderLLM adapter |
 | √ | `b701fc6` | ProviderLLM contract tests |
+| √ | `8ef9e19` | AgentContext read-only execution contract |
+| √ | `c9ce052` | AgentContext role visibility contract |
+| √ | `aece0d2` | AgentContext access policy projections |
+| √ | `0635762` | Phase 3.4.1 completion docs |
+| √ | `55d0482` | Phase 3.4.2 completion docs |
+| √ | `6273d14` | Phase 3.4.3 / 3.4.4 completion docs |
+| √ | `1a65e57` | Phase 3.4.5 completion docs |
+| √ | `eb53804` | Legacy Task.context usage inventory |
+| √ | `18a9bb4` | Workflow LLM-independence contract tests |
+| ☐ | — | 4.4 user validation pending |
 
 ---
 
@@ -193,25 +205,27 @@ ProviderLLM 只负责：
 9. MockLLM 是测试默认替身，不应依赖真实 provider 网络。
 10. Provider adapter 不应把 provider-specific API 泄漏到 Agent 或 Workflow。
 11. Developer 的 tool-calling loop 与普通文本 generation 是不同能力边界，不能为了接口统一而丢失工具调用能力。
+12. Workflow 的职责是编排 Agent execution，不应持有或理解具体 LLM provider 生命周期。
+13. LLM 可替换性应通过 Agent dependency injection 实现，而不是通过 Workflow provider 分支实现。
 
 ---
 
 # 当前下一动作
 
-**4.3.2 Agent LLM injection**
+**4.4 Workflow → LLM-independent**
 
 执行路径：
 
 ```text
-BaseAgent
-   ↓
-BaseLLM dependency injection
-   ↓
-Architect / Tester / Reviewer
-   ↓
-MockLLM / ProviderLLM
+Workflow / Orchestrator
+        ↓
+Agent execution contract
+        ↓
+Agent
+        ↓
+BaseLLM
+   ↙          ↘
+MockLLM    ProviderLLM
 ```
 
-Developer 则单独处理 tool-capable LLM adapter，避免破坏现有 Tool Calling Loop。
-
-完成 4.3.2 后，再进入 **4.4 Workflow → LLM-independent**。
+当前已加入 Workflow LLM-independence contract tests。用户 Pull 后验证专项测试和全量测试；通过后正式关闭 4.4，再进入 **4.5 Provider/config 可替换**。
