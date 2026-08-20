@@ -96,8 +96,8 @@ class AgentContext:
         """
         Convert to a detached dictionary.
 
-        ``dependency_context`` is emitted only when populated so the
-        pre-3.1c serialized AgentContext shape remains backward compatible.
+        Optional context extensions are emitted only when populated so the
+        pre-3.3 serialized AgentContext shape remains backward compatible.
         """
         result = {
             "task_id": self.task_id,
@@ -111,8 +111,6 @@ class AgentContext:
             "tester_feedback": deepcopy(self.tester_feedback),
             "reviewer_feedback": deepcopy(self.reviewer_feedback),
             "history": deepcopy(self.history),
-            "test_history": deepcopy(self.test_history),
-            "review_history": deepcopy(self.review_history),
             "metadata": deepcopy(self.metadata),
         }
 
@@ -120,6 +118,10 @@ class AgentContext:
             result["dependency_context"] = deepcopy(
                 self.dependency_context
             )
+        if self.test_history:
+            result["test_history"] = deepcopy(self.test_history)
+        if self.review_history:
+            result["review_history"] = deepcopy(self.review_history)
 
         return result
 
