@@ -4,13 +4,27 @@ from runtime.agent_config import AgentConfig
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_builder import ContextBuilder
+from runtime.llm.base import BaseLLM
+from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
 
 
 class BaseAgent(ABC):
 
-    def __init__(self, config: AgentConfig | None = None):
+    def __init__(
+        self,
+        config: AgentConfig | None = None,
+        *,
+        llm: BaseLLM | None = None,
+    ):
         self.config = config
+        self.llm = llm if llm is not None else ProviderLLM()
+
+        if not isinstance(self.llm, BaseLLM):
+            raise TypeError(
+                "BaseAgent llm must implement BaseLLM, "
+                f"got {type(self.llm).__name__}"
+            )
 
     @property
     @abstractmethod
