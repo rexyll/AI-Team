@@ -11,12 +11,12 @@
 
 ```text
 pytest -q
-463 passed in 0.96s
+470 passed in 1.00s
 ```
 
-**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。Phase 5.2 Tool Registry 已完成实现，等待用户专项/全量测试验收。**
+**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。Phase 5.2 Tool Registry 已完成并通过用户专项/全量验收。下一节点为 5.3 Tool Argument Validation。**
 
-工作树：本轮 5.2 修改已直接提交 GitHub；用户 Pull 后运行专项测试和全量 pytest，确认通过后再把 5.2 标记为最终完成。
+工作树：本轮 5.2 已完成实现、用户 Pull 后专项测试与全量 pytest 均通过；本次 DevPlan 记录完成状态。今天工作结束，下一工作日从 5.3 继续。
 
 ---
 
@@ -176,9 +176,9 @@ pytest -q
 
 **结论：5.1 Tool Contract 已完成。**
 
-## ☐ 5.2 Tool Registry Contract — 实现完成，验收待确认
+## <span style="color:green">√</span> 5.2 Tool Registry Contract
 
-本轮已完成 Registry abstraction 的第一版最小实现，并新增 `tests/test_tool_registry.py`。
+已完成 Registry abstraction，并通过用户 Pull 后专项测试与全量验收。
 
 已冻结：
 
@@ -210,7 +210,14 @@ fa67866  test: define ToolRegistry contract
 0420eed  refactor: route Developer tools through ToolRegistry
 ```
 
-**状态：实现已完成；必须等待用户 Pull 后执行专项测试和全量 pytest，确认通过后才能将 5.2 标记为最终完成。**
+用户最终验收：
+
+```text
+pytest -q
+470 passed in 1.00s
+```
+
+**结论：5.2 Tool Registry Contract 已完成。**
 
 ## ☐ 5.3 Tool Argument Validation
 ## ☐ 5.4 Workspace Sandbox
@@ -269,9 +276,11 @@ fa67866  test: define ToolRegistry contract
 | √ | `a8a05d0` | Provider/config substitution contract tests |
 | √ | `—` | 4.5 user validation: 456 passed |
 | √ | `—` | 5.1 Tool Contract user validation: 463 passed |
-| ⏳ | `fa67866` | 5.2 Tool Registry contract tests |
-| ⏳ | `549c0de` | 5.2 ToolRegistry abstraction |
-| ⏳ | `0420eed` | 5.2 Developer Registry integration |
+| √ | `fa67866` | 5.2 Tool Registry contract tests |
+| √ | `549c0de` | 5.2 ToolRegistry abstraction |
+| √ | `0420eed` | 5.2 Developer Registry integration |
+| √ | `—` | 5.2 user validation: 470 passed |
+| √ | `—` | 5.2 completion docs |
 
 ---
 
@@ -300,18 +309,14 @@ fa67866  test: define ToolRegistry contract
 
 # 当前下一动作
 
-**Phase 5.2 Tool Registry Contract — 用户验收阶段**
+**下一工作日：Phase 5.3 Tool Argument Validation**
 
-请用户 Pull 后首先执行：
+今天工作结束。下一步从 Tool 参数校验 contract 开始，不提前引入 Sandbox 或权限系统。
 
-```powershell
-pytest tests/test_tool_registry.py tests/test_tool_contract.py -q
-```
+计划：
 
-然后执行：
-
-```powershell
-pytest -q
-```
-
-如果专项和全量均通过，再将 5.2 标记为最终完成，并进入 **5.3 Tool Argument Validation**。
+1. 从现有 Tool Schema 冻结参数校验边界。
+2. 定义 required / type / unknown argument / malformed arguments 的统一错误语义。
+3. 先写 contract tests，再实现最小 validation layer。
+4. 保持 `ToolRegistry`、Developer tool-calling loop 和现有 `TOOLS` compatibility API 行为不变。
+5. 完成专项测试后再执行全量 `pytest -q`，通过用户验收后进入 5.4 Workspace Sandbox。
