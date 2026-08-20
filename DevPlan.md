@@ -5,21 +5,23 @@
 
 ## 当前状态
 
-**Phase 3 — AgentContext 正式化**
+**Phase 3 — AgentContext 正式化 / Context Lifecycle Governance**
 
 最新用户本地 / 远程同步 HEAD：
 
 ```text
-c9ce052 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
-test: add AgentContext role visibility contract
+9c8afc5 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
+test: define legacy Task context retirement boundary
 ```
 
 最新全量测试：
 
 ```text
 pytest -q
-404 passed in 3.22s
+414 passed in 16.69s
 ```
+
+工作树：clean。
 
 ---
 
@@ -244,59 +246,113 @@ pytest -q
 404 passed in 3.22s
 ```
 
-**结论：Phase 3.4.2 Agent-specific context visibility 已完成。四类 Agent 的 Context 可见性现在由 role-specific projection + Contract Tests 双重约束；下一阶段不再扩大 Context 字段，而是治理 execution context 的只读语义。**
+**结论：Phase 3.4.2 Agent-specific context visibility 已完成。四类 Agent 的 Context 可见性现在由 role-specific projection + Contract Tests 双重约束。**
 
-## ☐ 3.4.3 Read-only execution context convention
+## <span style="color:green">√</span> 3.4.3 Read-only execution context convention
 
-下一节点：建立 AgentContext 的 **read-only execution convention**。
+已通过 Contract Tests 固化 AgentContext 的只读 execution convention，当前不引入复杂 immutable object，而是明确 execution snapshot 的所有权边界。
 
-重点不是立即引入复杂不可变对象，而是先用 Contract Tests 明确：
+本节点确认：
 
 - Agent 收到的是 execution snapshot，而不是 Task mutable state。
-- Agent 不应通过 projection 修改 Context snapshot 后影响后续 Agent。
-- `context_view()` 返回值只能作为 Agent 输入，不应被当作 Task 更新 API。
-- Agent 执行过程中不得依赖对 `Task` / `task.context` 的隐式写入来传递结果。
-- AgentResult 才是 Agent → Workflow 的显式输出边界。
-- Context history / current result / metadata 的更新应由 Runtime / TaskManager 负责，而不是 Agent prompt 构建逻辑负责。
+- `ContextBuilder` 构建的 AgentContext 对 Task 的 result / context / test result / review result / history 均保持 deep-copy 隔离。
+- `context_view()` 返回值只能作为 Agent 输入；对 projection 的 mutation 不会反向修改 AgentContext。
+- Agent execution path 不通过 projection 作为 Task 更新 API。
+- 重新构建 AgentContext 会重新从 runtime-owned Task state 获取 snapshot，不会保留 Agent 对旧 projection 的修改。
+- current result 与 lifecycle / test / review history 均由 Runtime / TaskManager 所有。
+- AgentContext 不提供 `update_task`、`set_status`、`record_test_result`、`record_review_result` 等 Task mutation API。
+- AgentResult 保持 Agent → Workflow 的显式输出边界。
 
-第一步仍然是 Contract Tests；只有发现真实 Runtime 缺口才修改生产代码。
-
-## ☐ 3.4.4 Legacy Task context retirement plan
-
-### 目标
-
-Phase 3.4 不再继续增加 AgentContext 字段，而是开始治理 **Context 生命周期、字段访问权限以及 Legacy Task context 的退出路径**。
-
-严格要求：
-
-- Agent 不直接读取或修改 Task mutable state。
-- AgentContext 作为 execution snapshot 使用。
-- 明确不同 Agent 能读取哪些 Context 字段。
-- 明确 current result 与 history 的访问边界。
-- 明确 `task.context` compatibility bridge 的剩余使用点。
-- 只有 Contract Test 暴露真实缺口时才修改生产代码。
-
-验收流程仍保持：
+新增 Contract Test：
 
 ```text
-GitHub 原始代码审计
-        ↓
-Access Policy Contract Tests
-        ↓
-专项测试
-        ↓
-必要时最小生产代码修改
-        ↓
-本地全量 pytest
-        ↓
-用户 Push
-        ↓
-最终 Commit SHA
-        ↓
-DevPlan √
-        ↓
-下一节点
+tests/test_agent_context_read_only.py
 ```
+
+最终用户 Push SHA：
+
+- `8ef9e19` — `test: add AgentContext read-only execution contract`
+
+验收：
+
+```text
+pytest -q
+409 passed in 21.37s
+```
+
+随后针对 Legacy Task.context boundary 的新增 Contract Tests 继续运行全量回归：
+
+```text
+pytest -q
+414 passed in 16.69s
+```
+
+**结论：Phase 3.4.3 Read-only execution context convention 已完成。AgentContext 已明确为 runtime-owned execution snapshot；Agent 不再拥有 Task mutation 语义。**
+
+## <span style="color:green">√</span> 3.4.4 Legacy Task.context retirement boundary
+
+已完成 Legacy `Task.context` 的第一阶段退出边界定义。当前不删除 compatibility bridge，而是通过 Contract Tests 固化其允许的最小职责。
+
+### Legacy context 当前唯一允许的兼容职责
+
+```text
+Task.dependencies
+        │
+        ▼
+legacy task.context[dependency_id]
+        │
+        ▼
+AgentContext.dependency_context
+```
+
+同时：
+
+- 只有 `task.dependencies` 中声明的 dependency snapshot 才允许从 legacy context 进入 `dependency_context`。
+- 未声明的 legacy context snapshot 不得泄漏。
+- legacy dependency snapshot 不得重复进入 `AgentContext.metadata`。
+- legacy reserved keys 不得覆盖 canonical `task_result` / `tester_feedback` / `reviewer_feedback`。
+- legacy `result` / `status_history` / `test_history` / `review_history` 不再作为 execution result/history 的来源。
+- 非 dependency 的 legacy context 数据只能作为 metadata compatibility data 保存。
+- 当 `all_tasks` 中存在 completed dependency 时，canonical Task snapshot 优先于 legacy context snapshot。
+
+新增 Contract Test：
+
+```text
+tests/test_legacy_task_context_boundary.py
+```
+
+最终用户 Push SHA：
+
+- `9c8afc5` — `test: define legacy Task context retirement boundary`
+
+验收：
+
+```text
+pytest -q
+414 passed in 16.69s
+```
+
+**结论：Phase 3.4.4 Legacy Task.context retirement boundary 已完成第一阶段。下一步不是直接删除 `Task.context`，而是继续审计并消除 runtime 中非必要的 legacy context 读取点。**
+
+### 下一阶段 3.4.5 — Legacy context usage inventory
+
+目标：建立 `Task.context` 的完整 runtime usage inventory，并把每个读取点分类为：
+
+```text
+A. canonical runtime data source → 必须迁移
+B. dependency compatibility bridge → 暂时保留
+C. metadata compatibility → 明确保留范围
+D. dead / redundant usage → 删除
+```
+
+执行纪律：
+
+1. 先 GitHub 原始代码搜索 / 审计。
+2. 先添加 Contract Tests 或 usage inventory tests。
+3. 只有测试暴露真实 runtime 缺口时才修改生产代码。
+4. 每次只消除一类 legacy usage。
+5. 每个小节点都跑专项测试 + 全量 `pytest -q`。
+6. Phase 3 完成前不得提前进入 Workflow / LLM 大规模重构。
 
 ---
 
@@ -357,6 +413,8 @@ DevPlan √
 | <span style="color:green">√</span> | `73756eb` | Context History contract + snapshot |
 | <span style="color:green">√</span> | `aece0d2` | Context field access policy |
 | <span style="color:green">√</span> | `c9ce052` | Agent-specific context visibility contract |
+| <span style="color:green">√</span> | `8ef9e19` | AgentContext read-only execution contract |
+| <span style="color:green">√</span> | `9c8afc5` | Legacy Task.context retirement boundary |
 
 ---
 
@@ -375,13 +433,28 @@ DevPlan √
 11. 新增 Context 字段必须先建立 Contract Test，再进行最小 Runtime 修改。
 12. Context Access Policy 必须通过 role-specific projection 实现，不能让 Agent 依赖 `to_dict()` 的序列化字段存在性。
 13. Runtime projection 与 persistence serialization 必须保持职责分离，避免 legacy compatibility 反向限制运行时访问控制。
-14. Access Policy 测试应验证语义字段是否暴露，而不是绑定具体 dict 字符串序列化格式。
-15. Agent-specific visibility 应通过统一 projection 约束，不能在各 Agent 中各自实现一套字段过滤逻辑。
+14. Read-only execution context 优先通过 snapshot isolation + Contract Tests 建立所有权边界，不急于引入复杂 immutable abstraction。
+15. Legacy `Task.context` 退出必须先定义兼容边界，再逐步清除非必要读取点，不能一次性删除导致隐式依赖回归。
+16. Canonical runtime state 必须优先于 legacy compatibility data；compatibility bridge 只能补充不能覆盖 canonical fields。
 
 ---
 
-# 当前开发入口
+# 当前下一动作
 
-**Phase 3.4 — Context Lifecycle / Access Policy。**
+**3.4.5 Legacy context usage inventory**
 
-下一步执行 **3.4.3 Read-only execution context convention：先建立 Contract Tests，验证 AgentContext / context_view 的只读执行语义及 Agent → AgentResult → Runtime 的结果边界。只有 Contract Test 暴露真实缺口时才修改 Runtime。**
+先审计：
+
+```text
+Task.context
+    ↓
+所有 runtime / agents / workflow / task_manager 读取点
+    ↓
+分类 canonical / compatibility / metadata / dead usage
+    ↓
+Contract Test
+    ↓
+最小迁移
+```
+
+完成 3.4.5 后，再决定是否需要 3.4.6 compatibility bridge 最小化；只有当 `Task.context` 已没有非必要 runtime 读取点时，才进入 Phase 3 收尾与 Phase 4 LLM Abstraction。
