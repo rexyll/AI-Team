@@ -16,27 +16,61 @@ MAX_REVIEW_ROUNDS = 3
 
 @dataclass
 class StageOutcome:
+    """
+    Unified result contract for one workflow stage.
+
+    A StageOutcome represents the execution result of exactly one
+    WorkflowStage.
+
+    Contract:
+
+        stage
+        status
+        result
+        exception
+        result_dict
+
+    ``result`` is always the canonical AgentResult when the stage
+    completed successfully.
+
+    ``result_dict`` is a compatibility/read-only representation of
+    ``result`` in canonical dictionary form.
+
+    ``exception`` is populated only when stage execution failed.
+    """
+
     stage: WorkflowStage
     status: str
-    result: AgentResult | None = None
+    result: AgentResult | dict[str, Any] | None = None
     exception: Exception | None = None
 
     def __post_init__(self) -> None:
+        # ------------------------------------------------------------
+        # stage
+        # ------------------------------------------------------------
         if not isinstance(self.stage, WorkflowStage):
             raise TypeError(
                 "stage must be a WorkflowStage"
             )
 
+        # ------------------------------------------------------------
+        # status
+        # ------------------------------------------------------------
         if not isinstance(self.status, str):
             raise TypeError(
                 "status must be a string"
             )
 
-        if not self.status.strip():
+        self.status = self.status.strip()
+
+        if not self.status:
             raise ValueError(
                 "status must be a non-empty string"
             )
 
+        # ------------------------------------------------------------
+        # exception
+        # ------------------------------------------------------------
         if (
             self.exception is not None
             and not isinstance(self.exception, Exception)
@@ -45,6 +79,17 @@ class StageOutcome:
                 "exception must be an Exception or None"
             )
 
+        # ------------------------------------------------------------
+        # result
+        #
+        # Accept both:
+        #
+        # 1. canonical AgentResult
+        # 2. legacy dictionary
+        #
+        # This allows Workflow-level compatibility without weakening
+        # the AgentResult contract itself.
+        # ------------------------------------------------------------
         if isinstance(self.result, dict):
             self.result = self._normalize_result(
                 self.result
@@ -58,13 +103,41 @@ class StageOutcome:
                 "result must be an AgentResult, dict, or None"
             )
 
+        # ------------------------------------------------------------
+        # Canonical status
+        #
+        # The AgentResult is the source of truth for successful
+        # execution. Do not allow StageOutcome.status to diverge.
+        # ------------------------------------------------------------
         if self.result is not None:
             self.status = self.result.status
+
+        # ------------------------------------------------------------
+        # Failure consistency
+        # ------------------------------------------------------------
+        if self.exception is not None:
+            self.status = "failed"
+
+    # ----------------------------------------------------------------
+    # Result normalization
+    # ----------------------------------------------------------------
 
     @staticmethod
     def _normalize_result(
         result: dict[str, Any],
     ) -> AgentResult:
+        """
+        Normalize a legacy result dictionary into AgentResult.
+
+        StageOutcome is the compatibility boundary between older
+        Workflow code and the new canonical AgentResult contract.
+
+        AgentResult itself remains strict and still requires:
+            status
+            agent
+            task_id
+        """
+
         payload = dict(result)
 
         payload.setdefault(
@@ -77,26 +150,27 @@ class StageOutcome:
             "unknown",
         )
 
-        return AgentResult.from_dict(payload)
+        return AgentResult.from_dict(
+            payload
+        )
+
+    # ----------------------------------------------------------------
+    # Factory methods
+    # ----------------------------------------------------------------
 
     @classmethod
     def success(
         cls,
         stage: WorkflowStage,
-        result: AgentResult | dict[str, Any],
+        result: AgentResult,
     ) -> "StageOutcome":
         """
-        Create a successful stage outcome.
+        Create a successful StageOutcome.
         """
-
-        if isinstance(result, dict):
-            result = cls._normalize_result(
-                result
-            )
 
         if not isinstance(result, AgentResult):
             raise TypeError(
-                "result must be an AgentResult or dict"
+                "StageOutcome.success requires an AgentResult"
             )
 
         return cls(
@@ -113,12 +187,12 @@ class StageOutcome:
         exception: Exception,
     ) -> "StageOutcome":
         """
-        Create a failed stage outcome.
+        Create a failed StageOutcome.
         """
 
         if not isinstance(exception, Exception):
             raise TypeError(
-                "exception must be an Exception"
+                "StageOutcome.failure requires an Exception"
             )
 
         return cls(
@@ -128,32 +202,62 @@ class StageOutcome:
             exception=exception,
         )
 
+    # ----------------------------------------------------------------
+    # Compatibility representation
+    # ----------------------------------------------------------------
+
     @property
-    def is_success(self) -> bool:
+    def result_dict(self) -> dict[str, Any]:
+        """
+        Return the canonical dictionary representation of result.
+
+        ``result`` remains the canonical AgentResult object.
+
+        This property exists for Workflow code and legacy callers
+        that still consume dictionary-shaped results.
+        """
+
+        if self.result is None:
+            return {}
+
+        return self.result.to_dict()
+
+    # ----------------------------------------------------------------
+    # Convenience helpers
+    # ----------------------------------------------------------------
+
+    @property
+    def succeeded(self) -> bool:
+        """
+        Whether this stage completed without an exception.
+        """
+
         return (
             self.exception is None
+            and self.result is not None
             and self.status != "failed"
         )
 
     @property
-    def is_failure(self) -> bool:
+    def failed(self) -> bool:
+        """
+        Whether this stage failed.
+        """
+
         return (
-            self.exception is not None
-            or self.status == "failed"
+            self.status == "failed"
+            or self.exception is not None
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """
+        Convert StageOutcome into a serializable dictionary.
+        """
+
         return {
             "stage": self.stage.value,
             "status": self.status,
-            "result": (
-                self.result.to_dict()
-                if isinstance(
-                    self.result,
-                    AgentResult,
-                )
-                else None
-            ),
+            "result": self.result_dict,
             "exception": (
                 str(self.exception)
                 if self.exception is not None
@@ -284,11 +388,16 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
+        """
+        Execute the tester stage and always return a StageOutcome.
+        """
 
         try:
             raw_result = self.tester.run(task)
 
-            result = normalize_agent_result(raw_result)
+            result = normalize_agent_result(
+                raw_result
+            )
 
             return StageOutcome.success(
                 WorkflowStage.TESTER,
@@ -418,11 +527,20 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
+        """
+        Execute the developer stage and always return a StageOutcome.
+
+        The method itself does not mutate task state on failure.
+        Task state transitions are handled centrally by
+        _apply_developer_outcome().
+        """
 
         try:
             raw_result = self.developer.run(task)
 
-            result = normalize_agent_result(raw_result)
+            result = normalize_agent_result(
+                raw_result
+            )
 
             return StageOutcome.success(
                 WorkflowStage.DEVELOPER,
@@ -430,7 +548,7 @@ class TaskWorkflow:
             )
 
         except Exception as exc:
-            outcome = StageOutcome.failure(
+            return StageOutcome.failure(
                 WorkflowStage.DEVELOPER,
                 exc,
             )
@@ -477,11 +595,16 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
+        """
+        Execute the reviewer stage and always return a StageOutcome.
+        """
 
         try:
             raw_result = self.reviewer.run(task)
 
-            result = normalize_agent_result(raw_result)
+            result = normalize_agent_result(
+                raw_result
+            )
 
             return StageOutcome.success(
                 WorkflowStage.REVIEWER,
