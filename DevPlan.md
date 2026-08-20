@@ -14,9 +14,9 @@ pytest -q
 463 passed in 0.96s
 ```
 
-**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。**
+**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。Phase 5.2 Tool Registry 已完成实现，等待用户专项/全量测试验收。**
 
-工作树：用户本地已完成全量测试并确认通过；本节点文档更新已提交 GitHub，等待用户 Pull 后进入 5.2。
+工作树：本轮 5.2 修改已直接提交 GitHub；用户 Pull 后运行专项测试和全量 pytest，确认通过后再把 5.2 标记为最终完成。
 
 ---
 
@@ -176,17 +176,41 @@ pytest -q
 
 **结论：5.1 Tool Contract 已完成。**
 
-## ☐ 5.2 Tool Registry Contract
+## ☐ 5.2 Tool Registry Contract — 实现完成，验收待确认
 
-目标：将当前简单 `TOOLS` 映射提升为明确、可验证、provider-independent 的 Tool Registry 抽象。
+本轮已完成 Registry abstraction 的第一版最小实现，并新增 `tests/test_tool_registry.py`。
 
-重点：
+已冻结：
 
-1. 冻结注册 / 查询 / 枚举接口。
-2. 明确 duplicate name、unknown tool、invalid registration 的行为。
-3. Registry 输出 Tool Schema 时必须与 callable 保持一致。
-4. Developer tool-calling loop 只通过 Registry 获取 Tool，不直接依赖底层实现集合。
-5. 不在本节点引入 Sandbox、权限系统或复杂参数校验。
+1. `ToolRegistry.register(name, implementation, schema)` 注册接口。
+2. `ToolRegistry.get(name)` 查询接口。
+3. `ToolRegistry.list()` 枚举接口。
+4. `ToolRegistry.schema(name)` 单 Tool schema 查询接口。
+5. `ToolRegistry.schemas()` 从 Registry 输出完整 function-call schemas。
+6. duplicate name 明确抛出 `ValueError`。
+7. unknown tool 明确抛出 `KeyError`。
+8. 非法 name / implementation / schema 明确拒绝。
+9. schema function name 必须与 registration name 一致。
+10. Registry 返回独立 schema snapshot，调用方修改结果不会污染内部 registry。
+11. 默认 Tool 集合由 Registry 初始化，现有 `TOOLS[name]` API 保持兼容。
+12. Developer tool-calling loop 已改为通过 `TOOL_REGISTRY` 获取 Tool implementation 与 schemas，不再直接把 `TOOLS_SCHEMA` 作为执行边界。
+13. 本节点不引入 Sandbox、权限系统或复杂参数校验。
+
+新增：
+
+```text
+tests/test_tool_registry.py
+```
+
+本轮提交：
+
+```text
+fa67866  test: define ToolRegistry contract
+549c0de  refactor: introduce ToolRegistry abstraction
+0420eed  refactor: route Developer tools through ToolRegistry
+```
+
+**状态：实现已完成；必须等待用户 Pull 后执行专项测试和全量 pytest，确认通过后才能将 5.2 标记为最终完成。**
 
 ## ☐ 5.3 Tool Argument Validation
 ## ☐ 5.4 Workspace Sandbox
@@ -245,6 +269,9 @@ pytest -q
 | √ | `a8a05d0` | Provider/config substitution contract tests |
 | √ | `—` | 4.5 user validation: 456 passed |
 | √ | `—` | 5.1 Tool Contract user validation: 463 passed |
+| ⏳ | `fa67866` | 5.2 Tool Registry contract tests |
+| ⏳ | `549c0de` | 5.2 ToolRegistry abstraction |
+| ⏳ | `0420eed` | 5.2 Developer Registry integration |
 
 ---
 
@@ -266,34 +293,25 @@ pytest -q
 14. Provider/config substitution 必须通过 BaseLLM contract 验证，而不是在 Workflow 中增加 provider-specific 分支。
 15. Tool architecture 应继续保持 provider-independent；Tool capability 不应反向污染 BaseLLM 文本生成契约。
 16. Tool Contract 先冻结 capability boundary，再逐步增加 Registry、参数校验、Sandbox、权限和错误语义；避免一次性重构所有 Tool 基础设施。
+17. Tool Registry 必须成为 Developer tool resolution 与 schema generation 的统一边界；旧 `TOOLS` 仅作为兼容 API 保留。
+18. Registry contract 先冻结 duplicate / unknown / invalid registration 语义，再进入参数校验和安全边界，避免多个基础设施变化同时发生。
 
 ---
 
 # 当前下一动作
 
-**Phase 5.2 Tool Registry Contract**
+**Phase 5.2 Tool Registry Contract — 用户验收阶段**
 
-目标：把当前 `tools/registry.py` 中的简单 `TOOLS` 字典提升为正式 Registry abstraction，同时保持现有 Tool implementations 和 Developer tool-calling behavior 兼容。
+请用户 Pull 后首先执行：
 
-执行顺序：
-
-```text
-现有 TOOLS mapping
-    ↓
-Registry contract tests
-    ↓
-ToolRegistry abstraction
-    ↓
-Developer / schema integration
+```powershell
+pytest tests/test_tool_registry.py tests/test_tool_contract.py -q
 ```
 
-第一步先增加 Registry contract tests，冻结：
+然后执行：
 
-1. `register()` / `get()` / `list()` 的最小语义。
-2. 重复注册必须有明确、稳定的错误行为。
-3. 查询不存在 Tool 必须有明确、稳定的错误行为。
-4. Registry 必须拒绝无效 Tool registration。
-5. Schema generation 必须来自 Registry，而不是维护第二份脱节的 Tool name 列表。
-6. 旧 `TOOLS` API 在迁移期间保持兼容，避免无必要的全局改动。
+```powershell
+pytest -q
+```
 
-专项测试通过后，再实现 Registry；最后运行全量 `pytest -q` 并记录最终结果。
+如果专项和全量均通过，再将 5.2 标记为最终完成，并进入 **5.3 Tool Argument Validation**。
