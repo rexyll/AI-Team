@@ -1,5 +1,6 @@
 from agents.base import BaseAgent
 from config.model import ask_ai
+from runtime.agent_result import AgentResult
 from runtime.task import Task
 
 
@@ -20,11 +21,12 @@ SYSTEM_PROMPT = """
 
 
 class ArchitectAgent(BaseAgent):
+
     @property
     def role(self) -> str:
         return "architect"
 
-    def run(self, task: Task):
+    def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
             raise TypeError(
                 "ArchitectAgent.run() expects Task, "
@@ -47,9 +49,12 @@ class ArchitectAgent(BaseAgent):
             system_prompt=SYSTEM_PROMPT,
         )
 
-        return {
-            "status": "architect_completed",
-            "agent": self.role,
-            "task_id": task.id,
-            "architecture": result,
-        }
+        return AgentResult(
+            status="completed",
+            agent=self.role,
+            task_id=task.id,
+            message=result,
+            data={
+                "architecture": result,
+            },
+        )

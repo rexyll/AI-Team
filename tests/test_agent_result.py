@@ -314,3 +314,100 @@ def test_normalize_result_status_rejects_empty_status():
 
     with pytest.raises(ValueError):
         normalize_result_status("")
+
+
+def test_agent_result_from_any_accepts_agent_result():
+    original = AgentResult(
+        status="completed",
+        agent="developer",
+        task_id="TASK-001",
+        message="done",
+    )
+
+    result = AgentResult.from_any(original)
+
+    assert result is original
+
+
+def test_agent_result_from_any_injects_agent_and_task_id():
+    result = AgentResult.from_any(
+        {
+            "status": "completed",
+            "message": "done",
+        },
+        agent="developer",
+        task_id="TASK-001",
+    )
+
+    assert result.status == "completed"
+    assert result.agent == "developer"
+    assert result.task_id == "TASK-001"
+    assert result.message == "done"
+
+
+def test_agent_result_supports_legacy_payload_access():
+    result = AgentResult.from_dict(
+        {
+            "status": "architect_completed",
+            "agent": "architect",
+            "task_id": "TASK-001",
+            "architecture": "SQLite architecture",
+        }
+    )
+
+    assert result["architecture"] == "SQLite architecture"
+    assert result.get("architecture") == "SQLite architecture"
+
+
+def test_agent_result_succeeded_for_completed():
+    result = AgentResult(
+        status="completed",
+        agent="developer",
+        task_id="TASK-001",
+    )
+
+    assert result.succeeded is True
+    assert result.failed is False
+    assert result.requires_revision is False
+
+
+def test_agent_result_succeeded_for_approved():
+    result = AgentResult(
+        status="approved",
+        agent="reviewer",
+        task_id="TASK-001",
+    )
+
+    assert result.succeeded is True
+
+
+def test_agent_result_succeeded_for_passed():
+    result = AgentResult(
+        status="passed",
+        agent="tester",
+        task_id="TASK-001",
+    )
+
+    assert result.succeeded is True
+
+
+def test_agent_result_failed():
+    result = AgentResult(
+        status="failed",
+        agent="tester",
+        task_id="TASK-001",
+    )
+
+    assert result.failed is True
+    assert result.succeeded is False
+
+
+def test_agent_result_requires_revision():
+    result = AgentResult(
+        status="revision",
+        agent="reviewer",
+        task_id="TASK-001",
+    )
+
+    assert result.requires_revision is True
+    assert result.succeeded is False

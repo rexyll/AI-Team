@@ -8,6 +8,7 @@ from runtime.task import Task
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
+
 MAX_TOOL_ITERATIONS = 50
 
 
@@ -42,6 +43,7 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 
 
 class DeveloperAgent(BaseAgent):
+
     @property
     def role(self) -> str:
         return "developer"
@@ -50,24 +52,45 @@ class DeveloperAgent(BaseAgent):
         context_text = ""
 
         if task.context:
-            context_text += "\n====================\nUPSTREAM AGENT CONTEXT\n====================\n"
+            context_text += (
+                "\n====================\n"
+                "UPSTREAM AGENT CONTEXT\n"
+                "====================\n"
+            )
+
             for context_key, data in task.context.items():
                 if context_key == "reviewer_feedback":
                     continue
 
-                context_text += f"\nDependency: {context_key}\nRole: {data.get('role', '')}\nTitle: {data.get('title', '')}\n"
+                context_text += (
+                    f"\nDependency: {context_key}\n"
+                    f"Role: {data.get('role', '')}\n"
+                    f"Title: {data.get('title', '')}\n"
+                )
+
                 result = data.get("result", {})
+
                 if isinstance(result, dict):
                     architecture = result.get("architecture")
+
                     if architecture:
-                        context_text += "\nArchitect Architecture Design:\n" + str(architecture)
+                        context_text += (
+                            "\nArchitect Architecture Design:\n"
+                            + str(architecture)
+                        )
                     else:
-                        context_text += json.dumps(result, ensure_ascii=False, indent=2)
+                        context_text += json.dumps(
+                            result,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
                 else:
                     context_text += str(result)
+
                 context_text += "\n"
 
         reviewer_feedback = task.context.get("reviewer_feedback")
+
         if reviewer_feedback:
             context_text += """
             ====================
@@ -78,6 +101,7 @@ class DeveloperAgent(BaseAgent):
             本轮必须认真处理这些意见，并在最终结果中说明如何解决。
 
             """
+
             context_text += json.dumps(
                 reviewer_feedback,
                 ensure_ascii=False,
@@ -105,11 +129,17 @@ class DeveloperAgent(BaseAgent):
         """
 
         return [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
         ]
 
-    def run(self, task: Task):
+    def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
             raise TypeError(
                 "DeveloperAgent.run() expects Task, "
@@ -129,11 +159,13 @@ class DeveloperAgent(BaseAgent):
             message = response.choices[0].message
 
             if not message.tool_calls:
+                content = message.content or ""
+
                 return AgentResult(
                     status="completed",
-                    agent="developer",
+                    agent=self.role,
                     task_id=task.id,
-                    message=message,
+                    message=content,
                 )
 
             messages.append(
@@ -156,43 +188,72 @@ class DeveloperAgent(BaseAgent):
 
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
+
                 print(f"\n[Tool] {tool_name}")
 
                 try:
-                    arguments = json.loads(tool_call.function.arguments)
+                    arguments = json.loads(
+                        tool_call.function.arguments
+                    )
                 except (TypeError, json.JSONDecodeError) as exc:
-                    result = f"Tool error: invalid JSON arguments: {type(exc).__name__}: {exc}"
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    })
+                    result = (
+                        "Tool error: invalid JSON arguments: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        }
+                    )
+
                     continue
 
                 print(f"[Args] {arguments}")
 
                 if tool_name not in TOOLS:
                     result = f"Unknown tool: {tool_name}"
+
                 else:
                     try:
                         tool_function = TOOLS[tool_name]
-                        filtered_arguments, ignored_arguments = validate_tool_arguments(
+
+                        (
+                            filtered_arguments,
+                            ignored_arguments,
+                        ) = validate_tool_arguments(
                             tool_function,
                             arguments,
                         )
+
                         if ignored_arguments:
-                            print(f"[Ignored Args] {ignored_arguments}")
-                        result = tool_function(**filtered_arguments)
+                            print(
+                                f"[Ignored Args] {ignored_arguments}"
+                            )
+
+                        result = tool_function(
+                            **filtered_arguments
+                        )
+
                     except Exception as exc:
-                        result = f"Tool error: {type(exc).__name__}: {exc}"
+                        result = (
+                            f"Tool error: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
 
                 print(f"[Result]\n{result}")
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": str(result),
-                })
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(result),
+                    }
+                )
 
         raise RuntimeError(
-            f"Developer tool loop exceeded maximum iterations: {MAX_TOOL_ITERATIONS}"
+            "Developer tool loop exceeded maximum iterations: "
+            f"{MAX_TOOL_ITERATIONS}"
         )

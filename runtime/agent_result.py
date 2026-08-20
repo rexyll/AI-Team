@@ -57,7 +57,44 @@ class AgentResult:
         message
         data
 
-    Legacy Agent-specific payload fields are normalized into ``data``.
+    Compatibility rules:
+
+    1. ``agent`` and ``task_id`` may be omitted when constructing an
+       AgentResult directly. This is required by the runtime contract
+       layer, which may validate a partially populated result object.
+
+    2. ``from_dict()`` remains strict and requires:
+           status
+           agent
+           task_id
+
+       This prevents malformed external/legacy dictionaries from silently
+       becoming valid AgentResult objects.
+
+    3. Legacy Agent-specific payload fields are normalized into ``data``.
+
+       For example:
+
+           {
+               "status": "architect_completed",
+               "agent": "architect",
+               "task_id": "TASK-001",
+               "architecture": "SQLite architecture",
+           }
+
+       becomes:
+
+           AgentResult(
+               status="completed",
+               agent="architect",
+               task_id="TASK-001",
+               data={
+                   "architecture": "SQLite architecture"
+               }
+           )
+
+    4. Legacy payload fields remain directly accessible through
+       ``result[key]`` and ``result.get(key)``.
     """
 
     status: str
@@ -109,6 +146,25 @@ class AgentResult:
         }
 
     def __getitem__(self, key: str) -> Any:
+        """
+        Dictionary-style access to canonical fields and legacy payload fields.
+
+        Canonical:
+
+            result["status"]
+            result["agent"]
+            result["task_id"]
+            result["message"]
+            result["data"]
+
+        Legacy payload:
+
+            result["architecture"]
+            result["implementation"]
+            result["risk"]
+
+        Legacy fields are resolved from ``self.data``.
+        """
         if key == "status":
             return self.status
 
@@ -124,6 +180,9 @@ class AgentResult:
         if key == "data":
             return self.data
 
+        if key in self.data:
+            return self.data[key]
+
         raise KeyError(key)
 
     def get(
@@ -131,6 +190,9 @@ class AgentResult:
         key: str,
         default: Any = None,
     ) -> Any:
+        """
+        Dictionary-style ``get()`` with support for legacy payload fields.
+        """
         try:
             return self[key]
         except KeyError:
@@ -146,6 +208,15 @@ class AgentResult:
 
         1. Canonical AgentResult dictionaries.
         2. Legacy Agent dictionaries.
+
+        ``from_dict()`` intentionally requires the three core fields:
+
+            status
+            agent
+            task_id
+
+        This is stricter than direct AgentResult construction because
+        dictionary input normally represents an external/runtime boundary.
 
         Legacy Agent-specific payload fields are normalized into ``data``.
         """
@@ -182,6 +253,8 @@ class AgentResult:
                 "AgentResult data must be a dictionary"
             )
 
+        # Copy the dictionary so the caller's original object is never
+        # modified by normalization.
         data = dict(data)
 
         # ------------------------------------------------------------
@@ -209,6 +282,7 @@ class AgentResult:
         if legacy_result is not None:
             if isinstance(legacy_result, dict):
                 for key, value in legacy_result.items():
+                    # Canonical data wins if the same key exists.
                     data.setdefault(key, value)
             else:
                 data.setdefault(
@@ -230,6 +304,7 @@ class AgentResult:
 
         for key, value in result.items():
             if key not in reserved_fields:
+                # Canonical ``data`` wins over legacy top-level fields.
                 data.setdefault(key, value)
 
         return cls(
@@ -239,50 +314,69 @@ class AgentResult:
             message=result.get("message", ""),
             data=data,
         )
-        
-        
-    
-@classmethod
-def from_any(
-    cls,
-    result: "AgentResult | dict[str, Any]",
-    *,
-    agent: str | None = None,
-    task_id: str | None = None,
-) -> "AgentResult":
-    if isinstance(result, cls):
-        return result
 
-    if not isinstance(result, dict):
-        raise TypeError(
-            "Agent result must be an AgentResult or dict"
-        )
+    @classmethod
+    def from_any(
+        cls,
+        result: "AgentResult | dict[str, Any]",
+        *,
+        agent: str | None = None,
+        task_id: str | None = None,
+    ) -> "AgentResult":
+        """
+        Normalize either an AgentResult or a dictionary.
 
-    payload = dict(result)
+        When dictionary input is supplied, optional ``agent`` and
+        ``task_id`` arguments can fill missing fields before passing the
+        payload through the strict ``from_dict()`` contract.
 
-    if agent is not None:
-        payload.setdefault("agent", agent)
+        Example:
 
-    if task_id is not None:
-        payload.setdefault("task_id", task_id)
+            AgentResult.from_any(
+                {"status": "completed"},
+                agent="developer",
+                task_id="TASK-001",
+            )
+        """
+        if isinstance(result, cls):
+            return result
 
-    return cls.from_dict(payload)
+        if not isinstance(result, dict):
+            raise TypeError(
+                "Agent result must be an AgentResult or dict"
+            )
 
+        payload = dict(result)
 
-@property
-def succeeded(self) -> bool:
-    return self.status in {
-        "completed",
-        "approved",
-        "passed",
-    }
+        if agent is not None:
+            payload.setdefault("agent", agent)
 
+        if task_id is not None:
+            payload.setdefault("task_id", task_id)
 
-@property
-def failed(self) -> bool:
-    return self.status == "failed"
+        return cls.from_dict(payload)
 
+    @property
+    def succeeded(self) -> bool:
+        """
+        Whether the result represents a successful outcome.
+        """
+        return self.status in {
+            "completed",
+            "approved",
+            "passed",
+        }
 
-@property
-def requires_revision(self) -> bool:
-    return self.status == "revision"
+    @property
+    def failed(self) -> bool:
+        """
+        Whether the result represents a failed outcome.
+        """
+        return self.status == "failed"
+
+    @property
+    def requires_revision(self) -> bool:
+        """
+        Whether the result requires another development/review round.
+        """
+        return self.status == "revision"

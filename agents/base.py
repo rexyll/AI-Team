@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from runtime.agent_config import AgentConfig
+from runtime.agent_result import AgentResult
 from runtime.task import Task
 
 
@@ -15,10 +16,11 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def run(self, task: Task):
+    def run(self, task: Task) -> AgentResult:
         """
         Execute one AI Team task.
 
-        All agents must receive a runtime.task.Task object.
+        All agents must receive a runtime.task.Task object
+        and return an AgentResult.
         """
         pass
