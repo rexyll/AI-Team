@@ -10,16 +10,13 @@
 最新用户验收：
 
 ```text
-pytest tests/test_workflow_llm_independence.py -q
-3 passed in 0.60s
-
 pytest -q
-451 passed in 0.95s
+456 passed in 0.95s
 ```
 
-**Phase 4.4 Workflow → LLM-independent 已完成。**
+**Phase 4.5 Provider/config 可替换已完成。**
 
-工作树：由用户本地确认；上一节点已同步且 clean。
+工作树：用户本地已完成全量测试并确认通过；本节点已提交 GitHub，等待用户 Pull 后进入下一节点。
 
 ---
 
@@ -127,19 +124,31 @@ pytest -q
 
 **结论：4.4 Workflow → LLM-independent 已完成。**
 
-## ☐ 4.5 Provider/config 可替换
+## <span style="color:green">√</span> 4.5 Provider/config 可替换
 
-目标：验证并固化 provider/config 的可替换性：同一 Workflow / Agent execution path 可以通过 `BaseLLM` 注入不同实现，而无需修改 Workflow 代码。
+已完成 provider/config substitution contract，并通过用户全量验收：
 
-本节点重点：
+```text
+pytest -q
+456 passed in 0.95s
+```
 
-1. 明确 LLM provider configuration 与 Agent execution 的边界。
-2. 为不同 `BaseLLM` 实现建立统一注入契约。
-3. 验证同一 Agent / Workflow 可在 MockLLM 与 ProviderLLM-compatible fake 之间切换。
-4. 禁止 Workflow 根据 provider 名称、model 名称或配置类型分支。
-5. 确保默认配置仍保持现有运行路径兼容。
+新增：
 
-**下一步：先新增 4.5 provider/config substitution contract tests；专项测试通过后运行全量 pytest，再正式关闭 4.5。**
+```text
+tests/test_provider_config_substitution.py
+```
+
+已固化以下架构约束：
+
+1. 同一个 Agent execution contract 可以注入不同 `BaseLLM` 实现。
+2. `MockLLM` 与 `ProviderLLM` 可以走同一 Agent / Workflow execution path。
+3. Provider model/client configuration 保持在 `ProviderLLM` adapter 内部，不泄漏到 Agent execution contract。
+4. Workflow 不允许根据 provider、model 或 provider configuration 分支。
+5. Agent LLM injection 必须接受 `BaseLLM`，拒绝任意非 `BaseLLM` 对象。
+6. 默认 provider 运行路径继续保持兼容。
+
+**结论：4.5 Provider/config 可替换已完成。**
 
 # Phase 5 — Tool / Sandbox Architecture
 
@@ -199,8 +208,8 @@ pytest -q
 | √ | `1a65e57` | Phase 3.4.5 completion docs |
 | √ | `eb53804` | Legacy Task.context usage inventory |
 | √ | `18a9bb4` | Workflow LLM-independence contract tests |
-| √ | `—` | 4.4 user validation: 451 passed |
-| ☐ | — | 4.5 Provider/config 可替换 |
+| √ | `a8a05d0` | Provider/config substitution contract tests |
+| √ | `—` | 4.5 user validation: 456 passed |
 
 ---
 
@@ -220,26 +229,34 @@ pytest -q
 12. Workflow 的职责是编排 Agent execution，不应持有或理解具体 LLM provider 生命周期。
 13. LLM 可替换性应通过 Agent dependency injection 实现，而不是通过 Workflow provider 分支实现。
 14. Provider/config substitution 必须通过 BaseLLM contract 验证，而不是在 Workflow 中增加 provider-specific 分支。
+15. Tool architecture 应继续保持 provider-independent；Tool capability 不应反向污染 BaseLLM 文本生成契约。
 
 ---
 
 # 当前下一动作
 
-**4.5 Provider/config 可替换**
+**Phase 5.1 Tool Contract**
 
-执行路径：
+目标：建立统一、provider-independent 的 Tool 调用契约，为 Developer 的 tool-calling loop、Tool Registry、参数校验、权限和 Sandbox 奠定稳定边界。
+
+第一步只做 contract，不立即实现完整工具系统：
 
 ```text
-Configuration
-      ↓
-BaseLLM implementation
-   ↙             ↘
-MockLLM       ProviderLLM
-      \          /
-       \        /
-          Agent
-            ↓
-         Workflow
+Agent
+  ↓
+Tool Contract
+  ↓
+Tool Registry
+  ↓
+Tool implementation
 ```
 
-下一步：建立 `tests/test_provider_config_substitution.py`，先验证同一 Agent / Workflow execution path 可以替换不同 `BaseLLM` 实现，同时确保 Workflow 完全不感知 provider/config。
+重点验证：
+
+1. Tool 有稳定的 `name / description / input schema / execute` 边界。
+2. Tool execution result 使用统一结构，不直接泄漏底层异常类型或 provider-specific 数据。
+3. Tool contract 可以被 Developer 与未来 Tool Registry 共同消费。
+4. Tool 不应直接依赖 Workflow 或具体 LLM provider。
+5. 错误、参数和权限边界留到后续节点逐步收敛，不在 5.1 过度设计。
+
+下一步：先检查现有 `tools/`、Developer tool-calling loop 和相关测试，设计最小 `Tool` contract，并新增 contract tests；专项测试通过后再实现 Registry。
