@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from runtime.agent_context import AgentContext
+from runtime.legacy_dependency_bridge import LegacyDependencyBridge
 from runtime.task import Task
 
 
@@ -12,6 +13,7 @@ class ContextBuilder:
 
     def __init__(self, all_tasks: dict[str, Task] | None = None):
         self.all_tasks = all_tasks or {}
+        self._dependency_bridge = LegacyDependencyBridge(self.all_tasks)
 
     def build(self, task: Task) -> dict[str, Any]:
         """Build the legacy dictionary-based execution context."""
@@ -34,10 +36,9 @@ class ContextBuilder:
         ``dependencies`` remains the compact dependency-ID view.
         ``dependency_context`` contains completed dependency snapshots.
 
-        When ``all_tasks`` is unavailable, an already-built legacy
-        ``task.context`` dependency snapshot is used as a compatibility
-        source. This keeps the AgentContext migration from silently losing
-        Architect -> Developer context without changing Workflow behavior.
+        Legacy ``Task.context`` dependency data is read only through the
+        dedicated compatibility bridge and only when canonical task data is
+        unavailable.
         """
         self._validate_task(task)
 
@@ -77,38 +78,7 @@ class ContextBuilder:
         )
 
     def _build_dependency_context(self, task: Task) -> dict[str, Any]:
-        context: dict[str, Any] = {}
-
-        for dependency_id in task.dependencies:
-            dependency = self.all_tasks.get(dependency_id)
-
-            if dependency is not None:
-                if dependency.status != "completed":
-                    continue
-
-                context[dependency_id] = {
-                    "title": dependency.title,
-                    "role": dependency.role,
-                    "result": deepcopy(dependency.result),
-                }
-                continue
-
-            # Compatibility path: Workflow may already have materialized
-            # the completed dependency snapshot into task.context.
-            legacy_context = getattr(task, "context", {})
-            if not isinstance(legacy_context, dict):
-                continue
-
-            value = legacy_context.get(dependency_id)
-            if not isinstance(value, dict):
-                continue
-
-            if not {"title", "role", "result"}.issubset(value):
-                continue
-
-            context[dependency_id] = deepcopy(value)
-
-        return context
+        return self._dependency_bridge.build(task)
 
     @staticmethod
     def _build_tester_feedback(task: Task) -> dict[str, Any] | None:
@@ -173,4 +143,4 @@ def build_task_context(
     all_tasks: dict[str, Task],
 ) -> dict[str, Any]:
     """Backward-compatible functional API."""
-    return ContextBuilder(all_tasks).build(task)["dependencies"]
+    return LegacyDependencyBridge(all_tasks).build(task)
