@@ -239,3 +239,50 @@ class AgentResult:
             message=result.get("message", ""),
             data=data,
         )
+        
+        
+    
+@classmethod
+def from_any(
+    cls,
+    result: "AgentResult | dict[str, Any]",
+    *,
+    agent: str | None = None,
+    task_id: str | None = None,
+) -> "AgentResult":
+    if isinstance(result, cls):
+        return result
+
+    if not isinstance(result, dict):
+        raise TypeError(
+            "Agent result must be an AgentResult or dict"
+        )
+
+    payload = dict(result)
+
+    if agent is not None:
+        payload.setdefault("agent", agent)
+
+    if task_id is not None:
+        payload.setdefault("task_id", task_id)
+
+    return cls.from_dict(payload)
+
+
+@property
+def succeeded(self) -> bool:
+    return self.status in {
+        "completed",
+        "approved",
+        "passed",
+    }
+
+
+@property
+def failed(self) -> bool:
+    return self.status == "failed"
+
+
+@property
+def requires_revision(self) -> bool:
+    return self.status == "revision"

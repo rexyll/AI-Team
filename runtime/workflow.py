@@ -17,9 +17,18 @@ MAX_REVIEW_ROUNDS = 3
 @dataclass(frozen=True)
 class StageOutcome:
     stage: WorkflowStage
-    status: str
     result: AgentResult | None = None
     exception: Exception | None = None
+
+    @property
+    def status(self) -> str:
+        if self.result is not None:
+            return self.result.status
+
+        if self.exception is not None:
+            return "failed"
+
+        return "failed"
 
     @property
     def succeeded(self) -> bool:
@@ -52,6 +61,29 @@ class StageOutcome:
             ),
         }
     
+  
+@classmethod
+def success(
+    cls,
+    stage: WorkflowStage,
+    result: AgentResult,
+) -> "StageOutcome":
+    return cls(
+        stage=stage,
+        result=result,
+    )
+  
+    
+@classmethod
+def failure(
+    cls,
+    stage: WorkflowStage,
+    exception: Exception,
+) -> "StageOutcome":
+    return cls(
+        stage=stage,
+        exception=exception,
+    )
     
 class WorkflowStage(str, Enum):
     DEVELOPER = "developer"
@@ -177,18 +209,18 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
-
         try:
             raw_result = self.tester.run(task)
 
-            result = normalize_agent_result(
-                raw_result
+            result = AgentResult.from_any(
+                raw_result,
+                agent="tester",
+                task_id=task.id,
             )
 
-            return StageOutcome(
-                stage=WorkflowStage.TESTER,
-                status=result.status,
-                result=result,
+            return StageOutcome.success(
+                WorkflowStage.TESTER,
+                result,
             )
 
         except Exception as exc:
@@ -196,7 +228,11 @@ class TaskWorkflow:
                 task.id,
                 f"Tester execution failed: {exc}",
             )
-            raise
+
+            return StageOutcome.failure(
+                WorkflowStage.TESTER,
+                exc,
+            )
     
     
     def _apply_tester_outcome(
@@ -315,18 +351,18 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
-
         try:
             raw_result = self.developer.run(task)
 
-            result = normalize_agent_result(
-                raw_result
+            result = AgentResult.from_any(
+                raw_result,
+                agent="developer",
+                task_id=task.id,
             )
 
-            return StageOutcome(
-                stage=WorkflowStage.DEVELOPER,
-                status=result.status,
-                result=result,
+            return StageOutcome.success(
+                WorkflowStage.DEVELOPER,
+                result,
             )
 
         except Exception as exc:
@@ -334,7 +370,11 @@ class TaskWorkflow:
                 task.id,
                 f"Developer execution failed: {exc}",
             )
-            raise
+
+            return StageOutcome.failure(
+                WorkflowStage.DEVELOPER,
+                exc,
+            )
         
     def _apply_developer_outcome(
         self,
@@ -365,18 +405,18 @@ class TaskWorkflow:
         self,
         task: Task,
     ) -> StageOutcome:
-
         try:
             raw_result = self.reviewer.run(task)
 
-            result = normalize_agent_result(
-                raw_result
+            result = AgentResult.from_any(
+                raw_result,
+                agent="reviewer",
+                task_id=task.id,
             )
 
-            return StageOutcome(
-                stage=WorkflowStage.REVIEWER,
-                status=result.status,
-                result=result,
+            return StageOutcome.success(
+                WorkflowStage.REVIEWER,
+                result,
             )
 
         except Exception as exc:
@@ -384,7 +424,11 @@ class TaskWorkflow:
                 task.id,
                 f"Reviewer execution failed: {exc}",
             )
-            raise
+
+            return StageOutcome.failure(
+                WorkflowStage.REVIEWER,
+                exc,
+            )
     
     def _apply_reviewer_outcome(
         self,
