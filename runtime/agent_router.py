@@ -22,13 +22,13 @@ class AgentRouter:
 
             router.register("developer", agent)
 
-        The legacy form is kept for backward compatibility during
-        the Agent Router migration.
+        The legacy form is kept for backward compatibility.
         """
 
         if agent is None:
             # New API:
             # router.register(agent)
+
             agent = agent_or_role
 
             if not isinstance(agent, BaseAgent):
@@ -41,6 +41,7 @@ class AgentRouter:
         else:
             # Legacy API:
             # router.register("developer", agent)
+
             role = agent_or_role
 
             if not isinstance(role, str) or not role.strip():
@@ -70,18 +71,54 @@ class AgentRouter:
     def get_agent(
         self,
         role: str,
+    ) -> BaseAgent | None:
+        """
+        Return the registered agent for a role.
+
+        Returns None when the role has not been registered.
+
+        This method keeps the original AgentRouter contract.
+        """
+
+        return self.agents.get(role)
+
+    def route(
+        self,
+        role: str,
     ) -> BaseAgent:
+        """
+        Route a role to its registered Agent.
 
-        if role not in self.agents:
-            raise ValueError(
+        Raises:
+            KeyError:
+                If no agent is registered for the role.
+        """
+
+        try:
+            return self.agents[role]
+        except KeyError:
+            raise KeyError(
                 f"No agent registered for role: {role}"
-            )
-
-        return self.agents[role]
+            ) from None
 
     def has_agent(
         self,
         role: str,
     ) -> bool:
+        """
+        Return True when an agent is registered for the role.
+        """
 
         return role in self.agents
+
+    def list_agents(
+        self,
+    ) -> dict[str, BaseAgent]:
+        """
+        Return all registered agents.
+
+        A shallow copy is returned so callers cannot directly
+        modify the router's internal registry.
+        """
+
+        return self.agents.copy()
