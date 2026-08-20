@@ -1,5 +1,6 @@
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent as RuntimeTesterAgent
+from runtime.llm.mock import MockLLM
 from runtime.task import Task
 
 
@@ -39,7 +40,7 @@ def _task() -> Task:
 
 def test_tester_prompt_consumes_agent_context():
     task = _task()
-    context = RuntimeTesterAgent().build_context(task)
+    context = RuntimeTesterAgent(llm=MockLLM()).build_context(task)
     prompt = RuntimeTesterAgent._build_prompt(context)
 
     assert context.task_id in prompt
@@ -50,7 +51,7 @@ def test_tester_prompt_consumes_agent_context():
 
 def test_reviewer_prompt_consumes_agent_context():
     task = _task()
-    context = ReviewerAgent().build_context(task)
+    context = ReviewerAgent(llm=MockLLM()).build_context(task)
     prompt = ReviewerAgent._build_prompt(context)
 
     assert context.task_id in prompt
@@ -62,37 +63,25 @@ def test_reviewer_prompt_consumes_agent_context():
     assert "review_round=2" in prompt
 
 
-def test_tester_run_uses_agent_context_and_preserves_result(monkeypatch):
+def test_tester_run_uses_agent_context_and_preserves_result():
     task = _task()
+    llm = MockLLM("TEST_PASSED\nEvidence is sufficient.")
 
-    def fake_ask_ai(*, prompt, system_prompt):
-        assert "TASK-CTX-001" in prompt
-        assert "pytest -q -> 10 passed" in prompt
-        return "TEST_PASSED\nEvidence is sufficient."
-
-    monkeypatch.setattr("agents.tester.ask_ai", fake_ask_ai)
-
-    result = RuntimeTesterAgent().run(task)
+    result = RuntimeTesterAgent(llm=llm).run(task)
 
     assert result.status == "passed"
     assert result.agent == "tester"
     assert result.task_id == "TASK-CTX-001"
     assert result.data["tests"] == ["pytest -q -> 10 passed"]
     assert result.data["files_changed"] == ["src/example.py"]
+    assert len(llm.calls) == 1
 
 
-def test_reviewer_run_uses_agent_context_and_preserves_result(monkeypatch):
+def test_reviewer_run_uses_agent_context_and_preserves_result():
     task = _task()
+    llm = MockLLM("APPROVED\nAll requirements are satisfied.")
 
-    def fake_ask_ai(*, prompt, system_prompt):
-        assert "TASK-CTX-001" in prompt
-        assert "TEST_PASSED" in prompt
-        assert "REVISION_REQUIRED" in prompt
-        return "APPROVED\nAll requirements are satisfied."
-
-    monkeypatch.setattr("agents.reviewer.ask_ai", fake_ask_ai)
-
-    result = ReviewerAgent().run(task)
+    result = ReviewerAgent(llm=llm).run(task)
 
     assert result.status == "approved"
     assert result.agent == "reviewer"
@@ -100,3 +89,4 @@ def test_reviewer_run_uses_agent_context_and_preserves_result(monkeypatch):
     assert result.data["tester_status"] == "passed"
     assert result.data["tests"] == ["pytest -q -> 10 passed"]
     assert result.data["files_changed"] == ["src/example.py"]
+    assert len(llm.calls) == 1
