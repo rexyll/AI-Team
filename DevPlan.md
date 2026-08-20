@@ -1,537 +1,253 @@
-# AI-Team 开发计划与开发历史
+# AI-Team DevPlan
 
-> 项目：`rexyll/AI-Team`  
-> 当前分支：`refactor/runtime-architecture`  
-> 本文件是 Development Ledger：已完成节点使用绿色 `√`；进行中节点使用 `☐`。每个迁移节点严格遵循：GitHub 原始代码 → 小范围修改 → 专项测试 → 全量 pytest → 用户 Push → 记录最终 SHA → DevPlan √ → 下一节点。
+> 分支：`refactor/runtime-architecture`  
+> 开发纪律：**GitHub 原始代码 → 小范围修改 → 专项测试 → 全量 pytest → 用户 Push → 记录最终 SHA → DevPlan √ → 下一节点**
 
----
+## 当前状态
 
-# 1. 当前状态
+**Phase 3 — AgentContext 正式化**
 
-## 1.1 最新稳定基线
+最新用户本地 / 远程同步 HEAD：
 
-用户本地最新全量验证：
+```text
+ad786e8 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
+test: add AgentContext snapshot isolation contract coverage
+```
+
+最新全量测试：
 
 ```text
 pytest -q
-373 passed in 31.93s
-```
-
-**当前基线：373 passed / 0 failed。**
-
-最新远程 HEAD：
-
-- `483be86` — `test: cover AgentContext dependency snapshots`
-- `39102e5` — `fix: preserve AgentContext serialization compatibility`
-- `4a848c7` — `test: add DeveloperAgent AgentContext contract coverage`
-
-## 1.2 当前阶段
-
-**Phase 3 — AgentContext 正式化。**
-
-Phase 0/1 已建立 Task Lifecycle、Developer → Tester → Reviewer Quality Gate、Review Loop、Dependency、ContextBuilder、Project Execution；Phase 2 已完成 AgentResult 统一契约；Phase 3.1a / 3.1b / 3.1c 已完成。
-
-**当前节点：Phase 3.1d — Tester / Reviewer → AgentContext 迁移。**
-
----
-
-# 2. 总体架构目标
-
-```text
-User Request
- ↓
-Planner
- ↓
-PlanBuilder
- ↓
-DependencyGraph
- ↓
-ProjectOrchestrator
- ↓
-TaskWorkflow
- ↓
-ContextBuilder
- ↓
-AgentContext
- ↓
-Agent
- ↓
-AgentResult
- ↓
-Tester
- ↓
-Reviewer
- ↓
-ProjectResult
-```
-
-质量门禁保持：
-
-```text
-Developer → Tester FAILED → Developer revision → Tester
-Developer → Tester PASSED → Reviewer
-                         ├→ REVISION → Developer
-                         └→ APPROVED → Complete
+383 passed in 18.29s
 ```
 
 ---
 
-# 3. 已完成历史
-
-## Phase 0 — 基础骨架
-
-### <span style="color:green">√</span> 0.1 多 Agent 基础结构
-
-已建立 Planner / Architect / Developer / Tester / Reviewer，以及 Task / Workflow / Router / Factory。
-
-### <span style="color:green">√</span> 0.2 Developer + Workspace Sandbox
-
-Developer 具备 Workspace Sandbox、Tool Registry、文件读写、测试/构建和 Tool Loop 上限。
-
-关键 commits：
-
-- `f9c42858` / `60ac4e8c` — establish developer agent with workspace sandbox
-- `c9b02371` — pass reviewer feedback and bound tool loop
-- `1e8255d4` — correct terminal command policy
-
-### <span style="color:green">√</span> 0.3 TaskManager / Workflow
-
-TaskManager 负责状态变更，Workflow 负责 orchestration。
-
-- `75fcfe77` — keep task state transitions inside TaskManager
-- `dfb21a51` — centralize workflow execution and failure handling
-- `7592dbee` — route developer tasks through TaskWorkflow
-- `43108ad4` — centralize workflow transitions and review history
-
-## Phase 1 — Lifecycle / Quality Gate
-
-### <span style="color:green">√</span> 1.1 Task Lifecycle
-
-```text
-pending → ready → running → reviewing → review_pending → completed
-```
-
-### <span style="color:green">√</span> 1.2 Tester Quality Gate
-
-Reviewer 只有在 Tester `passed` 后才能运行；Tester `failed` 回到 Developer。
-
-- `7b1e78b0` — dedicated tester agent
-- `458f8050` — register tester agent
-- `9ce87012` — enforce quality gate
-- `63eea6c3` — restore tester workflow execution
-
-### <span style="color:green">√</span> 1.3 Reviewer Revision Loop
-
-支持 `APPROVED` / `REVISION_REQUIRED` 与 `max_review_rounds`。
-
-- `f8d8e2f2` — structured review history
-- `0d57e82c` — simplify workflow result handling
-
-### <span style="color:green">√</span> 1.4 Tester / Reviewer History
-
-支持 `test_result`、`test_history`、`review_result`、`review_history`。
-
-### <span style="color:green">√</span> 1.5 Workflow Result Handling
-
-Tester / Reviewer handling 从主流程抽离。
-
-## Phase 1.5 — Dependency / Context
-
-### <span style="color:green">√</span> 1.6 Dependency Graph
-
-支持依赖并拒绝循环依赖。
-
-- `45840786` — reject cyclic dependencies
-
-### <span style="color:green">√</span> 1.7 ContextBuilder
-
-提供 completed dependency result、Tester feedback、Reviewer feedback，并保持不修改 Task、不执行 Agent、不控制 Workflow。
-
-- `ffad0412` — preserve legacy task context API
-- `5a860447` — context flow integration tests
-
-### <span style="color:green">√</span> 1.8 Reviewer Feedback → Developer Context
-
-- `c9b02371`
-
-## Phase 1.6 — Planning / Orchestration
-
-### <span style="color:green">√</span> 1.9 Planner / PlanBuilder / Project Execution
-
-- `e2d31f3f` — fix project execution test orchestrator
-
-### <span style="color:green">√</span> 1.10 Agent Factory / Registry / Configuration
-
-- `529ca53c` — centralized task workflow factory
-- `79413eb4` — custom configuration validation
-
----
-
-# 4. Phase 2 — AgentResult Contract
-
-### <span style="color:green">√</span> 2.1 AgentResult
-
-统一结构：
-
-```python
-AgentResult(status, agent, task_id, message, data)
-```
-
-- `3d9f2e35` — canonicalize agent results
-
-### <span style="color:green">√</span> 2.2 Legacy Status / Payload Compatibility
-
-统一 legacy status，并将旧 Agent-specific payload 归一化到 `data`，保持 dictionary-style access。
-
-- `6528bf27` — AgentResult legacy compatibility
-- `7bb371b` — complete AgentResult compatibility contract
-
-### <span style="color:green">√</span> 2.3 Result Normalizer / Agent Contract
-
-Architect / Developer / Tester / Reviewer 均返回 AgentResult；`run(Task) -> AgentResult` 成为统一契约。
-
-### <span style="color:green">√</span> 2.4 Tester / Reviewer Result 标准化
-
-- `5bc0575` — standardize tester and reviewer agent results
-
-专项验证历史：
-
-```text
-pytest tests/test_developer_result.py -q   → 5 passed
-pytest tests/test_agent_result.py -q       → 36 passed
-pytest tests/test_task_lifecycle.py -q    → 23 passed
-pytest tests/test_context_flow.py -q       → 10 passed
-```
-
----
-
-# 5. Phase 3 — AgentContext 正式化
+# Phase 3 — AgentContext 正式化
 
 ## <span style="color:green">√</span> 3.1a BaseAgent → AgentContext
 
-建立兼容桥：
+完成 `BaseAgent.build_context()` compatibility bridge，保持 `run(Task) -> AgentResult` 外部契约。
 
-```text
-Task → BaseAgent.build_context() → AgentContext
-```
-
-完成：
-
-- `BaseAgent.build_context()`
-- Agent role 自动注入
-- `all_tasks` 支持
-- dependency snapshot
-- Task / AgentContext 隔离
-- BaseAgent context bridge contract tests
-
-关键 commits：
-
-- `0118003` — record Phase 3.1a and enter Architect migration
-- `8d0745b` — BaseAgent context bridge contract tests
 - `2786309` — `feat: add BaseAgent AgentContext compatibility bridge`
+
+## <span style="color:green">√</span> 3.1b ArchitectAgent → AgentContext
+
+Architect 内部通过 `build_context()` 消费 AgentContext，保持 AgentResult 与 `data["architecture"]` 兼容语义。
+
+- `ae729f4` — `feat: migrate architect agent to AgentContext`
+
+## <span style="color:green">√</span> 3.1c DeveloperAgent → AgentContext
+
+Developer 迁移到 AgentContext，并正式补齐 `dependency_context`，使 completed Architect result 能无损进入 Developer context。
+
+最终用户 Push SHA：
+
+- `483be86` — `test: cover AgentContext dependency snapshots`
 
 验收：
 
 ```text
-pytest -q
-362 passed in 21.11s
-```
-
-## <span style="color:green">√</span> 3.1b ArchitectAgent → AgentContext
-
-Architect 保持：
-
-```text
-run(Task) -> AgentResult
-```
-
-内部改为：
-
-```text
-Task → build_context() → AgentContext → Prompt → AgentResult
-```
-
-最终验收 commit：
-
-- `ae729f4` — `feat: migrate architect agent to AgentContext`
-
-用户已 Push，远程与本地 HEAD 一致。
-
-## <span style="color:green">√</span> 3.1c DeveloperAgent → AgentContext
-
-Developer 完成迁移，同时解决了原有 AgentContext 无法完整承载 completed dependency result 的边界问题。
-
-### 3.1c Context Contract
-
-AgentContext 现在同时提供：
-
-```text
- dependencies
-     ↓
- ["TASK-001", ...]
-
- dependency_context
-     ↓
- {
-   "TASK-001": {
-      "title": "...",
-      "role": "architect",
-      "result": {...}
-   }
- }
-```
-
-这样 Developer 可以获得 Architect 的完整结果，同时仍保持 compact dependency-ID view。
-
-### 3.1c 迁移原则
-
-- 保持 `run(Task) -> AgentResult`
-- Developer prompt 改为消费 AgentContext
-- Tool Loop / Tool Registry / Tool Guard 不改变
-- `changed_files` / tests / evidence 不改变
-- Workflow / TaskManager / Quality Gate 不改变
-- AgentContext 使用 deep-copy snapshot
-- 保留序列化兼容性
-
-### 3.1c 最终验收
-
-用户 Push 后远程 HEAD：
-
-- `483be86` — `test: cover AgentContext dependency snapshots`
-- `39102e5` — `fix: preserve AgentContext serialization compatibility`
-- `4a848c7` — `test: add DeveloperAgent AgentContext contract coverage`
-
-**本节点最终验收 SHA：`483be86`。**
-
-用户本地全量测试：
-
-```text
-pytest -q
 373 passed in 31.93s
 ```
 
-**Phase 3.1c 正式完成。**
+## <span style="color:green">√</span> 3.1d Tester / Reviewer → AgentContext
+
+Tester / Reviewer 均通过 `BaseAgent.build_context()` 使用 AgentContext；未修改 Workflow、TaskManager、Task lifecycle 或 Quality Gate。
+
+最终用户 Push SHA：
+
+- `2237e65` — `test: fix TesterAgent pytest collection warning`
+
+验收：
+
+```text
+377 passed
+0 warnings
+```
 
 ---
 
-## ☐ 3.1d Tester / Reviewer → AgentContext
+# Phase 3.2 — Context Snapshot 完整化
+
+## <span style="color:green">√</span> 3.2.1 Snapshot isolation contract
+
+已通过 Contract Tests 固化以下契约：
+
+- Task → AgentContext 深层数据隔离。
+- AgentContext → Task 深层数据隔离。
+- nested dict/list 等复杂 payload 的 deep-copy 隔离。
+- completed dependency snapshot 隔离。
+- pending / missing dependency 不进入 dependency snapshot。
+- `to_dict()` / `from_dict()` 保持独立对象语义。
+- legacy `task.context` dependency snapshot compatibility path 同样保持 deep-copy。
+
+新增：
+
+```text
+tests/test_agent_context_snapshot.py
+```
+
+最终用户 Push SHA：
+
+- `ad786e8` — `test: add AgentContext snapshot isolation contract coverage`
+
+验收：
+
+```text
+383 passed in 18.29s
+```
+
+**结论：当前 AgentContext snapshot 核心实现已经满足隔离契约，不为制造 commit 而修改生产代码。只有 Contract Test 暴露真实缺口时才修改 Runtime。**
+
+---
+
+# Phase 3.3 — Context History
+
+## ☐ 3.3.1 History Contract
 
 ### 目标
 
-将 Tester / Reviewer 内部 prompt 构造从 Task 直接读取迁移为：
+统一 AgentContext 中的 lifecycle / test / review history 语义，明确：
 
 ```text
-Task
- ↓
-BaseAgent.build_context()
- ↓
-AgentContext
- ↓
-Tester / Reviewer prompt
- ↓
-AgentResult
+Task 持久化历史
+        ≠
+AgentContext execution history snapshot
 ```
 
-### Tester 必须消费
+### 本节点第一步：只做 History Contract Audit / Tests
+
+必须先读取当前 GitHub 实现并确认：
+
+1. `history` 的 canonical schema。
+2. lifecycle history、test history、review history 的边界。
+3. Developer revision 后历史如何进入新的 AgentContext。
+4. Tester / Reviewer 各自需要读取哪些历史。
+5. history 是否保持 snapshot isolation。
+6. `to_dict()` / `from_dict()` 是否保持 history 结构及隔离。
+7. legacy history 字段如何兼容，避免重复记录或 schema 漂移。
+
+### 严格边界
+
+本节点禁止：
+
+- 为了迁移而修改 Workflow。
+- Agent 直接读取 `Task.status_history` 等 mutable state。
+- 引入第二套 history schema。
+- 用隐式兼容逻辑掩盖 schema 不一致。
+- 在没有失败 Contract Test 的情况下修改生产代码。
+
+### 验收门禁
 
 ```text
-context.task_id
-context.task_title
-context.task_description
-context.task_result
-context.tester_feedback
-context.reviewer_feedback
-context.history
-context.metadata
-context.dependency_context
-```
-
-重点保持 Developer Result / test evidence 的语义。
-
-### Reviewer 必须消费
-
-```text
-context.task_id
-context.task_title
-context.task_description
-context.task_result
-context.tester_feedback
-context.reviewer_feedback
-context.history
-context.metadata
-context.dependency_context
-```
-
-重点保持：
-
-- Tester status
-- Developer tests
-- Developer files_changed
-- Architect dependency result
-- previous review result
-- revision loop
-
-### 3.1d 严格边界
-
-只修改：
-
-- `agents/tester.py`
-- `agents/reviewer.py`
-- 对应 AgentContext contract tests
-
-不修改：
-
-- Workflow
-- TaskManager
-- Task lifecycle
-- Quality Gate
-- DependencyGraph
-
-外部接口继续保持：
-
-```python
-agent.run(task) -> AgentResult
+GitHub 原始 history 实现
+        ↓
+History Contract Tests
+        ↓
+专项测试
+        ↓
+必要时最小生产代码修改
+        ↓
+本地全量 pytest
+        ↓
+用户 Push
+        ↓
+最终 Commit SHA
+        ↓
+DevPlan √
+        ↓
+下一节点
 ```
 
 ---
 
-# 6. Phase 3 后续
+# Phase 3.4 — Context Lifecycle / Access Policy
 
-### ☐ 3.2 Context Snapshot 完整化
-
-确认 Agent 不修改原 Task；dependency context 是 snapshot；未完成 dependency 不暴露；Tester / Reviewer 只获得执行所需信息。
-
-### ☐ 3.3 Context History
-
-统一暴露 lifecycle / test / review history。
+## ☐ 3.4.1 Context field access policy
+## ☐ 3.4.2 Agent-specific context visibility
+## ☐ 3.4.3 Read-only execution context convention
+## ☐ 3.4.4 Legacy Task context retirement plan
 
 ---
 
-# 7. 后续路线
+# Phase 4 — LLM Abstraction
 
-## Phase 4 — LLM Abstraction
+## ☐ 4.1 BaseLLM 完整实现
+## ☐ 4.2 MockLLM
+## ☐ 4.3 Agent → BaseLLM
+## ☐ 4.4 Workflow → LLM-independent
+## ☐ 4.5 Provider/config 可替换
 
-### ☐ 4.1 BaseLLM 完整实现
-### ☐ 4.2 MockLLM
-### ☐ 4.3 Agent → BaseLLM
-### ☐ 4.4 Workflow → LLM-independent
-### ☐ 4.5 Provider/config 可替换
+# Phase 5 — Tool / Sandbox Architecture
 
-## Phase 5 — Tool / Sandbox Architecture
+## ☐ 5.1 Tool Contract
+## ☐ 5.2 Tool Registry Contract
+## ☐ 5.3 Tool Argument Validation
+## ☐ 5.4 Workspace Sandbox
+## ☐ 5.5 Tool Permission Policy
+## ☐ 5.6 Tool Error Contract
 
-### ☐ 5.1 Tool Contract
-### ☐ 5.2 Tool Registry Contract
-### ☐ 5.3 Tool Argument Validation
-### ☐ 5.4 Workspace Sandbox
-### ☐ 5.5 Tool Permission Policy
-### ☐ 5.6 Tool Error Contract
+# Phase 6 — Workflow / Project Orchestrator
 
-## Phase 6 — Workflow / Project Orchestrator
+## ☐ 6.1 TaskWorkflow 状态机
+## ☐ 6.2 Dependency-aware Scheduler
+## ☐ 6.3 ProjectOrchestrator
+## ☐ 6.4 Task 并行执行
+## ☐ 6.5 Retry / Resume
+## ☐ 6.6 ProjectResult
 
-### ☐ 6.1 TaskWorkflow 状态机
-### ☐ 6.2 Dependency-aware Scheduler
-### ☐ 6.3 ProjectOrchestrator
-### ☐ 6.4 Task 并行执行
-### ☐ 6.5 Retry / Resume
-### ☐ 6.6 ProjectResult
+# Phase 7 — Persistence / Observability
 
-## Phase 7 — Persistence / Observability
+## ☐ 7.1 Task persistence
+## ☐ 7.2 Project persistence
+## ☐ 7.3 Agent execution records
+## ☐ 7.4 Tool execution logs
+## ☐ 7.5 Workflow event log
+## ☐ 7.6 Resume from persisted state
 
-### ☐ 7.1 Task persistence
-### ☐ 7.2 Project persistence
-### ☐ 7.3 Agent execution records
-### ☐ 7.4 Tool execution logs
-### ☐ 7.5 Workflow event log
-### ☐ 7.6 Resume from persisted state
+# Phase 8 — Production Hardening
 
-## Phase 8 — Production Hardening
-
-### ☐ 8.1 Contract Tests
-### ☐ 8.2 Failure Injection Tests
-### ☐ 8.3 Security Tests
-### ☐ 8.4 LLM Mock Integration Tests
-### ☐ 8.5 Long-running Workflow Tests
-### ☐ 8.6 Performance / Concurrency Tests
-### ☐ 8.7 Documentation / Examples
+## ☐ 8.1 Contract Tests
+## ☐ 8.2 Failure Injection Tests
+## ☐ 8.3 Security Tests
+## ☐ 8.4 LLM Mock Integration Tests
+## ☐ 8.5 Long-running Workflow Tests
+## ☐ 8.6 Performance / Concurrency Tests
+## ☐ 8.7 Documentation / Examples
 
 ---
 
-# 8. 重要问题与经验
+# Commit Ledger
 
-1. **Workflow 不能绕过 Tester。** `63eea6c` 修复过该回归；Workflow 重构必须先跑 Developer → Tester → Reviewer 集成测试。
-2. **AgentResult 必须兼容旧 API。** `7bb371b` 修复过默认字段、from_dict 校验和 legacy payload access。
-3. **AgentContext 必须是 snapshot。** 使用 deep copy，避免 Task 后续变化污染已创建 Context。
-4. **测试失败先判断来源。** `8f2ee6d` 曾是测试文件缺少 `deepcopy` import，而非业务代码错误。
-5. **架构节点必须小步推进。** 一次只修改一个边界；用户本地全量通过后才 Push；Push 后才记录最终 SHA。
-6. **AgentContext 迁移先保留 Task 兼容入口。** `BaseAgent.build_context()` 是逐 Agent 迁移的桥梁。
-7. **Architect 是低风险迁移样板。** Architect 无 Tool Loop、无质量门禁副作用。
-8. **Developer 暴露了 dependency snapshot 边界。** 通过 `dependency_context` 正式解决，而不是继续从 `task.context` 隐式取值。
-9. **Tester / Reviewer 迁移必须保持质量门禁语义不变。** 本节点不得顺便修改 Workflow。
-
----
-
-# 9. Commit Ledger
-
-| 状态 | Commit | 说明 |
+| 状态 | Commit | 节点 |
 |---|---|---|
-| <span style="color:green">√</span> | `63eea6c` | restore tester workflow execution |
-| <span style="color:green">√</span> | `5a86044` | context flow integration tests |
-| <span style="color:green">√</span> | `e2d31f3` | project execution test orchestrator |
-| <span style="color:green">√</span> | `3d9f2e3` | canonicalize agent results |
-| <span style="color:green">√</span> | `6528bf2` | AgentResult legacy compatibility |
-| <span style="color:green">√</span> | `7bb371b` | AgentResult compatibility contract |
-| <span style="color:green">√</span> | `5bc0575` | tester/reviewer AgentResult standardization |
-| <span style="color:green">√</span> | `8f2ee6d` | AgentContext deepcopy test fix |
-| <span style="color:green">√</span> | `0118003` | record Phase 3.1a |
-| <span style="color:green">√</span> | `8d0745b` | BaseAgent context bridge contract tests |
-| <span style="color:green">√</span> | `2786309` | BaseAgent AgentContext compatibility bridge |
+| <span style="color:green">√</span> | `2786309` | BaseAgent → AgentContext |
 | <span style="color:green">√</span> | `ae729f4` | ArchitectAgent → AgentContext |
-| <span style="color:green">√</span> | `4a848c7` | DeveloperAgent AgentContext contract coverage |
-| <span style="color:green">√</span> | `39102e5` | AgentContext serialization compatibility |
-| <span style="color:green">√</span> | `483be86` | AgentContext dependency snapshot coverage / 3.1c final SHA |
-| ☐ | **pending** | Phase 3.1d Tester / Reviewer → AgentContext |
+| <span style="color:green">√</span> | `483be86` | DeveloperAgent → AgentContext |
+| <span style="color:green">√</span> | `2237e65` | Tester / Reviewer → AgentContext |
+| <span style="color:green">√</span> | `ad786e8` | Context Snapshot isolation contract |
+| ☐ | **pending** | Phase 3.3 Context History |
 
 ---
 
-# 10. 当前执行清单
+# 重要经验
 
-### Phase 3.1a
+1. Workflow 不能绕过 Tester；质量门禁修改必须先跑完整 Developer → Tester → Reviewer 集成测试。
+2. AgentResult 必须保持 legacy compatibility API。
+3. AgentContext 必须是 deep-copy snapshot，不能让 Agent 执行污染 Task。
+4. 测试失败先判断业务代码、测试代码还是环境问题，禁止盲目修改生产代码。
+5. AgentContext 迁移必须保持 `run(Task) -> AgentResult` 外部兼容入口。
+6. Developer 暴露的 dependency snapshot 缺口通过 `dependency_context` 正式解决，而不是继续读取 `task.context`。
+7. Tester / Reviewer 迁移不得顺便修改 Workflow。
+8. pytest warning 应在测试侧最小修复，不污染生产代码。
+9. Phase 3.2 已用 Contract Tests 证明 snapshot isolation，不为了产生生产 commit 而改 Runtime。
+10. Phase 3.3 必须先统一 History Contract，再决定是否修改 ContextBuilder / AgentContext。
 
-- [x] BaseAgent context bridge
-- [x] contract tests
-- [x] 全量 pytest
-- [x] 用户 Push
-- [x] SHA 记录
+---
 
-### Phase 3.1b
+# 当前开发入口
 
-- [x] ArchitectAgent 使用 AgentContext
-- [x] contract tests
-- [x] 全量 pytest
-- [x] 用户 Push
-- [x] `ae729f4` 记录
+**Phase 3.3 — Context History / History Contract。**
 
-### Phase 3.1c
-
-- [x] 检查 Developer 所需上下文
-- [x] 增加 `dependency_context`
-- [x] DeveloperAgent 使用 AgentContext
-- [x] serialization compatibility
-- [x] contract tests
-- [x] 全量 pytest
-- [x] 用户 Push
-- [x] `483be86` 记录
-
-### Phase 3.1d
-
-- [ ] TesterAgent 使用 `build_context()`
-- [ ] ReviewerAgent 使用 `build_context()`
-- [ ] 保持 Tester / Reviewer AgentResult 语义
-- [ ] 增加 Tester / Reviewer AgentContext contract tests
-- [ ] 专项测试
-- [ ] 全量 `pytest -q`
-- [ ] 用户 Push
-- [ ] 记录最终 SHA
-- [ ] DevPlan 3.1d → √
-
-**当前开发入口：Phase 3.1d — Tester / Reviewer → AgentContext。**
+下一步先做 **GitHub 原始代码审计 + History Contract Tests**，不直接修改生产代码。
