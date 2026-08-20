@@ -1,5 +1,5 @@
 from agents.reviewer import ReviewerAgent
-from agents.tester import TesterAgent
+from agents.tester import TesterAgent as RuntimeTesterAgent
 from runtime.task import Task
 
 
@@ -39,8 +39,8 @@ def _task() -> Task:
 
 def test_tester_prompt_consumes_agent_context():
     task = _task()
-    context = TesterAgent().build_context(task)
-    prompt = TesterAgent._build_prompt(context)
+    context = RuntimeTesterAgent().build_context(task)
+    prompt = RuntimeTesterAgent._build_prompt(context)
 
     assert context.task_id in prompt
     assert context.task_title in prompt
@@ -73,7 +73,7 @@ def test_tester_run_uses_agent_context_and_preserves_result(monkeypatch):
 
     monkeypatch.setattr("agents.tester.ask_ai", fake_ask_ai)
 
-    result = TesterAgent().run(task)
+    result = RuntimeTesterAgent().run(task)
 
     assert result.status == "passed"
     assert result.agent == "tester"
