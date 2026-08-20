@@ -71,6 +71,8 @@ class ContextBuilder:
                 else {}
             ),
             history=self._build_history(task),
+            test_history=self._build_test_history(task),
+            review_history=self._build_review_history(task),
             metadata=self._build_metadata(task),
         )
 
@@ -125,6 +127,14 @@ class ContextBuilder:
     @staticmethod
     def _build_history(task: Task) -> list[dict[str, Any]]:
         return deepcopy(getattr(task, "status_history", []))
+
+    @staticmethod
+    def _build_test_history(task: Task) -> list[dict[str, Any]]:
+        return deepcopy(getattr(task, "test_history", []))
+
+    @staticmethod
+    def _build_review_history(task: Task) -> list[dict[str, Any]]:
+        return deepcopy(getattr(task, "review_history", []))
 
     @staticmethod
     def _build_metadata(task: Task) -> dict[str, Any]:
