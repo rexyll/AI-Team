@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from config.model import client, AGNES_MODEL
 from config.tools_schema import TOOLS_SCHEMA
@@ -25,6 +26,7 @@ SYSTEM_PROMPT = """
 run_command 只用于测试、构建、执行程序或专用开发工具。
 
 执行开发任务时：
+
 1. 理解任务
 2. 阅读 Architect 提供的设计
 3. 检查工作区
@@ -39,6 +41,14 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 
 修改代码之前必须先读取相关文件。
 遵循正确性优先、简单优先、最小修改、不进行无关重构的原则。
+
+最终汇报时必须说明：
+
+- 完成了什么
+- 修改了哪些文件
+- 执行了哪些测试
+- 测试结果
+- 是否存在遗留问题
 """
 
 
@@ -59,6 +69,7 @@ class DeveloperAgent(BaseAgent):
             )
 
             for context_key, data in task.context.items():
+
                 if context_key == "reviewer_feedback":
                     continue
 
@@ -71,6 +82,7 @@ class DeveloperAgent(BaseAgent):
                 result = data.get("result", {})
 
                 if isinstance(result, dict):
+
                     architecture = result.get("architecture")
 
                     if architecture:
@@ -84,14 +96,18 @@ class DeveloperAgent(BaseAgent):
                             ensure_ascii=False,
                             indent=2,
                         )
+
                 else:
                     context_text += str(result)
 
                 context_text += "\n"
 
-        reviewer_feedback = task.context.get("reviewer_feedback")
+        reviewer_feedback = task.context.get(
+            "reviewer_feedback"
+        )
 
         if reviewer_feedback:
+
             context_text += """
             ====================
             PREVIOUS REVIEW FEEDBACK
@@ -112,20 +128,35 @@ class DeveloperAgent(BaseAgent):
         ====================
         CURRENT TASK
         ====================
+
         Task ID: {task.id}
         Role: {task.role}
         Title: {task.title}
         Description: {task.description}
         Dependencies: {task.dependencies}
+
         {context_text}
 
         ====================
         EXECUTION REQUIREMENT
         ====================
+
         请完成当前开发任务。
+
         开始工作前先检查工作区并阅读相关代码。
-        完成修改后运行相关测试。如果测试失败，请继续分析和修复。
+
+        完成修改后运行相关测试。
+        如果测试失败，请继续分析和修复。
+
         最终给出简洁的开发结果报告。
+
+        报告必须包含：
+
+        1. 完成内容
+        2. 修改文件
+        3. 测试命令
+        4. 测试结果
+        5. 遗留问题
         """
 
         return [
@@ -140,6 +171,7 @@ class DeveloperAgent(BaseAgent):
         ]
 
     def run(self, task: Task) -> AgentResult:
+
         if not isinstance(task, Task):
             raise TypeError(
                 "DeveloperAgent.run() expects Task, "
@@ -148,7 +180,12 @@ class DeveloperAgent(BaseAgent):
 
         messages = self._build_messages(task)
 
+        changed_files: list[str] = []
+        command_results: list[dict[str, Any]] = []
+        tool_calls: list[dict[str, Any]] = []
+
         for _ in range(MAX_TOOL_ITERATIONS):
+
             response = client.chat.completions.create(
                 model=AGNES_MODEL,
                 messages=messages,
@@ -159,13 +196,22 @@ class DeveloperAgent(BaseAgent):
             message = response.choices[0].message
 
             if not message.tool_calls:
+
                 content = message.content or ""
+
+                data = self._build_result_data(
+                    content=content,
+                    changed_files=changed_files,
+                    command_results=command_results,
+                    tool_calls=tool_calls,
+                )
 
                 return AgentResult(
                     status="completed",
                     agent=self.role,
                     task_id=task.id,
                     message=content,
+                    data=data,
                 )
 
             messages.append(
@@ -178,7 +224,9 @@ class DeveloperAgent(BaseAgent):
                             "type": "function",
                             "function": {
                                 "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
+                                "arguments": (
+                                    tool_call.function.arguments
+                                ),
                             },
                         }
                         for tool_call in message.tool_calls
@@ -187,6 +235,7 @@ class DeveloperAgent(BaseAgent):
             )
 
             for tool_call in message.tool_calls:
+
                 tool_name = tool_call.function.name
 
                 print(f"\n[Tool] {tool_name}")
@@ -195,7 +244,12 @@ class DeveloperAgent(BaseAgent):
                     arguments = json.loads(
                         tool_call.function.arguments
                     )
-                except (TypeError, json.JSONDecodeError) as exc:
+
+                except (
+                    TypeError,
+                    json.JSONDecodeError,
+                ) as exc:
+
                     result = (
                         "Tool error: invalid JSON arguments: "
                         f"{type(exc).__name__}: {exc}"
@@ -213,12 +267,26 @@ class DeveloperAgent(BaseAgent):
 
                 print(f"[Args] {arguments}")
 
+                tool_calls.append(
+                    {
+                        "name": tool_name,
+                        "arguments": dict(arguments),
+                    }
+                )
+
                 if tool_name not in TOOLS:
-                    result = f"Unknown tool: {tool_name}"
+
+                    result = (
+                        f"Unknown tool: {tool_name}"
+                    )
 
                 else:
+
                     try:
-                        tool_function = TOOLS[tool_name]
+
+                        tool_function = TOOLS[
+                            tool_name
+                        ]
 
                         (
                             filtered_arguments,
@@ -230,16 +298,26 @@ class DeveloperAgent(BaseAgent):
 
                         if ignored_arguments:
                             print(
-                                f"[Ignored Args] {ignored_arguments}"
+                                "[Ignored Args] "
+                                f"{ignored_arguments}"
                             )
 
                         result = tool_function(
                             **filtered_arguments
                         )
 
+                        self._record_tool_evidence(
+                            tool_name=tool_name,
+                            arguments=filtered_arguments,
+                            result=result,
+                            changed_files=changed_files,
+                            command_results=command_results,
+                        )
+
                     except Exception as exc:
+
                         result = (
-                            f"Tool error: "
+                            "Tool error: "
                             f"{type(exc).__name__}: {exc}"
                         )
 
@@ -257,3 +335,76 @@ class DeveloperAgent(BaseAgent):
             "Developer tool loop exceeded maximum iterations: "
             f"{MAX_TOOL_ITERATIONS}"
         )
+
+    @staticmethod
+    def _record_tool_evidence(
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+        changed_files: list[str],
+        command_results: list[dict[str, Any]],
+    ) -> None:
+        """
+        Record factual execution evidence from Developer tool calls.
+
+        This method intentionally records only evidence that can be
+        observed from the actual tool invocation.
+
+        The LLM is never trusted to invent changed files or test
+        execution evidence.
+        """
+
+        if tool_name == "write_file":
+
+            path = arguments.get("path")
+
+            if isinstance(path, str) and path:
+                if path not in changed_files:
+                    changed_files.append(path)
+
+        if tool_name == "run_command":
+
+            command = arguments.get("command")
+
+            if isinstance(command, str) and command:
+
+                command_results.append(
+                    {
+                        "command": command,
+                        "result": str(result),
+                    }
+                )
+
+    @staticmethod
+    def _build_result_data(
+        *,
+        content: str,
+        changed_files: list[str],
+        command_results: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Build the structured Developer Result payload.
+
+        ``report`` always preserves the original final LLM response.
+
+        ``files_changed`` and ``tests`` are derived from actual tool
+        execution evidence.
+        """
+
+        return {
+            "summary": content.strip(),
+            "files_changed": list(changed_files),
+            "tests": list(command_results),
+            "validation": {
+                "tool_call_count": len(tool_calls),
+                "test_command_count": len(
+                    command_results
+                ),
+                "files_changed_count": len(
+                    changed_files
+                ),
+            },
+            "report": content,
+        }
