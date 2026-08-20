@@ -26,7 +26,13 @@ class AgentContext:
 
     review_round: int = 0
 
+    # Dependency IDs are retained as the compact compatibility view.
     dependencies: list[str] = field(default_factory=list)
+
+    # Completed dependency snapshots are the canonical AgentContext view
+    # for Agents that need upstream results (for example Developer needs
+    # Architect's architecture output).
+    dependency_context: dict[str, Any] = field(default_factory=dict)
 
     task_result: dict[str, Any] = field(default_factory=dict)
 
@@ -41,10 +47,6 @@ class AgentContext:
     def __post_init__(self) -> None:
         """
         Validate and isolate the context snapshot.
-
-        AgentContext is intentionally not frozen because the current
-        architecture does not require Agents to mutate it. Instead,
-        mutable input values are deep-copied at construction time.
         """
 
         if not isinstance(self.task_id, str) or not self.task_id.strip():
@@ -52,10 +54,7 @@ class AgentContext:
                 "AgentContext task_id must be a non-empty string"
             )
 
-        if (
-            not isinstance(self.task_title, str)
-            or not self.task_title.strip()
-        ):
+        if not isinstance(self.task_title, str) or not self.task_title.strip():
             raise ValueError(
                 "AgentContext task_title must be a non-empty string"
             )
@@ -91,13 +90,17 @@ class AgentContext:
             )
 
         if not all(
-            isinstance(dependency_id, str)
-            and dependency_id.strip()
+            isinstance(dependency_id, str) and dependency_id.strip()
             for dependency_id in self.dependencies
         ):
             raise ValueError(
                 "AgentContext dependencies must contain "
                 "non-empty strings"
+            )
+
+        if not isinstance(self.dependency_context, dict):
+            raise ValueError(
+                "AgentContext dependency_context must be a dictionary"
             )
 
         if not isinstance(self.task_result, dict):
@@ -120,10 +123,7 @@ class AgentContext:
                 "AgentContext history must be a list"
             )
 
-        if not all(
-            isinstance(entry, dict)
-            for entry in self.history
-        ):
+        if not all(isinstance(entry, dict) for entry in self.history):
             raise ValueError(
                 "AgentContext history must contain dictionaries"
             )
@@ -133,13 +133,8 @@ class AgentContext:
                 "AgentContext metadata must be a dictionary"
             )
 
-        # ------------------------------------------------------------------
-        # Snapshot isolation
-        #
-        # The Agent must not accidentally observe later mutations to the
-        # Task or to dictionaries/lists used to construct this context.
-        # ------------------------------------------------------------------
         self.dependencies = deepcopy(self.dependencies)
+        self.dependency_context = deepcopy(self.dependency_context)
         self.task_result = deepcopy(self.task_result)
         self.tester_feedback = deepcopy(self.tester_feedback)
         self.reviewer_feedback = deepcopy(self.reviewer_feedback)
@@ -147,9 +142,7 @@ class AgentContext:
         self.metadata = deepcopy(self.metadata)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert the AgentContext into a detached dictionary snapshot.
-        """
+        """Convert the AgentContext into a detached dictionary snapshot."""
         return {
             "task_id": self.task_id,
             "task_title": self.task_title,
@@ -158,6 +151,7 @@ class AgentContext:
             "status": self.status,
             "review_round": self.review_round,
             "dependencies": deepcopy(self.dependencies),
+            "dependency_context": deepcopy(self.dependency_context),
             "task_result": deepcopy(self.task_result),
             "tester_feedback": deepcopy(self.tester_feedback),
             "reviewer_feedback": deepcopy(self.reviewer_feedback),
@@ -166,25 +160,10 @@ class AgentContext:
         }
 
     @classmethod
-    def from_dict(
-        cls,
-        context: dict[str, Any],
-    ) -> "AgentContext":
-        """
-        Construct an AgentContext from a dictionary.
-
-        Required fields:
-            task_id
-            task_title
-            task_description
-            role
-            status
-        """
-
+    def from_dict(cls, context: dict[str, Any]) -> "AgentContext":
+        """Construct an AgentContext from a dictionary."""
         if not isinstance(context, dict):
-            raise ValueError(
-                "AgentContext input must be a dictionary"
-            )
+            raise ValueError("AgentContext input must be a dictionary")
 
         required_fields = (
             "task_id",
@@ -194,16 +173,11 @@ class AgentContext:
             "status",
         )
 
-        missing = [
-            field
-            for field in required_fields
-            if field not in context
-        ]
+        missing = [field for field in required_fields if field not in context]
 
         if missing:
             raise ValueError(
-                "AgentContext missing required fields: "
-                + ", ".join(missing)
+                "AgentContext missing required fields: " + ", ".join(missing)
             )
 
         return cls(
@@ -214,69 +188,21 @@ class AgentContext:
             status=context["status"],
             review_round=context.get("review_round", 0),
             dependencies=context.get("dependencies", []),
+            dependency_context=context.get("dependency_context", {}),
             task_result=context.get("task_result", {}),
-            tester_feedback=context.get(
-                "tester_feedback",
-                {},
-            ),
-            reviewer_feedback=context.get(
-                "reviewer_feedback",
-                {},
-            ),
+            tester_feedback=context.get("tester_feedback", {}),
+            reviewer_feedback=context.get("reviewer_feedback", {}),
             history=context.get("history", []),
             metadata=context.get("metadata", {}),
         )
 
     def __getitem__(self, key: str) -> Any:
-        """
-        Dictionary-style compatibility access.
+        values = self.to_dict()
+        if key not in values:
+            raise KeyError(key)
+        return values[key]
 
-        This keeps the context convenient for existing code while the
-        canonical representation remains an AgentContext object.
-        """
-        if key == "task_id":
-            return self.task_id
-
-        if key == "task_title":
-            return self.task_title
-
-        if key == "task_description":
-            return self.task_description
-
-        if key == "role":
-            return self.role
-
-        if key == "status":
-            return self.status
-
-        if key == "review_round":
-            return self.review_round
-
-        if key == "dependencies":
-            return self.dependencies
-
-        if key == "task_result":
-            return self.task_result
-
-        if key == "tester_feedback":
-            return self.tester_feedback
-
-        if key == "reviewer_feedback":
-            return self.reviewer_feedback
-
-        if key == "history":
-            return self.history
-
-        if key == "metadata":
-            return self.metadata
-
-        raise KeyError(key)
-
-    def get(
-        self,
-        key: str,
-        default: Any = None,
-    ) -> Any:
+    def get(self, key: str, default: Any = None) -> Any:
         try:
             return self[key]
         except KeyError:
