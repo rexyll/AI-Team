@@ -6,6 +6,7 @@ from agents.base import BaseAgent
 from config.model import ask_ai
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
+from runtime.context_view import context_view
 from runtime.task import Task
 
 
@@ -82,13 +83,7 @@ class TesterAgent(BaseAgent):
 
     @staticmethod
     def _build_prompt(context: AgentContext) -> str:
-        """
-        Build the Tester prompt from an isolated AgentContext snapshot.
-
-        Developer result and execution context are exposed separately so
-        the Tester can distinguish factual execution evidence from
-        descriptive information.
-        """
+        view = context_view(context, "tester")
 
         return f"""
 请测试下面的软件开发任务。
@@ -98,25 +93,19 @@ TASK
 ====================
 
 Task ID:
-{context.task_id}
+{view['task_id']}
 
 Title:
-{context.task_title}
+{view['task_title']}
 
 Description:
-{context.task_description}
+{view['task_description']}
 
 ====================
 DEVELOPER RESULT
 ====================
 
-{context.task_result}
-
-====================
-CONTEXT
-====================
-
-{context.to_dict()}
+{view['task_result']}
 
 ====================
 TESTING REQUIREMENTS
@@ -160,14 +149,6 @@ TEST_FAILED
         decision: str,
         context: AgentContext,
     ) -> dict[str, Any]:
-        """
-        Build the structured Tester Result payload from AgentContext.
-
-        Tester does not invent test evidence. Existing evidence is copied
-        from the Developer result snapshot and the final Tester report is
-        preserved verbatim.
-        """
-
         developer_result = context.task_result
         tests: list[Any] = []
         files_changed: list[Any] = []
