@@ -2,8 +2,7 @@ import json
 from typing import Any
 
 from config.model import client, AGNES_MODEL
-from config.tools_schema import TOOLS_SCHEMA
-from tools.registry import TOOLS
+from tools.registry import TOOL_REGISTRY, TOOLS
 from agents.base import BaseAgent
 from runtime.task import Task
 from runtime.agent_context import AgentContext
@@ -199,7 +198,7 @@ class DeveloperAgent(BaseAgent):
             response = client.chat.completions.create(
                 model=AGNES_MODEL,
                 messages=messages,
-                tools=TOOLS_SCHEMA,
+                tools=TOOL_REGISTRY.schemas(),
                 tool_choice="auto",
             )
 
@@ -272,40 +271,39 @@ class DeveloperAgent(BaseAgent):
                     }
                 )
 
-                if tool_name not in TOOLS:
+                try:
+                    tool_function = TOOL_REGISTRY.get(tool_name)
+
+                    (
+                        filtered_arguments,
+                        ignored_arguments,
+                    ) = validate_tool_arguments(
+                        tool_function,
+                        arguments,
+                    )
+
+                    if ignored_arguments:
+                        print(
+                            "[Ignored Args] "
+                            f"{ignored_arguments}"
+                        )
+
+                    result = tool_function(**filtered_arguments)
+
+                    self._record_tool_evidence(
+                        tool_name=tool_name,
+                        arguments=filtered_arguments,
+                        result=result,
+                        changed_files=changed_files,
+                        command_results=command_results,
+                    )
+                except KeyError:
                     result = f"Unknown tool: {tool_name}"
-                else:
-                    try:
-                        tool_function = TOOLS[tool_name]
-
-                        (
-                            filtered_arguments,
-                            ignored_arguments,
-                        ) = validate_tool_arguments(
-                            tool_function,
-                            arguments,
-                        )
-
-                        if ignored_arguments:
-                            print(
-                                "[Ignored Args] "
-                                f"{ignored_arguments}"
-                            )
-
-                        result = tool_function(**filtered_arguments)
-
-                        self._record_tool_evidence(
-                            tool_name=tool_name,
-                            arguments=filtered_arguments,
-                            result=result,
-                            changed_files=changed_files,
-                            command_results=command_results,
-                        )
-                    except Exception as exc:
-                        result = (
-                            "Tool error: "
-                            f"{type(exc).__name__}: {exc}"
-                        )
+                except Exception as exc:
+                    result = (
+                        "Tool error: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
 
                 print(f"[Result]\n{result}")
 
