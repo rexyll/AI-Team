@@ -15,7 +15,9 @@ class ProviderLLM(BaseLLM):
         model: str = AGNES_MODEL,
         client_instance: Any = client,
     ) -> None:
-        if not isinstance(model, str) or not model.strip():
+        if not isinstance(model, str):
+            raise TypeError("ProviderLLM model must be a string")
+        if not model.strip():
             raise ValueError("ProviderLLM model must be a non-empty string")
         if client_instance is None:
             raise ValueError("ProviderLLM client_instance is required")
