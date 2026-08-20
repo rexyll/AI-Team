@@ -4,6 +4,7 @@ from typing import Any
 
 from agents.base import BaseAgent
 from config.model import ask_ai
+from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.task import Task
 
@@ -59,7 +60,8 @@ class ReviewerAgent(BaseAgent):
                 f"got {type(task).__name__}"
             )
 
-        prompt = self._build_prompt(task)
+        context = self.build_context(task)
+        prompt = self._build_prompt(context)
 
         result = ask_ai(
             prompt=prompt,
@@ -71,31 +73,19 @@ class ReviewerAgent(BaseAgent):
         data = self._build_result_data(
             content=result,
             decision=decision,
-            task=task,
+            context=context,
         )
 
         return AgentResult(
             status=decision,
             agent=self.role,
-            task_id=task.id,
+            task_id=context.task_id,
             message=result,
             data=data,
         )
 
     @staticmethod
-    def _build_prompt(task: Task) -> str:
-        developer_result = ReviewerAgent._extract_task_result(
-            task.result
-        )
-
-        tester_result = ReviewerAgent._extract_feedback(
-            task.test_result
-        )
-
-        reviewer_feedback = ReviewerAgent._extract_feedback(
-            task.review_result
-        )
-
+    def _build_prompt(context: AgentContext) -> str:
         return f"""
 请审核下面的开发任务。
 
@@ -104,37 +94,45 @@ TASK
 ====================
 
 Task ID:
-{task.id}
+{context.task_id}
 
 Title:
-{task.title}
+{context.task_title}
 
 Description:
-{task.description}
+{context.task_description}
 
 ====================
 DEVELOPER RESULT
 ====================
 
-{developer_result}
+{context.task_result}
 
 ====================
 TESTER RESULT
 ====================
 
-{tester_result}
+{context.tester_feedback}
 
 ====================
 PREVIOUS REVIEW RESULT
 ====================
 
-{reviewer_feedback}
+{context.reviewer_feedback}
 
 ====================
 UPSTREAM CONTEXT
 ====================
 
-{task.context}
+{context.dependency_context}
+
+====================
+EXECUTION CONTEXT
+====================
+
+history={context.history}
+metadata={context.metadata}
+review_round={context.review_round}
 
 ====================
 REVIEW REQUIREMENTS
@@ -175,105 +173,40 @@ REVISION_REQUIRED
 """
 
     @staticmethod
-    def _extract_task_result(
-        result: Any,
-    ) -> Any:
-        """
-        Convert AgentResult / dict / legacy value into a representation
-        suitable for the Reviewer prompt.
-        """
-
-        if isinstance(result, AgentResult):
-            return result.to_dict()
-
-        if isinstance(result, dict):
-            return result
-
-        return result
-
-    @staticmethod
-    def _extract_feedback(
-        result: Any,
-    ) -> Any:
-        """
-        Extract feedback/result while preserving compatibility with
-        both AgentResult and legacy dictionaries.
-        """
-
-        if isinstance(result, AgentResult):
-            return result.to_dict()
-
-        if isinstance(result, dict):
-            return dict(result)
-
-        if result is None:
-            return {}
-
-        return result
-
-    @staticmethod
     def _build_result_data(
         *,
         content: str,
         decision: str,
-        task: Task,
+        context: AgentContext,
     ) -> dict[str, Any]:
         """
-        Build the structured Reviewer Result payload.
+        Build the structured Reviewer Result payload from AgentContext.
 
         The Reviewer records the evidence it actually received rather
         than inventing additional facts.
         """
 
-        developer_result = ReviewerAgent._extract_task_result(
-            task.result
-        )
-
-        tester_result = ReviewerAgent._extract_feedback(
-            task.test_result
-        )
+        developer_result = context.task_result
+        tester_result = context.tester_feedback
 
         developer_data: dict[str, Any] = {}
 
-        if isinstance(developer_result, AgentResult):
-            developer_data = dict(
-                developer_result.data
-            )
-
-        elif isinstance(developer_result, dict):
-            data = developer_result.get(
-                "data",
-                developer_result,
-            )
-
+        if isinstance(developer_result, dict):
+            data = developer_result.get("data", developer_result)
             if isinstance(data, dict):
                 developer_data = dict(data)
 
-        tests = developer_data.get(
-            "tests",
-            [],
-        )
-
-        files_changed = developer_data.get(
-            "files_changed",
-            [],
-        )
+        tests = developer_data.get("tests", [])
+        files_changed = developer_data.get("files_changed", [])
 
         if not isinstance(tests, list):
             tests = []
-
         if not isinstance(files_changed, list):
             files_changed = []
 
         tester_status = None
-
-        if isinstance(tester_result, AgentResult):
-            tester_status = tester_result.status
-
-        elif isinstance(tester_result, dict):
-            tester_status = tester_result.get(
-                "status"
-            )
+        if isinstance(tester_result, dict):
+            tester_status = tester_result.get("status")
 
         return {
             "summary": content.strip(),
@@ -284,17 +217,13 @@ REVISION_REQUIRED
             "validation": {
                 "test_evidence_count": len(tests),
                 "files_changed_count": len(files_changed),
-                "tester_result_available": bool(
-                    tester_result
-                ),
+                "tester_result_available": bool(tester_result),
             },
             "report": content,
         }
 
     @staticmethod
-    def _parse_review_result(
-        result: str,
-    ) -> str:
+    def _parse_review_result(result: str) -> str:
         if not isinstance(result, str):
             raise ValueError(
                 "Reviewer returned invalid decision. "
