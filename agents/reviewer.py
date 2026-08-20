@@ -6,6 +6,7 @@ from agents.base import BaseAgent
 from config.model import ask_ai
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
+from runtime.context_view import context_view
 from runtime.task import Task
 
 
@@ -86,6 +87,8 @@ class ReviewerAgent(BaseAgent):
 
     @staticmethod
     def _build_prompt(context: AgentContext) -> str:
+        view = context_view(context, "reviewer")
+
         return f"""
 请审核下面的开发任务。
 
@@ -94,45 +97,45 @@ TASK
 ====================
 
 Task ID:
-{context.task_id}
+{view['task_id']}
 
 Title:
-{context.task_title}
+{view['task_title']}
 
 Description:
-{context.task_description}
+{view['task_description']}
 
 ====================
 DEVELOPER RESULT
 ====================
 
-{context.task_result}
+{view['task_result']}
 
 ====================
 TESTER RESULT
 ====================
 
-{context.tester_feedback}
+{view['tester_feedback']}
 
 ====================
 PREVIOUS REVIEW RESULT
 ====================
 
-{context.reviewer_feedback}
+{view['reviewer_feedback']}
 
 ====================
 UPSTREAM CONTEXT
 ====================
 
-{context.dependency_context}
+{view['dependency_context']}
 
 ====================
 EXECUTION CONTEXT
 ====================
 
-history={context.history}
-metadata={context.metadata}
-review_round={context.review_round}
+history={view['history']}
+metadata={view['metadata']}
+review_round={view['review_round']}
 
 ====================
 REVIEW REQUIREMENTS
@@ -179,13 +182,6 @@ REVISION_REQUIRED
         decision: str,
         context: AgentContext,
     ) -> dict[str, Any]:
-        """
-        Build the structured Reviewer Result payload from AgentContext.
-
-        The Reviewer records the evidence it actually received rather
-        than inventing additional facts.
-        """
-
         developer_result = context.task_result
         tester_result = context.tester_feedback
 
