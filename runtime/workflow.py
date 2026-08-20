@@ -18,7 +18,7 @@ MAX_REVIEW_ROUNDS = 3
 class StageOutcome:
     stage: WorkflowStage
     status: str
-    result: AgentResult | None = None
+    result: AgentResult | dict[str, Any] | None = None
     exception: Exception | None = None
 
     def __post_init__(self) -> None:
@@ -37,28 +37,29 @@ class StageOutcome:
                 "status must be a non-empty string"
             )
 
-        if self.result is not None:
-            if isinstance(self.result, dict):
-                normalized_result = AgentResult.from_dict(
-                    self.result
-                )
+        if (
+            self.exception is not None
+            and not isinstance(self.exception, Exception)
+        ):
+            raise TypeError(
+                "exception must be an Exception or None"
+            )
 
-                object.__setattr__(
-                    self,
-                    "result",
-                    normalized_result,
-                )
+        if isinstance(self.result, dict):
+            self.result = self._normalize_result(
+                self.result
+            )
 
-            elif not isinstance(self.result, AgentResult):
-                raise TypeError(
-                    "result must be an AgentResult, dict, or None"
-                )
-
-        if self.exception is not None:
-            if not isinstance(self.exception, Exception):
-                raise TypeError(
-                    "exception must be an Exception or None"
-                )
+        elif (
+            self.result is not None
+            and not isinstance(self.result, AgentResult)
+        ):
+            raise TypeError(
+                "result must be an AgentResult, dict, or None"
+            )
+            
+    
+    
 
     @property
     def succeeded(self) -> bool:
@@ -91,36 +92,72 @@ class StageOutcome:
             ),
         }
     
+    
   
-# @classmethod
-# def success(
-#     cls,
-#     stage: WorkflowStage,
-#     result: AgentResult,
-# ) -> "StageOutcome":
-#     return cls(
-#         stage=stage,
-#         result=result,
-#     )
+    @classmethod
+    def success(
+        cls,
+        stage: WorkflowStage,
+        result: AgentResult | dict[str, Any],
+    ) -> "StageOutcome":
+        status = (
+            result.status
+            if isinstance(result, AgentResult)
+            else result.get("status", "completed")
+        )
+
+        return cls(
+            stage=stage,
+            status=status,
+            result=result,
+        )
   
     
-# @classmethod
-# def failure(
-#     cls,
-#     stage: WorkflowStage,
-#     exception: Exception,
-# ) -> "StageOutcome":
-#     return cls(
-#         stage=stage,
-#         exception=exception,
-#     )
+    @classmethod
+    def failure(
+        cls,
+        stage: WorkflowStage,
+        exception: Exception,
+    ) -> "StageOutcome":
+        return cls(
+            stage=stage,
+            status="failed",
+            result=None,
+            exception=exception,
+        )
     
 class WorkflowStage(str, Enum):
     DEVELOPER = "developer"
     TESTER = "tester"
     REVIEWER = "reviewer"
     
-    
+def normalize_stage_result(
+        stage: WorkflowStage,
+        task: Task,
+        result: dict[str, Any] | AgentResult,
+    ) -> AgentResult:
+
+        if isinstance(result, AgentResult):
+            return result
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "stage result must be AgentResult or dict"
+            )
+
+        payload = dict(result)
+
+        payload.setdefault(
+            "agent",
+            stage.value,
+        )
+
+        payload.setdefault(
+            "task_id",
+            task.id,
+        )
+
+        return AgentResult.from_dict(payload)    
     
 
 class TaskWorkflow:
@@ -243,8 +280,10 @@ class TaskWorkflow:
         try:
             raw_result = self.tester.run(task)
 
-            result = normalize_agent_result(
-                raw_result
+            result = normalize_stage_result(
+                WorkflowStage.TESTER,
+                task,
+                raw_result,
             )
 
             return StageOutcome.success(
@@ -378,12 +417,16 @@ class TaskWorkflow:
 
         try:
             raw_result = self.developer.run(task)
-            result = normalize_agent_result(raw_result)
 
-            return StageOutcome(
-                stage=WorkflowStage.DEVELOPER,
-                status=result.status,
-                result=result,
+            result = normalize_stage_result(
+                WorkflowStage.DEVELOPER,
+                task,
+                raw_result,
+            )
+
+            return StageOutcome.success(
+                WorkflowStage.DEVELOPER,
+                result,
             )
 
         except Exception as exc:
@@ -431,12 +474,15 @@ class TaskWorkflow:
 
         try:
             raw_result = self.reviewer.run(task)
-            result = normalize_agent_result(raw_result)
+            result = normalize_stage_result(
+                WorkflowStage.REVIEWER,
+                task,
+                raw_result,
+            )
 
-            return StageOutcome(
-                stage=WorkflowStage.REVIEWER,
-                status=result.status,
-                result=result,
+            return StageOutcome.success(
+                WorkflowStage.REVIEWER,
+                result,
             )
 
         except Exception as exc:
