@@ -9,9 +9,6 @@ from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
 
 
-TesterAgent = RuntimeTesterAgent
-
-
 def make_task(**kwargs) -> Task:
     defaults = {
         "id": "TASK-LLM-001",
@@ -26,7 +23,7 @@ def make_task(**kwargs) -> Task:
 
 def test_base_agent_uses_provider_llm_by_default():
     assert isinstance(ArchitectAgent().llm, ProviderLLM)
-    assert isinstance(TesterAgent().llm, ProviderLLM)
+    assert isinstance(RuntimeTesterAgent().llm, ProviderLLM)
     assert isinstance(ReviewerAgent().llm, ProviderLLM)
 
 
@@ -56,7 +53,7 @@ def test_architect_accepts_injected_llm():
 
 def test_tester_accepts_injected_llm():
     llm = MockLLM("TEST_PASSED\nEvidence is sufficient.")
-    agent = TesterAgent(llm=llm)
+    agent = RuntimeTesterAgent(llm=llm)
 
     result = agent.run(make_task())
 
@@ -95,7 +92,7 @@ def test_reviewer_accepts_injected_llm():
 def test_injected_llm_is_shared_execution_dependency():
     llm = MockLLM("response")
     architect = ArchitectAgent(llm=llm)
-    tester = TesterAgent(llm=llm)
+    tester = RuntimeTesterAgent(llm=llm)
     reviewer = ReviewerAgent(llm=llm)
 
     assert architect.llm is llm
