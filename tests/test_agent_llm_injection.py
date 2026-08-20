@@ -2,11 +2,14 @@ import pytest
 
 from agents.architect import ArchitectAgent, SYSTEM_PROMPT as ARCHITECT_SYSTEM_PROMPT
 from agents.reviewer import ReviewerAgent, SYSTEM_PROMPT as REVIEWER_SYSTEM_PROMPT
-from agents.tester import TesterAgent, SYSTEM_PROMPT as TESTER_SYSTEM_PROMPT
+from agents.tester import TesterAgent as RuntimeTesterAgent, SYSTEM_PROMPT as TESTER_SYSTEM_PROMPT
 from runtime.llm.base import BaseLLM
 from runtime.llm.mock import MockLLM
 from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
+
+
+TesterAgent = RuntimeTesterAgent
 
 
 def make_task(**kwargs) -> Task:
