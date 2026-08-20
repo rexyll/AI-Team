@@ -23,3 +23,8 @@ class Task:
     review_history: list[dict[str, Any]] = field(default_factory=list)
     test_result: dict[str, Any] = field(default_factory=dict)
     test_history: list[dict[str, Any]] = field(default_factory=list)
+    
+    def validate_contract(self) -> None:
+        from runtime.runtime_contract import validate_task_contract
+
+        validate_task_contract(self)

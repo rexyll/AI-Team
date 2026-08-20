@@ -61,8 +61,8 @@ class AgentResult:
     """
 
     status: str
-    agent: str
-    task_id: str
+    agent: str | None = None
+    task_id: str | None = None
     message: str = ""
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -72,15 +72,17 @@ class AgentResult:
                 "AgentResult status must be a non-empty string"
             )
 
-        if not isinstance(self.agent, str) or not self.agent.strip():
-            raise ValueError(
-                "AgentResult agent must be a non-empty string"
-            )
+        if self.agent is not None:
+            if not isinstance(self.agent, str) or not self.agent.strip():
+                raise ValueError(
+                    "AgentResult agent must be a non-empty string"
+                )
 
-        if not isinstance(self.task_id, str) or not self.task_id.strip():
-            raise ValueError(
-                "AgentResult task_id must be a non-empty string"
-            )
+        if self.task_id is not None:
+            if not isinstance(self.task_id, str) or not self.task_id.strip():
+                raise ValueError(
+                    "AgentResult task_id must be a non-empty string"
+                )
 
         if not isinstance(self.message, str):
             raise ValueError(
