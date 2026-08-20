@@ -132,6 +132,8 @@ class ProjectOrchestrator:
             raise TypeError(
                 "PlannerAgent must return a dictionary"
             )
+        elif isinstance(plan, dict):
+            plan.setdefault("summary", planning_task)
 
         plan = result.get("plan")
 
