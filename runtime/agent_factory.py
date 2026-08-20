@@ -2,6 +2,7 @@ from collections.abc import Mapping
 
 from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
+from agents.planner import PlannerAgent
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
 
@@ -13,6 +14,9 @@ AgentConfigMap = Mapping[str, AgentConfig]
 
 
 def _default_agent_configs() -> dict[str, AgentConfig]:
+    """
+    Return the default configuration for all supported agents.
+    """
     return {
         "architect": AgentConfig(
             role="architect",
@@ -33,7 +37,7 @@ def _default_agent_configs() -> dict[str, AgentConfig]:
         "planner": AgentConfig(
             role="planner",
             model="default",
-        )
+        ),
     }
 
 
@@ -43,36 +47,97 @@ def create_agent_router(
     """
     Create and configure the AI Team AgentRouter.
 
-    When configs is omitted, default configurations are used.
+    Behavior:
+
+    1. When ``configs`` is None, all default agent configurations
+       are used.
+
+    2. When custom ``configs`` are provided, the four original
+       core agents must be explicitly configured:
+
+           architect
+           developer
+           tester
+           reviewer
+
+       The planner configuration is optional and will fall back
+       to the default planner configuration when omitted.
 
     Args:
         configs:
             Mapping from agent role to AgentConfig.
 
     Returns:
-        Configured AgentRouter.
+        A fully configured AgentRouter.
+
+    Raises:
+        ValueError:
+            If one or more required core agent configurations
+            are missing.
+
+        TypeError:
+            If a configuration value is not an AgentConfig.
+
+        ValueError:
+            If an AgentConfig.role does not match its mapping key.
     """
 
-    if configs is None:
-        configs = _default_agent_configs()
+    default_configs = _default_agent_configs()
 
-    required_roles = {
+    # ------------------------------------------------------------------
+    # No custom configuration:
+    #
+    # Use the complete default configuration.
+    # ------------------------------------------------------------------
+    if configs is None:
+        effective_configs = default_configs
+
+    # ------------------------------------------------------------------
+    # Custom configuration:
+    #
+    # The four original core agents must be explicitly provided.
+    # Planner is optional for backward compatibility and will use
+    # the default configuration when omitted.
+    # ------------------------------------------------------------------
+    else:
+        required_core_roles = {
+            "architect",
+            "developer",
+            "tester",
+            "reviewer",
+        }
+
+        missing_roles = required_core_roles - set(configs.keys())
+
+        if missing_roles:
+            raise ValueError(
+                "Missing agent configurations: "
+                + ", ".join(sorted(missing_roles))
+            )
+
+        effective_configs = {
+            **default_configs,
+            **configs,
+        }
+
+    # ------------------------------------------------------------------
+    # Validate every configuration that will actually be used.
+    # ------------------------------------------------------------------
+    supported_roles = {
         "architect",
         "developer",
         "tester",
         "reviewer",
+        "planner",
     }
 
-    missing_roles = required_roles - set(configs.keys())
+    for role in supported_roles:
+        config = effective_configs.get(role)
 
-    if missing_roles:
-        raise ValueError(
-            "Missing agent configurations: "
-            + ", ".join(sorted(missing_roles))
-        )
-
-    for role in required_roles:
-        config = configs[role]
+        if config is None:
+            raise ValueError(
+                f"Missing agent configuration: {role}"
+            )
 
         if not isinstance(config, AgentConfig):
             raise TypeError(
@@ -86,31 +151,37 @@ def create_agent_router(
                 f"expected '{role}', got '{config.role}'"
             )
 
+    # ------------------------------------------------------------------
+    # Create router.
+    # ------------------------------------------------------------------
     router = AgentRouter()
 
+    # ------------------------------------------------------------------
+    # Register agents.
+    # ------------------------------------------------------------------
     router.register(
         "architect",
-        ArchitectAgent(configs["architect"]),
+        ArchitectAgent(effective_configs["architect"]),
     )
 
     router.register(
         "developer",
-        DeveloperAgent(configs["developer"]),
+        DeveloperAgent(effective_configs["developer"]),
     )
 
     router.register(
         "tester",
-        TesterAgent(configs["tester"]),
+        TesterAgent(effective_configs["tester"]),
     )
 
     router.register(
         "reviewer",
-        ReviewerAgent(configs["reviewer"]),
+        ReviewerAgent(effective_configs["reviewer"]),
     )
-    
+
     router.register(
         "planner",
-        PlannerAgent(configs["planner"]),
+        PlannerAgent(effective_configs["planner"]),
     )
 
     return router

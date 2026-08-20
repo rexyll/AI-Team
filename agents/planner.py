@@ -5,6 +5,9 @@ from typing import Any
 
 from config.model import ask_ai
 from runtime.task_validator import validate_plan
+from agents.base import BaseAgent
+from runtime.task import Task
+
 
 
 SYSTEM_PROMPT = """
@@ -175,32 +178,6 @@ def _extract_json_object(response: str) -> str:
 
 def _parse_plan_response(response: str) -> dict[str, Any]:
     """
-    Parse and validate a Planner response.
-    """
-    response = response.strip()
-
-    try:
-        json_text = _extract_json_object(response)
-
-        plan = json.loads(json_text)
-
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Planner 返回的内容不是合法 JSON。\n"
-            f"原始响应：\n{response}"
-        ) from exc
-
-    if not isinstance(plan, dict):
-        raise ValueError(
-            "Planner JSON 根节点必须是对象。"
-        )
-
-    validate_plan(plan)
-
-    return plan
-
-def _parse_plan_response(response: str) -> dict:
-    """
     Extract, parse, and validate a Planner response.
 
     Raises:
@@ -320,3 +297,26 @@ def create_plan(requirement: str) -> dict:
                 ) from exc
 
     raise RuntimeError("Planner retry loop exited unexpectedly")
+
+
+class PlannerAgent(BaseAgent):
+
+    @property
+    def role(self) -> str:
+        return "planner"
+
+    def run(self, task: Task):
+        if not isinstance(task, Task):
+            raise TypeError(
+                "PlannerAgent.run() expects Task, "
+                f"got {type(task).__name__}"
+            )
+
+        plan = create_plan(task.description)
+
+        return {
+            "status": "planner_completed",
+            "agent": self.role,
+            "task_id": task.id,
+            "plan": plan,
+        }
