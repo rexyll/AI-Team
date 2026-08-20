@@ -8,21 +8,7 @@ from runtime.task import Task
 
 
 class ContextBuilder:
-    """
-    Build execution snapshots consumed by Agents.
-
-    Responsibilities:
-    - expose completed dependency results
-    - expose the latest tester feedback
-    - expose the latest reviewer feedback
-    - construct AgentContext snapshots
-
-    Non-responsibilities:
-    - do not modify Task
-    - do not change task status
-    - do not execute Agents
-    - do not control workflow transitions
-    """
+    """Build isolated execution snapshots consumed by Agents."""
 
     def __init__(self, all_tasks: dict[str, Task] | None = None):
         self.all_tasks = all_tasks or {}
@@ -30,7 +16,6 @@ class ContextBuilder:
     def build(self, task: Task) -> dict[str, Any]:
         """Build the legacy dictionary-based execution context."""
         self._validate_task(task)
-
         return {
             "dependencies": self._build_dependency_context(task),
             "tester_feedback": self._build_tester_feedback(task),
@@ -46,9 +31,13 @@ class ContextBuilder:
         """
         Build an AgentContext snapshot for one Agent execution.
 
-        Completed dependency payloads are copied into ``dependency_context``.
-        ``dependencies`` remains the compact list of dependency IDs for
-        backward compatibility.
+        ``dependencies`` remains the compact dependency-ID view.
+        ``dependency_context`` contains completed dependency snapshots.
+
+        When ``all_tasks`` is unavailable, an already-built legacy
+        ``task.context`` dependency snapshot is used as a compatibility
+        source. This keeps the AgentContext migration from silently losing
+        Architect -> Developer context without changing Workflow behavior.
         """
         self._validate_task(task)
 
@@ -91,14 +80,31 @@ class ContextBuilder:
         for dependency_id in task.dependencies:
             dependency = self.all_tasks.get(dependency_id)
 
-            if dependency is None or dependency.status != "completed":
+            if dependency is not None:
+                if dependency.status != "completed":
+                    continue
+
+                context[dependency_id] = {
+                    "title": dependency.title,
+                    "role": dependency.role,
+                    "result": deepcopy(dependency.result),
+                }
                 continue
 
-            context[dependency_id] = {
-                "title": dependency.title,
-                "role": dependency.role,
-                "result": deepcopy(dependency.result),
-            }
+            # Compatibility path: Workflow may already have materialized
+            # the completed dependency snapshot into task.context.
+            legacy_context = getattr(task, "context", {})
+            if not isinstance(legacy_context, dict):
+                continue
+
+            value = legacy_context.get(dependency_id)
+            if not isinstance(value, dict):
+                continue
+
+            if not {"title", "role", "result"}.issubset(value):
+                continue
+
+            context[dependency_id] = deepcopy(value)
 
         return context
 
@@ -137,6 +143,10 @@ class ContextBuilder:
             key: value
             for key, value in task_context.items()
             if key not in reserved
+            and not (
+                isinstance(value, dict)
+                and {"title", "role", "result"}.issubset(value)
+            )
         })
 
     @staticmethod
