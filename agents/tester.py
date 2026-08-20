@@ -4,6 +4,7 @@ from typing import Any
 
 from agents.base import BaseAgent
 from config.model import ask_ai
+from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.task import Task
 
@@ -55,7 +56,8 @@ class TesterAgent(BaseAgent):
                 f"got {type(task).__name__}"
             )
 
-        prompt = self._build_prompt(task)
+        context = self.build_context(task)
+        prompt = self._build_prompt(context)
 
         result = ask_ai(
             prompt=prompt,
@@ -67,30 +69,26 @@ class TesterAgent(BaseAgent):
         data = self._build_result_data(
             content=result,
             decision=decision,
-            task=task,
+            context=context,
         )
 
         return AgentResult(
             status=decision,
             agent=self.role,
-            task_id=task.id,
+            task_id=context.task_id,
             message=result,
             data=data,
         )
 
     @staticmethod
-    def _build_prompt(task: Task) -> str:
+    def _build_prompt(context: AgentContext) -> str:
         """
-        Build the Tester prompt.
+        Build the Tester prompt from an isolated AgentContext snapshot.
 
-        The prompt deliberately exposes the structured Developer result
-        and the execution context separately so the Tester can distinguish
-        factual execution evidence from descriptive information.
+        Developer result and execution context are exposed separately so
+        the Tester can distinguish factual execution evidence from
+        descriptive information.
         """
-
-        developer_result = TesterAgent._extract_task_result(
-            task.result
-        )
 
         return f"""
 请测试下面的软件开发任务。
@@ -100,25 +98,25 @@ TASK
 ====================
 
 Task ID:
-{task.id}
+{context.task_id}
 
 Title:
-{task.title}
+{context.task_title}
 
 Description:
-{task.description}
+{context.task_description}
 
 ====================
 DEVELOPER RESULT
 ====================
 
-{developer_result}
+{context.task_result}
 
 ====================
 CONTEXT
 ====================
 
-{task.context}
+{context.to_dict()}
 
 ====================
 TESTING REQUIREMENTS
@@ -156,78 +154,33 @@ TEST_FAILED
 """
 
     @staticmethod
-    def _extract_task_result(
-        result: Any,
-    ) -> Any:
-        """
-        Extract the most useful representation of Developer Result.
-
-        Supports:
-
-        1. AgentResult
-        2. canonical dictionaries
-        3. legacy dictionaries
-        4. arbitrary legacy result values
-        """
-
-        if isinstance(result, AgentResult):
-            return result.to_dict()
-
-        if isinstance(result, dict):
-            return result
-
-        return result
-
-    @staticmethod
     def _build_result_data(
         *,
         content: str,
         decision: str,
-        task: Task,
+        context: AgentContext,
     ) -> dict[str, Any]:
         """
-        Build the structured Tester Result payload.
+        Build the structured Tester Result payload from AgentContext.
 
-        Tester does not invent test evidence here. Existing evidence is
-        copied from Developer Result / Task state and the final Tester
-        report is preserved verbatim.
+        Tester does not invent test evidence. Existing evidence is copied
+        from the Developer result snapshot and the final Tester report is
+        preserved verbatim.
         """
 
-        developer_result = TesterAgent._extract_task_result(
-            task.result
-        )
-
+        developer_result = context.task_result
         tests: list[Any] = []
         files_changed: list[Any] = []
 
-        if isinstance(developer_result, AgentResult):
-            developer_data = developer_result.data
-
-            tests = list(
-                developer_data.get("tests", [])
-            )
-
-            files_changed = list(
-                developer_data.get("files_changed", [])
-            )
-
-        elif isinstance(developer_result, dict):
-            data = developer_result.get(
-                "data",
-                developer_result,
-            )
+        if isinstance(developer_result, dict):
+            data = developer_result.get("data", developer_result)
 
             if isinstance(data, dict):
                 tests_value = data.get("tests", [])
-
                 if isinstance(tests_value, list):
                     tests = list(tests_value)
 
-                files_value = data.get(
-                    "files_changed",
-                    [],
-                )
-
+                files_value = data.get("files_changed", [])
                 if isinstance(files_value, list):
                     files_changed = list(files_value)
 
