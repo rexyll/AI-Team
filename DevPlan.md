@@ -10,17 +10,15 @@
 最新用户本地 / 远程同步 HEAD：
 
 ```text
-ae ce0d2 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
-fix: enforce AgentContext access policy projections
+c9ce052 (HEAD -> refactor/runtime-architecture, origin/refactor/runtime-architecture)
+test: add AgentContext role visibility contract
 ```
-
-> 注：上面的 SHA 在代码仓库中为 `aece0d2`，此处保持标准 7 位短 SHA：`aece0d2`。
 
 最新全量测试：
 
 ```text
 pytest -q
-397 passed in 29.26s
+404 passed in 3.22s
 ```
 
 ---
@@ -215,19 +213,54 @@ pytest -q
 
 **结论：Phase 3.4.1 Context field access policy 已完成。Agent prompt 的 Context 输入现在经过 role-specific projection；Context 运行时投影与序列化兼容职责已经解耦。**
 
-## ☐ 3.4.2 Agent-specific context visibility
+## <span style="color:green">√</span> 3.4.2 Agent-specific context visibility
 
-下一节点：审计四类 Agent 的完整 Context 消费路径，确认不存在绕过 `context_view()` 的隐式字段读取或 prompt 泄露。
+已完成四类 Agent 的 Context 消费路径审计，并通过 Contract Tests 固化 role-specific visibility boundary。
 
-重点检查：
+本节点确认：
 
-- Architect / Developer / Tester / Reviewer 的 prompt 构建入口。
-- `AgentContext.to_dict()` 是否被 Agent execution path 直接调用。
-- `metadata`、`history`、`test_history`、`review_history`、`tester_feedback`、`reviewer_feedback` 是否存在越权读取。
-- `dependency_context` 是否存在绕过 Access Policy 的泄露路径。
-- 只有 Contract Test 暴露真实缺口时才修改生产代码。
+- Architect / Developer / Tester / Reviewer 的 prompt 构建均通过 `context_view()` 获取受控 projection。
+- Agent execution path 不直接依赖 `AgentContext.to_dict()` 作为运行时输入。
+- 禁止字段不会因为 Context snapshot 中存在而自动进入 Agent prompt。
+- `metadata`、`history`、`test_history`、`review_history`、`tester_feedback`、`reviewer_feedback` 按 role policy 控制可见性。
+- `dependency_context` 作为语义化 upstream snapshot 受 policy 控制，不允许通过其他 Context 字段绕过权限边界。
+- Contract Tests 不绑定 dict 的具体字符串序列化格式，而验证字段语义是否真正暴露 / 隐藏。
+- projection 返回 deep-copy，Agent 对 projection 的修改不会污染原始 AgentContext。
+
+新增 Contract Test：
+
+```text
+tests/test_agent_context_visibility.py
+```
+
+最终用户 Push SHA：
+
+- `c9ce052` — `test: add AgentContext role visibility contract`
+
+验收：
+
+```text
+pytest -q
+404 passed in 3.22s
+```
+
+**结论：Phase 3.4.2 Agent-specific context visibility 已完成。四类 Agent 的 Context 可见性现在由 role-specific projection + Contract Tests 双重约束；下一阶段不再扩大 Context 字段，而是治理 execution context 的只读语义。**
 
 ## ☐ 3.4.3 Read-only execution context convention
+
+下一节点：建立 AgentContext 的 **read-only execution convention**。
+
+重点不是立即引入复杂不可变对象，而是先用 Contract Tests 明确：
+
+- Agent 收到的是 execution snapshot，而不是 Task mutable state。
+- Agent 不应通过 projection 修改 Context snapshot 后影响后续 Agent。
+- `context_view()` 返回值只能作为 Agent 输入，不应被当作 Task 更新 API。
+- Agent 执行过程中不得依赖对 `Task` / `task.context` 的隐式写入来传递结果。
+- AgentResult 才是 Agent → Workflow 的显式输出边界。
+- Context history / current result / metadata 的更新应由 Runtime / TaskManager 负责，而不是 Agent prompt 构建逻辑负责。
+
+第一步仍然是 Contract Tests；只有发现真实 Runtime 缺口才修改生产代码。
+
 ## ☐ 3.4.4 Legacy Task context retirement plan
 
 ### 目标
@@ -312,8 +345,6 @@ DevPlan √
 ## ☐ 8.6 Performance / Concurrency Tests
 ## ☐ 8.7 Documentation / Examples
 
----
-
 # Commit Ledger
 
 | 状态 | Commit | 节点 |
@@ -325,6 +356,7 @@ DevPlan √
 | <span style="color:green">√</span> | `ad786e8` | Context Snapshot isolation contract |
 | <span style="color:green">√</span> | `73756eb` | Context History contract + snapshot |
 | <span style="color:green">√</span> | `aece0d2` | Context field access policy |
+| <span style="color:green">√</span> | `c9ce052` | Agent-specific context visibility contract |
 
 ---
 
@@ -344,6 +376,7 @@ DevPlan √
 12. Context Access Policy 必须通过 role-specific projection 实现，不能让 Agent 依赖 `to_dict()` 的序列化字段存在性。
 13. Runtime projection 与 persistence serialization 必须保持职责分离，避免 legacy compatibility 反向限制运行时访问控制。
 14. Access Policy 测试应验证语义字段是否暴露，而不是绑定具体 dict 字符串序列化格式。
+15. Agent-specific visibility 应通过统一 projection 约束，不能在各 Agent 中各自实现一套字段过滤逻辑。
 
 ---
 
@@ -351,4 +384,4 @@ DevPlan √
 
 **Phase 3.4 — Context Lifecycle / Access Policy。**
 
-下一步执行 **3.4.2 Agent-specific context visibility：GitHub 原始代码审计 + Contract Tests**，重点确认 Agent execution path 不存在绕过 `context_view()` 的 Context 字段访问。
+下一步执行 **3.4.3 Read-only execution context convention：先建立 Contract Tests，验证 AgentContext / context_view 的只读执行语义及 Agent → AgentResult → Runtime 的结果边界。只有 Contract Test 暴露真实缺口时才修改 Runtime。**
