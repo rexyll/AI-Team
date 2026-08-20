@@ -138,15 +138,13 @@ def test_stage_outcome_contract_accepts_exception():
 
 
 def test_stage_outcome_contract_rejects_invalid_exception():
-    outcome = StageOutcome(
-        stage=WorkflowStage.DEVELOPER,
-        status="failed",
-        result=None,
-        exception="boom",
-    )
-
-    with pytest.raises(ContractError):
-        validate_stage_outcome_contract(outcome)
+    with pytest.raises(TypeError):
+        StageOutcome(
+            stage=WorkflowStage.DEVELOPER,
+            status="failed",
+            result=None,
+            exception="boom",
+        )
         
         
 def test_workflow_contract_chain():

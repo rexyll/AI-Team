@@ -16,17 +16,6 @@ MAX_REVIEW_ROUNDS = 3
 
 @dataclass(frozen=True)
 class StageOutcome:
-    """
-    Workflow-level execution result for one Agent stage.
-
-    StageOutcome wraps AgentResult and additionally records
-    whether the stage execution itself raised an exception.
-
-    AgentResult represents business-level Agent output.
-
-    StageOutcome represents workflow-level execution state.
-    """
-
     stage: WorkflowStage
     status: str
     result: AgentResult | None = None
@@ -48,21 +37,28 @@ class StageOutcome:
                 "status must be a non-empty string"
             )
 
-        if (
-            self.result is not None
-            and not isinstance(self.result, AgentResult)
-        ):
-            raise TypeError(
-                "result must be an AgentResult or None"
-            )
+        if self.result is not None:
+            if isinstance(self.result, dict):
+                normalized_result = AgentResult.from_dict(
+                    self.result
+                )
 
-        if (
-            self.exception is not None
-            and not isinstance(self.exception, Exception)
-        ):
-            raise TypeError(
-                "exception must be an Exception or None"
-            )
+                object.__setattr__(
+                    self,
+                    "result",
+                    normalized_result,
+                )
+
+            elif not isinstance(self.result, AgentResult):
+                raise TypeError(
+                    "result must be an AgentResult, dict, or None"
+                )
+
+        if self.exception is not None:
+            if not isinstance(self.exception, Exception):
+                raise TypeError(
+                    "exception must be an Exception or None"
+                )
 
     @property
     def succeeded(self) -> bool:
@@ -78,34 +74,6 @@ class StageOutcome:
             return {}
 
         return self.result.to_dict()
-
-    @classmethod
-    def success(
-        cls,
-        stage: WorkflowStage,
-        result: AgentResult,
-    ) -> "StageOutcome":
-        return cls(
-            stage=stage,
-            status=result.status,
-            result=result,
-            exception=None,
-        )
-
-    @classmethod
-    def failure(
-        cls,
-        stage: WorkflowStage,
-        exception: Exception,
-        result: AgentResult | None = None,
-        status: str = "failed",
-    ) -> "StageOutcome":
-        return cls(
-            stage=stage,
-            status=status,
-            result=result,
-            exception=exception,
-        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -410,22 +378,15 @@ class TaskWorkflow:
 
         try:
             raw_result = self.developer.run(task)
+            result = normalize_agent_result(raw_result)
 
-            result = normalize_agent_result(
-                raw_result
-            )
-
-            return StageOutcome.success(
-                WorkflowStage.DEVELOPER,
-                result,
+            return StageOutcome(
+                stage=WorkflowStage.DEVELOPER,
+                status=result.status,
+                result=result,
             )
 
         except Exception as exc:
-            self.task_manager.mark_failed(
-                task.id,
-                f"Developer execution failed: {exc}",
-            )
-
             return StageOutcome.failure(
                 WorkflowStage.DEVELOPER,
                 exc,
@@ -440,12 +401,9 @@ class TaskWorkflow:
         if outcome.exception is not None:
             self.task_manager.mark_failed(
                 task.id,
-                (
-                    "Developer execution failed: "
-                    f"{outcome.exception}"
-                ),
+                str(outcome.exception),
             )
-            return
+            raise outcome.exception
 
         if outcome.status == "completed":
             self.task_manager.mark_developer_completed(
@@ -454,15 +412,15 @@ class TaskWorkflow:
             )
             return
 
+        message = (
+            outcome.result.message
+            if outcome.result is not None
+            else "Developer execution failed"
+        )
+
         self.task_manager.mark_failed(
             task.id,
-            outcome.result_dict.get(
-                "message",
-                (
-                    "Invalid developer result status: "
-                    f"{outcome.status}"
-                ),
-            ),
+            message,
         )
     
     
@@ -473,14 +431,12 @@ class TaskWorkflow:
 
         try:
             raw_result = self.reviewer.run(task)
+            result = normalize_agent_result(raw_result)
 
-            result = normalize_agent_result(
-                raw_result
-            )
-
-            return StageOutcome.success(
-                WorkflowStage.REVIEWER,
-                result,
+            return StageOutcome(
+                stage=WorkflowStage.REVIEWER,
+                status=result.status,
+                result=result,
             )
 
         except Exception as exc:
@@ -495,24 +451,22 @@ class TaskWorkflow:
         outcome: StageOutcome,
     ) -> str:
 
+        if task.status == TaskStatus.REVIEW_PENDING.value:
+            self.task_manager.mark_reviewing(task.id)
+
         if outcome.exception is not None:
             self.task_manager.mark_failed(
                 task.id,
-                (
-                    "Reviewer execution failed: "
-                    f"{outcome.exception}"
-                ),
+                str(outcome.exception),
             )
-            return "failed"
-
-        if task.status == TaskStatus.REVIEW_PENDING.value:
-            self.task_manager.mark_reviewing(task.id)
+            raise outcome.exception
 
         if outcome.status == "approved":
             self.task_manager.mark_review_approved(
                 task.id,
                 outcome.result_dict,
             )
+
             return "completed"
 
         if outcome.status == "revision":
@@ -529,18 +483,23 @@ class TaskWorkflow:
                         f"{self.max_review_rounds} rounds"
                     ),
                 )
+
                 return "failed"
 
             return "revision"
 
         if outcome.status == "failed":
+            message = (
+                outcome.result.message
+                if outcome.result is not None
+                else "Reviewer execution failed"
+            )
+
             self.task_manager.mark_failed(
                 task.id,
-                outcome.result_dict.get(
-                    "message",
-                    "Reviewer execution failed",
-                ),
+                message,
             )
+
             return "failed"
 
         self.task_manager.mark_failed(
