@@ -1,10 +1,10 @@
 from agents.architect import ArchitectAgent
 from runtime.context_builder import build_task_context
+from runtime.llm.mock import MockLLM
 from runtime.task import Task
 
 
 def test_architect_context():
-    
     architect_task = Task(
         id="TASK-001",
         title="数据库 Schema 设计",
@@ -13,7 +13,6 @@ def test_architect_context():
     """,
         role="architect",
     )
-
 
     developer_task = Task(
         id="TASK-003",
@@ -25,60 +24,28 @@ def test_architect_context():
         dependencies=["TASK-001"],
     )
 
-
-    architect = ArchitectAgent()
-
-
-    print()
-    print("=" * 60)
-    print("RUN ARCHITECT")
-    print("=" * 60)
+    architect = ArchitectAgent(
+        llm=MockLLM("SQLite architecture"),
+    )
 
     architect_result = architect.run(architect_task)
 
-    print()
-    print("ARCHITECT RETURN VALUE:")
-    print(architect_result)
-
-    print()
-    print("ARCHITECT RESULT:")
-    print(architect_task.result)
-    
-    # architect_task.status = "completed"
-
+    assert architect_result.data["architecture"] == "SQLite architecture"
 
     all_tasks = {
         architect_task.id: architect_task,
         developer_task.id: developer_task,
     }
 
-
     context = build_task_context(
         developer_task,
         all_tasks,
     )
 
-
     developer_task.context = context
 
-
-    print()
-    print("=" * 60)
-    print("DEVELOPER CONTEXT")
-    print("=" * 60)
-
     for task_id, data in context.items():
-
-        print()
-        print(f"Dependency: {task_id}")
-        print(f"Role: {data['role']}")
-        print(f"Title: {data['title']}")
-
-        assert data["result"]["architecture"]
-        
-        print()
-        print("Result:")
-        print(
-            data["result"]["architecture"]
-        )
-        
+        assert task_id == "TASK-001"
+        assert data["role"] == "architect"
+        assert data["title"] == "数据库 Schema 设计"
+        assert data["result"]["architecture"] == "SQLite architecture"
