@@ -16,17 +16,6 @@ MAX_REVIEW_ROUNDS = 3
 
 @dataclass
 class StageOutcome:
-    """
-    Unified outcome of a workflow stage.
-
-    A StageOutcome represents the execution boundary between
-    TaskWorkflow and an individual Agent.
-
-    The business result is normalized into AgentResult.
-
-    Legacy dictionaries are still accepted for compatibility.
-    """
-
     stage: WorkflowStage
     status: str
     result: AgentResult | None = None
@@ -61,58 +50,34 @@ class StageOutcome:
                 self.result
             )
 
-        elif (
+        if (
             self.result is not None
             and not isinstance(self.result, AgentResult)
         ):
             raise TypeError(
-                "result must be an AgentResult, dict or None"
+                "result must be an AgentResult, dict, or None"
             )
 
-        if self.exception is not None:
-            self.status = "failed"
-
-        elif isinstance(self.result, AgentResult):
+        if self.result is not None:
             self.status = self.result.status
 
     @staticmethod
     def _normalize_result(
         result: dict[str, Any],
     ) -> AgentResult:
-        """
-        Normalize legacy stage result dictionaries into AgentResult.
+        payload = dict(result)
 
-        Older workflow tests and integrations may provide only:
-
-            {
-                "status": "completed",
-                "message": "..."
-            }
-
-        AgentResult itself requires ``agent`` and ``task_id``.
-        Those fields are therefore synthesized here when missing.
-        """
-
-        if not isinstance(result, dict):
-            raise TypeError(
-                "StageOutcome result must be a dictionary"
-            )
-
-        normalized = dict(result)
-
-        normalized.setdefault(
+        payload.setdefault(
             "agent",
-            "workflow",
+            "unknown",
         )
 
-        normalized.setdefault(
+        payload.setdefault(
             "task_id",
             "unknown",
         )
 
-        return AgentResult.from_dict(
-            normalized
-        )
+        return AgentResult.from_dict(payload)
 
     @classmethod
     def success(
@@ -323,11 +288,7 @@ class TaskWorkflow:
         try:
             raw_result = self.tester.run(task)
 
-            result = normalize_stage_result(
-                WorkflowStage.TESTER,
-                task,
-                raw_result,
-            )
+            result = normalize_agent_result(raw_result)
 
             return StageOutcome.success(
                 WorkflowStage.TESTER,
@@ -461,11 +422,7 @@ class TaskWorkflow:
         try:
             raw_result = self.developer.run(task)
 
-            result = normalize_stage_result(
-                WorkflowStage.DEVELOPER,
-                task,
-                raw_result,
-            )
+            result = normalize_agent_result(raw_result)
 
             return StageOutcome.success(
                 WorkflowStage.DEVELOPER,
@@ -473,7 +430,7 @@ class TaskWorkflow:
             )
 
         except Exception as exc:
-            return StageOutcome.failure(
+            outcome = StageOutcome.failure(
                 WorkflowStage.DEVELOPER,
                 exc,
             )
@@ -485,10 +442,16 @@ class TaskWorkflow:
     ) -> None:
 
         if outcome.exception is not None:
+            error = (
+                f"Developer execution failed: "
+                f"{outcome.exception}"
+            )
+
             self.task_manager.mark_failed(
                 task.id,
-                str(outcome.exception),
+                error,
             )
+
             raise outcome.exception
 
         if outcome.status == "completed":
@@ -517,11 +480,8 @@ class TaskWorkflow:
 
         try:
             raw_result = self.reviewer.run(task)
-            result = normalize_stage_result(
-                WorkflowStage.REVIEWER,
-                task,
-                raw_result,
-            )
+
+            result = normalize_agent_result(raw_result)
 
             return StageOutcome.success(
                 WorkflowStage.REVIEWER,
@@ -544,10 +504,16 @@ class TaskWorkflow:
             self.task_manager.mark_reviewing(task.id)
 
         if outcome.exception is not None:
+            error = (
+                f"Reviewer execution failed: "
+                f"{outcome.exception}"
+            )
+
             self.task_manager.mark_failed(
                 task.id,
-                str(outcome.exception),
+                error,
             )
+
             raise outcome.exception
 
         if outcome.status == "approved":
