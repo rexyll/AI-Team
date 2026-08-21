@@ -57,3 +57,20 @@ class ToolExecutionHistory:
             raise TypeError("adapter must be a ToolExecutionPersistenceAdapter")
         for record in self._records.values():
             adapter.save(record)
+
+    def save_if_absent(self, adapter: "ToolExecutionPersistenceAdapter") -> int:
+        """Persist this history without failing on already-persisted identical records.
+
+        Returns the number of newly persisted records. Conflicting records
+        with an existing execution id are still rejected by the adapter.
+        """
+        from .tool_execution_persistence import ToolExecutionPersistenceAdapter
+
+        if not isinstance(adapter, ToolExecutionPersistenceAdapter):
+            raise TypeError("adapter must be a ToolExecutionPersistenceAdapter")
+
+        persisted = 0
+        for record in self._records.values():
+            if adapter.save_if_absent(record):
+                persisted += 1
+        return persisted
