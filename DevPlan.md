@@ -11,12 +11,12 @@
 
 ```text
 pytest -q
-744 passed in 2.02s
+765 passed in 2.19s
 ```
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 均已完成。
 
-Phase 7.1 / 7.1.1 / 7.2 / 7.3 已完成；7.4 Project Resume / Recovery 已完成并通过用户全量验收。当前进入 **7.5 Tool execution logs**。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 已完成；当前进入 **7.5.2 Project recovery tool-log integration**。
 
 ---
 
@@ -88,13 +88,27 @@ Phase 7.1 / 7.1.1 / 7.2 / 7.3 已完成；7.4 Project Resume / Recovery 已完�
 
 ```text
 pytest -q
-744 passed in 2.02s
+765 passed in 2.19s
 ```
 
-## ☐ 7.5 Tool execution logs
-### ☐ 7.5.1 Tool log ownership / persistence contract
-### ☐ 7.5.2 Project recovery tool-log integration
-### ☐ 7.5.3 Audit / query observability boundary
+## <span style="color:green">√</span> 7.5 Tool execution logs
+### <span style="color:green">√</span> 7.5.1 Tool log ownership / persistence contract
+
+已建立并验证：
+
+1. ToolExecutionRecord 必须属于已存在的 Task；
+2. Task context 中的 tool execution record 必须声明自身所属 Task；
+3. project-level history 中的悬空 task_id 被拒绝；
+4. 同 execution_id 的冲突记录被拒绝；
+5. project snapshot 支持从 Task context 派生 tool history；
+6. 显式 project history 可以作为 canonical history 覆盖派生 history，同时仍接受 Task ownership 校验；
+7. checkpoint / update / load 均保持上述 ownership 边界。
+
+## ☐ 7.5.2 Project recovery tool-log integration
+
+当前专项工作：验证 persisted project resume 后，project-level canonical tool history 能够重新注入 Task runtime context，并清除旧的 / 被覆盖的 task-local tool history，保证继续执行使用唯一 canonical history。
+
+## ☐ 7.5.3 Audit / query observability boundary
 ## ☐ 7.6 Workflow event log
 
 ### Phase 7 开发边界
@@ -125,10 +139,10 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 # 当前下一动作
 
-**当前节点：7.5.1 Tool log ownership / persistence contract。**
+**当前节点：7.5.2 Project recovery tool-log integration。**
 
-1. ToolExecutionRecord 必须属于已存在的 Task；
-2. Project snapshot 保存 / 恢复时不得接受悬空 tool execution records；
-3. Task context 中的 tool history 与 project-level history 必须保持 ownership 一致；
+1. persisted project 的 canonical tool history 必须在 `resume_persisted()` 后进入 Task context；
+2. 如果 project-level history 覆盖 Task-local history，恢复后不得残留旧 execution records；
+3. recovery 后继续执行必须使用同一 canonical ownership；
 4. 专项测试通过后执行全量 `pytest -q`；
-5. 用户全量验收通过后标记 7.5.1，再进入 7.5.2。
+5. 用户全量验收通过后标记 7.5.2，再进入 7.5.3。
