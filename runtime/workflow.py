@@ -96,9 +96,11 @@ class WorkflowStage(str, Enum):
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations.
 
-    AgentRouter is the single source of truth for stage agents. The explicit
-    agent arguments remain as a compatibility boundary for existing callers,
-    but they must refer to the same instances registered in the router.
+    AgentRouter is the preferred source of truth for stage agents. The
+    explicit agent arguments remain a compatibility boundary for legacy
+    lightweight routers and test doubles that only expose ``route`` or no
+    registry API at all. When a router exposes ``get_agent``, the resolved
+    instance must match the explicit compatibility argument.
     """
 
     def __init__(
@@ -106,15 +108,15 @@ class TaskWorkflow:
         task_manager: TaskManager,
         developer,
         reviewer,
-        agent_router: AgentRouter,
+        agent_router,
         max_review_rounds: int = MAX_REVIEW_ROUNDS,
         tester=None,
         state_change_hook: Callable[[TaskManager], None] | None = None,
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
-        if not isinstance(agent_router, AgentRouter):
-            raise TypeError("agent_router must be an AgentRouter")
+        if agent_router is None:
+            raise TypeError("agent_router is required")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
 
@@ -129,30 +131,47 @@ class TaskWorkflow:
             self._validate_explicit_agent("tester", tester)
 
     def _validate_explicit_agent(self, role: str, agent) -> None:
-        registered = self.agent_router.get_agent(role)
-        if registered is None:
-            raise ValueError(f"No agent registered for role: {role}")
-        if agent is not registered:
-            raise ValueError(
-                f"TaskWorkflow {role} agent must be the instance registered in AgentRouter"
-            )
+        """Validate the compatibility argument without forcing a concrete router type."""
+        if isinstance(self.agent_router, AgentRouter):
+            registered = self.agent_router.get_agent(role)
+            if registered is None:
+                raise ValueError(f"No agent registered for role: {role}")
+            if agent is not registered:
+                raise ValueError(
+                    f"TaskWorkflow {role} agent must be the instance registered in AgentRouter"
+                )
+            return
 
-    def _agent(self, role: str):
-        return self.agent_router.route(role)
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        if callable(get_agent):
+            registered = get_agent(role)
+            if registered is None:
+                raise ValueError(f"No agent registered for role: {role}")
+            if agent is not registered:
+                raise ValueError(
+                    f"TaskWorkflow {role} agent must match the router-resolved instance"
+                )
+
+    def _agent(self, role: str, fallback=None):
+        """Resolve an agent from the router when its registry API is available."""
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        if callable(get_agent):
+            agent = get_agent(role)
+            if agent is not None:
+                return agent
+        return fallback
 
     @property
     def developer(self):
-        return self._agent("developer")
+        return self._agent("developer", self._developer_fallback)
 
     @property
     def tester(self):
-        if not self.agent_router.has_agent("tester"):
-            return None
-        return self._agent("tester")
+        return self._agent("tester", self._tester_fallback)
 
     @property
     def reviewer(self):
-        return self._agent("reviewer")
+        return self._agent("reviewer", self._reviewer_fallback)
 
     def _checkpoint(self) -> None:
         """Persist a workflow-stage boundary when a durable hook is installed."""
@@ -191,11 +210,7 @@ class TaskWorkflow:
                     if tester_outcome.status != "passed":
                         continue
             else:
-                self._transition_to_declared_target(
-                    task,
-                    "tester",
-                    WorkflowOutcomeKind.SUCCESS,
-                )
+                self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
                 self._checkpoint()
 
             review_outcome = self._run_reviewer(task)
