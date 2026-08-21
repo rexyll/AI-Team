@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-592 passed in 1.38s
+594 passed in 1.41s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进，6.5.1 与 6.5.2 已通过用户全量回归，当前进入 6.5.3 Resume in-memory execution boundary 验收。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 已完成，当前进入 6.6 ProjectResult。**
 
 ---
 
@@ -103,7 +103,7 @@ pytest tests/test_task_manager_concurrency.py -q
 
 **结论：6.4 Task 并行执行已完成。**
 
-## ☐ 6.5 Retry / Resume
+## <span style="color:green">√</span> 6.5 Retry / Resume
 
 ### <span style="color:green">√</span> 6.5.1 Retry lifecycle contract
 
@@ -149,11 +149,9 @@ pytest -q
 
 **结论：6.5.2 Retry policy integration 已完成。**
 
-### ☐ 6.5.3 Resume in-memory execution boundary
+### <span style="color:green">√</span> 6.5.3 Resume in-memory execution boundary
 
-当前节点：定义并验收无 persistence 前提下的 in-memory resume execution boundary。
-
-目标：
+已完成无 persistence 前提下的 in-memory resume execution boundary：
 
 1. `ProjectOrchestrator.resume()` 从现有 `TaskManager` execution state 继续执行；
 2. resume 不重新调用 Planner；
@@ -161,21 +159,52 @@ pytest -q
 4. 已完成 Task 保持完成状态，不被重复执行；
 5. 当前可执行 Task 继续交给 Orchestrator / DependencyScheduler；
 6. 没有可恢复 in-memory execution state 时明确拒绝 resume；
-7. 不在 Phase 6.5.3 引入 persistence，持久化恢复留给 Phase 7.6。
+7. Resume 不引入 persistence，持久化恢复保留给 Phase 7.6。
 
-下一步先运行专项测试：
+用户专项验收：
 
 ```text
 pytest tests/test_project_resume.py -q
+6 passed in 0.58s
 ```
 
-专项通过后再运行全量 `pytest -q`。全量通过后将 6.5.3 标记为 √。
+### <span style="color:green">√</span> 6.5.4 Retry / Resume integration
 
-### ☐ 6.5.4 Retry / Resume integration
+已完成 Retry 与 Resume 的协作契约，并通过用户全量回归：
 
-待 6.5.3 contract 冻结后，验证 retry/resume 与 DependencyScheduler、TaskWorkflow、TaskManager 的协作边界。
+1. retry 后 Task 保持 retry attempt / budget 语义；
+2. retry 产生的 `READY` Task 可以由 resume 继续执行；
+3. resume 不重新 Planner、不重建 Task Graph；
+4. DependencyScheduler 继续负责 retry/resume 后的 readiness decision；
+5. TaskWorkflow 与 TaskManager lifecycle boundary 不被 resume 绕过；
+6. Retry / Resume integration 不修改已完成 peer Task；
+7. retry budget 在 resume 生命周期中保持稳定。
+
+用户最终验收：
+
+```text
+pytest -q
+594 passed in 1.41s
+```
+
+**结论：6.5 Retry / Resume 已完成。**
 
 ## ☐ 6.6 ProjectResult
+
+当前节点：冻结 project-level immutable execution summary contract，并确认 ProjectResult 不泄漏 TaskManager、Agent、LLM 或 Provider 实现细节。
+
+目标：
+
+1. `ProjectResult` 为 immutable value object；
+2. 成功、失败、阻塞、incomplete 四类结果语义明确；
+3. 汇总 total/completed/failed/blocked task 数量；
+4. failed / blocked Task ID 稳定、可序列化；
+5. `to_dict()` 返回 JSON-friendly representation；
+6. ProjectResult 不持有可变 TaskManager / Agent / Provider 引用；
+7. `ProjectOrchestrator.run()` / `resume()` 统一返回 ProjectResult；
+8. 空 TaskManager、部分完成、失败、阻塞等边界状态有明确 contract tests。
+
+下一步先新增 `tests/test_project_result_contract.py`，冻结上述 contract；专项通过后再修改实现；最后执行全量 pytest。
 
 # Phase 7 — Persistence / Observability
 
@@ -200,17 +229,11 @@ pytest tests/test_project_resume.py -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.5.3 Resume in-memory execution boundary。**
+**当前节点：Phase 6.6 ProjectResult。**
 
-1. 用户已确认 6.5.2 全量回归通过：`592 passed in 1.38s`。
-2. Retry policy 已冻结为 pure decision source，failure classification 位于 Orchestrator boundary，TaskManager 独占 retry/lifecycle mutation。
-3. 已提供 `ProjectOrchestrator.resume()` 作为 in-memory resume entry point，并保持 resume 不重新规划、不重建 task graph。
-4. 用户 Pull 后先运行：
-
-```text
-pytest tests/test_project_resume.py -q
-```
-
-5. 再运行全量 `pytest -q`。
-6. 全量通过后标记 6.5.3 为 √，然后进入 **6.5.4 Retry / Resume integration**。
-7. Resume 暂不与 persistence 耦合，Phase 7.6 再处理 persisted state resume。
+1. 用户已确认 6.5.3 / 6.5.4 专项与全量回归通过：`594 passed in 1.41s`。
+2. Retry / Resume 已冻结为不重新规划、不重建 Task Graph 的 execution-state continuation boundary。
+3. 下一步新增 `tests/test_project_result_contract.py`，先冻结 immutable ProjectResult contract。
+4. 专项通过后修改实现，再运行全量 `pytest -q`。
+5. 全量通过后标记 6.6 为 √，再进入 Phase 7 Persistence / Observability。
+6. Phase 7.6 才引入 persisted state resume，避免与当前 in-memory resume boundary 混杂。
