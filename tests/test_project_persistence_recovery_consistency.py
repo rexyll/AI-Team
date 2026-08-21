@@ -98,14 +98,14 @@ def test_load_rejects_plan_task_identity_mismatch(tmp_path):
         adapter.load("PROJECT-001")
 
 
-def test_load_rejects_plan_task_definition_mismatch(tmp_path):
+def test_load_rejects_duplicate_plan_task_ids(tmp_path):
     adapter = ProjectPersistenceAdapter(tmp_path)
     _save(adapter)
     path, payload = _read_payload(adapter)
-    payload["plan"]["tasks"][0]["role"] = "tester"
+    payload["plan"]["tasks"][1]["id"] = "TASK-001"
     _write_payload(path, payload)
 
-    with pytest.raises(ValueError, match="plan/task mismatch for TASK-001: role"):
+    with pytest.raises(ValueError, match="duplicate task ids"):
         adapter.load("PROJECT-001")
 
 
