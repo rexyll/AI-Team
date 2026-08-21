@@ -19,6 +19,7 @@ def _manager() -> TaskManager:
 def _plan() -> dict:
     return {
         "project": "Resume Project",
+        "summary": "Resume an interrupted project from persisted runtime state",
         "tasks": [
             {"id": "TASK-001", "title": "done", "description": "done", "role": "developer", "dependencies": []},
             {"id": "TASK-002", "title": "ready", "description": "ready", "role": "developer", "dependencies": ["TASK-001"]},
