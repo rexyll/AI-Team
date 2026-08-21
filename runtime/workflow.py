@@ -146,19 +146,17 @@ class TaskWorkflow:
             )
 
     def _agent(self, role: str, fallback=None):
+        """Resolve a stage agent from the router registry when available.
+
+        ``route()`` is intentionally not consulted here. Legacy routers used
+        by isolated workflow tests may implement route() as a guard that must
+        never be called. The explicit agent remains the compatibility fallback
+        when no registry API is available. This also keeps the router registry
+        as the sole dynamic source when ``get_agent()`` exists.
+        """
         get_agent = getattr(self.agent_router, "get_agent", None)
         if callable(get_agent):
             agent = get_agent(role)
-            if agent is not None:
-                return agent
-            return fallback
-
-        route = getattr(self.agent_router, "route", None)
-        if callable(route):
-            try:
-                agent = route(role)
-            except (KeyError, LookupError):
-                agent = None
             if agent is not None:
                 return agent
         return fallback
