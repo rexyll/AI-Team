@@ -148,7 +148,8 @@ class ProjectOrchestrator:
         The persisted plan and TaskManager are restored first, then the
         canonical project execution path is used. Each execution boundary
         checkpoints the restored runtime state, and the final result is
-        persisted as the authoritative project snapshot.
+        persisted only when the final checkpoint did not already capture the
+        same authoritative snapshot.
         """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
@@ -167,27 +168,41 @@ class ProjectOrchestrator:
             if isinstance(value, str):
                 project_name = value
 
+        last_checkpoint: tuple[tuple[tuple[str, str], ...], ProjectResult] | None = None
+
         def persist_checkpoint(manager: TaskManager) -> None:
+            nonlocal last_checkpoint
+            checkpoint_result = ProjectResult.from_task_manager(
+                manager,
+                project=project_name,
+            )
+            task_states = tuple(
+                (task.id, task.status)
+                for task in manager.get_all_tasks()
+            )
             adapter.update(
                 project_id,
                 plan=self.last_plan,
                 task_manager=manager,
-                result=ProjectResult.from_task_manager(
-                    manager,
-                    project=project_name,
-                ),
+                result=checkpoint_result,
             )
+            last_checkpoint = (task_states, checkpoint_result)
 
         result = self.execute(
             snapshot.task_manager,
             state_change_hook=persist_checkpoint,
         )
-        adapter.update(
-            project_id,
-            plan=self.last_plan,
-            task_manager=self.last_task_manager,
-            result=result,
+        final_states = tuple(
+            (task.id, task.status)
+            for task in self.last_task_manager.get_all_tasks()
         )
+        if last_checkpoint != (final_states, result):
+            adapter.update(
+                project_id,
+                plan=self.last_plan,
+                task_manager=self.last_task_manager,
+                result=result,
+            )
         return result
 
     def run(self, requirement: str) -> ProjectResult:
