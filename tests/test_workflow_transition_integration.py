@@ -1,5 +1,3 @@
-import pytest
-
 from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
 from runtime.task import Task
@@ -57,14 +55,14 @@ def _result(status: str) -> AgentResult:
     )
 
 
-def _assert_last_transition(
+def _assert_transition(
     task: Task,
     stage: str,
     outcome: WorkflowOutcomeKind,
+    history_index: int = -1,
 ) -> None:
     transition = get_workflow_transition(stage, outcome)
-    assert task.status == transition.target.value
-    assert task.status_history[-1] == {
+    assert task.status_history[history_index] == {
         "from": transition.source.value,
         "to": transition.target.value,
     }
@@ -82,7 +80,8 @@ def test_developer_success_uses_declared_transition():
         ),
     )
 
-    _assert_last_transition(
+    assert task.status == TaskStatus.REVIEW_PENDING.value
+    _assert_transition(
         task,
         "developer",
         WorkflowOutcomeKind.SUCCESS,
@@ -101,7 +100,8 @@ def test_developer_invalid_result_uses_declared_failure_transition():
         ),
     )
 
-    _assert_last_transition(
+    assert task.status == TaskStatus.FAILED.value
+    _assert_transition(
         task,
         "developer",
         WorkflowOutcomeKind.INVALID_RESULT,
@@ -120,14 +120,15 @@ def test_tester_success_uses_declared_transition():
         ),
     )
 
-    # The Workflow enters reviewer state immediately before reviewer
-    # execution. The contract integration test checks that lifecycle edge.
-    manager.mark_reviewing(task.id)
-    _assert_last_transition(
+    # Reviewer entry is a separate lifecycle transition performed by
+    # TaskWorkflow immediately before reviewer execution.
+    _assert_transition(
         task,
         "tester",
         WorkflowOutcomeKind.SUCCESS,
     )
+    manager.mark_reviewing(task.id)
+    assert task.status == TaskStatus.REVIEWING.value
 
 
 def test_tester_quality_failure_uses_declared_revision_transition():
@@ -142,7 +143,8 @@ def test_tester_quality_failure_uses_declared_revision_transition():
         ),
     )
 
-    _assert_last_transition(
+    assert task.status == TaskStatus.RUNNING.value
+    _assert_transition(
         task,
         "tester",
         WorkflowOutcomeKind.QUALITY_GATE_FAILURE,
@@ -162,7 +164,8 @@ def test_reviewer_success_uses_declared_completion_transition():
     )
 
     assert action == "completed"
-    _assert_last_transition(
+    assert task.status == TaskStatus.COMPLETED.value
+    _assert_transition(
         task,
         "reviewer",
         WorkflowOutcomeKind.SUCCESS,
@@ -182,7 +185,8 @@ def test_reviewer_revision_uses_declared_quality_failure_transition():
     )
 
     assert action == "revision"
-    _assert_last_transition(
+    assert task.status == TaskStatus.RUNNING.value
+    _assert_transition(
         task,
         "reviewer",
         WorkflowOutcomeKind.QUALITY_GATE_FAILURE,
@@ -202,7 +206,8 @@ def test_reviewer_invalid_result_uses_declared_failure_transition():
     )
 
     assert action == "failed"
-    _assert_last_transition(
+    assert task.status == TaskStatus.FAILED.value
+    _assert_transition(
         task,
         "reviewer",
         WorkflowOutcomeKind.INVALID_RESULT,
