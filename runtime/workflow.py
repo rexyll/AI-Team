@@ -3,24 +3,17 @@ from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 from runtime.result_normalizer import normalize_agent_result
 from runtime.context_builder import build_task_context
-from runtime.workflow_transition import (
-    WorkflowOutcomeKind,
-    get_workflow_transition,
-)
+from runtime.workflow_transition import WorkflowOutcomeKind, get_workflow_transition
 from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Callable
-
 from runtime.agent_result import AgentResult
 
-
 MAX_REVIEW_ROUNDS = 3
-
 
 @dataclass
 class StageOutcome:
     """Unified result contract for one workflow stage."""
-
     stage: "WorkflowStage"
     status: str
     result: AgentResult | dict[str, Any] | None = None
@@ -66,9 +59,7 @@ class StageOutcome:
 
     @property
     def result_dict(self) -> dict[str, Any]:
-        if self.result is None:
-            return {}
-        return self.result.to_dict()
+        return {} if self.result is None else self.result.to_dict()
 
     @property
     def succeeded(self) -> bool:
@@ -79,81 +70,52 @@ class StageOutcome:
         return self.status == "failed" or self.exception is not None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "stage": self.stage.value,
-            "status": self.status,
-            "result": self.result_dict,
-            "exception": str(self.exception) if self.exception is not None else None,
-        }
-
+        return {"stage": self.stage.value, "status": self.status, "result": self.result_dict, "exception": str(self.exception) if self.exception is not None else None}
 
 class WorkflowStage(str, Enum):
     DEVELOPER = "developer"
     TESTER = "tester"
     REVIEWER = "reviewer"
 
-
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations.
 
-    AgentRouter is the preferred source of truth for stage agents. The
-    explicit agent arguments remain a compatibility boundary for legacy
-    lightweight routers and test doubles that only expose ``route`` or no
-    registry API at all. When a router exposes ``get_agent``, the resolved
-    instance must match the explicit compatibility argument.
+    AgentRouter is the preferred source of truth for stage agents. Explicit
+    agent arguments remain a compatibility boundary for lightweight routers
+    and test doubles that do not expose a registry API.
     """
-
-    def __init__(
-        self,
-        task_manager: TaskManager,
-        developer,
-        reviewer,
-        agent_router,
-        max_review_rounds: int = MAX_REVIEW_ROUNDS,
-        tester=None,
-        state_change_hook: Callable[[TaskManager], None] | None = None,
-    ):
+    def __init__(self, task_manager: TaskManager, developer, reviewer, agent_router,
+                 max_review_rounds: int = MAX_REVIEW_ROUNDS, tester=None,
+                 state_change_hook: Callable[[TaskManager], None] | None = None):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
         if agent_router is None:
             raise TypeError("agent_router is required")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
-
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.max_review_rounds = max_review_rounds
         self._state_change_hook = state_change_hook
-
+        self._developer_fallback = developer
+        self._tester_fallback = tester
+        self._reviewer_fallback = reviewer
         self._validate_explicit_agent("developer", developer)
         self._validate_explicit_agent("reviewer", reviewer)
         if tester is not None:
             self._validate_explicit_agent("tester", tester)
 
     def _validate_explicit_agent(self, role: str, agent) -> None:
-        """Validate the compatibility argument without forcing a concrete router type."""
-        if isinstance(self.agent_router, AgentRouter):
-            registered = self.agent_router.get_agent(role)
-            if registered is None:
-                raise ValueError(f"No agent registered for role: {role}")
-            if agent is not registered:
-                raise ValueError(
-                    f"TaskWorkflow {role} agent must be the instance registered in AgentRouter"
-                )
-            return
-
         get_agent = getattr(self.agent_router, "get_agent", None)
-        if callable(get_agent):
-            registered = get_agent(role)
-            if registered is None:
-                raise ValueError(f"No agent registered for role: {role}")
-            if agent is not registered:
-                raise ValueError(
-                    f"TaskWorkflow {role} agent must match the router-resolved instance"
-                )
+        if not callable(get_agent):
+            return
+        registered = get_agent(role)
+        if registered is None:
+            raise ValueError(f"No agent registered for role: {role}")
+        if agent is not registered:
+            raise ValueError(f"TaskWorkflow {role} agent must match the router-resolved instance")
 
     def _agent(self, role: str, fallback=None):
-        """Resolve an agent from the router when its registry API is available."""
         get_agent = getattr(self.agent_router, "get_agent", None)
         if callable(get_agent):
             agent = get_agent(role)
@@ -174,34 +136,26 @@ class TaskWorkflow:
         return self._agent("reviewer", self._reviewer_fallback)
 
     def _checkpoint(self) -> None:
-        """Persist a workflow-stage boundary when a durable hook is installed."""
         if self._state_change_hook is not None:
             self._state_change_hook(self.task_manager)
 
     def _capture_developer_tool_history(self, task: Task) -> None:
-        """Attach immutable Developer tool evidence to the persisted task context."""
         history = getattr(self.developer, "tool_execution_history", None)
-        if history is None or not hasattr(history, "to_dict"):
-            return
-        task.context["tool_execution_history"] = history.to_dict()
+        if history is not None and hasattr(history, "to_dict"):
+            task.context["tool_execution_history"] = history.to_dict()
 
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
-
         for _ in range(self.max_review_rounds):
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
                 self._checkpoint()
-
             self._build_context(task)
-
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
             self._apply_developer_outcome(task, developer_outcome)
-
             if task.status == "failed":
                 return task
-
             if self.tester is not None:
                 tester_outcome = self._run_tester(task)
                 if not self._handle_tester_result(task, tester_outcome):
@@ -212,32 +166,23 @@ class TaskWorkflow:
             else:
                 self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
                 self._checkpoint()
-
             review_outcome = self._run_reviewer(task)
             review_action = self._apply_reviewer_outcome(task, review_outcome)
-
-            if review_action == "completed":
-                return task
-            if review_action == "failed":
+            if review_action in {"completed", "failed"}:
                 return task
             if review_action == "revision":
                 continue
-
         return task
 
     def _transition_to_declared_target(self, task: Task, stage: str, outcome: WorkflowOutcomeKind) -> None:
-        transition = get_workflow_transition(stage, outcome)
-        self.task_manager.transition(task.id, transition.target)
+        self.task_manager.transition(task.id, get_workflow_transition(stage, outcome).target)
 
     def _transition_for_outcome(self, task: Task, stage: WorkflowStage, outcome: WorkflowOutcomeKind) -> None:
-        transition = get_workflow_transition(stage.value, outcome)
-        self.task_manager.transition(task.id, transition.target)
+        self.task_manager.transition(task.id, get_workflow_transition(stage.value, outcome).target)
 
     def _run_tester(self, task: Task) -> StageOutcome:
         try:
-            raw_result = self.tester.run(task)
-            result = normalize_agent_result(raw_result)
-            return StageOutcome.success(WorkflowStage.TESTER, result)
+            return StageOutcome.success(WorkflowStage.TESTER, normalize_agent_result(self.tester.run(task)))
         except Exception as exc:
             return StageOutcome.failure(WorkflowStage.TESTER, exc)
 
@@ -271,9 +216,7 @@ class TaskWorkflow:
 
     def _run_developer(self, task: Task) -> StageOutcome:
         try:
-            raw_result = self.developer.run(task)
-            result = normalize_agent_result(raw_result)
-            return StageOutcome.success(WorkflowStage.DEVELOPER, result)
+            return StageOutcome.success(WorkflowStage.DEVELOPER, normalize_agent_result(self.developer.run(task)))
         except Exception as exc:
             return StageOutcome.failure(WorkflowStage.DEVELOPER, exc)
 
@@ -297,9 +240,7 @@ class TaskWorkflow:
 
     def _run_reviewer(self, task: Task) -> StageOutcome:
         try:
-            raw_result = self.reviewer.run(task)
-            result = normalize_agent_result(raw_result)
-            return StageOutcome.success(WorkflowStage.REVIEWER, result)
+            return StageOutcome.success(WorkflowStage.REVIEWER, normalize_agent_result(self.reviewer.run(task)))
         except Exception as exc:
             return StageOutcome.failure(WorkflowStage.REVIEWER, exc)
 
@@ -355,7 +296,5 @@ class TaskWorkflow:
         return "failed"
 
     def _build_context(self, task: Task) -> None:
-        """Build and persist dependency context for the current task."""
         all_tasks = {item.id: item for item in self.task_manager.get_all_tasks()}
-        dependency_context = build_task_context(task, all_tasks)
-        task.context["dependencies"] = dependency_context
+        task.context["dependencies"] = build_task_context(task, all_tasks)
