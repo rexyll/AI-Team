@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-542 passed in 1.08s
+551 passed in 1.34s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行正在进行。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4.1 / 6.4.2 Task 并行执行基础架构已完成，下一节点为 6.4.3 Concurrency hardening。**
 
 ---
 
@@ -37,7 +37,7 @@ pytest -q
 ## <span style="color:green">√</span> 4.4 Workflow → LLM-independent
 ## <span style="color:green">√</span> 4.5 Provider/config 可替换
 
-Phase 4 已完成，既有详细记录保留于 Git 历史。
+Phase 4 已完成。
 
 # Phase 5 — Tool / Sandbox Architecture
 
@@ -48,77 +48,43 @@ Phase 4 已完成，既有详细记录保留于 Git 历史。
 ## <span style="color:green">√</span> 5.5 Tool Permission Policy
 ## <span style="color:green">√</span> 5.6 Tool Error Contract
 
-**结论：Phase 5 Tool / Sandbox Architecture 已完成。详细契约记录保留于 Git 历史。**
+**结论：Phase 5 Tool / Sandbox Architecture 已完成。**
 
 # Phase 6 — Workflow / Project Orchestrator
 
 ## <span style="color:green">√</span> 6.1 TaskWorkflow 状态机
 
 ### <span style="color:green">√</span> 6.1.1 Stage execution → state transition contract
-
-已完成 declarative stage transition contract，并冻结 stage outcome、source/target topology 与 `TaskManager.transition()` mutation boundary。
-
 ### <span style="color:green">√</span> 6.1.2 TaskWorkflow → transition contract integration
 
-已完成 implementation convergence：Developer / Tester / Reviewer outcome 统一映射到 declarative transition contract，实际状态 mutation 仍统一经过 `TaskManager.transition()`。
+已完成 declarative stage transition contract，并冻结 stage outcome、source/target topology 与 `TaskManager.transition()` mutation boundary。
 
 **结论：6.1 TaskWorkflow 状态机已完成。**
 
 ## <span style="color:green">√</span> 6.2 Dependency-aware Scheduler
 
 ### <span style="color:green">√</span> 6.2.1 Dependency Scheduler read-only contract
-
-已建立 dependency-aware decision contract：ready、blocked、unknown dependency、cycle detection，以及 read-only scheduler boundary。
-
 ### <span style="color:green">√</span> 6.2.2 Orchestrator readiness boundary convergence
 
-已完成 Core Orchestrator 与 Scheduler 的职责收敛：DependencyScheduler 成为 readiness decision source，TaskManager 仍是唯一 lifecycle mutation boundary。
-
-用户此前全量验收：
-
-```text
-pytest -q
-533 passed in 1.11s
-```
+已完成 dependency-aware decision contract 与 Orchestrator readiness boundary convergence：DependencyScheduler 成为 readiness decision source，TaskManager 仍是唯一 lifecycle mutation boundary。
 
 **结论：6.2 Dependency-aware Scheduler 已完成。**
 
 ## <span style="color:green">√</span> 6.3 ProjectOrchestrator
 
-已完成 project-level execution facade，并完成 `ProjectOrchestrator` 与底层 `Orchestrator` 的职责收敛。
+已完成 project-level execution facade，并冻结以下边界：
 
-当前正式生命周期：
-
-```text
-Requirement
-    ↓
-PlannerAgent
-    ↓
-validated Plan
-    ↓
-PlanBuilder
-    ↓
-TaskManager
-    ↓
-core.Orchestrator
-    ↓
-ProjectResult
-```
-
-本节点冻结以下边界：
-
-1. `ProjectOrchestrator` 负责 project-level facade：plan → task graph → execution → project result。
-2. `core.Orchestrator` 只负责执行已经构建好的 `TaskManager`，不重复承担 project planning。
-3. `DependencyScheduler` 继续负责 dependency readiness decision。
-4. `TaskWorkflow` 继续负责单 Task stage lifecycle 与 transition contract。
+1. `ProjectOrchestrator` 负责 requirement → plan → task graph → execution → `ProjectResult`。
+2. `core.Orchestrator` 只负责执行已经构建好的 `TaskManager`。
+3. `DependencyScheduler` 负责 dependency readiness decision。
+4. `TaskWorkflow` 负责单 Task stage lifecycle。
 5. `TaskManager` 仍是唯一实际 Task lifecycle mutation boundary。
-6. `ProjectOrchestrator.run(requirement)` 正式返回 `ProjectResult`，不再返回 `TaskManager`。
-7. `ProjectOrchestrator.last_task_manager` 保留实际执行图访问边界；`last_plan` 与 `last_result` 分别记录 project plan 与最终 result。
-8. `ProjectResult` 为 provider-independent、immutable 的 project execution summary。
-9. Planner 输出在进入 `PlanBuilder` 前必须经过 `validate_plan()`。
-10. 本节点不引入 Task 并行执行、retry/resume 或 persistence。
+6. `ProjectOrchestrator.run(requirement)` 返回 immutable `ProjectResult`。
+7. `last_task_manager`、`last_plan`、`last_result` 分别保存执行图、plan 与最终结果。
+8. Planner 输出进入 `PlanBuilder` 前必须经过 `validate_plan()`。
+9. ProjectResult 为 provider-independent project execution summary。
 
-本节点通过用户最终回归：
+用户验收基线：
 
 ```text
 pytest -q
@@ -127,37 +93,52 @@ pytest -q
 
 **结论：6.3 ProjectOrchestrator 已完成。**
 
-## ☐ 6.4 Task 并行执行
+## <span style="color:green">√</span> 6.4 Task 并行执行
 
-### ☐ 6.4.1 Task layer executor contract（进行中）
+### <span style="color:green">√</span> 6.4.1 Task layer executor contract
 
-已建立第一版并行执行边界：
+已完成 `runtime.task_executor.TaskLayerExecutor`：
 
-1. 新增 `TaskLayerExecutor`，仅负责 bounded concurrency，不负责 Task lifecycle mutation。
-2. 一个 readiness batch 作为一个执行层；当前层全部 worker 完成后，Orchestrator 才进入下一轮 dependency scheduling。
-3. `max_workers` 默认值为 4，并在 executor 边界校验。
-4. worker exception 在所有已提交 peer 完成后再向上报告，避免一个失败任务主动取消其它独立任务。
-5. executor 保持输入/结果顺序确定性。
-6. Scheduler 与 TaskManager 的既有职责边界保持不变。
-7. 已新增 executor contract 与 Orchestrator parallel execution tests，待用户专项/全量 pytest 验收。
+1. bounded worker pool，默认 `max_workers=4`；
+2. 输入 task 顺序与返回结果顺序保持一致；
+3. 一个 worker 失败不会主动取消其它 peer；
+4. 所有 submitted futures 完成后才向调用方传播第一个异常；
+5. executor 不读取/修改 Task lifecycle 状态；
+6. invalid worker count、invalid task、invalid callable 均在 executor boundary 拒绝。
 
-### ☐ 6.4.2 Layer-based Orchestrator integration
+### <span style="color:green">√</span> 6.4.2 Layer-based Orchestrator integration
 
-待 6.4.1 验收后继续完善：
+已完成 `core.Orchestrator` 的 layer-based execution：
 
-- 明确 dependency execution layer 与 readiness batch 的一致性；
-- 完善 failure / blocked propagation；
-- 验证 Developer / Tester / Reviewer workflow 在并发层中的生命周期隔离；
-- 增加最大并发度与长任务并发回归测试。
+1. `DependencyScheduler` 产出的 ready batch 作为当前 execution layer；
+2. 同一 layer 内的独立 Task 通过 `TaskLayerExecutor` 并发执行；
+3. 当前 layer 的所有 worker 完成后才重新运行 dependency scheduling；
+4. 因此存在依赖关系的下游 Task 不会与其上游 Task 同层执行；
+5. worker failure 由 `_execute_task()` 转换为对应 Task 的 failed 状态，不取消其它独立 peer；
+6. 失败 Task 的下游依赖在下一轮 scheduler 中进入 blocked propagation；
+7. Developer workflow 在每个 Task execution 内独立创建 `TaskWorkflow`，避免共享 workflow 实例状态；
+8. `TaskManager` 仍是 lifecycle mutation boundary，Scheduler 与 Executor 均不直接改变 lifecycle。
 
-### ☐ 6.4.3 Concurrency hardening
+本阶段用户最终回归：
 
-待前两阶段完成后处理：
+```text
+pytest -q
+551 passed in 1.34s
+```
 
-- worker isolation；
-- deterministic completion semantics；
-- concurrency regression / performance contract；
-- 确认 TaskManager lifecycle mutation 在并发环境下仍满足既有 contract。
+**结论：6.4.1 / 6.4.2 已完成。**
+
+### ☐ 6.4.3 Concurrency hardening（当前节点）
+
+下一阶段重点：
+
+1. 明确 `TaskManager` 在并发 worker 环境下的 mutation / read consistency；
+2. 增加 concurrent lifecycle mutation regression tests；
+3. 验证同一 Task 不会被重复执行或发生非法双重 transition；
+4. 验证不同 Task 的 history/result/error 不会串写；
+5. 增加 worker exception、slow peer、mixed success/failure 的 deterministic contract；
+6. 建立轻量 concurrency performance contract，但不以 benchmark 数值作为业务正确性依据；
+7. 不引入 retry/resume、persistence 等跨阶段功能。
 
 ## ☐ 6.5 Retry / Resume
 ## ☐ 6.6 ProjectResult
@@ -185,12 +166,11 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.4.1 Task layer executor contract。**
+**当前节点：Phase 6.4.3 Concurrency hardening。**
 
-1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_task_executor.py -q`，验证 bounded concurrency、结果顺序、worker failure isolation、read-only executor boundary。
-3. 运行 `pytest tests/test_orchestrator_parallel_execution.py tests/test_orchestrator_scheduler_contract.py tests/test_dependency_scheduler.py tests/test_workflow_transition_integration.py -q`，验证并行执行与既有 Scheduler / Workflow contract。
-4. 运行 `pytest -q`，建立新的全量基线。
-5. 若全部通过，将 6.4.1 标记完成并进入 **6.4.2 Layer-based Orchestrator integration**。
-6. 并行执行必须保持 `TaskManager` 为唯一 lifecycle mutation boundary，并禁止 Scheduler 直接修改 Task。
-7. 本阶段暂不引入 retry/resume、persistence；ProjectResult 继续作为既有 project-level summary contract 使用。
+1. 用户已完成全量回归：`551 passed`。
+2. 下一步增加 TaskManager concurrency safety contract，而不是继续扩大业务功能面。
+3. 优先测试 lifecycle transition、result/error/history 的隔离性与 deterministic semantics。
+4. 完成后运行相关专项测试与全量 `pytest -q`。
+5. 全量通过后，将 6.4.3 标记完成，再进入 **6.5 Retry / Resume**。
+6. Retry / Resume 之前不引入 persistence，避免两个状态恢复机制同时演进。
