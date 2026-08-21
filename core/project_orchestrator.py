@@ -100,12 +100,17 @@ class ProjectOrchestrator:
             raise TypeError("task_manager must be a TaskManager")
         return self.execute(manager)
 
-    def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
-        """Restore a persisted snapshot and continue its executable task state."""
+    def resume_persisted(
+        self,
+        project_id: str,
+        adapter: ProjectPersistenceAdapter,
+    ) -> ProjectResult:
+        """Restore persisted project state without starting execution."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
         snapshot = adapter.load(project_id)
+
         if snapshot.plan is not None:
             validate_plan(snapshot.plan)
             self.last_plan = snapshot.plan
@@ -113,7 +118,14 @@ class ProjectOrchestrator:
             self.last_plan = None
 
         self.last_task_manager = snapshot.task_manager
-        return self.execute(snapshot.task_manager)
+        self.last_result = snapshot.result
+
+        return snapshot.result or ProjectResult.from_task_manager(
+            snapshot.task_manager,
+            project=(snapshot.plan or {}).get("project")
+            if snapshot.plan
+            else None,
+        )
 
     def run(self, requirement: str) -> ProjectResult:
         plan = self.create_plan(requirement)
