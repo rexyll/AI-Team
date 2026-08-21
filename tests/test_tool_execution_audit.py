@@ -49,7 +49,7 @@ def test_audit_filters_by_all_supported_dimensions():
 
     assert [r.execution_id for r in audit.records(task_id="TASK-002")] == ["TOOL-002"]
     assert [r.execution_id for r in audit.records(agent_role="tester")] == ["TOOL-003"]
-    assert [r.execution_id for r in audit.records(tool_name="read_file")] == ["TOOL-001"]
+    assert [r.execution_id for r in audit.records(tool_name="read_file")] == ["TOOL-001", "TOOL-003"]
     assert [r.execution_id for r in audit.records(status="failed")] == ["TOOL-003"]
     assert [r.execution_id for r in audit.records(task_id="TASK-002", tool_name="write_file")] == ["TOOL-002"]
 
