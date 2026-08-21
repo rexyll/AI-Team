@@ -7,19 +7,19 @@
 
 **Phase 6 — Workflow / Project Orchestrator**
 
-最新用户验收：
+最新用户验收基线：
 
 ```text
-pytest tests/test_tool_error_contract.py -q
-8 passed in 0.04s
+pytest tests/test_workflow_state_machine_contract.py -q
+6 passed in 0.02s
 
 pytest -q
-501 passed in 1.12s
+507 passed in 1.15s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。当前进入 6.1 TaskWorkflow 状态机。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机正在推进。**
 
-5.6 已冻结统一 Tool error/result contract；6.1 现阶段基于既有 `TaskStatus` + `TaskManager.transition()` 建立 TaskWorkflow 生命周期契约，下一步将把 Workflow stage/state orchestration 与该状态边界进一步收敛。
+6.1 第一阶段已冻结 TaskManager 状态机边界；本轮完成 6.1.1：把 Developer / Tester / Reviewer 的 stage outcome → lifecycle target 定义为独立、可测试的 declarative contract。下一步将把该 contract 真正接入 `TaskWorkflow`，使 stage execution 不再自行决定状态迁移。
 
 ---
 
@@ -167,30 +167,55 @@ tests/test_tool_error_contract.py
 
 ## ☐ 6.1 TaskWorkflow 状态机
 
-### 6.1 当前进展
+### 6.1.1 Stage execution → state transition contract
 
-已基于现有 `TaskStatus` / `VALID_STATUS_TRANSITIONS` / `TaskManager.transition()` 冻结第一版 Workflow state-machine contract，并新增：
+已完成第一版 declarative stage transition contract，并新增：
 
 ```text
-tests/test_workflow_state_machine_contract.py
+runtime/workflow_transition.py
+tests/test_workflow_stage_transition_contract.py
 ```
 
-当前契约覆盖：
+当前契约明确冻结：
 
-1. `TaskManager` 是 Task status transition 的唯一 mutation boundary。
-2. 正常路径：`pending → ready → running → review_pending → reviewing → completed`。
-3. Revision 路径：`reviewing → revision → running`。
-4. `completed` / `failed` 为不可恢复终态。
-5. 非法 workflow jump 必须拒绝。
-6. 非法 transition 不得产生 `status_history` 副作用。
+| Stage | Outcome | Source | Target |
+|---|---|---|---|
+| Developer | success | `running` | `review_pending` |
+| Developer | execution / invalid result | `running` | `failed` |
+| Tester | success | `review_pending` | `reviewing` |
+| Tester | quality-gate failure | `review_pending` | `running` |
+| Tester | execution / invalid result | `review_pending` | `failed` |
+| Reviewer | success / approved | `reviewing` | `completed` |
+| Reviewer | quality-gate failure / revision | `reviewing` | `running` |
+| Reviewer | execution / invalid result | `reviewing` | `failed` |
+
+本节点特别冻结：
+
+1. stage outcome 与 lifecycle target 必须是一一明确的 contract。
+2. transition source 也属于 contract，不能仅根据当前代码“碰巧可转移”推断。
+3. review-round limit 属于 Workflow policy，不进入基础 transition topology。
+4. scheduler / parallelism / retry / resume 均不属于本节点。
+5. `TaskManager.transition()` 仍是唯一实际 status mutation boundary。
 
 相关提交：
 
 ```text
-9b80b58  test: define TaskWorkflow state machine contract
+2498596  feat: define workflow stage transition contract
+c734e6c  test: define workflow stage transition contract
 ```
 
-**下一步：将 `TaskWorkflow` 的 stage execution 与 state transition 明确绑定，消除 Workflow 内部隐式状态变化，并为 6.2 Dependency-aware Scheduler 提供可观察的 task readiness boundary。**
+**状态：6.1.1 完成。**
+
+### 6.1.2 下一小步：TaskWorkflow 接入 transition contract
+
+目标：
+
+1. `_apply_developer_outcome()` 不再自行推断 target status。
+2. `_apply_tester_outcome()` 使用统一 transition contract。
+3. `_apply_reviewer_outcome()` 使用统一 transition contract。
+4. 所有实际 mutation 继续通过 `TaskManager`，不允许 Workflow 直接修改 `task.status`。
+5. 新增 integration contract，验证 stage outcome 与 `status_history` 完全一致。
+6. 不改变现有 legacy API，不提前引入 6.2 scheduler。
 
 ## ☐ 6.2 Dependency-aware Scheduler
 ## ☐ 6.3 ProjectOrchestrator
@@ -221,11 +246,13 @@ tests/test_workflow_state_machine_contract.py
 
 # 当前下一动作
 
-**当前节点：Phase 6.1 TaskWorkflow 状态机。**
+**当前节点：Phase 6.1.2 TaskWorkflow 接入 transition contract。**
 
 1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_tool_error_contract.py -q` 与 `pytest -q` 确认 Phase 5.6 基线。
-3. 运行 `pytest tests/test_workflow_state_machine_contract.py -q` 验收 6.1 第一阶段契约。
-4. 下一小步修改 `TaskWorkflow`，使 Developer / Tester / Reviewer stage outcome 与 TaskStatus transition 显式对应。
-5. 不在本阶段引入 scheduler / parallelism / retry。
-6. 完成 6.1 后再进入 6.2 Dependency-aware Scheduler。
+2. 运行 `pytest tests/test_workflow_stage_transition_contract.py -q`。
+3. 运行 `pytest tests/test_workflow_state_machine_contract.py -q`。
+4. 运行 `pytest -q`，记录新的全量基线。
+5. 下一轮修改 `TaskWorkflow`，将 Developer / Tester / Reviewer outcome → target status 的决策统一收敛到 `runtime/workflow_transition.py`。
+6. 增加 integration tests，重点验证 `status_history` 与 stage outcome 的一一对应。
+7. 不在本阶段引入 scheduler / parallelism / retry / persistence。
+8. 6.1.2 验收完成后，再进入 6.2 Dependency-aware Scheduler。
