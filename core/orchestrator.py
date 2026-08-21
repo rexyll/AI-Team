@@ -36,10 +36,20 @@ class Orchestrator:
             raise TypeError("hook must be callable or None")
         self._state_change_hook = hook
 
-    def _persist_state_checkpoint(self) -> None:
+    def _persist_state_checkpoint(
+        self,
+        task_manager: TaskManager | None = None,
+    ) -> None:
+        """Emit a checkpoint using the workflow hook contract.
+
+        TaskWorkflow invokes stage checkpoints with its TaskManager argument,
+        while Orchestrator also emits checkpoints internally without an
+        argument. Accept both forms so the same bound method can safely cross
+        the Orchestrator -> Workflow boundary.
+        """
         hook = self._state_change_hook
         if hook is not None:
-            hook(self.task_manager)
+            hook(task_manager if task_manager is not None else self.task_manager)
 
     @staticmethod
     def _default_failure_classifier(error: BaseException) -> FailureKind:
