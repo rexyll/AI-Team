@@ -140,6 +140,7 @@ class Orchestrator:
                 workflow = create_task_workflow(
                     task_manager=self.task_manager,
                     agent_router=self.agent_router,
+                    state_change_hook=self._persist_state_checkpoint,
                 )
                 workflow.execute(task.id)
             else:
