@@ -19,22 +19,12 @@ class ProjectOrchestrator:
 
     PLANNER_TASK_ID = "PLAN-001"
 
-    def __init__(
-        self,
-        agent_router: AgentRouter,
-        plan_builder: PlanBuilder | None = None,
-        orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None,
-    ):
+    def __init__(self, agent_router: AgentRouter, plan_builder: PlanBuilder | None = None, orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
-
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
-        self.orchestrator_factory = (
-            orchestrator_factory
-            if orchestrator_factory is not None
-            else self._default_orchestrator_factory
-        )
+        self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
         self.last_plan: dict[str, Any] | None = None
         self.last_task_manager: TaskManager | None = None
         self.last_result: ProjectResult | None = None
@@ -44,33 +34,19 @@ class ProjectOrchestrator:
         return Orchestrator(task_manager=task_manager, agent_router=agent_router)
 
     @staticmethod
-    def _restore_tool_execution_history(
-        task_manager: TaskManager,
-        history: ToolExecutionHistory | None,
-    ) -> None:
-        """Rehydrate the canonical project history into task runtime contexts.
-
-        Project-level persisted history is authoritative when present. Clear
-        any stale task-local history first so recovery cannot leave two
-        competing representations in memory when an explicit project history
-        intentionally overrides derived task history.
-        """
+    def _restore_tool_execution_history(task_manager: TaskManager, history: ToolExecutionHistory | None) -> None:
+        """Rehydrate the canonical project history into task runtime contexts."""
         tasks = {task.id: task for task in task_manager.get_all_tasks()}
         for task in tasks.values():
             task.context.pop("tool_execution_history", None)
-
         if history is None:
             return
-
         records_by_task: dict[str, list[dict[str, Any]]] = {}
         for record in history.to_dict():
             task_id = record.get("task_id")
             if not isinstance(task_id, str) or task_id not in tasks:
-                raise ValueError(
-                    f"persisted tool execution history references unknown task: {task_id}"
-                )
+                raise ValueError(f"persisted tool execution history references unknown task: {task_id}")
             records_by_task.setdefault(task_id, []).append(record)
-
         for task_id, records in records_by_task.items():
             tasks[task_id].context["tool_execution_history"] = records
 
@@ -79,15 +55,8 @@ class ProjectOrchestrator:
             raise TypeError("requirement must be a string")
         if not requirement.strip():
             raise ValueError("requirement cannot be empty")
-
         planner = self.agent_router.get_agent("planner")
-        planning_task = Task(
-            id=self.PLANNER_TASK_ID,
-            title="Generate project development plan",
-            description=requirement,
-            role="planner",
-            status="ready",
-        )
+        planning_task = Task(id=self.PLANNER_TASK_ID, title="Generate project development plan", description=requirement, role="planner", status="ready")
         result = planner.run(planning_task)
         if not isinstance(result, dict):
             raise TypeError("PlannerAgent must return a dictionary")
@@ -110,17 +79,11 @@ class ProjectOrchestrator:
             raise TypeError("task_manager must be a TaskManager")
         return self.orchestrator_factory(task_manager, self.agent_router)
 
-    def execute(
-        self,
-        task_manager: TaskManager,
-        *,
-        state_change_hook: Callable[[TaskManager], None] | None = None,
-    ) -> ProjectResult:
+    def execute(self, task_manager: TaskManager, *, state_change_hook: Callable[[TaskManager], None] | None = None) -> ProjectResult:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
-
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
         set_hook = getattr(orchestrator, "set_state_change_hook", None)
@@ -144,98 +107,49 @@ class ProjectOrchestrator:
             raise TypeError("task_manager must be a TaskManager")
         return self.execute(manager)
 
-    def resume_persisted(
-        self,
-        project_id: str,
-        adapter: ProjectPersistenceAdapter,
-    ) -> ProjectResult:
+    def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
         """Restore persisted project state without starting execution."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
-
         snapshot = adapter.load(project_id)
         self.last_plan = snapshot.plan
         self.last_task_manager = snapshot.task_manager
-        self._restore_tool_execution_history(
-            snapshot.task_manager,
-            snapshot.tool_execution_history,
-        )
+        self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
         self.last_result = snapshot.result
+        return snapshot.result or ProjectResult.from_task_manager(snapshot.task_manager, project=(snapshot.plan or {}).get("project") if snapshot.plan else None)
 
-        return snapshot.result or ProjectResult.from_task_manager(
-            snapshot.task_manager,
-            project=(snapshot.plan or {}).get("project")
-            if snapshot.plan
-            else None,
-        )
-
-    def audit_persisted(
-        self,
-        project_id: str,
-        adapter: ProjectPersistenceAdapter,
-    ) -> ToolExecutionAudit:
+    def audit_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ToolExecutionAudit:
         """Return the canonical read-only audit view for a persisted project."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         return adapter.audit(project_id)
 
-    def continue_persisted(
-        self,
-        project_id: str,
-        adapter: ProjectPersistenceAdapter,
-    ) -> ProjectResult:
+    def continue_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
         """Restore a persisted project and execute only its unfinished work."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
-
         snapshot = adapter.load(project_id)
         self.last_plan = snapshot.plan
         self.last_task_manager = snapshot.task_manager
-        self._restore_tool_execution_history(
-            snapshot.task_manager,
-            snapshot.tool_execution_history,
-        )
+        self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
         project_name = None
         if self.last_plan is not None:
             value = self.last_plan.get("project")
             if isinstance(value, str):
                 project_name = value
-
         last_checkpoint: tuple[tuple[tuple[str, str], ...], ProjectResult] | None = None
 
         def persist_checkpoint(manager: TaskManager) -> None:
             nonlocal last_checkpoint
-            checkpoint_result = ProjectResult.from_task_manager(
-                manager,
-                project=project_name,
-            )
-            task_states = tuple(
-                (task.id, task.status)
-                for task in manager.get_all_tasks()
-            )
-            adapter.update(
-                project_id,
-                plan=self.last_plan,
-                task_manager=manager,
-                result=checkpoint_result,
-            )
+            checkpoint_result = ProjectResult.from_task_manager(manager, project=project_name)
+            task_states = tuple((task.id, task.status) for task in manager.get_all_tasks())
+            adapter.checkpoint(project_id, plan=self.last_plan, task_manager=manager, result=checkpoint_result)
             last_checkpoint = (task_states, checkpoint_result)
 
-        result = self.execute(
-            snapshot.task_manager,
-            state_change_hook=persist_checkpoint,
-        )
-        final_states = tuple(
-            (task.id, task.status)
-            for task in self.last_task_manager.get_all_tasks()
-        )
+        result = self.execute(snapshot.task_manager, state_change_hook=persist_checkpoint)
+        final_states = tuple((task.id, task.status) for task in self.last_task_manager.get_all_tasks())
         if last_checkpoint != (final_states, result):
-            adapter.update(
-                project_id,
-                plan=self.last_plan,
-                task_manager=self.last_task_manager,
-                result=result,
-            )
+            adapter.checkpoint(project_id, plan=self.last_plan, task_manager=self.last_task_manager, result=result)
         return result
 
     def run(self, requirement: str) -> ProjectResult:
