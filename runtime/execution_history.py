@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from .execution_record import AgentExecutionRecord
+
+if TYPE_CHECKING:
+    from .execution_record_persistence import ExecutionRecordPersistenceAdapter
 
 
 class ExecutionHistory:
@@ -35,3 +38,30 @@ class ExecutionHistory:
     def latest_attempt(self, task_id: str) -> AgentExecutionRecord | None:
         records = self.list_for_task(task_id)
         return records[-1] if records else None
+
+    def save(self, adapter: "ExecutionRecordPersistenceAdapter") -> None:
+        """Persist every record through the execution-record adapter."""
+        from .execution_record_persistence import ExecutionRecordPersistenceAdapter
+
+        if not isinstance(adapter, ExecutionRecordPersistenceAdapter):
+            raise TypeError("adapter must be an ExecutionRecordPersistenceAdapter")
+        for record in self._records.values():
+            try:
+                adapter.save(record)
+            except FileExistsError:
+                existing = adapter.load(record.execution_id)
+                if existing != record:
+                    raise ValueError(
+                        f"persisted execution record conflicts with history: {record.execution_id}"
+                    )
+
+    @classmethod
+    def load(cls, adapter: "ExecutionRecordPersistenceAdapter") -> "ExecutionHistory":
+        from .execution_record_persistence import ExecutionRecordPersistenceAdapter
+
+        if not isinstance(adapter, ExecutionRecordPersistenceAdapter):
+            raise TypeError("adapter must be an ExecutionRecordPersistenceAdapter")
+        history = cls()
+        for execution_id in adapter.list_ids():
+            history.append(adapter.load(execution_id))
+        return history
