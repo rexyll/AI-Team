@@ -25,6 +25,21 @@ class Orchestrator:
         self.failure_classifier = (
             failure_classifier or self._default_failure_classifier
         )
+        self._state_change_hook: Callable[[TaskManager], None] | None = None
+
+    def set_state_change_hook(
+        self,
+        hook: Callable[[TaskManager], None] | None,
+    ) -> None:
+        """Install an optional callback for durable task-state checkpoints."""
+        if hook is not None and not callable(hook):
+            raise TypeError("hook must be callable or None")
+        self._state_change_hook = hook
+
+    def _persist_state_checkpoint(self) -> None:
+        hook = self._state_change_hook
+        if hook is not None:
+            hook(self.task_manager)
 
     @staticmethod
     def _default_failure_classifier(error: BaseException) -> FailureKind:
@@ -45,6 +60,7 @@ class Orchestrator:
                 self._handle_no_ready_tasks()
                 break
 
+            self._persist_state_checkpoint()
             self.task_executor.run_layer(
                 ready_tasks,
                 self._execute_task,
@@ -112,6 +128,14 @@ class Orchestrator:
             context = build_task_context(task, self.task_manager.tasks)
             task.context = context
 
+            # The orchestrator owns the task execution boundary. Mark the
+            # task running before entering either the single-agent path or
+            # the Developer -> Tester -> Reviewer workflow so a persisted
+            # checkpoint never claims executable work is still merely ready.
+            if task.status == "ready":
+                self.task_manager.mark_running(task.id)
+                self._persist_state_checkpoint()
+
             if task.role == "developer":
                 workflow = create_task_workflow(
                     task_manager=self.task_manager,
@@ -120,10 +144,10 @@ class Orchestrator:
                 workflow.execute(task.id)
             else:
                 agent = self.agent_router.get_agent(task.role)
-                self.task_manager.mark_running(task.id)
                 result = agent.run(task)
                 self.task_manager.mark_completed(task.id, result)
 
+            self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
 
         except Exception as exc:
@@ -134,6 +158,7 @@ class Orchestrator:
                 )
 
             self._apply_retry_policy(task, exc)
+            self._persist_state_checkpoint()
             print(f"[Failed] {task.id}: {exc}")
 
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
