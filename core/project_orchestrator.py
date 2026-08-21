@@ -137,19 +137,28 @@ class ProjectOrchestrator:
             value = self.last_plan.get("project")
             if isinstance(value, str):
                 project_name = value
-        last_checkpoint: tuple[tuple[tuple[str, str], ...], ProjectResult] | None = None
 
-        def persist_checkpoint(manager: TaskManager) -> None:
-            nonlocal last_checkpoint
-            checkpoint_result = ProjectResult.from_task_manager(manager, project=project_name)
-            task_states = tuple((task.id, task.status) for task in manager.get_all_tasks())
-            adapter.checkpoint(project_id, plan=self.last_plan, task_manager=manager, result=checkpoint_result)
-            last_checkpoint = (task_states, checkpoint_result)
+        def persist_boundary(manager: TaskManager) -> None:
+            boundary_result = ProjectResult.from_task_manager(manager, project=project_name)
+            adapter.update(
+                project_id,
+                plan=self.last_plan,
+                task_manager=manager,
+                result=boundary_result,
+            )
 
-        result = self.execute(snapshot.task_manager, state_change_hook=persist_checkpoint)
-        final_states = tuple((task.id, task.status) for task in self.last_task_manager.get_all_tasks())
-        if last_checkpoint != (final_states, result):
-            adapter.checkpoint(project_id, plan=self.last_plan, task_manager=self.last_task_manager, result=result)
+        result = self.execute(snapshot.task_manager, state_change_hook=persist_boundary)
+        persisted = adapter.load(project_id)
+        if persisted.result != result or any(
+            persisted.task_manager.get_task(task.id).status != task.status
+            for task in self.last_task_manager.get_all_tasks()
+        ):
+            adapter.update(
+                project_id,
+                plan=self.last_plan,
+                task_manager=self.last_task_manager,
+                result=result,
+            )
         return result
 
     def run(self, requirement: str) -> ProjectResult:
