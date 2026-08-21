@@ -142,6 +142,9 @@ class Orchestrator:
         The policy is pure; TaskManager owns all retry/lifecycle mutation.
         A denied decision leaves the failed Task untouched.
         """
+        if task.status != "failed":
+            return False
+
         failure_kind = self.failure_classifier(error)
         if not isinstance(failure_kind, FailureKind):
             raise TypeError("failure_classifier must return FailureKind")
