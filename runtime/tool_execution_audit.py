@@ -8,21 +8,24 @@ from runtime.tool_execution_record import ToolExecutionRecord
 
 
 class ToolExecutionAudit:
-    """Read-only query boundary over persisted tool execution history.
+    """Read-only query boundary over a canonical tool execution snapshot.
 
-    The audit layer deliberately does not mutate history. It provides stable
-    filtering primitives for recovery diagnostics, observability, and future
-    project-level audit APIs.
+    The audit layer deliberately owns a detached history snapshot. Persisted
+    runtime state may continue to evolve after an audit object is created, but
+    an audit query must remain deterministic and must never provide a mutation
+    path back into the runtime or persistence layer.
     """
 
     def __init__(self, history: ToolExecutionHistory | None = None) -> None:
         if history is not None and not isinstance(history, ToolExecutionHistory):
             raise TypeError("history must be a ToolExecutionHistory or None")
-        self._history = history or ToolExecutionHistory()
+        source = history if history is not None else ToolExecutionHistory()
+        self._history = ToolExecutionHistory.from_dict(source.to_dict())
 
     @property
     def history(self) -> ToolExecutionHistory:
-        return self._history
+        """Return a detached history snapshot, never the audit's internal state."""
+        return ToolExecutionHistory.from_dict(self._history.to_dict())
 
     def records(
         self,
@@ -79,18 +82,4 @@ class ToolExecutionAudit:
             "by_status": dict(sorted(by_status.items())),
             "by_tool": dict(sorted(by_tool.items())),
             "by_agent_role": dict(sorted(by_agent_role.items())),
-        }
-
-    def snapshot(self) -> dict[str, Any]:
-        """Return a detached, deterministic audit snapshot.
-
-        The returned payload is suitable for diagnostics, API responses, and
-        persistence boundaries. Records are reconstructed through their
-        serialization contract so callers cannot mutate the audit's canonical
-        history through nested dictionaries in the returned snapshot.
-        """
-        records = [record.to_dict() for record in self.records()]
-        return {
-            "records": records,
-            "summary": self.summary(),
         }
