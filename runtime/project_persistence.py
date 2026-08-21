@@ -36,6 +36,27 @@ class ProjectPersistenceAdapter:
             raise ValueError("project_id must be a simple path-safe identifier")
         return self.root / f"{project_id}.json"
 
+    @staticmethod
+    def _build_payload(
+        project_id: str,
+        plan: dict[str, Any] | None,
+        task_manager: TaskManager,
+        result: ProjectResult | None,
+    ) -> dict[str, Any]:
+        if not isinstance(task_manager, TaskManager):
+            raise TypeError("task_manager must be a TaskManager")
+        if plan is not None and not isinstance(plan, dict):
+            raise TypeError("plan must be a dictionary or None")
+        if result is not None and not isinstance(result, ProjectResult):
+            raise TypeError("result must be a ProjectResult or None")
+
+        return {
+            "project_id": project_id,
+            "plan": plan,
+            "tasks": [task.to_dict() for task in task_manager.get_all_tasks()],
+            "result": result.to_dict() if result is not None else None,
+        }
+
     def save(
         self,
         project_id: str,
@@ -44,24 +65,39 @@ class ProjectPersistenceAdapter:
         task_manager: TaskManager,
         result: ProjectResult | None = None,
     ) -> None:
-        if not isinstance(task_manager, TaskManager):
-            raise TypeError("task_manager must be a TaskManager")
-        if plan is not None and not isinstance(plan, dict):
-            raise TypeError("plan must be a dictionary or None")
-        if result is not None and not isinstance(result, ProjectResult):
-            raise TypeError("result must be a ProjectResult or None")
-
         path = self._path(project_id)
         if path.exists():
             raise FileExistsError(f"project already exists: {project_id}")
 
-        payload: dict[str, Any] = {
-            "project_id": project_id,
-            "plan": plan,
-            "tasks": [task.to_dict() for task in task_manager.get_all_tasks()],
-            "result": result.to_dict() if result is not None else None,
-        }
+        payload = self._build_payload(
+            project_id,
+            plan,
+            task_manager,
+            result,
+        )
+        self._atomic_write(path, payload)
 
+    def update(
+        self,
+        project_id: str,
+        *,
+        plan: dict[str, Any] | None,
+        task_manager: TaskManager,
+        result: ProjectResult | None = None,
+    ) -> None:
+        """Replace an existing project snapshot atomically."""
+        path = self._path(project_id)
+        if not path.exists():
+            raise KeyError(project_id)
+        if not path.is_file():
+            raise ValueError(f"project payload is not a file: {project_id}")
+
+        payload = self._build_payload(
+            project_id,
+            plan,
+            task_manager,
+            result,
+        )
         self._atomic_write(path, payload)
 
     def load(self, project_id: str) -> ProjectSnapshot:
