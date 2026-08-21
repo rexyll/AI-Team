@@ -111,3 +111,43 @@ def test_tool_execution_history_can_save_to_persistence(tmp_path):
     history.save(adapter)
 
     assert adapter.load("TOOL-001") == history.get("TOOL-001")
+
+
+def test_tool_execution_persistence_save_if_absent_is_idempotent(tmp_path):
+    adapter = ToolExecutionPersistenceAdapter(tmp_path)
+    record = _record()
+
+    assert adapter.save_if_absent(record) is True
+    assert adapter.save_if_absent(record) is False
+    assert adapter.load("TOOL-001") == record
+
+
+def test_tool_execution_persistence_save_if_absent_rejects_conflicting_record(tmp_path):
+    adapter = ToolExecutionPersistenceAdapter(tmp_path)
+    adapter.save(_record())
+
+    conflicting = _record(
+        tool_name="run_command",
+        arguments={"command": "pytest -q"},
+        output="different",
+    )
+
+    with pytest.raises(FileExistsError):
+        adapter.save_if_absent(conflicting)
+
+
+def test_tool_execution_history_save_if_absent_reports_new_records(tmp_path):
+    adapter = ToolExecutionPersistenceAdapter(tmp_path)
+    history = ToolExecutionHistory()
+    history.append(_record())
+    history.append(
+        _record(
+            execution_id="TOOL-002",
+            started_at="2026-08-21T00:00:02+00:00",
+            completed_at="2026-08-21T00:00:03+00:00",
+        )
+    )
+
+    assert history.save_if_absent(adapter) == 2
+    assert history.save_if_absent(adapter) == 0
+    assert adapter.list_ids() == ["TOOL-001", "TOOL-002"]
