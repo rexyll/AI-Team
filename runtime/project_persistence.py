@@ -257,6 +257,10 @@ class ProjectPersistenceAdapter:
         snapshot = self.load(project_id)
         return ToolExecutionAudit(snapshot.tool_execution_history)
 
+    def audit_snapshot(self, project_id: str) -> dict[str, Any]:
+        """Return a detached audit snapshot for one persisted project."""
+        return self.audit(project_id).snapshot()
+
     @staticmethod
     def _validate_snapshot_consistency(
         project_id: str,
