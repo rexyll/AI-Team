@@ -10,16 +10,16 @@
 最新用户验收：
 
 ```text
-pytest tests/test_workspace_sandbox.py -q
-9 passed in 0.06s
+pytest tests/test_tool_permission.py -q
+7 passed in 0.03s
 
 pytest -q
-486 passed in 1.11s
+493 passed in 1.12s
 ```
 
-**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation、Phase 5.4 Workspace Sandbox 已完成。当前进入 5.5 Tool Permission Policy。**
+**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation、Phase 5.4 Workspace Sandbox、Phase 5.5 Tool Permission Policy 已完成。当前进入 5.6 Tool Error Contract。**
 
-工作树：5.4 已通过用户专项测试与全量验收；下一节点建立 Tool permission policy，并明确 permission 与 path sandbox、argument validation 的职责边界。
+工作树：5.5 已通过用户专项测试与全量验收；下一节点统一 Tool 错误语义，使参数校验、权限、sandbox 与运行时失败形成稳定且可消费的错误契约。
 
 ---
 
@@ -128,31 +128,66 @@ tests/test_workspace_sandbox.py
 
 **结论：5.4 Workspace Sandbox 已完成。**
 
-## ☐ 5.5 Tool Permission Policy
+## <span style="color:green">√</span> 5.5 Tool Permission Policy
 
-目标：在 Workspace Sandbox 的 filesystem containment 之上增加 Tool capability / permission 层，明确“路径合法”与“操作被授权”是两个独立判断。
+已在 Workspace Sandbox 与 Tool Argument Validation 之上建立独立 capability authorization boundary，并通过用户最终验收：
+
+```text
+pytest tests/test_tool_permission.py -q
+7 passed in 0.03s
+
+pytest -q
+493 passed in 1.12s
+```
+
+本节点冻结以下边界：
+
+1. deny-by-default；未声明 capability 的 Tool 不得执行对应操作。
+2. capability 最小集合为 `read`、`write`、`execute`。
+3. Tool identity 与 permission policy 解耦，权限规则不硬编码进具体 Tool。
+4. permission policy 不绕过 `WorkspaceSandbox`；路径 containment 仍由 sandbox 负责。
+5. permission failure 使用独立 `ToolPermissionError`，不与 argument validation / sandbox error 混淆。
+6. policy evaluation 必须发生在 Tool 实际执行前。
+7. 当前只实现最小显式 allowlist，不引入复杂 RBAC。
+8. `ToolPermissionPolicy` 与 `DEFAULT_TOOL_PERMISSION_POLICY` 提供稳定的后续扩展边界。
+
+已实现：
+
+```text
+security.tool_permission.ToolPermissionPolicy
+security.tool_permission.ToolPermissionError
+security.tool_permission.READ
+security.tool_permission.WRITE
+security.tool_permission.EXECUTE
+security.tool_permission.DEFAULT_TOOL_PERMISSION_POLICY
+tests/test_tool_permission.py
+```
+
+**结论：5.5 Tool Permission Policy 已完成。**
+
+## ☐ 5.6 Tool Error Contract
+
+目标：统一 Tool 层错误语义与 Agent 可消费结果，避免不同 Tool 直接暴露不稳定的底层异常。
 
 设计原则：
 
-1. deny-by-default；未声明 capability 的 Tool 不得执行对应操作。
-2. permission policy 不绕过 `WorkspaceSandbox`，filesystem path 仍必须经过 sandbox containment。
-3. 至少区分 `read`、`write`、`execute` 三类 capability。
-4. Tool identity 与 permission policy 解耦，避免把权限规则硬编码进具体 Tool 实现。
-5. permission failure 使用独立、稳定的异常契约，不与 argument validation / path containment 混淆。
-6. policy evaluation 必须发生在 Tool 实际执行前。
-7. policy 应支持最小显式 allowlist，并为后续角色/项目级 policy 扩展保留边界。
-8. 不在本节点引入复杂 RBAC；先冻结最小 capability contract。
+1. 参数错误、权限错误、sandbox/path 错误、Tool runtime failure 必须保持可区分的错误类别。
+2. 对外提供稳定的 Tool error contract，而不是依赖具体 Python exception message。
+3. Tool failure 不应被误判为 Agent / Workflow success。
+4. 错误结果应携带足够的 machine-readable 信息，同时避免泄露敏感路径、环境变量或内部堆栈。
+5. 保留现有异常类型的兼容边界；5.6 负责统一映射，不进行大规模 Tool 重构。
+6. Tool timeout / execution failure 为后续 Workflow retry / observability 保留稳定语义。
+7. 本节点不引入复杂重试策略；retry/resume 留给 Phase 6.5。
 
 建议新增：
 
 ```text
-security/tool_permission.py
-tests/test_tool_permission.py
+runtime/tool_result.py
+runtime/tool_errors.py
+ tests/test_tool_error_contract.py
 ```
 
-**下一步：实现最小 `ToolPermissionPolicy` + capability contract + deny-by-default 专项测试；通过专项测试及全量 pytest 后再进入 5.6。**
-
-## ☐ 5.6 Tool Error Contract
+**下一步：冻结最小 `ToolResult` / error contract，定义 validation / permission / sandbox / runtime failure 的分类与安全映射；通过专项测试及全量 pytest 后再进入 Phase 6。**
 
 # Phase 6 — Workflow / Project Orchestrator
 
@@ -186,12 +221,12 @@ tests/test_tool_permission.py
 
 # 当前下一动作
 
-**当前节点：Phase 5.5 Tool Permission Policy。**
+**当前节点：Phase 5.6 Tool Error Contract。**
 
 1. 用户 Pull 最新提交。
-2. 基于现有 Tool Contract / Registry / Argument Validation / WorkspaceSandbox 建立最小 capability policy。
-3. 新增 `security/tool_permission.py` 与专项 contract tests。
-4. 验证 deny-by-default、read/write/execute capability 以及 permission failure boundary。
+2. 基于现有 Tool Contract / Registry / Argument Validation / WorkspaceSandbox / Permission Policy 冻结统一 Tool error/result contract。
+3. 新增 `runtime/tool_errors.py`、`runtime/tool_result.py` 与专项 contract tests。
+4. 验证 validation / permission / sandbox / runtime failure 分类、映射及安全错误信息。
 5. 运行专项测试。
 6. 运行全量 `pytest -q`。
-7. 用户验收通过后，将 5.5 标记完成并进入 5.6 Tool Error Contract。
+7. 用户验收通过后，将 5.6 标记完成并进入 Phase 6.1 TaskWorkflow 状态机。
