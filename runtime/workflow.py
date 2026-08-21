@@ -94,7 +94,12 @@ class WorkflowStage(str, Enum):
 
 
 class TaskWorkflow:
-    """Execute one task through Developer/Tester/Reviewer iterations."""
+    """Execute one task through Developer/Tester/Reviewer iterations.
+
+    AgentRouter is the single source of truth for stage agents. The explicit
+    agent arguments remain as a compatibility boundary for existing callers,
+    but they must refer to the same instances registered in the router.
+    """
 
     def __init__(
         self,
@@ -108,15 +113,46 @@ class TaskWorkflow:
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
+        if not isinstance(agent_router, AgentRouter):
+            raise TypeError("agent_router must be an AgentRouter")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
+
         self.task_manager = task_manager
         self.agent_router = agent_router
-        self.developer = developer
-        self.tester = tester
-        self.reviewer = reviewer
         self.max_review_rounds = max_review_rounds
         self._state_change_hook = state_change_hook
+
+        self._validate_explicit_agent("developer", developer)
+        self._validate_explicit_agent("reviewer", reviewer)
+        if tester is not None:
+            self._validate_explicit_agent("tester", tester)
+
+    def _validate_explicit_agent(self, role: str, agent) -> None:
+        registered = self.agent_router.get_agent(role)
+        if registered is None:
+            raise ValueError(f"No agent registered for role: {role}")
+        if agent is not registered:
+            raise ValueError(
+                f"TaskWorkflow {role} agent must be the instance registered in AgentRouter"
+            )
+
+    def _agent(self, role: str):
+        return self.agent_router.route(role)
+
+    @property
+    def developer(self):
+        return self._agent("developer")
+
+    @property
+    def tester(self):
+        if not self.agent_router.has_agent("tester"):
+            return None
+        return self._agent("tester")
+
+    @property
+    def reviewer(self):
+        return self._agent("reviewer")
 
     def _checkpoint(self) -> None:
         """Persist a workflow-stage boundary when a durable hook is installed."""
