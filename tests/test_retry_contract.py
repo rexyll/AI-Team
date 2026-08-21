@@ -5,16 +5,16 @@ from runtime.task import Task
 
 
 def _manager() -> TaskManager:
-    manager = TaskManager()
-    manager.add_task(
-        Task(
-            id="RETRY-001",
-            title="retry contract",
-            description="retry contract",
-            role="developer",
-        )
+    return TaskManager(
+        [
+            Task(
+                id="RETRY-001",
+                title="retry contract",
+                description="retry contract",
+                role="developer",
+            )
+        ]
     )
-    return manager
 
 
 def test_task_starts_with_zero_retry_attempts():
@@ -69,15 +69,22 @@ def test_non_retryable_failure_cannot_create_retry_attempt():
 
 
 def test_retry_attempt_does_not_mutate_successful_peer_task():
-    manager = _manager()
-    manager.add_task(
-        Task(
-            id="RETRY-002",
-            title="peer",
-            description="peer",
-            role="developer",
-            status="completed",
-        )
+    manager = TaskManager(
+        [
+            Task(
+                id="RETRY-001",
+                title="retry contract",
+                description="retry contract",
+                role="developer",
+            ),
+            Task(
+                id="RETRY-002",
+                title="peer",
+                description="peer",
+                role="developer",
+                status="completed",
+            ),
+        ]
     )
 
     task = manager.get_task("RETRY-001")
