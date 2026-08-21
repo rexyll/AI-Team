@@ -9,7 +9,7 @@ from runtime.workflow_transition import (
 )
 from enum import Enum
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from runtime.agent_result import AgentResult
 
@@ -110,15 +110,24 @@ class TaskWorkflow:
         agent_router: AgentRouter,
         max_review_rounds: int = MAX_REVIEW_ROUNDS,
         tester=None,
+        state_change_hook: Callable[[TaskManager], None] | None = None,
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
+        if state_change_hook is not None and not callable(state_change_hook):
+            raise TypeError("state_change_hook must be callable or None")
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.developer = developer
         self.tester = tester
         self.reviewer = reviewer
         self.max_review_rounds = max_review_rounds
+        self._state_change_hook = state_change_hook
+
+    def _checkpoint(self) -> None:
+        """Persist a workflow-stage boundary when a durable hook is installed."""
+        if self._state_change_hook is not None:
+            self._state_change_hook(self.task_manager)
 
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
@@ -126,6 +135,7 @@ class TaskWorkflow:
         for _ in range(self.max_review_rounds):
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
+                self._checkpoint()
 
             self._build_context(task)
 
@@ -152,6 +162,7 @@ class TaskWorkflow:
                     "tester",
                     WorkflowOutcomeKind.SUCCESS,
                 )
+                self._checkpoint()
 
             review_outcome = self._run_reviewer(task)
             review_action = self._apply_reviewer_outcome(task, review_outcome)
@@ -202,6 +213,7 @@ class TaskWorkflow:
             )
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "tester", outcome.result)
+            self._checkpoint()
             return
 
         if outcome.exception is not None:
@@ -215,6 +227,7 @@ class TaskWorkflow:
                 task.id,
                 outcome.result_dict.get("message", "Tester execution failed"),
             )
+            self._checkpoint()
             return
 
         if outcome.status == "failed":
@@ -226,6 +239,7 @@ class TaskWorkflow:
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "tester", outcome.result)
             self.task_manager.record_error(task.id, None)
+            self._checkpoint()
             return
 
         self._transition_for_outcome(
@@ -237,6 +251,7 @@ class TaskWorkflow:
             task.id,
             f"Invalid tester result status: {outcome.status}",
         )
+        self._checkpoint()
 
     def _handle_tester_result(self, task: Task, outcome: StageOutcome) -> bool:
         self._apply_tester_outcome(task, outcome)
@@ -259,6 +274,7 @@ class TaskWorkflow:
                 WorkflowOutcomeKind.EXECUTION_FAILURE,
             )
             self.task_manager.record_error(task.id, error)
+            self._checkpoint()
             raise outcome.exception
 
         if outcome.status == "completed":
@@ -269,6 +285,7 @@ class TaskWorkflow:
             )
             self.task_manager.record_error(task.id, None)
             self.task_manager.record_result(task.id, outcome.result_dict)
+            self._checkpoint()
             return
 
         message = (
@@ -282,6 +299,7 @@ class TaskWorkflow:
             WorkflowOutcomeKind.INVALID_RESULT,
         )
         self.task_manager.record_error(task.id, message)
+        self._checkpoint()
 
     def _run_reviewer(self, task: Task) -> StageOutcome:
         try:
@@ -298,6 +316,7 @@ class TaskWorkflow:
                 "tester",
                 WorkflowOutcomeKind.SUCCESS,
             )
+            self._checkpoint()
 
         if outcome.exception is not None:
             error = f"Reviewer execution failed: {outcome.exception}"
@@ -307,6 +326,7 @@ class TaskWorkflow:
                 WorkflowOutcomeKind.EXECUTION_FAILURE,
             )
             self.task_manager.record_error(task.id, error)
+            self._checkpoint()
             raise outcome.exception
 
         if outcome.status == "approved":
@@ -317,6 +337,7 @@ class TaskWorkflow:
             )
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
+            self._checkpoint()
             return "completed"
 
         if outcome.status == "revision":
@@ -334,8 +355,10 @@ class TaskWorkflow:
                     task.id,
                     f"Task failed review after {self.max_review_rounds} rounds",
                 )
+                self._checkpoint()
                 return "failed"
 
+            self._checkpoint()
             return "revision"
 
         if outcome.status == "failed":
@@ -350,6 +373,7 @@ class TaskWorkflow:
                 WorkflowOutcomeKind.EXECUTION_FAILURE,
             )
             self.task_manager.record_error(task.id, message)
+            self._checkpoint()
             return "failed"
 
         self._transition_for_outcome(
@@ -361,6 +385,7 @@ class TaskWorkflow:
             task.id,
             f"Unknown reviewer status: {outcome.status}",
         )
+        self._checkpoint()
         return "failed"
 
     def _handle_review_result(self, task: Task, outcome: StageOutcome) -> str:
