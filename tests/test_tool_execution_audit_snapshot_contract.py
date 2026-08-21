@@ -40,7 +40,7 @@ def test_audit_history_property_is_detached_from_audit_state():
     exposed.append(_record("TOOL-002"))
 
     assert [record.execution_id for record in audit.records()] == ["TOOL-001"]
-    assert [record.execution_id for record in history.to_dict()] == ["TOOL-001"]
+    assert [payload["execution_id"] for payload in history.to_dict()] == ["TOOL-001"]
 
 
 def test_audit_returns_detached_records():
