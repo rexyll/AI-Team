@@ -80,7 +80,10 @@ def test_orchestrator_waits_for_dependency_layer_before_next_layer():
 
     Orchestrator(manager, _Router(agent), max_workers=2).run()
 
-    assert agent.started[:2] == ["TASK-001", "TASK-002"]
+    # Independent tasks run concurrently, so worker scheduling does not
+    # guarantee which one enters the agent first. The dependency task must
+    # not start until both upstream tasks have started/completed their layer.
+    assert set(agent.started[:2]) == {"TASK-001", "TASK-002"}
     assert agent.started[2] == "TASK-003"
     assert all(task.status == "completed" for task in manager.get_all_tasks())
 
