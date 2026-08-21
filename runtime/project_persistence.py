@@ -10,6 +10,7 @@ from typing import Any
 from core.project_result import ProjectResult
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 
 
@@ -212,6 +213,11 @@ class ProjectPersistenceAdapter:
             result=result,
             tool_execution_history=tool_execution_history,
         )
+
+    def audit(self, project_id: str) -> ToolExecutionAudit:
+        """Return a read-only audit view over the persisted project history."""
+        snapshot = self.load(project_id)
+        return ToolExecutionAudit(snapshot.tool_execution_history)
 
     @staticmethod
     def _validate_snapshot_consistency(
