@@ -10,6 +10,7 @@ from typing import Any
 from core.project_result import ProjectResult
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.tool_execution_history import ToolExecutionHistory
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class ProjectSnapshot:
     plan: dict[str, Any] | None
     task_manager: TaskManager
     result: ProjectResult | None
+    tool_execution_history: ToolExecutionHistory | None = None
 
 
 class ProjectPersistenceAdapter:
@@ -42,6 +44,7 @@ class ProjectPersistenceAdapter:
         plan: dict[str, Any] | None,
         task_manager: TaskManager,
         result: ProjectResult | None,
+        tool_execution_history: ToolExecutionHistory | None,
     ) -> dict[str, Any]:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
@@ -49,12 +52,21 @@ class ProjectPersistenceAdapter:
             raise TypeError("plan must be a dictionary or None")
         if result is not None and not isinstance(result, ProjectResult):
             raise TypeError("result must be a ProjectResult or None")
+        if tool_execution_history is not None and not isinstance(
+            tool_execution_history, ToolExecutionHistory
+        ):
+            raise TypeError("tool_execution_history must be a ToolExecutionHistory or None")
 
         return {
             "project_id": project_id,
             "plan": plan,
             "tasks": [task.to_dict() for task in task_manager.get_all_tasks()],
             "result": result.to_dict() if result is not None else None,
+            "tool_execution_history": (
+                tool_execution_history.to_dict()
+                if tool_execution_history is not None
+                else None
+            ),
         }
 
     def save(
@@ -64,6 +76,7 @@ class ProjectPersistenceAdapter:
         plan: dict[str, Any] | None,
         task_manager: TaskManager,
         result: ProjectResult | None = None,
+        tool_execution_history: ToolExecutionHistory | None = None,
     ) -> None:
         path = self._path(project_id)
         if path.exists():
@@ -74,6 +87,7 @@ class ProjectPersistenceAdapter:
             plan,
             task_manager,
             result,
+            tool_execution_history,
         )
         self._atomic_write(path, payload)
 
@@ -84,6 +98,7 @@ class ProjectPersistenceAdapter:
         plan: dict[str, Any] | None,
         task_manager: TaskManager,
         result: ProjectResult | None = None,
+        tool_execution_history: ToolExecutionHistory | None = None,
     ) -> None:
         """Replace an existing project snapshot atomically."""
         path = self._path(project_id)
@@ -97,6 +112,7 @@ class ProjectPersistenceAdapter:
             plan,
             task_manager,
             result,
+            tool_execution_history,
         )
         self._atomic_write(path, payload)
 
@@ -132,6 +148,17 @@ class ProjectPersistenceAdapter:
 
         result_payload = payload.get("result")
         result = self._restore_result(result_payload)
+
+        history_payload = payload.get("tool_execution_history")
+        try:
+            tool_execution_history = (
+                ToolExecutionHistory.from_dict(history_payload)
+                if history_payload is not None
+                else None
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("project payload contains an invalid tool execution history") from exc
+
         task_manager = TaskManager(tasks)
         self._validate_snapshot_consistency(
             project_id,
@@ -145,6 +172,7 @@ class ProjectPersistenceAdapter:
             plan=plan,
             task_manager=task_manager,
             result=result,
+            tool_execution_history=tool_execution_history,
         )
 
     @staticmethod
@@ -155,19 +183,7 @@ class ProjectPersistenceAdapter:
         task_manager: TaskManager,
         result: ProjectResult | None,
     ) -> None:
-        """Validate only invariants that must survive persisted recovery.
-
-        The plan is the immutable planning record while TaskManager stores the
-        mutable runtime state. Runtime task metadata may legitimately differ
-        from the original plan after execution or migration, so recovery does
-        not require a field-for-field plan/task match.
-
-        Some persistence boundaries intentionally carry only project-level plan
-        metadata and an independently persisted runtime TaskManager. In that
-        case ``plan.tasks`` may be empty even when runtime tasks exist. When a
-        plan does contain task definitions, their stable task identity set must
-        agree with the runtime task identity set.
-        """
+        """Validate only invariants that must survive persisted recovery."""
         tasks = task_manager.get_all_tasks()
         task_ids = [task.id for task in tasks]
 
