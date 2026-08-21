@@ -33,9 +33,6 @@ class ToolExecutionAudit:
         status: str | None = None,
     ) -> list[ToolExecutionRecord]:
         """Return detached records matching all supplied filters."""
-        # ToolExecutionHistory is intentionally not iterable. Build detached
-        # records through its serialization boundary so callers cannot mutate
-        # nested fields of the audit history through the returned records.
         records: Iterable[ToolExecutionRecord] = (
             ToolExecutionRecord.from_dict(payload)
             for payload in self._history.to_dict()
@@ -82,4 +79,18 @@ class ToolExecutionAudit:
             "by_status": dict(sorted(by_status.items())),
             "by_tool": dict(sorted(by_tool.items())),
             "by_agent_role": dict(sorted(by_agent_role.items())),
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a detached, deterministic audit snapshot.
+
+        The returned payload is suitable for diagnostics, API responses, and
+        persistence boundaries. Records are reconstructed through their
+        serialization contract so callers cannot mutate the audit's canonical
+        history through nested dictionaries in the returned snapshot.
+        """
+        records = [record.to_dict() for record in self.records()]
+        return {
+            "records": records,
+            "summary": self.summary(),
         }
