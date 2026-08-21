@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from core.project_orchestrator import ProjectOrchestrator
+from core.project_result import ProjectResult
 from runtime.task_manager import TaskManager
 
 
@@ -45,7 +46,6 @@ class FakePlanner:
 
     def run(self, task):
         self.received_task = task
-
         return {
             "status": "planner_completed",
             "agent": "planner",
@@ -79,7 +79,6 @@ class FakeRouter:
     def get_agent(self, role):
         if role == "planner":
             return self.planner
-
         raise KeyError(role)
 
 
@@ -96,139 +95,78 @@ class FakeOrchestrator:
 def test_create_plan_calls_planner():
     planner = FakePlanner()
     router = FakeRouter(planner)
+    project = ProjectOrchestrator(agent_router=router)
 
-    project = ProjectOrchestrator(
-        agent_router=router,
-    )
-
-    plan = project.create_plan(
-        "开发一个个人记账软件。"
-    )
+    plan = project.create_plan("开发一个个人记账软件。")
 
     assert plan == _plan()
-
     assert planner.received_task is not None
     assert planner.received_task.id == "PLAN-001"
     assert planner.received_task.role == "planner"
     assert planner.received_task.status == "ready"
-    assert (
-        planner.received_task.description
-        == "开发一个个人记账软件。"
-    )
+    assert planner.received_task.description == "开发一个个人记账软件。"
 
 
 def test_create_plan_stores_last_plan():
-    planner = FakePlanner()
-    router = FakeRouter(planner)
-
-    project = ProjectOrchestrator(
-        agent_router=router,
-    )
-
-    plan = project.create_plan(
-        "开发一个个人记账软件。"
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
+    plan = project.create_plan("开发一个个人记账软件。")
     assert project.last_plan is plan
 
 
 def test_create_plan_rejects_empty_requirement():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
     with pytest.raises(ValueError):
         project.create_plan("")
 
 
 def test_create_plan_rejects_whitespace_requirement():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
     with pytest.raises(ValueError):
         project.create_plan("   ")
 
 
 def test_create_plan_rejects_non_string_requirement():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
     with pytest.raises(TypeError):
         project.create_plan(None)
 
 
 def test_create_plan_propagates_planner_failure():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FailingPlanner()),
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FailingPlanner()))
     with pytest.raises(RuntimeError, match="planner failed"):
-        project.create_plan(
-            "开发一个个人记账软件。"
-        )
+        project.create_plan("开发一个个人记账软件。")
 
 
 def test_create_plan_rejects_invalid_planner_result():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(
-            InvalidPlannerResult()
-        ),
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="does not contain a valid plan",
-    ):
-        project.create_plan(
-            "开发一个个人记账软件。"
-        )
+    project = ProjectOrchestrator(agent_router=FakeRouter(InvalidPlannerResult()))
+    with pytest.raises(ValueError, match="does not contain a valid plan"):
+        project.create_plan("开发一个个人记账软件。")
 
 
 def test_build_task_manager():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
-    manager = project.build_task_manager(
-        _plan()
-    )
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
+    manager = project.build_task_manager(_plan())
 
     assert isinstance(manager, TaskManager)
-
     tasks = manager.get_all_tasks()
-
     assert len(tasks) == 3
-
     assert tasks[0].id == "TASK-001"
     assert tasks[0].role == "architect"
     assert tasks[0].status == "pending"
-
     assert tasks[1].id == "TASK-002"
     assert tasks[1].dependencies == ["TASK-001"]
-
     assert tasks[2].id == "TASK-003"
     assert tasks[2].dependencies == ["TASK-002"]
 
 
 def test_build_task_manager_stores_last_task_manager():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
-    manager = project.build_task_manager(
-        _plan()
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
+    manager = project.build_task_manager(_plan())
     assert project.last_task_manager is manager
 
 
 def test_build_task_manager_rejects_non_dict():
-    project = ProjectOrchestrator(
-        agent_router=FakeRouter(FakePlanner()),
-    )
-
+    project = ProjectOrchestrator(agent_router=FakeRouter(FakePlanner()))
     with pytest.raises(TypeError):
         project.build_task_manager(None)
 
@@ -236,131 +174,80 @@ def test_build_task_manager_rejects_non_dict():
 def test_create_orchestrator():
     planner = FakePlanner()
     router = FakeRouter(planner)
-
     captured = {}
 
     def factory(task_manager, agent_router):
         captured["task_manager"] = task_manager
         captured["agent_router"] = agent_router
+        return FakeOrchestrator(task_manager, agent_router)
 
-        return FakeOrchestrator(
-            task_manager,
-            agent_router,
-        )
+    project = ProjectOrchestrator(agent_router=router, orchestrator_factory=factory)
+    manager = project.build_task_manager(_plan())
+    orchestrator = project.create_orchestrator(manager)
 
-    project = ProjectOrchestrator(
-        agent_router=router,
-        orchestrator_factory=factory,
-    )
-
-    manager = project.build_task_manager(
-        _plan()
-    )
-
-    orchestrator = project.create_orchestrator(
-        manager
-    )
-
-    assert isinstance(
-        orchestrator,
-        FakeOrchestrator,
-    )
-
+    assert isinstance(orchestrator, FakeOrchestrator)
     assert captured["task_manager"] is manager
     assert captured["agent_router"] is router
 
 
-def test_run_executes_orchestrator():
+def test_run_executes_orchestrator_and_returns_project_result():
     planner = FakePlanner()
     router = FakeRouter(planner)
-
     captured = {}
 
     def factory(task_manager, agent_router):
-        orchestrator = FakeOrchestrator(
-            task_manager,
-            agent_router,
-        )
-
+        orchestrator = FakeOrchestrator(task_manager, agent_router)
         captured["orchestrator"] = orchestrator
-
         return orchestrator
 
-    project = ProjectOrchestrator(
-        agent_router=router,
-        orchestrator_factory=factory,
-    )
-
-    manager = project.run(
-        "开发一个个人记账软件。"
-    )
-
+    project = ProjectOrchestrator(agent_router=router, orchestrator_factory=factory)
+    result = project.run("开发一个个人记账软件。")
     orchestrator = captured["orchestrator"]
 
+    assert isinstance(result, ProjectResult)
     assert orchestrator.run_called is True
-    assert orchestrator.task_manager is manager
+    assert orchestrator.task_manager is project.last_task_manager
     assert orchestrator.agent_router is router
-
     assert project.last_plan == _plan()
-    assert project.last_task_manager is manager
+    assert project.last_result is result
+    assert result.project == "记账软件"
+    assert result.total_tasks == 3
 
 
-def test_run_returns_task_manager():
-    planner = FakePlanner()
-    router = FakeRouter(planner)
-
-    def factory(task_manager, agent_router):
-        return FakeOrchestrator(
-            task_manager,
-            agent_router,
-        )
-
+def test_execute_returns_project_result_and_preserves_task_manager():
     project = ProjectOrchestrator(
-        agent_router=router,
-        orchestrator_factory=factory,
+        agent_router=FakeRouter(FakePlanner()),
+        orchestrator_factory=lambda task_manager, agent_router: FakeOrchestrator(
+            task_manager, agent_router
+        ),
     )
+    manager = project.build_task_manager(_plan())
 
-    result = project.run(
-        "开发一个个人记账软件。"
-    )
+    result = project.execute(manager)
 
-    assert isinstance(
-        result,
-        TaskManager,
-    )
-
-    assert len(
-        result.get_all_tasks()
-    ) == 3
+    assert isinstance(result, ProjectResult)
+    assert project.last_task_manager is manager
+    assert project.last_result is result
+    assert result.project is None
+    assert result.total_tasks == 3
+    assert result.completed_tasks == 0
+    assert result.success is False
+    assert result.status == "incomplete"
 
 
 def test_run_does_not_execute_when_planner_fails():
     planner = FailingPlanner()
     router = FakeRouter(planner)
-
     orchestrator_created = False
 
     def factory(task_manager, agent_router):
         nonlocal orchestrator_created
-
         orchestrator_created = True
+        return FakeOrchestrator(task_manager, agent_router)
 
-        return FakeOrchestrator(
-            task_manager,
-            agent_router,
-        )
+    project = ProjectOrchestrator(agent_router=router, orchestrator_factory=factory)
 
-    project = ProjectOrchestrator(
-        agent_router=router,
-        orchestrator_factory=factory,
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="planner failed",
-    ):
-        project.run(
-            "开发一个个人记账软件。"
-        )
+    with pytest.raises(RuntimeError, match="planner failed"):
+        project.run("开发一个个人记账软件。")
 
     assert orchestrator_created is False
