@@ -33,7 +33,13 @@ class ToolExecutionAudit:
         status: str | None = None,
     ) -> list[ToolExecutionRecord]:
         """Return detached records matching all supplied filters."""
-        records: Iterable[ToolExecutionRecord] = self._history
+        # ToolExecutionHistory is intentionally not iterable. Build detached
+        # records through its serialization boundary so callers cannot mutate
+        # nested fields of the audit history through the returned records.
+        records: Iterable[ToolExecutionRecord] = (
+            ToolExecutionRecord.from_dict(payload)
+            for payload in self._history.to_dict()
+        )
         if task_id is not None:
             records = (record for record in records if record.task_id == task_id)
         if agent_role is not None:
