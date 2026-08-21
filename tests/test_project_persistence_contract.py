@@ -3,9 +3,9 @@ import json
 import pytest
 
 from core.project_result import ProjectResult
+from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
-from runtime.project_persistence import ProjectPersistenceAdapter
 
 
 def _manager() -> TaskManager:
@@ -124,6 +124,53 @@ def test_project_persistence_rejects_corrupt_payload(tmp_path):
     (tmp_path / "PROJECT-001.json").write_text("{not-json", encoding="utf-8")
 
     with pytest.raises(ValueError):
+        adapter.load("PROJECT-001")
+
+
+def test_project_persistence_rejects_plan_task_identity_mismatch(tmp_path):
+    adapter = ProjectPersistenceAdapter(tmp_path)
+    adapter.save("PROJECT-001", plan=_plan(), task_manager=_manager(), result=None)
+
+    payload_path = tmp_path / "PROJECT-001.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["plan"]["tasks"][0]["id"] = "PROJECT-TASK-999"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="plan/task identity mismatch"):
+        adapter.load("PROJECT-001")
+
+
+def test_project_persistence_rejects_result_state_mismatch(tmp_path):
+    adapter = ProjectPersistenceAdapter(tmp_path)
+    adapter.save("PROJECT-001", plan=_plan(), task_manager=_manager(), result=_result())
+
+    payload_path = tmp_path / "PROJECT-001.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["result"]["completed_tasks"] = 2
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="result mismatch"):
+        adapter.load("PROJECT-001")
+
+
+def test_project_persistence_rejects_unknown_tool_execution_task_reference(tmp_path):
+    adapter = ProjectPersistenceAdapter(tmp_path)
+    adapter.save("PROJECT-001", plan=_plan(), task_manager=_manager(), result=None)
+
+    payload_path = tmp_path / "PROJECT-001.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["tool_execution_history"] = [
+        {
+            "execution_id": "TOOL-999",
+            "task_id": "PROJECT-TASK-999",
+            "agent_role": "developer",
+            "tool_name": "read_file",
+            "status": "completed",
+        }
+    ]
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid tool execution history"):
         adapter.load("PROJECT-001")
 
 
