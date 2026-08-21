@@ -6,6 +6,7 @@ from core.orchestrator import Orchestrator
 from core.project_result import ProjectResult
 from runtime.agent_router import AgentRouter
 from runtime.plan_builder import PlanBuilder
+from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.task_validator import validate_plan
@@ -92,9 +93,6 @@ class ProjectOrchestrator:
         if not isinstance(plan, dict):
             raise ValueError("PlannerAgent result does not contain a valid plan")
 
-        # ProjectOrchestrator is the boundary at which Planner output becomes
-        # an accepted project plan. Do not expose an invalid plan through
-        # last_plan or pass it to the runtime graph builder.
         validate_plan(plan)
         self.last_plan = plan
         return plan
@@ -113,19 +111,10 @@ class ProjectOrchestrator:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
 
-        return self.orchestrator_factory(
-            task_manager,
-            self.agent_router,
-        )
+        return self.orchestrator_factory(task_manager, self.agent_router)
 
     def execute(self, task_manager: TaskManager) -> ProjectResult:
-        """
-        Execute an already-built project task graph and return its result.
-
-        Task scheduling and lifecycle execution remain delegated to the
-        lower-level Orchestrator. ProjectOrchestrator only translates the
-        resulting TaskManager state into the project-level result contract.
-        """
+        """Execute an already-built project task graph and return its result."""
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
 
@@ -139,10 +128,7 @@ class ProjectOrchestrator:
             if isinstance(value, str):
                 project_name = value
 
-        result = ProjectResult.from_task_manager(
-            task_manager,
-            project=project_name,
-        )
+        result = ProjectResult.from_task_manager(task_manager, project=project_name)
         self.last_result = result
         return result
 
@@ -150,14 +136,7 @@ class ProjectOrchestrator:
         self,
         task_manager: TaskManager | None = None,
     ) -> ProjectResult:
-        """
-        Resume execution from the current in-memory TaskManager state.
-
-        Resume deliberately does not invoke the planner or rebuild the task
-        graph. The existing TaskManager is the complete execution state for
-        this in-memory boundary; completed tasks remain untouched while the
-        Orchestrator continues scheduling executable work.
-        """
+        """Resume execution from the current in-memory TaskManager state."""
         manager = task_manager if task_manager is not None else self.last_task_manager
         if manager is None:
             raise ValueError("no in-memory task manager is available to resume")
@@ -166,10 +145,42 @@ class ProjectOrchestrator:
 
         return self.execute(manager)
 
+    def resume_persisted(
+        self,
+        project_id: str,
+        adapter: ProjectPersistenceAdapter,
+    ) -> ProjectResult:
+        """Restore a persisted project snapshot without invoking the planner.
+
+        This phase restores the complete persistence boundary into runtime
+        objects. Actual continuation through the execution Orchestrator is
+        deliberately left to the next resume-integration phase.
+        """
+        if not isinstance(adapter, ProjectPersistenceAdapter):
+            raise TypeError("adapter must be a ProjectPersistenceAdapter")
+
+        snapshot = adapter.load(project_id)
+        if snapshot.plan is not None:
+            validate_plan(snapshot.plan)
+            self.last_plan = snapshot.plan
+        else:
+            self.last_plan = None
+
+        self.last_task_manager = snapshot.task_manager
+        result = snapshot.result
+        if result is None:
+            result = ProjectResult.from_task_manager(
+                snapshot.task_manager,
+                project=(snapshot.plan or {}).get("project")
+                if snapshot.plan is not None
+                else None,
+            )
+
+        self.last_result = result
+        return result
+
     def run(self, requirement: str) -> ProjectResult:
-        """
-        Plan and execute a complete project through the project facade.
-        """
+        """Plan and execute a complete project through the project facade."""
         plan = self.create_plan(requirement)
         task_manager = self.build_task_manager(plan)
         return self.execute(task_manager)
