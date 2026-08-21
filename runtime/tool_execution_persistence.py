@@ -50,6 +50,27 @@ class ToolExecutionPersistenceAdapter:
                 pass
             raise
 
+    def save_if_absent(self, record: ToolExecutionRecord) -> bool:
+        """Persist a record once, treating an identical existing record as success.
+
+        Returns ``True`` when a new file is created and ``False`` when the
+        exact same immutable record already exists. A conflicting record with
+        the same execution id is rejected so persisted history remains
+        append-only and immutable.
+        """
+        if not isinstance(record, ToolExecutionRecord):
+            raise TypeError("record must be a ToolExecutionRecord")
+
+        path = self._path(record.execution_id)
+        if path.exists():
+            existing = self.load(record.execution_id)
+            if existing == record:
+                return False
+            raise FileExistsError(path)
+
+        self.save(record)
+        return True
+
     def load(self, execution_id: str) -> ToolExecutionRecord:
         path = self._path(execution_id)
         if not path.is_file():
