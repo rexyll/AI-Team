@@ -33,7 +33,7 @@ def test_project_result_is_immutable_value_object():
 
 
 def test_project_result_from_empty_task_manager_is_incomplete():
-    result = ProjectResult.from_task_manager(TaskManager(), project="empty")
+    result = ProjectResult.from_task_manager(TaskManager([]), project="empty")
 
     assert result.project == "empty"
     assert result.success is False
