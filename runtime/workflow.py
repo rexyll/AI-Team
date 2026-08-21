@@ -29,25 +29,19 @@ class StageOutcome:
     def __post_init__(self) -> None:
         if not isinstance(self.stage, WorkflowStage):
             raise TypeError("stage must be a WorkflowStage")
-
         if not isinstance(self.status, str):
             raise TypeError("status must be a string")
         self.status = self.status.strip()
         if not self.status:
             raise ValueError("status must be a non-empty string")
-
         if self.exception is not None and not isinstance(self.exception, Exception):
             raise TypeError("exception must be an Exception or None")
-
         if isinstance(self.result, dict):
             self.result = self._normalize_result(self.result)
-
         if self.result is not None and not isinstance(self.result, AgentResult):
             raise TypeError("result must be an AgentResult, dict, or None")
-
         if self.result is not None:
             self.status = self.result.status
-
         if self.exception is not None:
             self.status = "failed"
 
@@ -129,6 +123,13 @@ class TaskWorkflow:
         if self._state_change_hook is not None:
             self._state_change_hook(self.task_manager)
 
+    def _capture_developer_tool_history(self, task: Task) -> None:
+        """Attach immutable Developer tool evidence to the persisted task context."""
+        history = getattr(self.developer, "tool_execution_history", None)
+        if history is None or not hasattr(history, "to_dict"):
+            return
+        task.context["tool_execution_history"] = history.to_dict()
+
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
 
@@ -140,6 +141,7 @@ class TaskWorkflow:
             self._build_context(task)
 
             developer_outcome = self._run_developer(task)
+            self._capture_developer_tool_history(task)
             self._apply_developer_outcome(task, developer_outcome)
 
             if task.status == "failed":
@@ -147,16 +149,12 @@ class TaskWorkflow:
 
             if self.tester is not None:
                 tester_outcome = self._run_tester(task)
-
                 if not self._handle_tester_result(task, tester_outcome):
                     if task.status == "failed":
                         return task
                     if tester_outcome.status != "passed":
                         continue
             else:
-                # A no-tester workflow still needs the reviewer entry state.
-                # Reuse the declared Tester success target rather than
-                # duplicating review_pending -> reviewing topology here.
                 self._transition_to_declared_target(
                     task,
                     "tester",
@@ -176,23 +174,11 @@ class TaskWorkflow:
 
         return task
 
-    def _transition_to_declared_target(
-        self,
-        task: Task,
-        stage: str,
-        outcome: WorkflowOutcomeKind,
-    ) -> None:
-        """Apply the target declared by the workflow transition contract."""
+    def _transition_to_declared_target(self, task: Task, stage: str, outcome: WorkflowOutcomeKind) -> None:
         transition = get_workflow_transition(stage, outcome)
         self.task_manager.transition(task.id, transition.target)
 
-    def _transition_for_outcome(
-        self,
-        task: Task,
-        stage: WorkflowStage,
-        outcome: WorkflowOutcomeKind,
-    ) -> None:
-        """Apply a stage outcome through the single declarative transition source."""
+    def _transition_for_outcome(self, task: Task, stage: WorkflowStage, outcome: WorkflowOutcomeKind) -> None:
         transition = get_workflow_transition(stage.value, outcome)
         self.task_manager.transition(task.id, transition.target)
 
@@ -206,51 +192,26 @@ class TaskWorkflow:
 
     def _apply_tester_outcome(self, task: Task, outcome: StageOutcome) -> None:
         if outcome.status == "passed":
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.TESTER,
-                WorkflowOutcomeKind.SUCCESS,
-            )
+            self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "tester", outcome.result)
             self._checkpoint()
             return
-
         if outcome.exception is not None:
             self.task_manager.record_test_result(task.id, outcome.result_dict)
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.TESTER,
-                WorkflowOutcomeKind.EXECUTION_FAILURE,
-            )
-            self.task_manager.record_error(
-                task.id,
-                outcome.result_dict.get("message", "Tester execution failed"),
-            )
+            self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.EXECUTION_FAILURE)
+            self.task_manager.record_error(task.id, outcome.result_dict.get("message", "Tester execution failed"))
             self._checkpoint()
             return
-
         if outcome.status == "failed":
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.TESTER,
-                WorkflowOutcomeKind.QUALITY_GATE_FAILURE,
-            )
+            self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.QUALITY_GATE_FAILURE)
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "tester", outcome.result)
             self.task_manager.record_error(task.id, None)
             self._checkpoint()
             return
-
-        self._transition_for_outcome(
-            task,
-            WorkflowStage.TESTER,
-            WorkflowOutcomeKind.INVALID_RESULT,
-        )
-        self.task_manager.record_error(
-            task.id,
-            f"Invalid tester result status: {outcome.status}",
-        )
+        self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.INVALID_RESULT)
+        self.task_manager.record_error(task.id, f"Invalid tester result status: {outcome.status}")
         self._checkpoint()
 
     def _handle_tester_result(self, task: Task, outcome: StageOutcome) -> bool:
@@ -268,36 +229,18 @@ class TaskWorkflow:
     def _apply_developer_outcome(self, task: Task, outcome: StageOutcome) -> None:
         if outcome.exception is not None:
             error = f"Developer execution failed: {outcome.exception}"
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.DEVELOPER,
-                WorkflowOutcomeKind.EXECUTION_FAILURE,
-            )
+            self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.EXECUTION_FAILURE)
             self.task_manager.record_error(task.id, error)
             self._checkpoint()
             raise outcome.exception
-
         if outcome.status == "completed":
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.DEVELOPER,
-                WorkflowOutcomeKind.SUCCESS,
-            )
+            self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_error(task.id, None)
             self.task_manager.record_result(task.id, outcome.result_dict)
             self._checkpoint()
             return
-
-        message = (
-            outcome.result.message
-            if outcome.result is not None
-            else "Developer execution failed"
-        )
-        self._transition_for_outcome(
-            task,
-            WorkflowStage.DEVELOPER,
-            WorkflowOutcomeKind.INVALID_RESULT,
-        )
+        message = outcome.result.message if outcome.result is not None else "Developer execution failed"
+        self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.INVALID_RESULT)
         self.task_manager.record_error(task.id, message)
         self._checkpoint()
 
@@ -311,103 +254,53 @@ class TaskWorkflow:
 
     def _apply_reviewer_outcome(self, task: Task, outcome: StageOutcome) -> str:
         if task.status == "review_pending":
-            self._transition_to_declared_target(
-                task,
-                "tester",
-                WorkflowOutcomeKind.SUCCESS,
-            )
+            self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
             self._checkpoint()
-
         if outcome.exception is not None:
             error = f"Reviewer execution failed: {outcome.exception}"
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.REVIEWER,
-                WorkflowOutcomeKind.EXECUTION_FAILURE,
-            )
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
             self.task_manager.record_error(task.id, error)
             self._checkpoint()
             raise outcome.exception
-
         if outcome.status == "approved":
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.REVIEWER,
-                WorkflowOutcomeKind.SUCCESS,
-            )
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
             self._checkpoint()
             return "completed"
-
         if outcome.status == "revision":
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.REVIEWER,
-                WorkflowOutcomeKind.QUALITY_GATE_FAILURE,
-            )
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.QUALITY_GATE_FAILURE)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "reviewer", outcome.result_dict)
             self.task_manager.record_error(task.id, None)
-
             if task.review_round >= self.max_review_rounds:
-                self.task_manager.mark_failed(
-                    task.id,
-                    f"Task failed review after {self.max_review_rounds} rounds",
-                )
+                self.task_manager.mark_failed(task.id, f"Task failed review after {self.max_review_rounds} rounds")
                 self._checkpoint()
                 return "failed"
-
             self._checkpoint()
             return "revision"
-
         if outcome.status == "failed":
-            message = (
-                outcome.result.message
-                if outcome.result is not None
-                else "Reviewer execution failed"
-            )
-            self._transition_for_outcome(
-                task,
-                WorkflowStage.REVIEWER,
-                WorkflowOutcomeKind.EXECUTION_FAILURE,
-            )
+            message = outcome.result.message if outcome.result is not None else "Reviewer execution failed"
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
             self.task_manager.record_error(task.id, message)
             self._checkpoint()
             return "failed"
-
-        self._transition_for_outcome(
-            task,
-            WorkflowStage.REVIEWER,
-            WorkflowOutcomeKind.INVALID_RESULT,
-        )
-        self.task_manager.record_error(
-            task.id,
-            f"Unknown reviewer status: {outcome.status}",
-        )
+        self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.INVALID_RESULT)
+        self.task_manager.record_error(task.id, f"Unknown reviewer status: {outcome.status}")
         self._checkpoint()
         return "failed"
 
     def _handle_review_result(self, task: Task, outcome: StageOutcome) -> str:
         if outcome.status == "approved":
             return "completed"
-
         if outcome.status == "failed":
             return "failed"
-
         if outcome.status == "revision":
             if task.review_round >= self.max_review_rounds:
-                self.task_manager.mark_failed(
-                    task.id,
-                    f"Task failed review after {self.max_review_rounds} rounds",
-                )
+                self.task_manager.mark_failed(task.id, f"Task failed review after {self.max_review_rounds} rounds")
                 return "failed"
             return "revision"
-
-        self.task_manager.mark_failed(
-            task.id,
-            f"Unknown review status: {outcome.status}",
-        )
+        self.task_manager.mark_failed(task.id, f"Unknown review status: {outcome.status}")
         return "failed"
 
     def _build_context(self, task: Task) -> None:
