@@ -1,5 +1,6 @@
 from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
+from runtime.dependency_scheduler import DependencyScheduler
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 
@@ -39,8 +40,40 @@ class Orchestrator:
         print("=" * 60)
 
     def _get_executable_tasks(self):
-        """Return tasks that are already ready plus newly promoted tasks."""
-        promoted_tasks = self.task_manager.get_ready_tasks()
+        """Use DependencyScheduler as the dependency decision source.
+
+        DependencyScheduler is read-only. TaskManager remains responsible
+        for applying ready/blocked lifecycle mutations.
+        """
+        scheduler = DependencyScheduler(
+            self.task_manager.get_all_tasks()
+        )
+
+        # Apply scheduler blocked decisions through the sole lifecycle
+        # mutation boundary, then rebuild the snapshot so downstream tasks
+        # observe newly blocked dependencies.
+        while True:
+            blocked_decisions = scheduler.get_blocked_decisions()
+            if not blocked_decisions:
+                break
+
+            for decision in blocked_decisions:
+                self.task_manager.mark_blocked(
+                    decision.task_id,
+                    decision.reason or "Blocked by dependencies",
+                )
+
+            scheduler = DependencyScheduler(
+                self.task_manager.get_all_tasks()
+            )
+
+        scheduled_tasks = scheduler.get_ready_tasks()
+
+        # Scheduler decides readiness; TaskManager applies the state change.
+        for task in scheduled_tasks:
+            if task.status == "pending":
+                self.task_manager.mark_ready(task.id)
+
         already_ready = [
             task
             for task in self.task_manager.get_all_tasks()
@@ -50,7 +83,7 @@ class Orchestrator:
         # Preserve task-manager order while avoiding duplicates.
         executable = []
         seen = set()
-        for task in [*promoted_tasks, *already_ready]:
+        for task in [*scheduled_tasks, *already_ready]:
             if task.id not in seen:
                 executable.append(task)
                 seen.add(task.id)
