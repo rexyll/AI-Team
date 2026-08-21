@@ -158,7 +158,12 @@ class Orchestrator:
                 result = agent.run(task)
                 self.task_manager.mark_completed(task.id, result)
 
-            self._persist_state_checkpoint()
+            # Developer workflow stages own their terminal checkpoints. A
+            # second checkpoint here would duplicate the final "completed"
+            # state and violate the stage-boundary contract. Single-agent
+            # roles still need their terminal checkpoint here.
+            if task.role != "developer":
+                self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
 
         except Exception as exc:
