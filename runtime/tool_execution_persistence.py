@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .tool_execution_record import ToolExecutionRecord
 
@@ -70,6 +71,79 @@ class ToolExecutionPersistenceAdapter:
 
         self.save(record)
         return True
+
+    def save_if_absent_many(self, records: Iterable[ToolExecutionRecord]) -> int:
+        """Persist a batch with preflight conflict detection and rollback.
+
+        Identical records already on disk are treated as idempotent. New
+        records are staged before any target is replaced. If staging or the
+        commit phase fails, files created by this batch are removed so callers
+        do not observe a deliberately partial batch. Conflicting records are
+        rejected before any write occurs.
+        """
+        incoming = list(records)
+        for record in incoming:
+            if not isinstance(record, ToolExecutionRecord):
+                raise TypeError("records must contain ToolExecutionRecord values")
+
+        unique: dict[str, ToolExecutionRecord] = {}
+        for record in incoming:
+            existing = unique.get(record.execution_id)
+            if existing is not None and existing != record:
+                raise ValueError(
+                    f"conflicting tool execution record for execution_id: {record.execution_id}"
+                )
+            unique[record.execution_id] = record
+
+        pending: list[tuple[Path, str]] = []
+        for execution_id, record in unique.items():
+            path = self._path(execution_id)
+            if path.exists():
+                existing = self.load(execution_id)
+                if existing != record:
+                    raise FileExistsError(path)
+                continue
+            payload = json.dumps(record.to_dict(), ensure_ascii=False, indent=2)
+            pending.append((path, payload))
+
+        staged: list[tuple[Path, Path]] = []
+        created: list[Path] = []
+        try:
+            for path, payload in pending:
+                fd, temporary = tempfile.mkstemp(
+                    prefix=f".{path.stem}-", suffix=".tmp", dir=self.root, text=True
+                )
+                temp_path = Path(temporary)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                        handle.write(payload)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+                staged.append((temp_path, path))
+
+            for temp_path, path in staged:
+                os.replace(temp_path, path)
+                created.append(path)
+
+            return len(pending)
+        except Exception:
+            for temp_path, _ in staged:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+            for path in created:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            raise
 
     def load(self, execution_id: str) -> ToolExecutionRecord:
         path = self._path(execution_id)
