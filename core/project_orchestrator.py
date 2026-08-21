@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from core.orchestrator import Orchestrator
+from core.project_result import ProjectResult
 from runtime.agent_router import AgentRouter
 from runtime.plan_builder import PlanBuilder
 from runtime.task import Task
@@ -22,7 +23,7 @@ class ProjectOrchestrator:
             -> PlanBuilder
             -> TaskManager
             -> Orchestrator
-            -> Task execution
+            -> ProjectResult
 
     The lower-level Orchestrator remains responsible only for executing
     an already-created TaskManager. ProjectOrchestrator does not duplicate
@@ -53,6 +54,7 @@ class ProjectOrchestrator:
 
         self.last_plan: dict[str, Any] | None = None
         self.last_task_manager: TaskManager | None = None
+        self.last_result: ProjectResult | None = None
 
     @staticmethod
     def _default_orchestrator_factory(
@@ -116,13 +118,13 @@ class ProjectOrchestrator:
             self.agent_router,
         )
 
-    def execute(self, task_manager: TaskManager) -> TaskManager:
+    def execute(self, task_manager: TaskManager) -> ProjectResult:
         """
-        Execute an already-built project task graph.
+        Execute an already-built project task graph and return its result.
 
-        This is the explicit project-level execution boundary. It delegates
-        task scheduling and lifecycle execution to the lower-level
-        Orchestrator and does not implement those policies itself.
+        Task scheduling and lifecycle execution remain delegated to the
+        lower-level Orchestrator. ProjectOrchestrator only translates the
+        resulting TaskManager state into the project-level result contract.
         """
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
@@ -130,9 +132,21 @@ class ProjectOrchestrator:
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
         orchestrator.run()
-        return task_manager
 
-    def run(self, requirement: str) -> TaskManager:
+        project_name = None
+        if self.last_plan is not None:
+            value = self.last_plan.get("project")
+            if isinstance(value, str):
+                project_name = value
+
+        result = ProjectResult.from_task_manager(
+            task_manager,
+            project=project_name,
+        )
+        self.last_result = result
+        return result
+
+    def run(self, requirement: str) -> ProjectResult:
         """
         Plan and execute a complete project through the project facade.
         """
