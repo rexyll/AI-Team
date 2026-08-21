@@ -54,6 +54,10 @@ class ProjectPersistenceAdapter:
                 execution_id = item.get("execution_id")
                 if not isinstance(execution_id, str) or not execution_id:
                     raise ValueError(f"task {task.id} has a tool execution record without execution_id")
+                if item.get("task_id") != task.id:
+                    raise ValueError(
+                        f"task {task.id} contains a tool execution record owned by another task"
+                    )
                 existing = payload_by_id.get(execution_id)
                 if existing is not None and existing != item:
                     raise ValueError(f"conflicting tool execution record: {execution_id}")
@@ -82,6 +86,11 @@ class ProjectPersistenceAdapter:
 
         if tool_execution_history is None:
             tool_execution_history = ProjectPersistenceAdapter._history_from_task_manager(task_manager)
+        elif tool_execution_history is not None:
+            ProjectPersistenceAdapter._validate_tool_execution_history(
+                task_manager,
+                tool_execution_history,
+            )
 
         return {
             "project_id": project_id,
@@ -94,6 +103,22 @@ class ProjectPersistenceAdapter:
                 else None
             ),
         }
+
+    @staticmethod
+    def _validate_tool_execution_history(
+        task_manager: TaskManager,
+        history: ToolExecutionHistory | None,
+    ) -> None:
+        """Ensure every persisted tool log belongs to a known task."""
+        if history is None:
+            return
+        task_ids = {task.id for task in task_manager.get_all_tasks()}
+        for record in history.to_dict():
+            task_id = record.get("task_id")
+            if task_id not in task_ids:
+                raise ValueError(
+                    f"tool execution history references unknown task: {task_id}"
+                )
 
     def save(
         self,
@@ -175,6 +200,7 @@ class ProjectPersistenceAdapter:
 
         task_manager = TaskManager(tasks)
         self._validate_snapshot_consistency(project_id, plan=plan, task_manager=task_manager, result=result)
+        self._validate_tool_execution_history(task_manager, tool_execution_history)
 
         return ProjectSnapshot(
             project_id=project_id,
