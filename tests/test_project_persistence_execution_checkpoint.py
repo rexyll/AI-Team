@@ -12,18 +12,23 @@ from runtime.task_manager import TaskManager
 
 
 class MockAgent:
-    def __init__(self, status: str = "completed") -> None:
-        self.status = status
+    def __init__(self) -> None:
         self.calls = 0
 
     def run(self, task: Task) -> dict:
         self.calls += 1
         return {
-            "status": self.status,
+            "status": "completed",
             "agent": task.role,
             "task_id": task.id,
-            "message": self.status,
+            "message": "completed",
         }
+
+
+class FailingAgent(MockAgent):
+    def run(self, task: Task) -> dict:
+        self.calls += 1
+        raise RuntimeError("agent failed")
 
 
 class BlockingAgent(MockAgent):
@@ -96,7 +101,7 @@ def test_orchestrator_state_change_hook_captures_ready_running_completed():
 
 def test_orchestrator_state_change_hook_captures_failed_terminal_state():
     manager = _manager()
-    agent = MockAgent(status="failed")
+    agent = FailingAgent()
     router = AgentRouter()
     router.register("architect", agent)
 
