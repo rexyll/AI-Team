@@ -124,6 +124,12 @@ class ProjectOrchestrator:
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         return adapter.audit(project_id)
 
+    def audit_snapshot_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> dict[str, Any]:
+        """Return a detached audit snapshot for a persisted project."""
+        if not isinstance(adapter, ProjectPersistenceAdapter):
+            raise TypeError("adapter must be a ProjectPersistenceAdapter")
+        return adapter.audit_snapshot(project_id)
+
     def continue_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
         """Restore a persisted project and execute only its unfinished work."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
