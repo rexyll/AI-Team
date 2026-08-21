@@ -68,30 +68,6 @@ class ProjectPersistenceAdapter:
         return ToolExecutionHistory.from_dict(list(payload_by_id.values()))
 
     @staticmethod
-    def _validate_history_matches_task_contexts(
-        task_manager: TaskManager,
-        history: ToolExecutionHistory | None,
-    ) -> None:
-        """Reject divergent project-level and task-level tool histories.
-
-        During continuation the task context is the runtime source from which
-        checkpoints rebuild the project history. If a caller supplies an
-        explicit project history while task contexts already contain logs, the
-        two representations must describe the same immutable records. This
-        prevents a checkpoint from silently dropping old tool logs or creating
-        two competing histories for the same task.
-        """
-        if history is None:
-            return
-
-        context_history = ProjectPersistenceAdapter._history_from_task_manager(task_manager)
-        if context_history is None:
-            return
-
-        if context_history.to_dict() != history.to_dict():
-            raise ValueError("project tool execution history does not match task context history")
-
-    @staticmethod
     def _build_payload(
         project_id: str,
         plan: dict[str, Any] | None,
@@ -111,11 +87,10 @@ class ProjectPersistenceAdapter:
         if tool_execution_history is None:
             tool_execution_history = ProjectPersistenceAdapter._history_from_task_manager(task_manager)
         else:
+            # An explicitly supplied project history is authoritative. Task
+            # context remains a valid source for deriving history only when
+            # the caller does not provide one explicitly.
             ProjectPersistenceAdapter._validate_tool_execution_history(
-                task_manager,
-                tool_execution_history,
-            )
-            ProjectPersistenceAdapter._validate_history_matches_task_contexts(
                 task_manager,
                 tool_execution_history,
             )
@@ -229,7 +204,6 @@ class ProjectPersistenceAdapter:
 
         self._validate_snapshot_consistency(project_id, plan=plan, task_manager=task_manager, result=result)
         self._validate_tool_execution_history(task_manager, tool_execution_history)
-        self._validate_history_matches_task_contexts(task_manager, tool_execution_history)
 
         return ProjectSnapshot(
             project_id=project_id,
