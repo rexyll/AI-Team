@@ -10,6 +10,7 @@ from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.task_validator import validate_plan
+from runtime.tool_execution_history import ToolExecutionHistory
 
 
 class ProjectOrchestrator:
@@ -40,6 +41,29 @@ class ProjectOrchestrator:
     @staticmethod
     def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
         return Orchestrator(task_manager=task_manager, agent_router=agent_router)
+
+    @staticmethod
+    def _restore_tool_execution_history(
+        task_manager: TaskManager,
+        history: ToolExecutionHistory | None,
+    ) -> None:
+        """Rehydrate the project-level history into each task's runtime context."""
+        if history is None:
+            return
+
+        tasks = {task.id: task for task in task_manager.get_all_tasks()}
+        records_by_task: dict[str, list[dict[str, Any]]] = {}
+        for record in history.to_dict():
+            task_id = record.get("task_id")
+            if not isinstance(task_id, str) or task_id not in tasks:
+                raise ValueError(
+                    f"persisted tool execution history references unknown task: {task_id}"
+                )
+            records_by_task.setdefault(task_id, []).append(record)
+
+        for task_id, task in tasks.items():
+            if task_id in records_by_task:
+                task.context["tool_execution_history"] = records_by_task[task_id]
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
@@ -128,6 +152,10 @@ class ProjectOrchestrator:
             self.last_plan = None
 
         self.last_task_manager = snapshot.task_manager
+        self._restore_tool_execution_history(
+            snapshot.task_manager,
+            snapshot.tool_execution_history,
+        )
         self.last_result = snapshot.result
 
         return snapshot.result or ProjectResult.from_task_manager(
@@ -145,11 +173,11 @@ class ProjectOrchestrator:
         """Restore a persisted project and execute only its unfinished work.
 
         Continuation never invokes the planner or rebuilds the TaskManager.
-        The persisted plan and TaskManager are restored first, then the
-        canonical project execution path is used. Each execution boundary
-        checkpoints the restored runtime state, and the final result is
-        persisted only when the final checkpoint did not already capture the
-        same authoritative snapshot.
+        The persisted plan, TaskManager, and tool execution history are restored
+        first, then the canonical project execution path is used. Each
+        execution boundary checkpoints the restored runtime state, and the
+        final result is persisted only when the final checkpoint did not already
+        capture the same authoritative snapshot.
         """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
@@ -162,6 +190,10 @@ class ProjectOrchestrator:
             self.last_plan = None
 
         self.last_task_manager = snapshot.task_manager
+        self._restore_tool_execution_history(
+            snapshot.task_manager,
+            snapshot.tool_execution_history,
+        )
         project_name = None
         if self.last_plan is not None:
             value = self.last_plan.get("project")
