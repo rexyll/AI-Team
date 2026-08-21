@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from .tool_execution_record import ToolExecutionRecord
 
@@ -20,6 +20,49 @@ class ToolExecutionHistory:
         if record.execution_id in self._records:
             raise ValueError(f"execution_id already exists: {record.execution_id}")
         self._records[record.execution_id] = record
+
+    def append_if_absent(self, record: ToolExecutionRecord) -> bool:
+        """Add a record unless an identical immutable record already exists."""
+        if not isinstance(record, ToolExecutionRecord):
+            raise TypeError("record must be a ToolExecutionRecord")
+        existing = self._records.get(record.execution_id)
+        if existing is None:
+            self._records[record.execution_id] = record
+            return True
+        if existing == record:
+            return False
+        raise ValueError(
+            f"conflicting tool execution record for execution_id: {record.execution_id}"
+        )
+
+    def merge(self, records: Iterable[ToolExecutionRecord]) -> int:
+        """Merge records atomically by execution-id identity.
+
+        Identical duplicates are ignored. A conflicting record aborts the
+        merge before mutating this history. Returns the number of new records.
+        """
+        incoming = list(records)
+        for record in incoming:
+            if not isinstance(record, ToolExecutionRecord):
+                raise TypeError("records must contain ToolExecutionRecord values")
+
+        pending: dict[str, ToolExecutionRecord] = {}
+        for record in incoming:
+            existing = self._records.get(record.execution_id)
+            if existing is None:
+                previous = pending.get(record.execution_id)
+                if previous is not None and previous != record:
+                    raise ValueError(
+                        f"conflicting tool execution record for execution_id: {record.execution_id}"
+                    )
+                pending[record.execution_id] = record
+            elif existing != record:
+                raise ValueError(
+                    f"conflicting tool execution record for execution_id: {record.execution_id}"
+                )
+
+        self._records.update(pending)
+        return len(pending)
 
     def get(self, execution_id: str) -> ToolExecutionRecord:
         try:
@@ -59,11 +102,7 @@ class ToolExecutionHistory:
             adapter.save(record)
 
     def save_if_absent(self, adapter: "ToolExecutionPersistenceAdapter") -> int:
-        """Persist this history without failing on already-persisted identical records.
-
-        Returns the number of newly persisted records. Conflicting records
-        with an existing execution id are still rejected by the adapter.
-        """
+        """Persist this history without failing on identical existing records."""
         from .tool_execution_persistence import ToolExecutionPersistenceAdapter
 
         if not isinstance(adapter, ToolExecutionPersistenceAdapter):
