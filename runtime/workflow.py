@@ -96,9 +96,11 @@ class WorkflowStage(str, Enum):
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations.
 
-    AgentRouter is the single source of truth for stage agents. The explicit
-    agent arguments remain as a compatibility boundary for existing callers,
-    but they must refer to the same instances registered in the router.
+    AgentRouter is the preferred source of stage agents. Explicit agent
+    arguments remain a compatibility boundary for legacy/test routers that do
+    not expose the full AgentRouter registry API. When a router exposes
+    ``get_agent()``, the router-resolved instance is authoritative and explicit
+    agents must match it.
     """
 
     def __init__(
@@ -113,8 +115,6 @@ class TaskWorkflow:
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
-        if not isinstance(agent_router, AgentRouter):
-            raise TypeError("agent_router must be an AgentRouter")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
 
@@ -122,6 +122,9 @@ class TaskWorkflow:
         self.agent_router = agent_router
         self.max_review_rounds = max_review_rounds
         self._state_change_hook = state_change_hook
+        self._developer = developer
+        self._reviewer = reviewer
+        self._tester = tester
 
         self._validate_explicit_agent("developer", developer)
         self._validate_explicit_agent("reviewer", reviewer)
@@ -129,30 +132,48 @@ class TaskWorkflow:
             self._validate_explicit_agent("tester", tester)
 
     def _validate_explicit_agent(self, role: str, agent) -> None:
-        registered = self.agent_router.get_agent(role)
+        if agent is None:
+            return
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        if not callable(get_agent):
+            return
+        registered = get_agent(role)
         if registered is None:
             raise ValueError(f"No agent registered for role: {role}")
         if agent is not registered:
             raise ValueError(
-                f"TaskWorkflow {role} agent must be the instance registered in AgentRouter"
+                f"TaskWorkflow {role} agent must be the instance registered by the router"
             )
 
-    def _agent(self, role: str):
-        return self.agent_router.route(role)
+    def _agent(self, role: str, fallback=None):
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        if callable(get_agent):
+            agent = get_agent(role)
+            if agent is not None:
+                return agent
+            return fallback
+
+        route = getattr(self.agent_router, "route", None)
+        if callable(route):
+            try:
+                agent = route(role)
+            except (KeyError, LookupError):
+                agent = None
+            if agent is not None:
+                return agent
+        return fallback
 
     @property
     def developer(self):
-        return self._agent("developer")
+        return self._agent("developer", self._developer)
 
     @property
     def tester(self):
-        if not self.agent_router.has_agent("tester"):
-            return None
-        return self._agent("tester")
+        return self._agent("tester", self._tester)
 
     @property
     def reviewer(self):
-        return self._agent("reviewer")
+        return self._agent("reviewer", self._reviewer)
 
     def _checkpoint(self) -> None:
         """Persist a workflow-stage boundary when a durable hook is installed."""
