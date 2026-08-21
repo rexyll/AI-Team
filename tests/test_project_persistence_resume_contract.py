@@ -11,8 +11,8 @@ from runtime.task_manager import TaskManager
 
 def _manager() -> TaskManager:
     return TaskManager([
-        Task(id="TASK-001", title="done", description="done", status="completed"),
-        Task(id="TASK-002", title="ready", description="ready", status="ready"),
+        Task(id="TASK-001", title="done", description="done", role="developer", status="completed"),
+        Task(id="TASK-002", title="ready", description="ready", role="developer", status="ready"),
     ])
 
 
