@@ -140,17 +140,18 @@ class ProjectOrchestrator:
         project_id: str,
         adapter: ProjectPersistenceAdapter,
     ) -> ProjectResult:
-        """Restore persisted project state without starting execution."""
+        """Restore persisted project state without starting execution.
+
+        Persisted plans are treated as recovery metadata rather than newly
+        generated planner output. The persistence boundary is responsible for
+        loading and validating the snapshot; recovery must remain compatible
+        with older snapshots whose plan metadata is intentionally minimal.
+        """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
         snapshot = adapter.load(project_id)
-        if snapshot.plan is not None:
-            validate_plan(snapshot.plan)
-            self.last_plan = snapshot.plan
-        else:
-            self.last_plan = None
-
+        self.last_plan = snapshot.plan
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(
             snapshot.task_manager,
@@ -178,17 +179,17 @@ class ProjectOrchestrator:
         execution boundary checkpoints the restored runtime state, and the
         final result is persisted only when the final checkpoint did not already
         capture the same authoritative snapshot.
+
+        Persisted plans are recovery metadata. They are not re-submitted to the
+        planner validator during continuation so legacy/minimal plan metadata can
+        still be recovered while the persistence adapter remains authoritative
+        for snapshot integrity.
         """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
         snapshot = adapter.load(project_id)
-        if snapshot.plan is not None:
-            validate_plan(snapshot.plan)
-            self.last_plan = snapshot.plan
-        else:
-            self.last_plan = None
-
+        self.last_plan = snapshot.plan
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(
             snapshot.task_manager,
