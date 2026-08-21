@@ -10,13 +10,16 @@
 最新用户验收：
 
 ```text
+pytest tests/test_workspace_sandbox.py -q
+9 passed in 0.06s
+
 pytest -q
-477 passed in 10.28s
+486 passed in 1.11s
 ```
 
-**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation 已完成。当前进入 5.4 Workspace Sandbox。**
+**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation、Phase 5.4 Workspace Sandbox 已完成。当前进入 5.5 Tool Permission Policy。**
 
-工作树：5.3 已完成实现并通过用户全量验收；5.4 已开始，已建立 WorkspaceSandbox 最小安全边界与专项 contract tests，等待用户 Pull 后验证。
+工作树：5.4 已通过用户专项测试与全量验收；下一节点建立 Tool permission policy，并明确 permission 与 path sandbox、argument validation 的职责边界。
 
 ---
 
@@ -77,17 +80,25 @@ pytest -q
 
 ```text
 8872b45  feat: add schema-based tool argument validation
- da65b8f  refactor: enforce tool schema validation before execution
- 5f83d29  test: define Tool argument validation contract
+da65b8f  refactor: enforce tool schema validation before execution
+5f83d29  test: define Tool argument validation contract
 ```
 
 **结论：5.3 Tool Argument Validation 已完成。**
 
-## ☐ 5.4 Workspace Sandbox
+## <span style="color:green">√</span> 5.4 Workspace Sandbox
 
-已开始建立统一 `WorkspaceSandbox` filesystem boundary。
+已建立统一 `WorkspaceSandbox` filesystem boundary，并通过用户最终验收：
 
-本节点当前设计目标：
+```text
+pytest tests/test_workspace_sandbox.py -q
+9 passed in 0.06s
+
+pytest -q
+486 passed in 1.11s
+```
+
+本节点冻结以下边界：
 
 1. 所有 Tool filesystem path resolution 统一经过 workspace boundary。
 2. relative path 与 absolute path 都必须经过 containment check。
@@ -96,31 +107,51 @@ pytest -q
 5. 非 path 类型必须明确拒绝。
 6. file / directory 的基础类型边界提供统一 helper。
 7. 保留现有 `resolve_workspace_path()` 兼容 API，逐步迁移调用方。
-8. 本节点暂不引入 Tool permission policy；权限语义留给 5.5。
-
-已新增：
-
-```text
-tests/test_workspace_sandbox.py
-```
+8. 本节点不引入 Tool permission policy；权限语义进入 5.5。
 
 已实现：
 
 ```text
 security.workspace.WorkspaceSandbox
 security.workspace.DEFAULT_SANDBOX
+security.workspace.resolve_workspace_path()
+tests/test_workspace_sandbox.py
 ```
 
-当前提交：
+相关提交：
 
 ```text
 10e1228  feat: introduce WorkspaceSandbox boundary
 5c60f5d  test: define WorkspaceSandbox security contract
+6ee394b  docs: advance to Phase 5.4 Workspace Sandbox
 ```
 
-**下一步：用户 Pull 后运行 WorkspaceSandbox 专项测试及全量 pytest；验证通过后完成 5.4，再进入 5.5 Tool Permission Policy。**
+**结论：5.4 Workspace Sandbox 已完成。**
 
 ## ☐ 5.5 Tool Permission Policy
+
+目标：在 Workspace Sandbox 的 filesystem containment 之上增加 Tool capability / permission 层，明确“路径合法”与“操作被授权”是两个独立判断。
+
+设计原则：
+
+1. deny-by-default；未声明 capability 的 Tool 不得执行对应操作。
+2. permission policy 不绕过 `WorkspaceSandbox`，filesystem path 仍必须经过 sandbox containment。
+3. 至少区分 `read`、`write`、`execute` 三类 capability。
+4. Tool identity 与 permission policy 解耦，避免把权限规则硬编码进具体 Tool 实现。
+5. permission failure 使用独立、稳定的异常契约，不与 argument validation / path containment 混淆。
+6. policy evaluation 必须发生在 Tool 实际执行前。
+7. policy 应支持最小显式 allowlist，并为后续角色/项目级 policy 扩展保留边界。
+8. 不在本节点引入复杂 RBAC；先冻结最小 capability contract。
+
+建议新增：
+
+```text
+security/tool_permission.py
+tests/test_tool_permission.py
+```
+
+**下一步：实现最小 `ToolPermissionPolicy` + capability contract + deny-by-default 专项测试；通过专项测试及全量 pytest 后再进入 5.6。**
+
 ## ☐ 5.6 Tool Error Contract
 
 # Phase 6 — Workflow / Project Orchestrator
@@ -155,10 +186,12 @@ security.workspace.DEFAULT_SANDBOX
 
 # 当前下一动作
 
-**当前节点：Phase 5.4 Workspace Sandbox。**
+**当前节点：Phase 5.5 Tool Permission Policy。**
 
 1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_workspace_sandbox.py -q`。
-3. 运行全量 `pytest -q`。
-4. 用户验收通过后，将 5.4 标记完成。
-5. 下一节点进入 5.5 Tool Permission Policy。
+2. 基于现有 Tool Contract / Registry / Argument Validation / WorkspaceSandbox 建立最小 capability policy。
+3. 新增 `security/tool_permission.py` 与专项 contract tests。
+4. 验证 deny-by-default、read/write/execute capability 以及 permission failure boundary。
+5. 运行专项测试。
+6. 运行全量 `pytest -q`。
+7. 用户验收通过后，将 5.5 标记完成并进入 5.6 Tool Error Contract。
