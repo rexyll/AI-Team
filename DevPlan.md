@@ -11,12 +11,12 @@
 
 ```text
 pytest -q
-470 passed in 1.00s
+477 passed in 10.28s
 ```
 
-**Phase 4.5 Provider/config 可替换已完成。Phase 5.1 Tool Contract 已完成。Phase 5.2 Tool Registry 已完成并通过用户专项/全量验收。下一节点为 5.3 Tool Argument Validation。**
+**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation 已完成。当前进入 5.4 Workspace Sandbox。**
 
-工作树：本轮 5.2 已完成实现、用户 Pull 后专项测试与全量 pytest 均通过；本次 DevPlan 记录完成状态。今天工作结束，下一工作日从 5.3 继续。
+工作树：5.3 已完成实现并通过用户全量验收；5.4 已开始，已建立 WorkspaceSandbox 最小安全边界与专项 contract tests，等待用户 Pull 后验证。
 
 ---
 
@@ -33,122 +33,13 @@ pytest -q
 # Phase 4 — LLM Abstraction
 
 ## <span style="color:green">√</span> 4.1 BaseLLM Contract
-
-已冻结 provider-independent `BaseLLM.generate()` 契约：
-
-```text
-BaseLLM.generate(
-    prompt: str,
-    *,
-    system_prompt: str = "",
-    temperature: float = 0.2,
-    max_tokens: int = 4096,
-) -> str
-```
-
 ## <span style="color:green">√</span> 4.2 MockLLM
-
-完成 deterministic、零网络依赖的 MockLLM：
-
-- 默认 response
-- FIFO response queue
-- fallback response
-- invocation recording
-- reset / remaining response
-- BaseLLM compatibility
-- 参数边界校验
-
 ## <span style="color:green">√</span> 4.3.1 ProviderLLM adapter contract
-
-建立 provider-independent `BaseLLM` 与现有 OpenAI-compatible provider client 之间的最小适配层：
-
-```text
-Agent
-  ↓
-BaseLLM.generate()
-  ↓
-ProviderLLM
-  ↓
-OpenAI-compatible client
-  ↓
-provider API
-```
-
-ProviderLLM 只负责：
-
-- 接收 `BaseLLM.generate()` 标准参数
-- 构造 system/user messages
-- 转发 model / temperature / max_tokens
-- 返回纯文本结果
-- 不暴露 provider client 给 Agent
-
 ## <span style="color:green">√</span> 4.3.2 Agent LLM injection
-
-已完成 Agent 侧 LLM dependency injection：
-
-1. `BaseAgent` 支持注入 `BaseLLM`。
-2. Architect / Tester / Reviewer 使用 `self.llm.generate()`，不再直接依赖 `ask_ai`。
-3. 默认运行路径继续使用 `ProviderLLM`，保持现有 provider 配置兼容。
-4. `MockLLM` 可直接替换真实模型进行 deterministic 测试。
-5. 保持 `run(Task) -> AgentResult`、AgentContext access policy 和 Workflow 行为不变。
-6. Developer 的 tool-calling loop 暂不强行迁移到普通文本 `BaseLLM`，保留独立 tool-capable adapter 边界。
-
-**结论：4.3.2 Agent LLM injection 已完成。**
-
 ## <span style="color:green">√</span> 4.4 Workflow → LLM-independent
-
-已完成 Workflow LLM-independence：Workflow / Orchestrator 只依赖 Agent execution contract，不感知具体 LLM provider、`ask_ai` 或 `ProviderLLM`。
-
-新增 contract tests：
-
-```text
-tests/test_workflow_llm_independence.py
-```
-
-已验证：
-
-- `runtime/workflow.py` 不直接 import provider LLM 或 `ask_ai`
-- Workflow 可以执行没有 `.llm` 属性的最小 Agent 实现
-- Workflow 依赖 Agent 的 `run(task)` / result contract，而不是具体模型实现
-- 保留 Tester quality gate 与 legacy no-Tester workflow 行为
-
-用户最终验收：
-
-```text
-pytest tests/test_workflow_llm_independence.py -q
-3 passed in 0.60s
-
-pytest -q
-451 passed in 0.95s
-```
-
-**结论：4.4 Workflow → LLM-independent 已完成。**
-
 ## <span style="color:green">√</span> 4.5 Provider/config 可替换
 
-已完成 provider/config substitution contract，并通过用户全量验收：
-
-```text
-pytest -q
-456 passed in 0.95s
-```
-
-新增：
-
-```text
-tests/test_provider_config_substitution.py
-```
-
-已固化以下架构约束：
-
-1. 同一个 Agent execution contract 可以注入不同 `BaseLLM` 实现。
-2. `MockLLM` 与 `ProviderLLM` 可以走同一 Agent / Workflow execution path。
-3. Provider model/client configuration 保持在 `ProviderLLM` adapter 内部，不泄漏到 Agent execution contract。
-4. Workflow 不允许根据 provider、model 或 provider configuration 分支。
-5. Agent LLM injection 必须接受 `BaseLLM`，拒绝任意非 `BaseLLM` 对象。
-6. 默认 provider 运行路径继续保持兼容。
-
-**结论：4.5 Provider/config 可替换已完成。**
+Phase 4 已完成，既有详细记录保留于 Git 历史。
 
 # Phase 5 — Tool / Sandbox Architecture
 
@@ -156,71 +47,79 @@ tests/test_provider_config_substitution.py
 
 已完成现有 Tool 能力的最小 provider-independent contract 冻结，并新增 `tests/test_tool_contract.py`。
 
-当前契约覆盖：
-
-1. Registry tool name 与 implementation 一一对应。
-2. 每个 registered tool 都是稳定 callable，并具有可检查的 execution signature / return annotation。
-3. Tool Schema 与 Registry 使用完全一致的 tool names。
-4. Schema 保持标准 function-call 结构：`type=function`、`name`、`description`、`parameters`。
-5. `required` 参数必须属于 `properties`，避免 schema 自相矛盾。
-6. Tool contract 不允许嵌入 OpenAI / Agnes / API key / model / provider 等 LLM-specific configuration。
-7. Registry 中必须是独立 function/builtin，不绑定 Workflow 对象。
-8. 现有工具的基础类型边界继续由 implementation 自身承担，5.1 不提前引入复杂 validation framework。
-
-用户最终验收：
-
-```text
-pytest -q
-463 passed in 0.96s
-```
-
-**结论：5.1 Tool Contract 已完成。**
-
 ## <span style="color:green">√</span> 5.2 Tool Registry Contract
 
 已完成 Registry abstraction，并通过用户 Pull 后专项测试与全量验收。
 
-已冻结：
+## <span style="color:green">√</span> 5.3 Tool Argument Validation
 
-1. `ToolRegistry.register(name, implementation, schema)` 注册接口。
-2. `ToolRegistry.get(name)` 查询接口。
-3. `ToolRegistry.list()` 枚举接口。
-4. `ToolRegistry.schema(name)` 单 Tool schema 查询接口。
-5. `ToolRegistry.schemas()` 从 Registry 输出完整 function-call schemas。
-6. duplicate name 明确抛出 `ValueError`。
-7. unknown tool 明确抛出 `KeyError`。
-8. 非法 name / implementation / schema 明确拒绝。
-9. schema function name 必须与 registration name 一致。
-10. Registry 返回独立 schema snapshot，调用方修改结果不会污染内部 registry。
-11. 默认 Tool 集合由 Registry 初始化，现有 `TOOLS[name]` API 保持兼容。
-12. Developer tool-calling loop 已改为通过 `TOOL_REGISTRY` 获取 Tool implementation 与 schemas，不再直接把 `TOOLS_SCHEMA` 作为执行边界。
-13. 本节点不引入 Sandbox、权限系统或复杂参数校验。
-
-新增：
-
-```text
-tests/test_tool_registry.py
-```
-
-本轮提交：
-
-```text
-fa67866  test: define ToolRegistry contract
-549c0de  refactor: introduce ToolRegistry abstraction
-0420eed  refactor: route Developer tools through ToolRegistry
-```
-
-用户最终验收：
+已完成 schema-aware Tool 参数校验，并通过用户最终全量验收：
 
 ```text
 pytest -q
-470 passed in 1.00s
+477 passed in 10.28s
 ```
 
-**结论：5.2 Tool Registry Contract 已完成。**
+本节点冻结以下边界：
 
-## ☐ 5.3 Tool Argument Validation
+1. Tool arguments 必须是 JSON object。
+2. `required` 参数缺失必须拒绝。
+3. unknown arguments 必须拒绝，不能静默吞掉。
+4. 已声明的 JSON primitive/container 类型必须校验。
+5. malformed schema 必须拒绝执行。
+6. validation 失败时 Tool 不得执行。
+7. 使用统一 `ToolArgumentValidationError` 表达参数/schema validation failure。
+8. Developer tool-calling loop 在 Tool execution 前执行 schema validation。
+9. 保留旧 `validate_tool_arguments(tool, arguments)` 两参数兼容行为，避免破坏 legacy boundary。
+10. 不把 provider-specific LLM configuration 引入 Tool validation。
+
+相关提交：
+
+```text
+8872b45  feat: add schema-based tool argument validation
+ da65b8f  refactor: enforce tool schema validation before execution
+ 5f83d29  test: define Tool argument validation contract
+```
+
+**结论：5.3 Tool Argument Validation 已完成。**
+
 ## ☐ 5.4 Workspace Sandbox
+
+已开始建立统一 `WorkspaceSandbox` filesystem boundary。
+
+本节点当前设计目标：
+
+1. 所有 Tool filesystem path resolution 统一经过 workspace boundary。
+2. relative path 与 absolute path 都必须经过 containment check。
+3. `..` traversal 必须拒绝。
+4. symlink resolve 后逃逸 workspace 必须拒绝。
+5. 非 path 类型必须明确拒绝。
+6. file / directory 的基础类型边界提供统一 helper。
+7. 保留现有 `resolve_workspace_path()` 兼容 API，逐步迁移调用方。
+8. 本节点暂不引入 Tool permission policy；权限语义留给 5.5。
+
+已新增：
+
+```text
+tests/test_workspace_sandbox.py
+```
+
+已实现：
+
+```text
+security.workspace.WorkspaceSandbox
+security.workspace.DEFAULT_SANDBOX
+```
+
+当前提交：
+
+```text
+10e1228  feat: introduce WorkspaceSandbox boundary
+5c60f5d  test: define WorkspaceSandbox security contract
+```
+
+**下一步：用户 Pull 后运行 WorkspaceSandbox 专项测试及全量 pytest；验证通过后完成 5.4，再进入 5.5 Tool Permission Policy。**
+
 ## ☐ 5.5 Tool Permission Policy
 ## ☐ 5.6 Tool Error Contract
 
@@ -254,69 +153,12 @@ pytest -q
 
 ---
 
-# Commit Ledger — Current milestone
-
-| 状态 | Commit | 节点 |
-|---|---|---|
-| √ | `6273d14` | Phase 3.4.3 / 3.4.4 completion docs |
-| √ | `eb53804` | Legacy Task.context usage inventory |
-| √ | `1a65e57` | Phase 3.4.5 completion docs |
-| √ | `9c8afc5` | Legacy Task.context retirement boundary |
-| √ | `52ebb7d` | ProviderLLM adapter |
-| √ | `b701fc6` | ProviderLLM contract tests |
-| √ | `8ef9e19` | AgentContext read-only execution contract |
-| √ | `c9ce052` | AgentContext role visibility contract |
-| √ | `aece0d2` | AgentContext access policy projections |
-| √ | `0635762` | Phase 3.4.1 completion docs |
-| √ | `55d0482` | Phase 3.4.2 completion docs |
-| √ | `6273d14` | Phase 3.4.3 / 3.4.4 completion docs |
-| √ | `1a65e57` | Phase 3.4.5 completion docs |
-| √ | `eb53804` | Legacy Task.context usage inventory |
-| √ | `18a9bb4` | Workflow LLM-independence contract tests |
-| √ | `a8a05d0` | Provider/config substitution contract tests |
-| √ | `—` | 4.5 user validation: 456 passed |
-| √ | `—` | 5.1 Tool Contract user validation: 463 passed |
-| √ | `fa67866` | 5.2 Tool Registry contract tests |
-| √ | `549c0de` | 5.2 ToolRegistry abstraction |
-| √ | `0420eed` | 5.2 Developer Registry integration |
-| √ | `—` | 5.2 user validation: 470 passed |
-| √ | `—` | 5.2 completion docs |
-
----
-
-# 重要经验
-
-1. Workflow 不能绕过 Tester；质量门禁修改必须先跑完整 Developer → Tester → Reviewer 集成测试。
-2. AgentResult 必须保持 legacy compatibility API。
-3. AgentContext 必须是 deep-copy snapshot，不能让 Agent 执行污染 Task。
-4. AgentContext Access Policy 必须通过 role-specific projection 实现。
-5. Runtime projection 与 persistence serialization 必须保持职责分离。
-6. Legacy `Task.context` 只能保留最小 compatibility boundary。
-7. Canonical runtime state 必须优先于 legacy compatibility data。
-8. LLM abstraction 必须先建立稳定 BaseLLM contract，再逐步迁移 Agent。
-9. MockLLM 是测试默认替身，不应依赖真实 provider 网络。
-10. Provider adapter 不应把 provider-specific API 泄漏到 Agent 或 Workflow。
-11. Developer 的 tool-calling loop 与普通文本 generation 是不同能力边界，不能为了接口统一而丢失工具调用能力。
-12. Workflow 的职责是编排 Agent execution，不应持有或理解具体 LLM provider 生命周期。
-13. LLM 可替换性应通过 Agent dependency injection 实现，而不是通过 Workflow provider 分支实现。
-14. Provider/config substitution 必须通过 BaseLLM contract 验证，而不是在 Workflow 中增加 provider-specific 分支。
-15. Tool architecture 应继续保持 provider-independent；Tool capability 不应反向污染 BaseLLM 文本生成契约。
-16. Tool Contract 先冻结 capability boundary，再逐步增加 Registry、参数校验、Sandbox、权限和错误语义；避免一次性重构所有 Tool 基础设施。
-17. Tool Registry 必须成为 Developer tool resolution 与 schema generation 的统一边界；旧 `TOOLS` 仅作为兼容 API 保留。
-18. Registry contract 先冻结 duplicate / unknown / invalid registration 语义，再进入参数校验和安全边界，避免多个基础设施变化同时发生。
-
----
-
 # 当前下一动作
 
-**下一工作日：Phase 5.3 Tool Argument Validation**
+**当前节点：Phase 5.4 Workspace Sandbox。**
 
-今天工作结束。下一步从 Tool 参数校验 contract 开始，不提前引入 Sandbox 或权限系统。
-
-计划：
-
-1. 从现有 Tool Schema 冻结参数校验边界。
-2. 定义 required / type / unknown argument / malformed arguments 的统一错误语义。
-3. 先写 contract tests，再实现最小 validation layer。
-4. 保持 `ToolRegistry`、Developer tool-calling loop 和现有 `TOOLS` compatibility API 行为不变。
-5. 完成专项测试后再执行全量 `pytest -q`，通过用户验收后进入 5.4 Workspace Sandbox。
+1. 用户 Pull 最新提交。
+2. 运行 `pytest tests/test_workspace_sandbox.py -q`。
+3. 运行全量 `pytest -q`。
+4. 用户验收通过后，将 5.4 标记完成。
+5. 下一节点进入 5.5 Tool Permission Policy。
