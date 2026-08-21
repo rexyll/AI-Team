@@ -132,13 +132,74 @@ class ProjectPersistenceAdapter:
 
         result_payload = payload.get("result")
         result = self._restore_result(result_payload)
+        task_manager = TaskManager(tasks)
+        self._validate_snapshot_consistency(
+            project_id,
+            plan=plan,
+            task_manager=task_manager,
+            result=result,
+        )
 
         return ProjectSnapshot(
             project_id=project_id,
             plan=plan,
-            task_manager=TaskManager(tasks),
+            task_manager=task_manager,
             result=result,
         )
+
+    @staticmethod
+    def _validate_snapshot_consistency(
+        project_id: str,
+        *,
+        plan: dict[str, Any] | None,
+        task_manager: TaskManager,
+        result: ProjectResult | None,
+    ) -> None:
+        """Reject snapshots whose plan, runtime tasks, and result disagree."""
+        tasks = task_manager.get_all_tasks()
+        task_by_id = {task.id: task for task in tasks}
+
+        if plan is not None:
+            plan_tasks = plan.get("tasks")
+            if not isinstance(plan_tasks, list):
+                raise ValueError(f"project snapshot plan has invalid tasks: {project_id}")
+
+            plan_by_id: dict[str, dict[str, Any]] = {}
+            for item in plan_tasks:
+                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                    raise ValueError(f"project snapshot plan contains an invalid task: {project_id}")
+                task_id = item["id"]
+                if task_id in plan_by_id:
+                    raise ValueError(f"project snapshot plan contains duplicate task: {task_id}")
+                plan_by_id[task_id] = item
+
+            if set(plan_by_id) != set(task_by_id):
+                raise ValueError(f"project snapshot plan/task identity mismatch: {project_id}")
+
+            fields = ("title", "description", "role", "dependencies")
+            for task_id, plan_task in plan_by_id.items():
+                task = task_by_id[task_id]
+                for field in fields:
+                    persisted_value = getattr(task, field)
+                    planned_value = plan_task.get(field)
+                    if field == "dependencies":
+                        persisted_value = list(persisted_value)
+                        planned_value = list(planned_value) if isinstance(planned_value, list) else planned_value
+                    if persisted_value != planned_value:
+                        raise ValueError(
+                            f"project snapshot plan/task mismatch for {task_id}: {field}"
+                        )
+
+        if result is not None:
+            project_name = None
+            if plan is not None and isinstance(plan.get("project"), str):
+                project_name = plan["project"]
+            expected = ProjectResult.from_task_manager(
+                task_manager,
+                project=project_name,
+            )
+            if result != expected:
+                raise ValueError(f"project snapshot result mismatch: {project_id}")
 
     @staticmethod
     def _restore_result(payload: Any) -> ProjectResult | None:
