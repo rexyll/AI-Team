@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-525 passed in 1.10s
+533 passed in 1.11s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已启动。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成第一阶段 contract，并已接入 Core Orchestrator 的 readiness decision boundary。**
 
 ---
 
@@ -215,27 +215,54 @@ pytest -q
 
 **结论：6.1 TaskWorkflow 状态机已完成。**
 
-## <span style="color:green">◐</span> 6.2 Dependency-aware Scheduler
+## <span style="color:green">√</span> 6.2 Dependency-aware Scheduler
 
-本节点已启动，第一步建立只读 Dependency Scheduler contract：
+### <span style="color:green">√</span> 6.2.1 Dependency Scheduler read-only contract
+
+已建立：
 
 ```text
 runtime/dependency_scheduler.py
 tests/test_dependency_scheduler.py
 ```
 
-当前冻结的第一层边界：
+冻结以下边界：
 
-1. Scheduler 负责 dependency-aware **decision**，不负责 Task lifecycle mutation。
-2. `TaskManager.transition()` 继续保持唯一 status mutation boundary。
-3. pending/ready task 只有在全部 dependencies 为 `completed` 时才可进入 runnable 集合。
-4. failed / blocked dependency 会产生 blocked decision，但 Scheduler 不直接把 Task 改为 `blocked`。
-5. unknown dependency 与 dependency cycle 在 Scheduler 初始化时拒绝。
-6. execution layers 复用现有 `runtime/dependency_graph.py`，保持 deterministic dependency order。
-7. Scheduler 必须是 read-only，不修改 `status`、`status_history`、`error`。
-8. 当前不引入并发执行、retry、resume 或 persistence。
+1. Scheduler 只负责 dependency-aware decision，不负责 lifecycle mutation。
+2. pending/ready task 仅在全部 dependencies `completed` 时进入 runnable 集合。
+3. failed / blocked dependency 返回 blocked decision，不直接修改 Task。
+4. unknown dependency 与 dependency cycle 在 Scheduler 初始化时拒绝。
+5. execution layers 复用 `runtime/dependency_graph.py`。
+6. Scheduler 对 `status`、`status_history`、`error` 保持 read-only。
+7. 当前不引入并发、retry/resume 或 persistence。
 
-下一步将通过专项测试确认该 contract，然后把 Scheduler 作为 `ProjectOrchestrator` 的决策组件接入，而不是把 scheduler 逻辑继续堆进 `TaskManager.get_ready_tasks()`。
+### <span style="color:green">√</span> 6.2.2 Orchestrator readiness boundary convergence
+
+已完成 Core Orchestrator 与 Scheduler 的第一阶段职责收敛：
+
+```text
+core/orchestrator.py
+tests/test_orchestrator_scheduler_contract.py
+```
+
+本节点完成：
+
+1. `core.Orchestrator` 不再把 dependency readiness 判断直接委托给 `TaskManager.get_ready_tasks()`。
+2. `DependencyScheduler` 成为 Orchestrator 的 dependency decision source。
+3. Scheduler 仍保持 read-only。
+4. `TaskManager` 仍是唯一 lifecycle mutation boundary：scheduler decision → `TaskManager.mark_ready()`；blocked decision → `TaskManager.mark_blocked()`。
+5. blocked dependency 会通过 scheduler decision 逐层传播到 downstream task。
+6. 每轮 scheduler 都基于最新 Task 状态重新建立 snapshot，避免 stale readiness。
+7. 不引入并行执行、retry/resume、persistence。
+
+用户随后完成全量回归：
+
+```text
+pytest -q
+533 passed in 1.11s
+```
+
+**结论：Phase 6.2 Dependency-aware Scheduler 第一阶段完成。**
 
 ## ☐ 6.3 ProjectOrchestrator
 ## ☐ 6.4 Task 并行执行
@@ -265,12 +292,12 @@ tests/test_dependency_scheduler.py
 
 # 当前下一动作
 
-**当前节点：Phase 6.2 Dependency-aware Scheduler。**
+**当前节点：Phase 6.3 ProjectOrchestrator。**
 
 1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_dependency_scheduler.py -q`，确认 Scheduler 第一层 contract。
-3. 运行 `pytest tests/test_workflow_transition_integration.py tests/test_workflow_stage_transition_contract.py tests/test_workflow_state_machine_contract.py -q`，确保 6.1 回归稳定。
+2. 运行 `pytest tests/test_orchestrator_scheduler_contract.py -q`，确认 Scheduler → Orchestrator boundary。
+3. 运行 `pytest tests/test_dependency_scheduler.py tests/test_workflow_transition_integration.py tests/test_workflow_stage_transition_contract.py tests/test_workflow_state_machine_contract.py -q`，确认 6.1 / 6.2 回归稳定。
 4. 运行 `pytest -q`，建立新的全量基线。
-5. 下一小步：评估并收敛 `TaskManager.get_ready_tasks()` 与 `DependencyScheduler` 的职责边界，避免 dependency readiness 出现双份事实源。
-6. 在不改变 `TaskManager.transition()` 唯一 mutation boundary 的前提下，为 ProjectOrchestrator 准备 scheduler-facing API。
+5. 下一阶段围绕现有 `core/project_orchestrator.py` 收敛 project-level execution facade，避免重新创建第二套 ProjectOrchestrator。
+6. 明确 `core.ProjectOrchestrator`、`core.Orchestrator`、`DependencyScheduler`、`TaskWorkflow` 四层职责边界。
 7. 本阶段暂不引入并发、retry/resume、persistence。
