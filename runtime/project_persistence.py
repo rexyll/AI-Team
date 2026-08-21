@@ -39,6 +39,31 @@ class ProjectPersistenceAdapter:
         return self.root / f"{project_id}.json"
 
     @staticmethod
+    def _history_from_task_manager(task_manager: TaskManager) -> ToolExecutionHistory | None:
+        """Extract Developer tool history embedded in task runtime snapshots."""
+        payload_by_id: dict[str, dict[str, Any]] = {}
+        for task in task_manager.get_all_tasks():
+            payload = task.context.get("tool_execution_history", [])
+            if payload is None:
+                continue
+            if not isinstance(payload, list):
+                raise ValueError(f"task {task.id} has invalid tool execution history payload")
+            for item in payload:
+                if not isinstance(item, dict):
+                    raise ValueError(f"task {task.id} has an invalid tool execution record")
+                execution_id = item.get("execution_id")
+                if not isinstance(execution_id, str) or not execution_id:
+                    raise ValueError(f"task {task.id} has a tool execution record without execution_id")
+                existing = payload_by_id.get(execution_id)
+                if existing is not None and existing != item:
+                    raise ValueError(f"conflicting tool execution record: {execution_id}")
+                payload_by_id[execution_id] = item
+
+        if not payload_by_id:
+            return None
+        return ToolExecutionHistory.from_dict(list(payload_by_id.values()))
+
+    @staticmethod
     def _build_payload(
         project_id: str,
         plan: dict[str, Any] | None,
@@ -52,10 +77,11 @@ class ProjectPersistenceAdapter:
             raise TypeError("plan must be a dictionary or None")
         if result is not None and not isinstance(result, ProjectResult):
             raise TypeError("result must be a ProjectResult or None")
-        if tool_execution_history is not None and not isinstance(
-            tool_execution_history, ToolExecutionHistory
-        ):
+        if tool_execution_history is not None and not isinstance(tool_execution_history, ToolExecutionHistory):
             raise TypeError("tool_execution_history must be a ToolExecutionHistory or None")
+
+        if tool_execution_history is None:
+            tool_execution_history = ProjectPersistenceAdapter._history_from_task_manager(task_manager)
 
         return {
             "project_id": project_id,
@@ -82,13 +108,7 @@ class ProjectPersistenceAdapter:
         if path.exists():
             raise FileExistsError(f"project already exists: {project_id}")
 
-        payload = self._build_payload(
-            project_id,
-            plan,
-            task_manager,
-            result,
-            tool_execution_history,
-        )
+        payload = self._build_payload(project_id, plan, task_manager, result, tool_execution_history)
         self._atomic_write(path, payload)
 
     def update(
@@ -107,13 +127,7 @@ class ProjectPersistenceAdapter:
         if not path.is_file():
             raise ValueError(f"project payload is not a file: {project_id}")
 
-        payload = self._build_payload(
-            project_id,
-            plan,
-            task_manager,
-            result,
-            tool_execution_history,
-        )
+        payload = self._build_payload(project_id, plan, task_manager, result, tool_execution_history)
         self._atomic_write(path, payload)
 
     def load(self, project_id: str) -> ProjectSnapshot:
@@ -154,18 +168,13 @@ class ProjectPersistenceAdapter:
             tool_execution_history = (
                 ToolExecutionHistory.from_dict(history_payload)
                 if history_payload is not None
-                else None
+                else self._history_from_task_manager(TaskManager(tasks))
             )
         except (TypeError, ValueError, KeyError) as exc:
             raise ValueError("project payload contains an invalid tool execution history") from exc
 
         task_manager = TaskManager(tasks)
-        self._validate_snapshot_consistency(
-            project_id,
-            plan=plan,
-            task_manager=task_manager,
-            result=result,
-        )
+        self._validate_snapshot_consistency(project_id, plan=plan, task_manager=task_manager, result=result)
 
         return ProjectSnapshot(
             project_id=project_id,
@@ -186,7 +195,6 @@ class ProjectPersistenceAdapter:
         """Validate only invariants that must survive persisted recovery."""
         tasks = task_manager.get_all_tasks()
         task_ids = [task.id for task in tasks]
-
         if len(task_ids) != len(set(task_ids)):
             raise ValueError(f"project snapshot contains duplicate task ids: {project_id}")
 
@@ -194,15 +202,11 @@ class ProjectPersistenceAdapter:
             plan_tasks = plan.get("tasks")
             if not isinstance(plan_tasks, list):
                 raise ValueError(f"project snapshot plan has invalid tasks: {project_id}")
-
             plan_ids: list[str] = []
             for item in plan_tasks:
                 if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                    raise ValueError(
-                        f"project snapshot plan contains an invalid task: {project_id}"
-                    )
+                    raise ValueError(f"project snapshot plan contains an invalid task: {project_id}")
                 plan_ids.append(item["id"])
-
             if len(plan_ids) != len(set(plan_ids)):
                 raise ValueError(f"project snapshot plan contains duplicate task ids: {project_id}")
             if plan_ids and set(plan_ids) != set(task_ids):
@@ -212,10 +216,7 @@ class ProjectPersistenceAdapter:
             project_name = None
             if plan is not None and isinstance(plan.get("project"), str):
                 project_name = plan["project"]
-            expected = ProjectResult.from_task_manager(
-                task_manager,
-                project=project_name,
-            )
+            expected = ProjectResult.from_task_manager(task_manager, project=project_name)
             if result != expected:
                 raise ValueError(f"project snapshot result mismatch: {project_id}")
 
@@ -225,19 +226,9 @@ class ProjectPersistenceAdapter:
             return None
         if not isinstance(payload, dict):
             raise ValueError("project payload result must be a dictionary or None")
-
-        required = {
-            "project",
-            "success",
-            "status",
-            "total_tasks",
-            "completed_tasks",
-            "failed_tasks",
-            "blocked_tasks",
-        }
+        required = {"project", "success", "status", "total_tasks", "completed_tasks", "failed_tasks", "blocked_tasks"}
         if set(payload) != required:
             raise ValueError("project payload result has an invalid schema")
-
         failed_tasks = payload["failed_tasks"]
         blocked_tasks = payload["blocked_tasks"]
         if not isinstance(failed_tasks, list) or not isinstance(blocked_tasks, list):
@@ -250,7 +241,6 @@ class ProjectPersistenceAdapter:
             raise ValueError("project result total_tasks must be an integer")
         if not isinstance(payload["completed_tasks"], int) or isinstance(payload["completed_tasks"], bool):
             raise ValueError("project result completed_tasks must be an integer")
-
         return ProjectResult(
             project=payload["project"],
             success=payload["success"],
@@ -271,20 +261,11 @@ class ProjectPersistenceAdapter:
         path.unlink()
 
     def list_ids(self) -> list[str]:
-        return sorted(
-            path.stem
-            for path in self.root.glob("*.json")
-            if path.is_file()
-        )
+        return sorted(path.stem for path in self.root.glob("*.json") if path.is_file())
 
     @staticmethod
     def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
-        fd, temporary = tempfile.mkstemp(
-            prefix=f".{path.stem}-",
-            suffix=".tmp",
-            dir=path.parent,
-            text=True,
-        )
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".tmp", dir=path.parent, text=True)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
