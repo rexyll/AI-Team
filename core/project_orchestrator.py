@@ -48,11 +48,20 @@ class ProjectOrchestrator:
         task_manager: TaskManager,
         history: ToolExecutionHistory | None,
     ) -> None:
-        """Rehydrate the project-level history into each task's runtime context."""
+        """Rehydrate the canonical project history into task runtime contexts.
+
+        Project-level persisted history is authoritative when present. Clear
+        any stale task-local history first so recovery cannot leave two
+        competing representations in memory when an explicit project history
+        intentionally overrides derived task history.
+        """
+        tasks = {task.id: task for task in task_manager.get_all_tasks()}
+        for task in tasks.values():
+            task.context.pop("tool_execution_history", None)
+
         if history is None:
             return
 
-        tasks = {task.id: task for task in task_manager.get_all_tasks()}
         records_by_task: dict[str, list[dict[str, Any]]] = {}
         for record in history.to_dict():
             task_id = record.get("task_id")
@@ -62,9 +71,8 @@ class ProjectOrchestrator:
                 )
             records_by_task.setdefault(task_id, []).append(record)
 
-        for task_id, task in tasks.items():
-            if task_id in records_by_task:
-                task.context["tool_execution_history"] = records_by_task[task_id]
+        for task_id, records in records_by_task.items():
+            tasks[task_id].context["tool_execution_history"] = records
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
@@ -141,13 +149,7 @@ class ProjectOrchestrator:
         project_id: str,
         adapter: ProjectPersistenceAdapter,
     ) -> ProjectResult:
-        """Restore persisted project state without starting execution.
-
-        Persisted plans are treated as recovery metadata rather than newly
-        generated planner output. The persistence boundary is responsible for
-        loading and validating the snapshot; recovery must remain compatible
-        with older snapshots whose plan metadata is intentionally minimal.
-        """
+        """Restore persisted project state without starting execution."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
@@ -182,20 +184,7 @@ class ProjectOrchestrator:
         project_id: str,
         adapter: ProjectPersistenceAdapter,
     ) -> ProjectResult:
-        """Restore a persisted project and execute only its unfinished work.
-
-        Continuation never invokes the planner or rebuilds the TaskManager.
-        The persisted plan, TaskManager, and tool execution history are restored
-        first, then the canonical project execution path is used. Each
-        execution boundary checkpoints the restored runtime state, and the
-        final result is persisted only when the final checkpoint did not already
-        capture the same authoritative snapshot.
-
-        Persisted plans are recovery metadata. They are not re-submitted to the
-        planner validator during continuation so legacy/minimal plan metadata can
-        still be recovered while the persistence adapter remains authoritative
-        for snapshot integrity.
-        """
+        """Restore a persisted project and execute only its unfinished work."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
