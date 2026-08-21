@@ -1,6 +1,9 @@
+from collections.abc import Callable
+
 from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
 from runtime.dependency_scheduler import DependencyScheduler
+from runtime.retry_policy import FailureKind, decide_retry
 from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
@@ -14,10 +17,21 @@ class Orchestrator:
         task_manager: TaskManager,
         agent_router: AgentRouter,
         max_workers: int = 4,
+        failure_classifier: Callable[[BaseException], FailureKind] | None = None,
     ):
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
+        self.failure_classifier = (
+            failure_classifier or self._default_failure_classifier
+        )
+
+    @staticmethod
+    def _default_failure_classifier(error: BaseException) -> FailureKind:
+        """Classify execution failures without involving Agent/Workflow code."""
+        if isinstance(error, (TypeError, ValueError, KeyError)):
+            return FailureKind.NON_RETRYABLE
+        return FailureKind.EXECUTION
 
     def run(self) -> None:
         print("\n" + "=" * 60)
@@ -31,9 +45,6 @@ class Orchestrator:
                 self._handle_no_ready_tasks()
                 break
 
-            # One readiness batch is one execution layer. All tasks in the
-            # batch may execute concurrently; the next scheduling iteration
-            # is the barrier that waits for this layer to finish.
             self.task_executor.run_layer(
                 ready_tasks,
                 self._execute_task,
@@ -57,9 +68,6 @@ class Orchestrator:
             self.task_manager.get_all_tasks()
         )
 
-        # Apply scheduler blocked decisions through the sole lifecycle
-        # mutation boundary, then rebuild the snapshot so downstream tasks
-        # observe newly blocked dependencies.
         while True:
             blocked_decisions = scheduler.get_blocked_decisions()
             if not blocked_decisions:
@@ -77,7 +85,6 @@ class Orchestrator:
 
         scheduled_tasks = scheduler.get_ready_tasks()
 
-        # Scheduler decides readiness; TaskManager applies the state change.
         for task in scheduled_tasks:
             if task.status == "pending":
                 self.task_manager.mark_ready(task.id)
@@ -88,7 +95,6 @@ class Orchestrator:
             if task.status == "ready"
         ]
 
-        # Preserve task-manager order while avoiding duplicates.
         executable = []
         seen = set()
         for task in [*scheduled_tasks, *already_ready]:
@@ -126,7 +132,36 @@ class Orchestrator:
                     task.id,
                     f"{type(exc).__name__}: {exc}",
                 )
+
+            self._apply_retry_policy(task, exc)
             print(f"[Failed] {task.id}: {exc}")
+
+    def _apply_retry_policy(self, task, error: BaseException) -> bool:
+        """Apply retry policy after failure, at the Orchestrator boundary.
+
+        The policy is pure; TaskManager owns all retry/lifecycle mutation.
+        A denied decision leaves the failed Task untouched.
+        """
+        failure_kind = self.failure_classifier(error)
+        if not isinstance(failure_kind, FailureKind):
+            raise TypeError("failure_classifier must return FailureKind")
+
+        decision = decide_retry(
+            attempt=task.retry_attempt,
+            max_retries=task.max_retries,
+            failure_kind=failure_kind,
+            reason=f"{type(error).__name__}: {error}",
+        )
+
+        if not decision.retry:
+            return False
+
+        self.task_manager.retry_task(
+            task.id,
+            reason=decision.reason,
+            retryable=True,
+        )
+        return True
 
     def _handle_no_ready_tasks(self) -> None:
         print("\n[ERROR] 没有可以执行的任务。\n")
