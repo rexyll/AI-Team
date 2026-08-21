@@ -10,16 +10,19 @@
 最新用户验收基线：
 
 ```text
+pytest tests/test_workflow_stage_transition_contract.py -q
+11 passed in 0.03s
+
 pytest tests/test_workflow_state_machine_contract.py -q
 6 passed in 0.02s
 
 pytest -q
-507 passed in 1.15s
+518 passed in 1.15s
 ```
 
 **Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机正在推进。**
 
-6.1 第一阶段已冻结 TaskManager 状态机边界；本轮完成 6.1.1：把 Developer / Tester / Reviewer 的 stage outcome → lifecycle target 定义为独立、可测试的 declarative contract。下一步将把该 contract 真正接入 `TaskWorkflow`，使 stage execution 不再自行决定状态迁移。
+6.1.1 已冻结 declarative stage transition topology。本轮完成 6.1.2 的第一部分：建立 `TaskWorkflow` → `TaskManager` → `status_history` 的 integration contract，证明当前 stage outcome handling 的实际生命周期结果与 6.1.1 transition contract 一致。下一步仍需把 target-state 决策从 Workflow 中的隐式分支正式收敛到 `runtime/workflow_transition.py`，避免 contract 与 implementation 出现双份事实源。
 
 ---
 
@@ -167,9 +170,9 @@ tests/test_tool_error_contract.py
 
 ## ☐ 6.1 TaskWorkflow 状态机
 
-### 6.1.1 Stage execution → state transition contract
+### <span style="color:green">√</span> 6.1.1 Stage execution → state transition contract
 
-已完成第一版 declarative stage transition contract，并新增：
+已完成 declarative stage transition contract：
 
 ```text
 runtime/workflow_transition.py
@@ -206,16 +209,29 @@ c734e6c  test: define workflow stage transition contract
 
 **状态：6.1.1 完成。**
 
-### 6.1.2 下一小步：TaskWorkflow 接入 transition contract
+### <span style="color:green">◐</span> 6.1.2 TaskWorkflow → transition contract integration
 
-目标：
+本轮新增：
 
-1. `_apply_developer_outcome()` 不再自行推断 target status。
-2. `_apply_tester_outcome()` 使用统一 transition contract。
-3. `_apply_reviewer_outcome()` 使用统一 transition contract。
-4. 所有实际 mutation 继续通过 `TaskManager`，不允许 Workflow 直接修改 `task.status`。
-5. 新增 integration contract，验证 stage outcome 与 `status_history` 完全一致。
-6. 不改变现有 legacy API，不提前引入 6.2 scheduler。
+```text
+tests/test_workflow_transition_integration.py
+```
+
+integration contract 已验证：
+
+1. Developer success → `running → review_pending`。
+2. Developer invalid result → `running → failed`。
+3. Tester success → `review_pending → reviewing`。
+4. Tester quality-gate failure → `review_pending → running`。
+5. Reviewer approved → `reviewing → completed`。
+6. Reviewer revision → `reviewing → running`。
+7. Reviewer invalid result → `reviewing → failed`。
+8. 实际 `Task.status_history` 与 declarative transition contract 的 source/target 一致。
+9. 所有实际状态 mutation 仍经过 `TaskManager`。
+
+**当前状态：integration contract 已完成，但 runtime implementation 尚未完全消除 Workflow 内部的重复 target-state 分支。**
+
+下一小步必须完成真正的 implementation convergence：由 `runtime/workflow_transition.py` 成为 stage outcome → lifecycle target 的唯一 declarative source，`TaskWorkflow` 只负责把 AgentResult 映射为 `WorkflowOutcomeKind`，然后委托 transition contract + `TaskManager.transition()` 完成状态迁移。
 
 ## ☐ 6.2 Dependency-aware Scheduler
 ## ☐ 6.3 ProjectOrchestrator
@@ -246,13 +262,13 @@ c734e6c  test: define workflow stage transition contract
 
 # 当前下一动作
 
-**当前节点：Phase 6.1.2 TaskWorkflow 接入 transition contract。**
+**当前节点：Phase 6.1.2 implementation convergence。**
 
 1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_workflow_stage_transition_contract.py -q`。
-3. 运行 `pytest tests/test_workflow_state_machine_contract.py -q`。
-4. 运行 `pytest -q`，记录新的全量基线。
-5. 下一轮修改 `TaskWorkflow`，将 Developer / Tester / Reviewer outcome → target status 的决策统一收敛到 `runtime/workflow_transition.py`。
-6. 增加 integration tests，重点验证 `status_history` 与 stage outcome 的一一对应。
-7. 不在本阶段引入 scheduler / parallelism / retry / persistence。
-8. 6.1.2 验收完成后，再进入 6.2 Dependency-aware Scheduler。
+2. 运行 `pytest tests/test_workflow_transition_integration.py -q`。
+3. 运行 `pytest tests/test_workflow_stage_transition_contract.py tests/test_workflow_state_machine_contract.py -q`。
+4. 运行 `pytest -q`，确认新的全量基线。
+5. 修改 `TaskWorkflow` / 必要的 lifecycle facade，使 Developer / Tester / Reviewer 的 status target 不再重复硬编码。
+6. 保持 `TaskManager.transition()` 为唯一 status mutation boundary。
+7. 只收敛 transition semantics；不引入 scheduler / parallelism / retry / persistence。
+8. 完成 6.1.2 implementation convergence 后，再进入 **6.2 Dependency-aware Scheduler**。
