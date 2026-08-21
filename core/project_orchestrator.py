@@ -10,6 +10,7 @@ from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.task_validator import validate_plan
+from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 
 
@@ -165,6 +166,16 @@ class ProjectOrchestrator:
             if snapshot.plan
             else None,
         )
+
+    def audit_persisted(
+        self,
+        project_id: str,
+        adapter: ProjectPersistenceAdapter,
+    ) -> ToolExecutionAudit:
+        """Return the canonical read-only audit view for a persisted project."""
+        if not isinstance(adapter, ProjectPersistenceAdapter):
+            raise TypeError("adapter must be a ProjectPersistenceAdapter")
+        return adapter.audit(project_id)
 
     def continue_persisted(
         self,
