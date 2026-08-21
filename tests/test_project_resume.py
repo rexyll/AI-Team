@@ -1,7 +1,9 @@
 import pytest
 
+from core.orchestrator import Orchestrator
 from core.project_orchestrator import ProjectOrchestrator
 from core.project_result import ProjectResult
+from runtime.retry_policy import FailureKind
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 
@@ -124,3 +126,88 @@ def test_resume_does_not_invoke_planner():
     result = project.resume(manager)
 
     assert result.status == "completed"
+
+
+def test_retry_policy_requeues_failed_task_for_later_resume():
+    task = Task(
+        id="RESUME-RETRY-001",
+        title="retryable task",
+        description="failed before process restart",
+        role="architect",
+    )
+    task.configure_retry(max_retries=1)
+    manager = TaskManager([task])
+    manager.mark_ready(task.id)
+    manager.mark_running(task.id)
+    manager.mark_failed(task.id, "temporary provider failure")
+
+    retry_orchestrator = Orchestrator(manager, FakeRouter())
+    assert retry_orchestrator._apply_retry_policy(
+        task,
+        RuntimeError("temporary provider failure"),
+    ) is True
+
+    assert task.status == "ready"
+    assert task.retry_attempt == 1
+
+    class ResumeRouter:
+        def get_agent(self, role):
+            class Agent:
+                def run(self, task):
+                    return {
+                        "status": "completed",
+                        "task_id": task.id,
+                    }
+
+            return Agent()
+
+    project = ProjectOrchestrator(agent_router=ResumeRouter())
+    project.last_task_manager = manager
+
+    result = project.resume()
+
+    assert result.status == "completed"
+    assert manager.get_task(task.id).status == "completed"
+    assert task.retry_attempt == 1
+    assert len(task.retry_history) == 1
+
+
+def test_resume_preserves_retry_budget_after_failed_retry():
+    task = Task(
+        id="RESUME-RETRY-002",
+        title="retry budget",
+        description="resume after retry",
+        role="architect",
+    )
+    task.configure_retry(max_retries=2)
+    manager = TaskManager([task])
+    manager.mark_ready(task.id)
+    manager.mark_running(task.id)
+    manager.mark_failed(task.id, "temporary failure")
+
+    orchestrator = Orchestrator(manager, FakeRouter())
+    assert orchestrator._apply_retry_policy(
+        task,
+        RuntimeError("temporary failure"),
+    ) is True
+
+    assert task.retry_attempt == 1
+    assert task.max_retries == 2
+    assert task.status == "ready"
+
+    class ResumeRouter:
+        def get_agent(self, role):
+            class Agent:
+                def run(self, task):
+                    return {
+                        "status": "completed",
+                        "task_id": task.id,
+                    }
+
+            return Agent()
+
+    result = ProjectOrchestrator(agent_router=ResumeRouter()).resume(manager)
+
+    assert result.status == "completed"
+    assert task.retry_attempt == 1
+    assert task.max_retries == 2
