@@ -160,8 +160,13 @@ class ProjectPersistenceAdapter:
         The plan is the immutable planning record while TaskManager stores the
         mutable runtime state. Runtime task metadata may legitimately differ
         from the original plan after execution or migration, so recovery does
-        not require a field-for-field plan/task match. The stable task identity
-        set and the persisted aggregate result, however, must remain coherent.
+        not require a field-for-field plan/task match.
+
+        Some persistence boundaries intentionally carry only project-level plan
+        metadata and an independently persisted runtime TaskManager. In that
+        case ``plan.tasks`` may be empty even when runtime tasks exist. When a
+        plan does contain task definitions, their stable task identity set must
+        agree with the runtime task identity set.
         """
         tasks = task_manager.get_all_tasks()
         task_ids = [task.id for task in tasks]
@@ -184,7 +189,7 @@ class ProjectPersistenceAdapter:
 
             if len(plan_ids) != len(set(plan_ids)):
                 raise ValueError(f"project snapshot plan contains duplicate task ids: {project_id}")
-            if set(plan_ids) != set(task_ids):
+            if plan_ids and set(plan_ids) != set(task_ids):
                 raise ValueError(f"project snapshot plan/task identity mismatch: {project_id}")
 
         if result is not None:
