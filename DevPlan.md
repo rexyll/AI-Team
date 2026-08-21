@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-602 passed in 1.37s
+606 passed in 1.35s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6 Workflow / Project Orchestrator 已完成。当前进入 Phase 7 Persistence / Observability。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6 Workflow / Project Orchestrator 已完成。当前 Phase 7.1 Task persistence contract 已完成，下一步进入 Task persistence adapter。**
 
 ---
 
@@ -56,68 +56,28 @@ Phase 4 已完成。
 ### <span style="color:green">√</span> 6.1.1 Stage execution → state transition contract
 ### <span style="color:green">√</span> 6.1.2 TaskWorkflow → transition contract integration
 
-已完成 declarative stage transition contract，并冻结 stage outcome、source/target topology 与 `TaskManager.transition()` mutation boundary。
-
-**结论：6.1 TaskWorkflow 状态机已完成。**
-
 ## <span style="color:green">√</span> 6.2 Dependency-aware Scheduler
 ### <span style="color:green">√</span> 6.2.1 Dependency Scheduler read-only contract
 ### <span style="color:green">√</span> 6.2.2 Orchestrator readiness boundary convergence
 
-已完成 dependency-aware decision contract 与 Orchestrator readiness boundary convergence：DependencyScheduler 成为 readiness decision source，TaskManager 仍是唯一 lifecycle mutation boundary。
-
-**结论：6.2 Dependency-aware Scheduler 已完成。**
-
 ## <span style="color:green">√</span> 6.3 ProjectOrchestrator
 
-已完成 project-level execution facade，并冻结以下边界：
-
-1. `ProjectOrchestrator` 负责 requirement → plan → task graph → execution → `ProjectResult`。
-2. `core.Orchestrator` 只负责执行已经构建好的 `TaskManager`。
-3. `DependencyScheduler` 负责 dependency readiness decision。
-4. `TaskWorkflow` 负责单 Task stage lifecycle。
-5. `TaskManager` 仍是唯一实际 Task lifecycle mutation boundary。
-6. `ProjectOrchestrator.run(requirement)` 返回 immutable `ProjectResult`。
-7. `last_task_manager`、`last_plan`、`last_result` 分别保存执行图、plan 与最终结果。
-8. Planner 输出进入 `PlanBuilder` 前必须经过 `validate_plan()`。
-9. ProjectResult 为 provider-independent project execution summary。
-
-**结论：6.3 ProjectOrchestrator 已完成。**
+已完成 project-level execution facade，并冻结 requirement → plan → task graph → execution → ProjectResult 边界。
 
 ## <span style="color:green">√</span> 6.4 Task 并行执行
 ### <span style="color:green">√</span> 6.4.1 Task layer executor contract
 ### <span style="color:green">√</span> 6.4.2 Layer-based Orchestrator integration
 ### <span style="color:green">√</span> 6.4.3 Concurrency hardening
 
-已完成 bounded layer executor、DependencyScheduler layer integration 与 TaskManager 并发安全边界。并发层只保证 layer readiness，不假设 worker 实际进入 Agent 的先后顺序；同层独立 Task 可并行执行，依赖下游只能在上游 layer 完成后进入下一轮 scheduling。
-
-**结论：6.4 Task 并行执行已完成。**
-
 ## <span style="color:green">√</span> 6.5 Retry / Resume
-
 ### <span style="color:green">√</span> 6.5.1 Retry lifecycle contract
 ### <span style="color:green">√</span> 6.5.2 Retry policy integration
 ### <span style="color:green">√</span> 6.5.3 Resume in-memory execution boundary
 ### <span style="color:green">√</span> 6.5.4 Retry / Resume integration
 
-Retry / Resume 已完成，保持不重新 Planner、不重建 Task Graph 的 execution-state continuation boundary。TaskManager 是唯一 retry/lifecycle mutation boundary；DependencyScheduler 继续负责 readiness decision；持久化恢复保留给 Phase 7.6。
-
-**结论：6.5 Retry / Resume 已完成。**
-
 ## <span style="color:green">√</span> 6.6 ProjectResult
 
-已完成 project-level immutable execution summary contract，并通过用户全量回归：
-
-1. `ProjectResult` 为 immutable value object；
-2. 成功、失败、阻塞、incomplete 结果语义明确；
-3. 汇总 total/completed/failed/blocked task 数量；
-4. failed / blocked Task ID 稳定、可序列化；
-5. `to_dict()` 返回 JSON-friendly representation；
-6. ProjectResult 不持有可变 TaskManager / Agent / Provider 引用；
-7. `ProjectOrchestrator.run()` / `resume()` 统一返回 ProjectResult；
-8. 空 TaskManager、部分完成、失败、阻塞等边界状态有明确 contract tests。
-
-用户最终验收：
+已完成 immutable project execution summary，并通过用户最终回归：
 
 ```text
 pytest tests/test_project_result_contract.py -q
@@ -131,7 +91,27 @@ pytest -q
 
 # Phase 7 — Persistence / Observability
 
-## ☐ 7.1 Task persistence
+## <span style="color:green">√</span> 7.1 Task persistence contract
+
+已冻结 Task persistence serialization / deserialization boundary，并完成实现：
+
+1. `Task.to_dict()` 输出 persistence-safe、JSON-friendly mapping；
+2. `Task.from_dict()` 支持 lifecycle state round-trip；
+3. 缺少 identity 字段时拒绝恢复；
+4. status、dependencies、retry state、status history、context、result、review/test state 均保持持久化边界；
+5. persisted Task 不携带 Agent、LLM、Router、TaskManager、Workflow 等 runtime object；
+6. 恢复后的 Task 继续经过既有 runtime contract validation。
+
+用户最终验收：
+
+```text
+pytest -q
+606 passed in 1.35s
+```
+
+**结论：7.1 Task persistence contract 已完成。**
+
+## ☐ 7.1.1 Task persistence adapter
 ## ☐ 7.2 Project persistence
 ## ☐ 7.3 Agent execution records
 ## ☐ 7.4 Tool execution logs
@@ -144,11 +124,12 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 优先顺序：
 
-1. 先冻结 Task persistence schema 与 serialization contract；
-2. 再冻结 Project persistence schema；
-3. 再记录 Agent / Tool / Workflow execution events；
-4. 最后把 persisted state 接入 `ProjectOrchestrator.resume()`；
-5. 具体数据库 / 文件存储实现应服从上述 contract，不反向污染 Workflow 核心层。
+1. Task persistence schema / serialization contract；
+2. Task persistence adapter；
+3. Project persistence schema；
+4. Agent / Tool / Workflow execution records；
+5. persisted state 接入 `ProjectOrchestrator.resume()`；
+6. 具体数据库 / 文件存储实现必须服从上述 contract，不反向污染 Workflow 核心层。
 
 # Phase 8 — Production Hardening
 
@@ -164,11 +145,11 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 # 当前下一动作
 
-**当前节点：Phase 7.1 Task persistence。**
+**当前节点：Phase 7.1.1 Task persistence adapter。**
 
-1. 先新增 `tests/test_task_persistence_contract.py`，冻结 Task serialization / deserialization contract；
-2. 明确 persisted Task 不携带 Agent / LLM / runtime object 引用；
-3. 明确 status、dependencies、retry state、status history、context snapshot 等生命周期字段的持久化边界；
-4. 专项测试通过后再实现 persistence adapter；
-5. 最后执行全量 `pytest -q`；
-6. 只有用户全量验收通过后，才将 7.1 标记为 √。
+1. 冻结 adapter 的 save/load/delete/list contract；
+2. adapter 只接受 persistence-safe Task representation；
+3. 第一版优先使用本地文件存储，避免提前引入数据库依赖；
+4. 明确 atomic write、missing Task、corrupt payload、duplicate identity 等错误边界；
+5. 专项测试通过后执行全量 `pytest -q`；
+6. 用户全量验收通过后再标记 7.1.1 为 √。
