@@ -192,7 +192,16 @@ class DeveloperAgent(BaseAgent):
 
         context = self.build_context(task)
         messages = self._build_messages(context)
-        self.tool_execution_history = ToolExecutionHistory()
+        persisted_history = task.context.get("tool_execution_history")
+        if persisted_history is None:
+            self.tool_execution_history = ToolExecutionHistory()
+        else:
+            try:
+                self.tool_execution_history = ToolExecutionHistory.from_dict(persisted_history)
+            except (TypeError, ValueError, KeyError) as exc:
+                raise ValueError(
+                    f"task {task.id} contains invalid persisted tool execution history"
+                ) from exc
 
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
