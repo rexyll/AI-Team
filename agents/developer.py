@@ -264,22 +264,17 @@ class DeveloperAgent(BaseAgent):
 
                 print(f"[Args] {arguments}")
 
-                tool_calls.append(
-                    {
-                        "name": tool_name,
-                        "arguments": dict(arguments),
-                    }
-                )
-
                 try:
                     tool_function = TOOL_REGISTRY.get(tool_name)
+                    tool_schema = TOOL_REGISTRY.schema(tool_name)
 
                     (
-                        filtered_arguments,
+                        validated_arguments,
                         ignored_arguments,
                     ) = validate_tool_arguments(
                         tool_function,
                         arguments,
+                        schema=tool_schema,
                     )
 
                     if ignored_arguments:
@@ -288,11 +283,18 @@ class DeveloperAgent(BaseAgent):
                             f"{ignored_arguments}"
                         )
 
-                    result = tool_function(**filtered_arguments)
+                    tool_calls.append(
+                        {
+                            "name": tool_name,
+                            "arguments": dict(validated_arguments),
+                        }
+                    )
+
+                    result = tool_function(**validated_arguments)
 
                     self._record_tool_evidence(
                         tool_name=tool_name,
-                        arguments=filtered_arguments,
+                        arguments=validated_arguments,
                         result=result,
                         changed_files=changed_files,
                         command_results=command_results,
