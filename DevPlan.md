@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-551 passed in 1.34s
+557 passed in 1.34s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4.1 / 6.4.2 Task 并行执行基础架构已完成，下一节点为 6.4.3 Concurrency hardening。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成，下一节点为 6.5 Retry / Resume。**
 
 ---
 
@@ -84,13 +84,6 @@ Phase 4 已完成。
 8. Planner 输出进入 `PlanBuilder` 前必须经过 `validate_plan()`。
 9. ProjectResult 为 provider-independent project execution summary。
 
-用户验收基线：
-
-```text
-pytest -q
-542 passed in 1.08s
-```
-
 **结论：6.3 ProjectOrchestrator 已完成。**
 
 ## <span style="color:green">√</span> 6.4 Task 并行执行
@@ -119,28 +112,44 @@ pytest -q
 7. Developer workflow 在每个 Task execution 内独立创建 `TaskWorkflow`，避免共享 workflow 实例状态；
 8. `TaskManager` 仍是 lifecycle mutation boundary，Scheduler 与 Executor 均不直接改变 lifecycle。
 
-本阶段用户最终回归：
+### <span style="color:green">√</span> 6.4.3 Concurrency hardening
+
+已完成 TaskManager 并发安全边界：
+
+1. `TaskManager` lifecycle mutation 使用 `RLock` 保护 validate → history → status mutation 原子区间；
+2. 同一 Task 的并发 transition 至多一次成功，避免重复 lifecycle transition；
+3. 不同 Task 的 status/history/result/error 在并发执行下保持隔离；
+4. concurrent scheduler/read operations 不破坏 TaskManager 状态一致性；
+5. 非法并发 transition 不污染 `status_history`；
+6. 使用 re-entrant lock 支持嵌套 lifecycle 调用且避免死锁；
+7. 新增 `tests/test_task_manager_concurrency.py`，覆盖上述 concurrency safety contracts；
+8. 不在本阶段引入 retry/resume/persistence，保持职责边界稳定。
+
+用户最终验收：
 
 ```text
+pytest tests/test_task_manager_concurrency.py -q
+6 passed in 0.05s
+
 pytest -q
-551 passed in 1.34s
+557 passed in 1.34s
 ```
 
-**结论：6.4.1 / 6.4.2 已完成。**
+**结论：6.4 Task 并行执行已完成。**
 
-### ☐ 6.4.3 Concurrency hardening（当前节点）
+## ☐ 6.5 Retry / Resume
 
 下一阶段重点：
 
-1. 明确 `TaskManager` 在并发 worker 环境下的 mutation / read consistency；
-2. 增加 concurrent lifecycle mutation regression tests；
-3. 验证同一 Task 不会被重复执行或发生非法双重 transition；
-4. 验证不同 Task 的 history/result/error 不会串写；
-5. 增加 worker exception、slow peer、mixed success/failure 的 deterministic contract；
-6. 建立轻量 concurrency performance contract，但不以 benchmark 数值作为业务正确性依据；
-7. 不引入 retry/resume、persistence 等跨阶段功能。
+1. 明确 Task failure 后 retry 的状态机边界；
+2. 区分 retry attempt、workflow stage 与 Task lifecycle status；
+3. retry 必须保持已有成功 peer 的结果不受影响；
+4. 明确 retryable / non-retryable failure contract；
+5. 建立最大 retry 次数、attempt history 与最终失败语义；
+6. Resume 只恢复可恢复的 Task execution state，不在本阶段引入完整 persistence；
+7. 确保 retry/resume 与 dependency scheduler、TaskWorkflow、TaskManager 的职责边界清晰；
+8. 优先 contract tests，再实现最小状态机变化。
 
-## ☐ 6.5 Retry / Resume
 ## ☐ 6.6 ProjectResult
 
 # Phase 7 — Persistence / Observability
@@ -166,11 +175,11 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.4.3 Concurrency hardening。**
+**当前节点：Phase 6.5 Retry / Resume。**
 
-1. 用户已完成全量回归：`551 passed`。
-2. 下一步增加 TaskManager concurrency safety contract，而不是继续扩大业务功能面。
-3. 优先测试 lifecycle transition、result/error/history 的隔离性与 deterministic semantics。
-4. 完成后运行相关专项测试与全量 `pytest -q`。
-5. 全量通过后，将 6.4.3 标记完成，再进入 **6.5 Retry / Resume**。
-6. Retry / Resume 之前不引入 persistence，避免两个状态恢复机制同时演进。
+1. 6.4.3 Concurrency hardening 已通过专项与全量回归并正式完成。
+2. 下一步先建立 retry/resume contract tests，不直接扩大实现范围。
+3. 优先冻结 retry attempt、最大次数、失败分类与 Task 状态转换语义。
+4. Resume 暂不依赖持久化层，只定义内存态恢复边界。
+5. 完成后运行专项测试与全量 `pytest -q`。
+6. 全量通过后标记 6.5 完成，再进入 **6.6 ProjectResult**。
