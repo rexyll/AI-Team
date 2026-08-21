@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from core.project_result import ProjectResult
 from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
@@ -41,7 +43,12 @@ def test_project_persistence_derives_tool_history_from_task_runtime_context(tmp_
     manager = _manager_with_history()
     result = ProjectResult.from_task_manager(manager, project="history")
 
-    adapter.save("PROJECT-TOOL-001", plan={"project": "history", "tasks": []}, task_manager=manager, result=result)
+    adapter.save(
+        "PROJECT-TOOL-001",
+        plan={"project": "history", "tasks": []},
+        task_manager=manager,
+        result=result,
+    )
 
     snapshot = adapter.load("PROJECT-TOOL-001")
 
@@ -90,9 +97,9 @@ def test_legacy_project_snapshot_without_tool_history_remains_loadable(tmp_path)
     )
 
     path = tmp_path / "PROJECT-TOOL-003.json"
-    payload = path.read_text(encoding="utf-8")
-    payload = payload.replace(', "tool_execution_history": null', "")
-    path.write_text(payload, encoding="utf-8")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.pop("tool_execution_history")
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
     snapshot = adapter.load("PROJECT-TOOL-003")
     assert snapshot.tool_execution_history is None
