@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from config.model import client, AGNES_MODEL
@@ -7,6 +8,8 @@ from agents.base import BaseAgent
 from runtime.task import Task
 from runtime.agent_context import AgentContext
 from runtime.context_view import context_view
+from runtime.tool_execution_history import ToolExecutionHistory
+from runtime.tool_execution_record import ToolExecutionRecord
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -189,6 +192,7 @@ class DeveloperAgent(BaseAgent):
 
         context = self.build_context(task)
         messages = self._build_messages(context)
+        self.tool_execution_history = ToolExecutionHistory()
 
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
@@ -242,12 +246,22 @@ class DeveloperAgent(BaseAgent):
 
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
+                started_at = datetime.now(timezone.utc).isoformat()
+                status = "completed"
+                result: Any = None
+                error: Any = None
+                record_arguments: dict[str, Any] = {}
 
                 print(f"\n[Tool] {tool_name}")
 
                 try:
                     arguments = json.loads(tool_call.function.arguments)
                 except (TypeError, json.JSONDecodeError) as exc:
+                    status = "invalid_arguments"
+                    error = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    }
                     result = (
                         "Tool error: invalid JSON arguments: "
                         f"{type(exc).__name__}: {exc}"
@@ -259,6 +273,42 @@ class DeveloperAgent(BaseAgent):
                             "tool_call_id": tool_call.id,
                             "content": result,
                         }
+                    )
+                    self._record_tool_execution(
+                        execution_id=tool_call.id,
+                        task_id=context.task_id,
+                        tool_name=tool_name,
+                        started_at=started_at,
+                        status=status,
+                        arguments=record_arguments,
+                        output=None,
+                        error=error,
+                    )
+                    continue
+
+                if not isinstance(arguments, dict):
+                    status = "invalid_arguments"
+                    error = {
+                        "type": "TypeError",
+                        "message": "tool arguments must be a JSON object",
+                    }
+                    result = "Tool error: arguments must be a JSON object"
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        }
+                    )
+                    self._record_tool_execution(
+                        execution_id=tool_call.id,
+                        task_id=context.task_id,
+                        tool_name=tool_name,
+                        started_at=started_at,
+                        status=status,
+                        arguments=record_arguments,
+                        output=None,
+                        error=error,
                     )
                     continue
 
@@ -276,6 +326,7 @@ class DeveloperAgent(BaseAgent):
                         arguments,
                         schema=tool_schema,
                     )
+                    record_arguments = dict(validated_arguments)
 
                     if ignored_arguments:
                         print(
@@ -300,8 +351,18 @@ class DeveloperAgent(BaseAgent):
                         command_results=command_results,
                     )
                 except KeyError:
+                    status = "unknown_tool"
+                    error = {
+                        "type": "KeyError",
+                        "message": f"Unknown tool: {tool_name}",
+                    }
                     result = f"Unknown tool: {tool_name}"
                 except Exception as exc:
+                    status = "failed"
+                    error = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    }
                     result = (
                         "Tool error: "
                         f"{type(exc).__name__}: {exc}"
@@ -317,9 +378,47 @@ class DeveloperAgent(BaseAgent):
                     }
                 )
 
+                self._record_tool_execution(
+                    execution_id=tool_call.id,
+                    task_id=context.task_id,
+                    tool_name=tool_name,
+                    started_at=started_at,
+                    status=status,
+                    arguments=record_arguments,
+                    output=result if status == "completed" else None,
+                    error=error,
+                )
+
         raise RuntimeError(
             "Developer tool loop exceeded maximum iterations: "
             f"{MAX_TOOL_ITERATIONS}"
+        )
+
+    def _record_tool_execution(
+        self,
+        *,
+        execution_id: str,
+        task_id: str,
+        tool_name: str,
+        started_at: str,
+        status: str,
+        arguments: dict[str, Any],
+        output: Any,
+        error: Any,
+    ) -> None:
+        self.tool_execution_history.append(
+            ToolExecutionRecord(
+                execution_id=execution_id,
+                task_id=task_id,
+                agent_role=self.role,
+                tool_name=tool_name,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                status=status,
+                arguments=arguments,
+                output=output,
+                error=error,
+            )
         )
 
     @staticmethod
