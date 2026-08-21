@@ -146,6 +146,26 @@ class ProjectOrchestrator:
         self.last_result = result
         return result
 
+    def resume(
+        self,
+        task_manager: TaskManager | None = None,
+    ) -> ProjectResult:
+        """
+        Resume execution from the current in-memory TaskManager state.
+
+        Resume deliberately does not invoke the planner or rebuild the task
+        graph. The existing TaskManager is the complete execution state for
+        this in-memory boundary; completed tasks remain untouched while the
+        Orchestrator continues scheduling executable work.
+        """
+        manager = task_manager if task_manager is not None else self.last_task_manager
+        if manager is None:
+            raise ValueError("no in-memory task manager is available to resume")
+        if not isinstance(manager, TaskManager):
+            raise TypeError("task_manager must be a TaskManager")
+
+        return self.execute(manager)
+
     def run(self, requirement: str) -> ProjectResult:
         """
         Plan and execute a complete project through the project facade.
