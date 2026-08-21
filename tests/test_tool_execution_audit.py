@@ -13,6 +13,10 @@ def _record(
     tool: str = "read_file",
     status: str = "completed",
 ) -> ToolExecutionRecord:
+    error = None if status == "completed" else {
+        "message": f"tool execution {status}",
+    }
+
     return ToolExecutionRecord(
         execution_id=execution_id,
         task_id=task_id,
@@ -23,7 +27,7 @@ def _record(
         status=status,
         arguments={"path": "src/app.py"},
         output={"execution": execution_id},
-        error=None,
+        error=error,
         metadata={},
     )
 
