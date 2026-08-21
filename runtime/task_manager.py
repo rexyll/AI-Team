@@ -370,6 +370,49 @@ class TaskManager:
             self.record_error(task_id, error)
             return task
 
+    def retry_task(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        retryable: bool,
+    ) -> Task:
+        """
+        Explicitly requeue one failed Task for another execution attempt.
+
+        FAILED remains a terminal state for the generic state machine: this
+        operation is the only lifecycle boundary that may reopen it. Retry
+        policy is evaluated before any status mutation, so rejected retries
+        leave status, error, history, and attempt counters untouched.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("retry reason must be a non-empty string")
+        if not isinstance(retryable, bool):
+            raise TypeError("retryable must be a boolean")
+
+        with self._lock:
+            task = self.get_task(task_id)
+            if task.status != TaskStatus.FAILED.value:
+                raise ValueError(
+                    f"Task {task_id} cannot be retried from status "
+                    f"{task.status}"
+                )
+
+            task.record_retry_attempt(
+                reason=reason,
+                retryable=retryable,
+            )
+
+            task.status_history.append(
+                {
+                    "from": TaskStatus.FAILED.value,
+                    "to": TaskStatus.READY.value,
+                }
+            )
+            task.status = TaskStatus.READY.value
+            task.error = None
+            return task
+
     # ------------------------------------------------------------------
     # Backward-compatible lifecycle APIs
     # ------------------------------------------------------------------
