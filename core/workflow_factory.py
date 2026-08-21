@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from runtime.agent_router import AgentRouter
 from runtime.task_manager import TaskManager
 from runtime.workflow import TaskWorkflow
@@ -7,6 +9,7 @@ def create_task_workflow(
     task_manager: TaskManager,
     agent_router: AgentRouter,
     max_review_rounds: int = 3,
+    state_change_hook: Callable[[TaskManager], None] | None = None,
 ) -> TaskWorkflow:
     """Build the canonical Developer -> Tester -> Reviewer workflow."""
 
@@ -21,4 +24,5 @@ def create_task_workflow(
         reviewer=reviewer,
         agent_router=agent_router,
         max_review_rounds=max_review_rounds,
+        state_change_hook=state_change_hook,
     )
