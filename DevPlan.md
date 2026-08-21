@@ -14,7 +14,7 @@ pytest -q
 542 passed in 1.08s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行正在进行。**
 
 ---
 
@@ -128,6 +128,37 @@ pytest -q
 **结论：6.3 ProjectOrchestrator 已完成。**
 
 ## ☐ 6.4 Task 并行执行
+
+### ☐ 6.4.1 Task layer executor contract（进行中）
+
+已建立第一版并行执行边界：
+
+1. 新增 `TaskLayerExecutor`，仅负责 bounded concurrency，不负责 Task lifecycle mutation。
+2. 一个 readiness batch 作为一个执行层；当前层全部 worker 完成后，Orchestrator 才进入下一轮 dependency scheduling。
+3. `max_workers` 默认值为 4，并在 executor 边界校验。
+4. worker exception 在所有已提交 peer 完成后再向上报告，避免一个失败任务主动取消其它独立任务。
+5. executor 保持输入/结果顺序确定性。
+6. Scheduler 与 TaskManager 的既有职责边界保持不变。
+7. 已新增 executor contract 与 Orchestrator parallel execution tests，待用户专项/全量 pytest 验收。
+
+### ☐ 6.4.2 Layer-based Orchestrator integration
+
+待 6.4.1 验收后继续完善：
+
+- 明确 dependency execution layer 与 readiness batch 的一致性；
+- 完善 failure / blocked propagation；
+- 验证 Developer / Tester / Reviewer workflow 在并发层中的生命周期隔离；
+- 增加最大并发度与长任务并发回归测试。
+
+### ☐ 6.4.3 Concurrency hardening
+
+待前两阶段完成后处理：
+
+- worker isolation；
+- deterministic completion semantics；
+- concurrency regression / performance contract；
+- 确认 TaskManager lifecycle mutation 在并发环境下仍满足既有 contract。
+
 ## ☐ 6.5 Retry / Resume
 ## ☐ 6.6 ProjectResult
 
@@ -154,13 +185,12 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.4 Task 并行执行。**
+**当前节点：Phase 6.4.1 Task layer executor contract。**
 
 1. 用户 Pull 最新提交。
-2. 运行 `pytest tests/test_project_orchestrator.py tests/test_project_execution.py -q`，确认 6.3 project facade contract。
-3. 运行 `pytest tests/test_orchestrator_scheduler_contract.py tests/test_dependency_scheduler.py tests/test_workflow_transition_integration.py tests/test_workflow_stage_transition_contract.py tests/test_workflow_state_machine_contract.py -q`，确认 6.1 / 6.2 / 6.3 回归稳定。
+2. 运行 `pytest tests/test_task_executor.py -q`，验证 bounded concurrency、结果顺序、worker failure isolation、read-only executor boundary。
+3. 运行 `pytest tests/test_orchestrator_parallel_execution.py tests/test_orchestrator_scheduler_contract.py tests/test_dependency_scheduler.py tests/test_workflow_transition_integration.py -q`，验证并行执行与既有 Scheduler / Workflow contract。
 4. 运行 `pytest -q`，建立新的全量基线。
-5. 下一阶段进入 **6.4 Task 并行执行**：在现有 DependencyScheduler execution layers 基础上设计并发边界。
+5. 若全部通过，将 6.4.1 标记完成并进入 **6.4.2 Layer-based Orchestrator integration**。
 6. 并行执行必须保持 `TaskManager` 为唯一 lifecycle mutation boundary，并禁止 Scheduler 直接修改 Task。
-7. 明确 worker isolation、最大并发度、ready-layer 批次语义以及 failure/blocked propagation 的 contract。
-8. 本阶段暂不引入 retry/resume、persistence；ProjectResult 继续作为既有 project-level summary contract 使用。
+7. 本阶段暂不引入 retry/resume、persistence；ProjectResult 继续作为既有 project-level summary contract 使用。
