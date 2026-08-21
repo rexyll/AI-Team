@@ -51,7 +51,8 @@ class MockTester:
             "message": "TEST_PASSED",
         }
 
-def test_orchestrator_routes_developer_through_review_workflow():
+
+def _developer_workflow():
     task = Task(
         id="TASK-ORCH-001",
         title="orchestrator workflow",
@@ -63,13 +64,18 @@ def test_orchestrator_routes_developer_through_review_workflow():
     developer = MockDeveloper()
     reviewer = MockReviewer()
     tester = MockTester()
-    
+
     router = AgentRouter()
     router.register("developer", developer)
     router.register("tester", tester)
     router.register("reviewer", reviewer)
 
     manager = TaskManager([task])
+    return task, developer, reviewer, tester, manager, router
+
+
+def test_orchestrator_routes_developer_through_review_workflow():
+    task, developer, reviewer, tester, manager, router = _developer_workflow()
     orchestrator = Orchestrator(manager, router)
 
     orchestrator.run()
@@ -82,3 +88,26 @@ def test_orchestrator_routes_developer_through_review_workflow():
     assert task.review_result["status"] == "approved"
 
 
+def test_orchestrator_checkpoint_hook_is_compatible_with_developer_workflow():
+    task, developer, reviewer, tester, manager, router = _developer_workflow()
+    checkpoints: list[str] = []
+    orchestrator = Orchestrator(manager, router)
+    orchestrator.set_state_change_hook(
+        lambda task_manager: checkpoints.append(
+            task_manager.get_task(task.id).status
+        )
+    )
+
+    orchestrator.run()
+
+    assert task.status == "completed"
+    assert checkpoints == [
+        "ready",
+        "running",
+        "review_pending",
+        "reviewing",
+        "completed",
+    ]
+    assert developer.calls == 1
+    assert tester.calls == 1
+    assert reviewer.calls == 1
