@@ -71,7 +71,7 @@ class Developer:
         }
 
 
-class Tester:
+class LifecycleTester:
     role = "tester"
 
     def __init__(self) -> None:
@@ -108,7 +108,7 @@ class Router:
         self.planner = Planner()
         self.architect = Architect()
         self.developer = Developer()
-        self.tester = Tester()
+        self.tester = LifecycleTester()
         self.reviewer = Reviewer()
 
     def get_agent(self, role):
@@ -180,7 +180,10 @@ def test_project_lifecycle_continue_uses_persisted_runtime_without_replanning(tm
 
     manager.mark_ready("TASK-LIFE-001")
     manager.mark_running("TASK-LIFE-001")
-    manager.mark_completed("TASK-LIFE-001", {"status": "completed", "message": "restored"})
+    manager.mark_completed(
+        "TASK-LIFE-001",
+        {"status": "completed", "message": "restored"},
+    )
     manager.mark_ready("TASK-LIFE-002")
 
     adapter = ProjectPersistenceAdapter(tmp_path)
