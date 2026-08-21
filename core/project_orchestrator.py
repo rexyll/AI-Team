@@ -77,11 +77,22 @@ class ProjectOrchestrator:
             raise TypeError("task_manager must be a TaskManager")
         return self.orchestrator_factory(task_manager, self.agent_router)
 
-    def execute(self, task_manager: TaskManager) -> ProjectResult:
+    def execute(
+        self,
+        task_manager: TaskManager,
+        *,
+        state_change_hook: Callable[[TaskManager], None] | None = None,
+    ) -> ProjectResult:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
+        if state_change_hook is not None and not callable(state_change_hook):
+            raise TypeError("state_change_hook must be callable or None")
+
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
+        set_hook = getattr(orchestrator, "set_state_change_hook", None)
+        if state_change_hook is not None and callable(set_hook):
+            set_hook(state_change_hook)
         orchestrator.run()
         project_name = None
         if self.last_plan is not None:
@@ -135,8 +146,9 @@ class ProjectOrchestrator:
 
         Continuation never invokes the planner or rebuilds the TaskManager.
         The persisted plan and TaskManager are restored first, then the
-        canonical project execution path is used. The resulting runtime
-        snapshot replaces the existing persisted snapshot atomically.
+        canonical project execution path is used. Each execution boundary
+        checkpoints the restored runtime state, and the final result is
+        persisted as the authoritative project snapshot.
         """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
@@ -149,7 +161,27 @@ class ProjectOrchestrator:
             self.last_plan = None
 
         self.last_task_manager = snapshot.task_manager
-        result = self.execute(snapshot.task_manager)
+        project_name = None
+        if self.last_plan is not None:
+            value = self.last_plan.get("project")
+            if isinstance(value, str):
+                project_name = value
+
+        def persist_checkpoint(manager: TaskManager) -> None:
+            adapter.update(
+                project_id,
+                plan=self.last_plan,
+                task_manager=manager,
+                result=ProjectResult.from_task_manager(
+                    manager,
+                    project=project_name,
+                ),
+            )
+
+        result = self.execute(
+            snapshot.task_manager,
+            state_change_hook=persist_checkpoint,
+        )
         adapter.update(
             project_id,
             plan=self.last_plan,
