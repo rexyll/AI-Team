@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from core.project_orchestrator import ProjectOrchestrator
+from core.project_result import ProjectResult
 from runtime.task_manager import TaskManager
 
 
@@ -80,9 +81,86 @@ def test_project_orchestrator_execute_is_explicit_project_execution_boundary():
 
     result = project.execute(manager)
 
-    assert result is manager
+    assert isinstance(result, ProjectResult)
+    assert result.success is False
+    assert result.status == "incomplete"
+    assert result.total_tasks == 1
+    assert result.completed_tasks == 0
+    assert result.failed_tasks == ()
+    assert result.blocked_tasks == ()
+    assert project.last_result is result
     assert captured["orchestrator"].run_called is True
     assert captured["orchestrator"].task_manager is manager
+
+
+def test_project_result_reports_successful_execution():
+    manager = TaskManager([])
+    manager.tasks = {}
+
+    # A one-task completed manager is enough to validate the project-level
+    # result contract without invoking an LLM or the workflow runtime.
+    from runtime.task import Task
+
+    manager = TaskManager(
+        [
+            Task(
+                id="TASK-001",
+                title="done",
+                description="done",
+                role="architect",
+                status="completed",
+            )
+        ]
+    )
+
+    result = ProjectResult.from_task_manager(manager, project="demo")
+
+    assert result.to_dict() == {
+        "project": "demo",
+        "success": True,
+        "status": "completed",
+        "total_tasks": 1,
+        "completed_tasks": 1,
+        "failed_tasks": [],
+        "blocked_tasks": [],
+    }
+
+
+def test_project_result_reports_failed_and_blocked_tasks():
+    from runtime.task import Task
+
+    manager = TaskManager(
+        [
+            Task(
+                id="TASK-FAILED",
+                title="failed",
+                description="failed",
+                role="developer",
+                status="failed",
+            ),
+            Task(
+                id="TASK-BLOCKED",
+                title="blocked",
+                description="blocked",
+                role="tester",
+                status="blocked",
+            ),
+        ]
+    )
+
+    result = ProjectResult.from_task_manager(manager)
+
+    assert result.success is False
+    assert result.status == "failed"
+    assert result.total_tasks == 2
+    assert result.completed_tasks == 0
+    assert result.failed_tasks == ("TASK-FAILED",)
+    assert result.blocked_tasks == ("TASK-BLOCKED",)
+
+
+def test_project_result_requires_task_manager():
+    with pytest.raises(TypeError, match="task_manager must be a TaskManager"):
+        ProjectResult.from_task_manager(None)  # type: ignore[arg-type]
 
 
 def test_project_orchestrator_execute_requires_task_manager():
