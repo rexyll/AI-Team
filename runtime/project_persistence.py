@@ -88,9 +88,6 @@ class ProjectPersistenceAdapter:
         if tool_execution_history is None:
             tool_execution_history = ProjectPersistenceAdapter._history_from_task_manager(task_manager)
         else:
-            # An explicitly supplied project history is authoritative. Task
-            # context remains a valid source for deriving history only when
-            # the caller does not provide one explicitly.
             ProjectPersistenceAdapter._validate_tool_execution_history(
                 task_manager,
                 tool_execution_history,
@@ -157,6 +154,47 @@ class ProjectPersistenceAdapter:
             raise ValueError(f"project payload is not a file: {project_id}")
 
         payload = self._build_payload(project_id, plan, task_manager, result, tool_execution_history)
+        self._atomic_write(path, payload)
+
+    def checkpoint(
+        self,
+        project_id: str,
+        *,
+        plan: dict[str, Any] | None,
+        task_manager: TaskManager,
+        result: ProjectResult,
+        tool_execution_history: ToolExecutionHistory | None = None,
+    ) -> None:
+        """Commit one complete runtime checkpoint as a single atomic snapshot.
+
+        A checkpoint is deliberately stricter than ``update``: it represents a
+        recoverable runtime boundary, so a complete ProjectResult is required
+        and must describe exactly the supplied TaskManager state. All
+        validation happens before the atomic replacement, preserving the
+        previous snapshot when the candidate state is invalid.
+        """
+        if not isinstance(result, ProjectResult):
+            raise TypeError("result must be a ProjectResult")
+
+        path = self._path(project_id)
+        if not path.exists():
+            raise KeyError(project_id)
+        if not path.is_file():
+            raise ValueError(f"project payload is not a file: {project_id}")
+
+        self._validate_snapshot_consistency(
+            project_id,
+            plan=plan,
+            task_manager=task_manager,
+            result=result,
+        )
+        payload = self._build_payload(
+            project_id,
+            plan,
+            task_manager,
+            result,
+            tool_execution_history,
+        )
         self._atomic_write(path, payload)
 
     def load(self, project_id: str) -> ProjectSnapshot:
