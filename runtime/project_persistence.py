@@ -155,40 +155,37 @@ class ProjectPersistenceAdapter:
         task_manager: TaskManager,
         result: ProjectResult | None,
     ) -> None:
-        """Reject snapshots whose plan, runtime tasks, and result disagree."""
+        """Validate only invariants that must survive persisted recovery.
+
+        The plan is the immutable planning record while TaskManager stores the
+        mutable runtime state. Runtime task metadata may legitimately differ
+        from the original plan after execution or migration, so recovery does
+        not require a field-for-field plan/task match. The stable task identity
+        set and the persisted aggregate result, however, must remain coherent.
+        """
         tasks = task_manager.get_all_tasks()
-        task_by_id = {task.id: task for task in tasks}
+        task_ids = [task.id for task in tasks]
+
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError(f"project snapshot contains duplicate task ids: {project_id}")
 
         if plan is not None:
             plan_tasks = plan.get("tasks")
             if not isinstance(plan_tasks, list):
                 raise ValueError(f"project snapshot plan has invalid tasks: {project_id}")
 
-            plan_by_id: dict[str, dict[str, Any]] = {}
+            plan_ids: list[str] = []
             for item in plan_tasks:
                 if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                    raise ValueError(f"project snapshot plan contains an invalid task: {project_id}")
-                task_id = item["id"]
-                if task_id in plan_by_id:
-                    raise ValueError(f"project snapshot plan contains duplicate task: {task_id}")
-                plan_by_id[task_id] = item
+                    raise ValueError(
+                        f"project snapshot plan contains an invalid task: {project_id}"
+                    )
+                plan_ids.append(item["id"])
 
-            if set(plan_by_id) != set(task_by_id):
+            if len(plan_ids) != len(set(plan_ids)):
+                raise ValueError(f"project snapshot plan contains duplicate task ids: {project_id}")
+            if set(plan_ids) != set(task_ids):
                 raise ValueError(f"project snapshot plan/task identity mismatch: {project_id}")
-
-            fields = ("title", "description", "role", "dependencies")
-            for task_id, plan_task in plan_by_id.items():
-                task = task_by_id[task_id]
-                for field in fields:
-                    persisted_value = getattr(task, field)
-                    planned_value = plan_task.get(field)
-                    if field == "dependencies":
-                        persisted_value = list(persisted_value)
-                        planned_value = list(planned_value) if isinstance(planned_value, list) else planned_value
-                    if persisted_value != planned_value:
-                        raise ValueError(
-                            f"project snapshot plan/task mismatch for {task_id}: {field}"
-                        )
 
         if result is not None:
             project_name = None
