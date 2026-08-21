@@ -120,15 +120,12 @@ def test_tester_success_uses_declared_transition():
         ),
     )
 
-    # Reviewer entry is a separate lifecycle transition performed by
-    # TaskWorkflow immediately before reviewer execution.
+    assert task.status == TaskStatus.REVIEWING.value
     _assert_transition(
         task,
         "tester",
         WorkflowOutcomeKind.SUCCESS,
     )
-    manager.mark_reviewing(task.id)
-    assert task.status == TaskStatus.REVIEWING.value
 
 
 def test_tester_quality_failure_uses_declared_revision_transition():
