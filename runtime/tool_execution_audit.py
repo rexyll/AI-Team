@@ -83,3 +83,16 @@ class ToolExecutionAudit:
             "by_tool": dict(sorted(by_tool.items())),
             "by_agent_role": dict(sorted(by_agent_role.items())),
         }
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a fully detached, persistence-safe audit snapshot.
+
+        The snapshot contains both the immutable record payloads and the
+        deterministic aggregate summary. Every nested value is rebuilt from
+        the audit-owned history so callers cannot mutate audit state through
+        the returned dictionary.
+        """
+        return {
+            "records": [record.to_dict() for record in self.records()],
+            "summary": self.summary(),
+        }
