@@ -85,20 +85,28 @@ def test_project_snapshot_round_trips_tool_logs_for_known_tasks(tmp_path):
     assert snapshot.tool_execution_history.get("EXEC-001").task_id == "TASK-001"
 
 
-def test_project_save_rejects_divergent_explicit_history_when_task_context_already_has_logs(tmp_path):
+def test_explicit_project_history_overrides_task_context_history(tmp_path):
+    adapter = ProjectPersistenceAdapter(tmp_path)
     manager = _manager()
-    manager.get_task("TASK-001").context["tool_execution_history"] = [_record("TASK-001").to_dict()]
+    derived = _record("TASK-001", execution_id="EXEC-001")
+    explicit = _record("TASK-001", execution_id="EXEC-002")
+    manager.get_task("TASK-001").context["tool_execution_history"] = [derived.to_dict()]
 
-    divergent = ToolExecutionHistory()
-    divergent.append(_record("TASK-001", execution_id="EXEC-002"))
+    history = ToolExecutionHistory()
+    history.append(explicit)
+    adapter.save(
+        "PROJECT-001",
+        plan=None,
+        task_manager=manager,
+        tool_execution_history=history,
+    )
 
-    with pytest.raises(ValueError, match="does not match task context history"):
-        ProjectPersistenceAdapter(tmp_path).save(
-            "PROJECT-001",
-            plan=None,
-            task_manager=manager,
-            tool_execution_history=divergent,
-        )
+    snapshot = adapter.load("PROJECT-001")
+
+    assert snapshot.tool_execution_history is not None
+    assert snapshot.tool_execution_history.get("EXEC-002") == explicit
+    with pytest.raises(KeyError):
+        snapshot.tool_execution_history.get("EXEC-001")
 
 
 def test_repeated_project_checkpoint_does_not_duplicate_tool_logs(tmp_path):
