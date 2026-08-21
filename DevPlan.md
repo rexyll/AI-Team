@@ -11,12 +11,12 @@
 
 ```text
 pytest -q
-668 passed in 1.68s
+744 passed in 2.02s
 ```
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 均已完成。
 
-Phase 7 已完成 Task / Project / Agent Execution Record 的 persistence contract、adapter 与 execution history 基础集成，下一步进入 **7.4 Project Resume / Recovery**。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 已完成；7.4 Project Resume / Recovery 已完成并通过用户全量验收。当前进入 **7.5 Tool execution logs**。
 
 ---
 
@@ -74,31 +74,27 @@ Phase 7 已完成 Task / Project / Agent Execution Record 的 persistence contra
 
 ## <span style="color:green">√</span> 7.1 Task persistence contract
 ## <span style="color:green">√</span> 7.1.1 Task persistence adapter
-
-已完成 Task persistence-safe serialization、round-trip、identity validation，以及本地文件 adapter 的 save/load/delete/list、atomic write、corrupt payload 与 duplicate identity 边界。
-
 ## <span style="color:green">√</span> 7.2 Project persistence
-
-已完成 Project plan、TaskManager、ProjectResult 的持久化边界及 adapter round-trip，并保持 runtime object 不进入 persisted payload。
-
 ## <span style="color:green">√</span> 7.3 Agent execution records
 
-已完成 `AgentExecutionRecord` serialization、immutable execution history、`ExecutionRecordPersistenceAdapter`，以及 `ExecutionHistory` 的 save/load 集成。
+## <span style="color:green">√</span> 7.4 Project Resume / Recovery
+### <span style="color:green">√</span> 7.4.1 Persisted project resume contract
+### <span style="color:green">√</span> 7.4.2 ProjectOrchestrator persisted resume integration
+### <span style="color:green">√</span> 7.4.3 Recovery consistency / corruption boundaries
+
+已完成 persisted project → runtime state 恢复边界、Planner-free continuation、TaskManager identity consistency、ProjectResult consistency，以及 corrupt snapshot / identity mismatch / unknown task tool-history 等恢复边界。
 
 用户最终验收：
 
 ```text
 pytest -q
-668 passed in 1.68s
+744 passed in 2.02s
 ```
 
-**结论：7.1 / 7.1.1 / 7.2 / 7.3 已完成。**
-
-## ☐ 7.4 Project Resume / Recovery
-### ☐ 7.4.1 Persisted project resume contract
-### ☐ 7.4.2 ProjectOrchestrator persisted resume integration
-### ☐ 7.4.3 Recovery consistency / corruption boundaries
 ## ☐ 7.5 Tool execution logs
+### ☐ 7.5.1 Tool log ownership / persistence contract
+### ☐ 7.5.2 Project recovery tool-log integration
+### ☐ 7.5.3 Audit / query observability boundary
 ## ☐ 7.6 Workflow event log
 
 ### Phase 7 开发边界
@@ -129,13 +125,10 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 # 当前下一动作
 
-**当前节点：7.4.1 Persisted project resume contract。**
+**当前节点：7.5.1 Tool log ownership / persistence contract。**
 
-1. 冻结 persisted project → runtime state 的恢复边界；
-2. resume 不重新调用 Planner；
-3. resume 不重新构建已经持久化的 task graph；
-4. 已完成 Task 保持原 lifecycle state；
-5. 恢复后的 TaskManager 继续交给现有 Orchestrator；
-6. 缺失 project、损坏 snapshot、schema / identity 不一致必须明确失败；
-7. 专项测试通过后执行全量 `pytest -q`；
-8. 用户全量验收通过后再标记 7.4.1。
+1. ToolExecutionRecord 必须属于已存在的 Task；
+2. Project snapshot 保存 / 恢复时不得接受悬空 tool execution records；
+3. Task context 中的 tool history 与 project-level history 必须保持 ownership 一致；
+4. 专项测试通过后执行全量 `pytest -q`；
+5. 用户全量验收通过后标记 7.5.1，再进入 7.5.2。
