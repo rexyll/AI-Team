@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-583 passed in 1.36s
+592 passed in 1.38s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进，6.5.1 已通过用户全量回归，当前进入 6.5.2 Retry policy integration。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进，6.5.1 与 6.5.2 已通过用户全量回归，当前进入 6.5.3 Resume in-memory execution boundary 验收。**
 
 ---
 
@@ -126,9 +126,9 @@ pytest -q
 583 passed in 1.36s
 ```
 
-### ☐ 6.5.2 Retry policy integration
+### <span style="color:green">√</span> 6.5.2 Retry policy integration
 
-当前正在实现 Orchestrator failure boundary integration：
+已完成 Orchestrator failure boundary integration，并通过用户全量回归：
 
 1. `runtime.retry_policy.decide_retry()` 作为纯 retry decision source；
 2. Orchestrator 在 execution failure boundary 统一进行 failure classification 与 retry decision；
@@ -138,15 +138,42 @@ pytest -q
 6. non-retryable failure 或预算耗尽保持 `FAILED`；
 7. 默认 `ValueError` / `TypeError` / `KeyError` 视为 non-retryable，其它未分类执行异常默认为 execution failure；
 8. 支持注入 failure classifier，为后续 quality-gate retry 保留扩展点；
-9. 新增 `tests/test_orchestrator_retry_policy.py`，先完成专项验证，再进行全量回归。
+9. 新增 `tests/test_orchestrator_retry_policy.py`，覆盖 retryable failure、non-retryable failure、budget exhaustion、custom classifier 与 non-failed task guard。
+
+用户最终验收：
+
+```text
+pytest -q
+592 passed in 1.38s
+```
+
+**结论：6.5.2 Retry policy integration 已完成。**
 
 ### ☐ 6.5.3 Resume in-memory execution boundary
 
-待 6.5.2 验收后继续：定义无 persistence 前提下可恢复 execution state 与 resume entry point；不引入持久化层。
+当前节点：定义并验收无 persistence 前提下的 in-memory resume execution boundary。
+
+目标：
+
+1. `ProjectOrchestrator.resume()` 从现有 `TaskManager` execution state 继续执行；
+2. resume 不重新调用 Planner；
+3. resume 不重新构建 Task Graph；
+4. 已完成 Task 保持完成状态，不被重复执行；
+5. 当前可执行 Task 继续交给 Orchestrator / DependencyScheduler；
+6. 没有可恢复 in-memory execution state 时明确拒绝 resume；
+7. 不在 Phase 6.5.3 引入 persistence，持久化恢复留给 Phase 7.6。
+
+下一步先运行专项测试：
+
+```text
+pytest tests/test_project_resume.py -q
+```
+
+专项通过后再运行全量 `pytest -q`。全量通过后将 6.5.3 标记为 √。
 
 ### ☐ 6.5.4 Retry / Resume integration
 
-待前述 contract 冻结后，验证 retry/resume 与 DependencyScheduler、TaskWorkflow、TaskManager 的协作边界。
+待 6.5.3 contract 冻结后，验证 retry/resume 与 DependencyScheduler、TaskWorkflow、TaskManager 的协作边界。
 
 ## ☐ 6.6 ProjectResult
 
@@ -173,17 +200,17 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.5.2 Retry policy integration。**
+**当前节点：Phase 6.5.3 Resume in-memory execution boundary。**
 
-1. 用户已确认 6.5.1 全量回归通过：`583 passed in 1.36s`。
-2. 已将 retry policy 接入 Orchestrator failure boundary，并保持 policy pure / lifecycle mutation 集中于 TaskManager。
-3. 已新增 `tests/test_orchestrator_retry_policy.py`，覆盖 retryable failure、non-retryable failure、budget exhaustion、custom classifier 与 non-failed task guard。
+1. 用户已确认 6.5.2 全量回归通过：`592 passed in 1.38s`。
+2. Retry policy 已冻结为 pure decision source，failure classification 位于 Orchestrator boundary，TaskManager 独占 retry/lifecycle mutation。
+3. 已提供 `ProjectOrchestrator.resume()` 作为 in-memory resume entry point，并保持 resume 不重新规划、不重建 task graph。
 4. 用户 Pull 后先运行：
 
 ```text
-pytest tests/test_retry_policy.py tests/test_orchestrator_retry_policy.py -q
+pytest tests/test_project_resume.py -q
 ```
 
 5. 再运行全量 `pytest -q`。
-6. 全量通过后标记 6.5.2 为 √，然后进入 **6.5.3 Resume in-memory execution boundary**。
-7. Resume 暂不与 persistence 耦合，保持 Phase 7 的 persistence 边界。
+6. 全量通过后标记 6.5.3 为 √，然后进入 **6.5.4 Retry / Resume integration**。
+7. Resume 暂不与 persistence 耦合，Phase 7.6 再处理 persisted state resume。
