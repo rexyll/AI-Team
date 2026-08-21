@@ -1,6 +1,7 @@
 from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
 from runtime.dependency_scheduler import DependencyScheduler
+from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 
@@ -12,9 +13,11 @@ class Orchestrator:
         self,
         task_manager: TaskManager,
         agent_router: AgentRouter,
+        max_workers: int = 4,
     ):
         self.task_manager = task_manager
         self.agent_router = agent_router
+        self.task_executor = TaskLayerExecutor(max_workers=max_workers)
 
     def run(self) -> None:
         print("\n" + "=" * 60)
@@ -28,8 +31,13 @@ class Orchestrator:
                 self._handle_no_ready_tasks()
                 break
 
-            for task in ready_tasks:
-                self._execute_task(task)
+            # One readiness batch is one execution layer. All tasks in the
+            # batch may execute concurrently; the next scheduling iteration
+            # is the barrier that waits for this layer to finish.
+            self.task_executor.run_layer(
+                ready_tasks,
+                self._execute_task,
+            )
 
         print("\n" + "=" * 60)
         print(
