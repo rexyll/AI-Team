@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-578 passed in 1.36s
+583 passed in 1.36s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进，6.5.1 已通过用户全量回归，当前进入 6.5.2 Retry policy integration。**
 
 ---
 
@@ -105,23 +105,40 @@ pytest tests/test_task_manager_concurrency.py -q
 
 ## ☐ 6.5 Retry / Resume
 
-### ☐ 6.5.1 Retry lifecycle contract
+### <span style="color:green">√</span> 6.5.1 Retry lifecycle contract
 
-当前已进入 retry contract hardening：
+已完成并通过用户全量回归验证：
 
 1. `Task.retry_attempt` 从 0 开始，并与 `status_history` 分离；
-2. `Task.max_retries` 必须显式配置，默认预算为 0；
+2. `Task.max_retries` 默认预算为 0，并支持显式配置；
 3. retry attempt 只允许由 retryable failure 创建，并受 retry budget 限制；
 4. `TaskManager.retry_task()` 只允许从 `FAILED` 状态重新打开 Task；
 5. 合法 retry 的生命周期目标固定为 `FAILED → READY`；
-6. retry 必须记录 attempt、reason、retryable，并清除旧 error；
-7. budget exhausted / non-retryable / invalid source state 的 retry 必须保持 Task 状态、history、error 与 attempt 不变；
-8. retry 一个 Task 不得修改其它 peer Task；
-9. 已新增 `tests/test_task_manager_retry_contract.py`，等待用户 Pull 后进行专项与全量验证。
+6. retry 记录 attempt、reason、retryable，并清除旧 error；
+7. budget exhausted / non-retryable / invalid source state 的 retry 不污染已有 lifecycle state；
+8. retry 一个 Task 不修改其它 peer Task；
+9. 新增 retry lifecycle contract tests。
+
+用户验收：
+
+```text
+pytest -q
+583 passed in 1.36s
+```
 
 ### ☐ 6.5.2 Retry policy integration
 
-待 6.5.1 验收后继续：将 retryable / max retry policy 接入 Orchestrator execution failure boundary，避免把 retry decision 混入 Agent、Workflow 或 Scheduler。
+当前正在实现 Orchestrator failure boundary integration：
+
+1. `runtime.retry_policy.decide_retry()` 作为纯 retry decision source；
+2. Orchestrator 在 execution failure boundary 统一进行 failure classification 与 retry decision；
+3. Agent、TaskWorkflow、DependencyScheduler 不直接承担 retry policy；
+4. `TaskManager` 仍是唯一 retry/lifecycle mutation boundary；
+5. retryable failure 在预算内通过 `FAILED → READY` 重新进入 scheduler；
+6. non-retryable failure 或预算耗尽保持 `FAILED`；
+7. 默认 `ValueError` / `TypeError` / `KeyError` 视为 non-retryable，其它未分类执行异常默认为 execution failure；
+8. 支持注入 failure classifier，为后续 quality-gate retry 保留扩展点；
+9. 新增 `tests/test_orchestrator_retry_policy.py`，先完成专项验证，再进行全量回归。
 
 ### ☐ 6.5.3 Resume in-memory execution boundary
 
@@ -156,16 +173,17 @@ pytest tests/test_task_manager_concurrency.py -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.5.1 Retry lifecycle contract。**
+**当前节点：Phase 6.5.2 Retry policy integration。**
 
-1. 用户当前基线为 `578 passed`，作为 6.5.1 开始前回归基线。
-2. 已新增 `tests/test_task_manager_retry_contract.py`，冻结 TaskManager retry lifecycle 的最小 contract。
-3. 用户 Pull 后先运行：
+1. 用户已确认 6.5.1 全量回归通过：`583 passed in 1.36s`。
+2. 已将 retry policy 接入 Orchestrator failure boundary，并保持 policy pure / lifecycle mutation 集中于 TaskManager。
+3. 已新增 `tests/test_orchestrator_retry_policy.py`，覆盖 retryable failure、non-retryable failure、budget exhaustion、custom classifier 与 non-failed task guard。
+4. 用户 Pull 后先运行：
 
 ```text
-pytest tests/test_retry_contract.py tests/test_task_manager_retry_contract.py -q
+pytest tests/test_retry_policy.py tests/test_orchestrator_retry_policy.py -q
 ```
 
-4. 再运行全量 `pytest -q`。
-5. 若全部通过，下一步实现 6.5.2 Retry policy integration，并在完成后再更新节点为 √。
-6. Resume 暂不与 persistence 耦合，保持 Phase 7 的 persistence 边界。
+5. 再运行全量 `pytest -q`。
+6. 全量通过后标记 6.5.2 为 √，然后进入 **6.5.3 Resume in-memory execution boundary**。
+7. Resume 暂不与 persistence 耦合，保持 Phase 7 的 persistence 边界。
