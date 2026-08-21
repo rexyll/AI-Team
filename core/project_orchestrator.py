@@ -119,6 +119,38 @@ class ProjectOrchestrator:
             project=(snapshot.plan or {}).get("project") if snapshot.plan else None,
         )
 
+    def continue_persisted(
+        self,
+        project_id: str,
+        adapter: ProjectPersistenceAdapter,
+    ) -> ProjectResult:
+        """Restore a persisted project and execute only its unfinished work.
+
+        Continuation never invokes the planner or rebuilds the TaskManager.
+        The persisted plan and TaskManager are restored first, then the
+        canonical project execution path is used. The resulting runtime
+        snapshot replaces the existing persisted snapshot atomically.
+        """
+        if not isinstance(adapter, ProjectPersistenceAdapter):
+            raise TypeError("adapter must be a ProjectPersistenceAdapter")
+
+        snapshot = adapter.load(project_id)
+        if snapshot.plan is not None:
+            validate_plan(snapshot.plan)
+            self.last_plan = snapshot.plan
+        else:
+            self.last_plan = None
+
+        self.last_task_manager = snapshot.task_manager
+        result = self.execute(snapshot.task_manager)
+        adapter.update(
+            project_id,
+            plan=self.last_plan,
+            task_manager=self.last_task_manager,
+            result=result,
+        )
+        return result
+
     def run(self, requirement: str) -> ProjectResult:
         plan = self.create_plan(requirement)
         task_manager = self.build_task_manager(plan)
