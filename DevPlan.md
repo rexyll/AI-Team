@@ -11,10 +11,10 @@
 
 ```text
 pytest -q
-557 passed in 1.34s
+578 passed in 1.36s
 ```
 
-**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成，下一节点为 6.5 Retry / Resume。**
+**Phase 5 Tool / Sandbox Architecture 已完成。Phase 6.1 TaskWorkflow 状态机已完成。Phase 6.2 Dependency-aware Scheduler 已完成。Phase 6.3 ProjectOrchestrator 已完成。Phase 6.4 Task 并行执行已完成。Phase 6.5 Retry / Resume 正在推进。**
 
 ---
 
@@ -89,66 +89,47 @@ Phase 4 已完成。
 ## <span style="color:green">√</span> 6.4 Task 并行执行
 
 ### <span style="color:green">√</span> 6.4.1 Task layer executor contract
-
-已完成 `runtime.task_executor.TaskLayerExecutor`：
-
-1. bounded worker pool，默认 `max_workers=4`；
-2. 输入 task 顺序与返回结果顺序保持一致；
-3. 一个 worker 失败不会主动取消其它 peer；
-4. 所有 submitted futures 完成后才向调用方传播第一个异常；
-5. executor 不读取/修改 Task lifecycle 状态；
-6. invalid worker count、invalid task、invalid callable 均在 executor boundary 拒绝。
-
 ### <span style="color:green">√</span> 6.4.2 Layer-based Orchestrator integration
-
-已完成 `core.Orchestrator` 的 layer-based execution：
-
-1. `DependencyScheduler` 产出的 ready batch 作为当前 execution layer；
-2. 同一 layer 内的独立 Task 通过 `TaskLayerExecutor` 并发执行；
-3. 当前 layer 的所有 worker 完成后才重新运行 dependency scheduling；
-4. 因此存在依赖关系的下游 Task 不会与其上游 Task 同层执行；
-5. worker failure 由 `_execute_task()` 转换为对应 Task 的 failed 状态，不取消其它独立 peer；
-6. 失败 Task 的下游依赖在下一轮 scheduler 中进入 blocked propagation；
-7. Developer workflow 在每个 Task execution 内独立创建 `TaskWorkflow`，避免共享 workflow 实例状态；
-8. `TaskManager` 仍是 lifecycle mutation boundary，Scheduler 与 Executor 均不直接改变 lifecycle。
-
 ### <span style="color:green">√</span> 6.4.3 Concurrency hardening
 
-已完成 TaskManager 并发安全边界：
+已完成 bounded layer executor、DependencyScheduler layer integration 与 TaskManager 并发安全边界。TaskManager 是唯一 lifecycle mutation boundary；同层独立 Task 可并行执行，依赖下游只能在上游 layer 完成后进入下一轮 scheduling。
 
-1. `TaskManager` lifecycle mutation 使用 `RLock` 保护 validate → history → status mutation 原子区间；
-2. 同一 Task 的并发 transition 至多一次成功，避免重复 lifecycle transition；
-3. 不同 Task 的 status/history/result/error 在并发执行下保持隔离；
-4. concurrent scheduler/read operations 不破坏 TaskManager 状态一致性；
-5. 非法并发 transition 不污染 `status_history`；
-6. 使用 re-entrant lock 支持嵌套 lifecycle 调用且避免死锁；
-7. 新增 `tests/test_task_manager_concurrency.py`，覆盖上述 concurrency safety contracts；
-8. 不在本阶段引入 retry/resume/persistence，保持职责边界稳定。
-
-用户最终验收：
+用户最终验收基线：
 
 ```text
 pytest tests/test_task_manager_concurrency.py -q
 6 passed in 0.05s
-
-pytest -q
-557 passed in 1.34s
 ```
 
 **结论：6.4 Task 并行执行已完成。**
 
 ## ☐ 6.5 Retry / Resume
 
-下一阶段重点：
+### ☐ 6.5.1 Retry lifecycle contract
 
-1. 明确 Task failure 后 retry 的状态机边界；
-2. 区分 retry attempt、workflow stage 与 Task lifecycle status；
-3. retry 必须保持已有成功 peer 的结果不受影响；
-4. 明确 retryable / non-retryable failure contract；
-5. 建立最大 retry 次数、attempt history 与最终失败语义；
-6. Resume 只恢复可恢复的 Task execution state，不在本阶段引入完整 persistence；
-7. 确保 retry/resume 与 dependency scheduler、TaskWorkflow、TaskManager 的职责边界清晰；
-8. 优先 contract tests，再实现最小状态机变化。
+当前已进入 retry contract hardening：
+
+1. `Task.retry_attempt` 从 0 开始，并与 `status_history` 分离；
+2. `Task.max_retries` 必须显式配置，默认预算为 0；
+3. retry attempt 只允许由 retryable failure 创建，并受 retry budget 限制；
+4. `TaskManager.retry_task()` 只允许从 `FAILED` 状态重新打开 Task；
+5. 合法 retry 的生命周期目标固定为 `FAILED → READY`；
+6. retry 必须记录 attempt、reason、retryable，并清除旧 error；
+7. budget exhausted / non-retryable / invalid source state 的 retry 必须保持 Task 状态、history、error 与 attempt 不变；
+8. retry 一个 Task 不得修改其它 peer Task；
+9. 已新增 `tests/test_task_manager_retry_contract.py`，等待用户 Pull 后进行专项与全量验证。
+
+### ☐ 6.5.2 Retry policy integration
+
+待 6.5.1 验收后继续：将 retryable / max retry policy 接入 Orchestrator execution failure boundary，避免把 retry decision 混入 Agent、Workflow 或 Scheduler。
+
+### ☐ 6.5.3 Resume in-memory execution boundary
+
+待 6.5.2 验收后继续：定义无 persistence 前提下可恢复 execution state 与 resume entry point；不引入持久化层。
+
+### ☐ 6.5.4 Retry / Resume integration
+
+待前述 contract 冻结后，验证 retry/resume 与 DependencyScheduler、TaskWorkflow、TaskManager 的协作边界。
 
 ## ☐ 6.6 ProjectResult
 
@@ -175,11 +156,16 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：Phase 6.5 Retry / Resume。**
+**当前节点：Phase 6.5.1 Retry lifecycle contract。**
 
-1. 6.4.3 Concurrency hardening 已通过专项与全量回归并正式完成。
-2. 下一步先建立 retry/resume contract tests，不直接扩大实现范围。
-3. 优先冻结 retry attempt、最大次数、失败分类与 Task 状态转换语义。
-4. Resume 暂不依赖持久化层，只定义内存态恢复边界。
-5. 完成后运行专项测试与全量 `pytest -q`。
-6. 全量通过后标记 6.5 完成，再进入 **6.6 ProjectResult**。
+1. 用户当前基线为 `578 passed`，作为 6.5.1 开始前回归基线。
+2. 已新增 `tests/test_task_manager_retry_contract.py`，冻结 TaskManager retry lifecycle 的最小 contract。
+3. 用户 Pull 后先运行：
+
+```text
+pytest tests/test_retry_contract.py tests/test_task_manager_retry_contract.py -q
+```
+
+4. 再运行全量 `pytest -q`。
+5. 若全部通过，下一步实现 6.5.2 Retry policy integration，并在完成后再更新节点为 √。
+6. Resume 暂不与 persistence 耦合，保持 Phase 7 的 persistence 边界。
