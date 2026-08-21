@@ -11,12 +11,12 @@
 
 ```text
 pytest -q
-765 passed in 2.19s
+767 passed in 2.32s
 ```
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 均已完成。
 
-Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 已完成；当前进入 **7.5.2 Project recovery tool-log integration**。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 / 7.5.2 已完成；当前进入 **7.5.3 Audit / query observability boundary**。
 
 ---
 
@@ -84,31 +84,32 @@ Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 已完成；当前进入 **7.5.2 Pro
 
 已完成 persisted project → runtime state 恢复边界、Planner-free continuation、TaskManager identity consistency、ProjectResult consistency，以及 corrupt snapshot / identity mismatch / unknown task tool-history 等恢复边界。
 
-用户最终验收：
+## <span style="color:green">√</span> 7.5 Tool execution logs
+### <span style="color:green">√</span> 7.5.1 Tool log ownership / persistence contract
+### <span style="color:green">√</span> 7.5.2 Project recovery tool-log integration
+
+7.5.2 已完成并通过用户全量验收。persisted project 的 canonical tool history 现在会在 `resume_persisted()` / `continue_persisted()` 恢复到 Task runtime context；旧的 task-local tool history 会被清除；继续执行和 checkpoint 使用同一 canonical ownership。
+
+用户验收基线：
 
 ```text
 pytest -q
-765 passed in 2.19s
+767 passed in 2.32s
 ```
 
-## <span style="color:green">√</span> 7.5 Tool execution logs
-### <span style="color:green">√</span> 7.5.1 Tool log ownership / persistence contract
+### <span style="color:orange">▶</span> 7.5.3 Audit / query observability boundary
 
-已建立并验证：
+本节点目标：
 
-1. ToolExecutionRecord 必须属于已存在的 Task；
-2. Task context 中的 tool execution record 必须声明自身所属 Task；
-3. project-level history 中的悬空 task_id 被拒绝；
-4. 同 execution_id 的冲突记录被拒绝；
-5. project snapshot 支持从 Task context 派生 tool history；
-6. 显式 project history 可以作为 canonical history 覆盖派生 history，同时仍接受 Task ownership 校验；
-7. checkpoint / update / load 均保持上述 ownership 边界。
+1. `ToolExecutionAudit` 只读，不向调用者暴露内部 mutable history；
+2. Audit 创建时固定 canonical history snapshot，后续 runtime history 变化不得改变已有 audit 查询结果；
+3. `records()` 返回 detached records；
+4. `count()` 与 `records()` 使用同一 snapshot / filter semantics；
+5. `summary()` 保持 deterministic aggregate contract；
+6. `ProjectPersistenceAdapter.audit()` / `ProjectOrchestrator.audit_persisted()` 继续只读取 persisted canonical history，不污染 runtime state。
 
-## ☐ 7.5.2 Project recovery tool-log integration
+专项测试通过后执行全量 `pytest -q`，用户验收后再进入 7.6 Workflow event log。
 
-当前专项工作：验证 persisted project resume 后，project-level canonical tool history 能够重新注入 Task runtime context，并清除旧的 / 被覆盖的 task-local tool history，保证继续执行使用唯一 canonical history。
-
-## ☐ 7.5.3 Audit / query observability boundary
 ## ☐ 7.6 Workflow event log
 
 ### Phase 7 开发边界
@@ -139,10 +140,9 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 # 当前下一动作
 
-**当前节点：7.5.2 Project recovery tool-log integration。**
+**当前节点：7.5.3 Audit / query observability boundary。**
 
-1. persisted project 的 canonical tool history 必须在 `resume_persisted()` 后进入 Task context；
-2. 如果 project-level history 覆盖 Task-local history，恢复后不得残留旧 execution records；
-3. recovery 后继续执行必须使用同一 canonical ownership；
-4. 专项测试通过后执行全量 `pytest -q`；
-5. 用户全量验收通过后标记 7.5.2，再进入 7.5.3。
+1. 完成 Audit immutable snapshot / detached query contract；
+2. 增加 Audit 与 persisted canonical history 的隔离测试；
+3. 专项测试通过后执行全量 `pytest -q`；
+4. 用户全量验收通过后标记 7.5.3，再进入 7.6 Workflow event log。
