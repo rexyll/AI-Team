@@ -3,12 +3,23 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from core.project_result import ProjectResult
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+
+
+@dataclass(frozen=True)
+class ProjectSnapshot:
+    """Runtime-neutral representation of one persisted project snapshot."""
+
+    project_id: str
+    plan: dict[str, Any] | None
+    task_manager: TaskManager
+    result: ProjectResult | None
 
 
 class ProjectPersistenceAdapter:
@@ -53,7 +64,7 @@ class ProjectPersistenceAdapter:
 
         self._atomic_write(path, payload)
 
-    def load(self, project_id: str) -> dict[str, Any]:
+    def load(self, project_id: str) -> ProjectSnapshot:
         path = self._path(project_id)
         if not path.exists():
             raise KeyError(project_id)
@@ -70,22 +81,73 @@ class ProjectPersistenceAdapter:
             raise ValueError("project payload must be a dictionary")
         if payload.get("project_id") != project_id:
             raise ValueError("project payload identity mismatch")
-        if not isinstance(payload.get("tasks"), list):
-            raise ValueError("project payload tasks must be a list")
 
-        # Validate persisted Task schemas without returning runtime objects.
-        for task_payload in payload["tasks"]:
-            Task.from_dict(task_payload)
+        plan = payload.get("plan")
+        if plan is not None and not isinstance(plan, dict):
+            raise ValueError("project payload plan must be a dictionary or None")
+
+        task_payloads = payload.get("tasks")
+        if not isinstance(task_payloads, list):
+            raise ValueError("project payload tasks must be a list")
+        try:
+            tasks = [Task.from_dict(item) for item in task_payloads]
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("project payload contains an invalid task") from exc
 
         result_payload = payload.get("result")
-        if result_payload is not None and not isinstance(result_payload, dict):
+        result = self._restore_result(result_payload)
+
+        return ProjectSnapshot(
+            project_id=project_id,
+            plan=plan,
+            task_manager=TaskManager(tasks),
+            result=result,
+        )
+
+    @staticmethod
+    def _restore_result(payload: Any) -> ProjectResult | None:
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
             raise ValueError("project payload result must be a dictionary or None")
 
-        return payload
+        required = {
+            "project",
+            "success",
+            "status",
+            "total_tasks",
+            "completed_tasks",
+            "failed_tasks",
+            "blocked_tasks",
+        }
+        if set(payload) != required:
+            raise ValueError("project payload result has an invalid schema")
+
+        failed_tasks = payload["failed_tasks"]
+        blocked_tasks = payload["blocked_tasks"]
+        if not isinstance(failed_tasks, list) or not isinstance(blocked_tasks, list):
+            raise ValueError("project result task collections must be lists")
+        if not isinstance(payload["success"], bool):
+            raise ValueError("project result success must be a boolean")
+        if not isinstance(payload["status"], str):
+            raise ValueError("project result status must be a string")
+        if not isinstance(payload["total_tasks"], int) or isinstance(payload["total_tasks"], bool):
+            raise ValueError("project result total_tasks must be an integer")
+        if not isinstance(payload["completed_tasks"], int) or isinstance(payload["completed_tasks"], bool):
+            raise ValueError("project result completed_tasks must be an integer")
+
+        return ProjectResult(
+            project=payload["project"],
+            success=payload["success"],
+            status=payload["status"],
+            total_tasks=payload["total_tasks"],
+            completed_tasks=payload["completed_tasks"],
+            failed_tasks=tuple(failed_tasks),
+            blocked_tasks=tuple(blocked_tasks),
+        )
 
     def load_task_manager(self, project_id: str) -> TaskManager:
-        payload = self.load(project_id)
-        return TaskManager([Task.from_dict(item) for item in payload["tasks"]])
+        return self.load(project_id).task_manager
 
     def delete(self, project_id: str) -> None:
         path = self._path(project_id)
