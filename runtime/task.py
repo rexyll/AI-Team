@@ -56,6 +56,65 @@ class Task:
             }
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the Task's persistence-safe, JSON-friendly state."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "role": self.role,
+            "status": self.status,
+            "status_history": self.status_history,
+            "error": self.error,
+            "review_round": self.review_round,
+            "dependencies": self.dependencies,
+            "result": self.result,
+            "context": self.context,
+            "review_result": self.review_result,
+            "review_history": self.review_history,
+            "test_result": self.test_result,
+            "test_history": self.test_history,
+            "retry_attempt": self.retry_attempt,
+            "max_retries": self.max_retries,
+            "retry_history": self.retry_history,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Task":
+        """Restore a Task from a persistence-safe mapping."""
+        if not isinstance(payload, dict):
+            raise TypeError("Task payload must be a dictionary")
+
+        required = ("id", "title", "description", "role")
+        missing = [key for key in required if key not in payload]
+        if missing:
+            raise ValueError(
+                "Task payload missing required fields: " + ", ".join(missing)
+            )
+
+        task = cls(
+            id=payload["id"],
+            title=payload["title"],
+            description=payload["description"],
+            role=payload["role"],
+            status=payload.get("status", "pending"),
+            status_history=list(payload.get("status_history", [])),
+            error=payload.get("error"),
+            review_round=payload.get("review_round", 0),
+            dependencies=list(payload.get("dependencies", [])),
+            result=dict(payload.get("result", {})),
+            context=dict(payload.get("context", {})),
+            review_result=dict(payload.get("review_result", {})),
+            review_history=list(payload.get("review_history", [])),
+            test_result=dict(payload.get("test_result", {})),
+            test_history=list(payload.get("test_history", [])),
+            retry_attempt=payload.get("retry_attempt", 0),
+            max_retries=payload.get("max_retries", 0),
+            retry_history=list(payload.get("retry_history", [])),
+        )
+        task.validate_contract()
+        return task
+
     def validate_contract(self) -> None:
         from runtime.runtime_contract import validate_task_contract
 
