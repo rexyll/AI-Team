@@ -5,21 +5,21 @@
 
 ## 当前状态
 
-**Phase 5 — Tool / Sandbox Architecture**
+**Phase 6 — Workflow / Project Orchestrator**
 
 最新用户验收：
 
 ```text
-pytest tests/test_tool_permission.py -q
-7 passed in 0.03s
+pytest tests/test_tool_error_contract.py -q
+8 passed in 0.04s
 
 pytest -q
-493 passed in 1.12s
+501 passed in 1.12s
 ```
 
-**Phase 4.5 Provider/config 可替换、Phase 5.1 Tool Contract、Phase 5.2 Tool Registry、Phase 5.3 Tool Argument Validation、Phase 5.4 Workspace Sandbox、Phase 5.5 Tool Permission Policy 已完成。当前进入 5.6 Tool Error Contract。**
+**Phase 5 Tool / Sandbox Architecture 已完成。当前进入 6.1 TaskWorkflow 状态机。**
 
-工作树：5.5 已通过用户专项测试与全量验收；下一节点统一 Tool 错误语义，使参数校验、权限、sandbox 与运行时失败形成稳定且可消费的错误契约。
+5.6 已冻结统一 Tool error/result contract；6.1 现阶段基于既有 `TaskStatus` + `TaskManager.transition()` 建立 TaskWorkflow 生命周期契约，下一步将把 Workflow stage/state orchestration 与该状态边界进一步收敛。
 
 ---
 
@@ -76,14 +76,6 @@ pytest -q
 9. 保留旧 `validate_tool_arguments(tool, arguments)` 两参数兼容行为，避免破坏 legacy boundary。
 10. 不把 provider-specific LLM configuration 引入 Tool validation。
 
-相关提交：
-
-```text
-8872b45  feat: add schema-based tool argument validation
-da65b8f  refactor: enforce tool schema validation before execution
-5f83d29  test: define Tool argument validation contract
-```
-
 **结论：5.3 Tool Argument Validation 已完成。**
 
 ## <span style="color:green">√</span> 5.4 Workspace Sandbox
@@ -108,23 +100,6 @@ pytest -q
 6. file / directory 的基础类型边界提供统一 helper。
 7. 保留现有 `resolve_workspace_path()` 兼容 API，逐步迁移调用方。
 8. 本节点不引入 Tool permission policy；权限语义进入 5.5。
-
-已实现：
-
-```text
-security.workspace.WorkspaceSandbox
-security.workspace.DEFAULT_SANDBOX
-security.workspace.resolve_workspace_path()
-tests/test_workspace_sandbox.py
-```
-
-相关提交：
-
-```text
-10e1228  feat: introduce WorkspaceSandbox boundary
-5c60f5d  test: define WorkspaceSandbox security contract
-6ee394b  docs: advance to Phase 5.4 Workspace Sandbox
-```
 
 **结论：5.4 Workspace Sandbox 已完成。**
 
@@ -151,47 +126,72 @@ pytest -q
 7. 当前只实现最小显式 allowlist，不引入复杂 RBAC。
 8. `ToolPermissionPolicy` 与 `DEFAULT_TOOL_PERMISSION_POLICY` 提供稳定的后续扩展边界。
 
+**结论：5.5 Tool Permission Policy 已完成。**
+
+## <span style="color:green">√</span> 5.6 Tool Error Contract
+
+已冻结统一 Tool failure/result contract，并通过用户最终验收：
+
+```text
+pytest tests/test_tool_error_contract.py -q
+8 passed in 0.04s
+
+pytest -q
+501 passed in 1.12s
+```
+
 已实现：
 
 ```text
-security.tool_permission.ToolPermissionPolicy
-security.tool_permission.ToolPermissionError
-security.tool_permission.READ
-security.tool_permission.WRITE
-security.tool_permission.EXECUTE
-security.tool_permission.DEFAULT_TOOL_PERMISSION_POLICY
-tests/test_tool_permission.py
-```
-
-**结论：5.5 Tool Permission Policy 已完成。**
-
-## ☐ 5.6 Tool Error Contract
-
-目标：统一 Tool 层错误语义与 Agent 可消费结果，避免不同 Tool 直接暴露不稳定的底层异常。
-
-设计原则：
-
-1. 参数错误、权限错误、sandbox/path 错误、Tool runtime failure 必须保持可区分的错误类别。
-2. 对外提供稳定的 Tool error contract，而不是依赖具体 Python exception message。
-3. Tool failure 不应被误判为 Agent / Workflow success。
-4. 错误结果应携带足够的 machine-readable 信息，同时避免泄露敏感路径、环境变量或内部堆栈。
-5. 保留现有异常类型的兼容边界；5.6 负责统一映射，不进行大规模 Tool 重构。
-6. Tool timeout / execution failure 为后续 Workflow retry / observability 保留稳定语义。
-7. 本节点不引入复杂重试策略；retry/resume 留给 Phase 6.5。
-
-建议新增：
-
-```text
-runtime/tool_result.py
 runtime/tool_errors.py
- tests/test_tool_error_contract.py
+runtime/tool_result.py
+tests/test_tool_error_contract.py
 ```
 
-**下一步：冻结最小 `ToolResult` / error contract，定义 validation / permission / sandbox / runtime failure 的分类与安全映射；通过专项测试及全量 pytest 后再进入 Phase 6。**
+本节点冻结以下边界：
+
+1. `ToolError` 提供稳定的 `code/category/message/details` machine-readable contract。
+2. `ToolResult` 统一表达成功与失败，成功不得携带 error，失败必须携带 error。
+3. 参数校验 → `TOOL_ARGUMENT_INVALID`。
+4. 权限拒绝 → `TOOL_PERMISSION_DENIED`。
+5. workspace containment violation → `TOOL_SANDBOX_VIOLATION`。
+6. timeout → `TOOL_TIMEOUT`。
+7. Tool runtime failure → `TOOL_EXECUTION_FAILED`。
+8. 未知异常不直接暴露底层异常文本、traceback 或内部环境信息。
+9. `ToolResult.to_dict()` 提供 provider-independent JSON-friendly representation。
+10. 5.6 不引入 retry/resume；该语义留给 Phase 6.5。
+
+**结论：Phase 5 Tool / Sandbox Architecture 已完成。**
 
 # Phase 6 — Workflow / Project Orchestrator
 
 ## ☐ 6.1 TaskWorkflow 状态机
+
+### 6.1 当前进展
+
+已基于现有 `TaskStatus` / `VALID_STATUS_TRANSITIONS` / `TaskManager.transition()` 冻结第一版 Workflow state-machine contract，并新增：
+
+```text
+tests/test_workflow_state_machine_contract.py
+```
+
+当前契约覆盖：
+
+1. `TaskManager` 是 Task status transition 的唯一 mutation boundary。
+2. 正常路径：`pending → ready → running → review_pending → reviewing → completed`。
+3. Revision 路径：`reviewing → revision → running`。
+4. `completed` / `failed` 为不可恢复终态。
+5. 非法 workflow jump 必须拒绝。
+6. 非法 transition 不得产生 `status_history` 副作用。
+
+相关提交：
+
+```text
+9b80b58  test: define TaskWorkflow state machine contract
+```
+
+**下一步：将 `TaskWorkflow` 的 stage execution 与 state transition 明确绑定，消除 Workflow 内部隐式状态变化，并为 6.2 Dependency-aware Scheduler 提供可观察的 task readiness boundary。**
+
 ## ☐ 6.2 Dependency-aware Scheduler
 ## ☐ 6.3 ProjectOrchestrator
 ## ☐ 6.4 Task 并行执行
@@ -221,12 +221,11 @@ runtime/tool_errors.py
 
 # 当前下一动作
 
-**当前节点：Phase 5.6 Tool Error Contract。**
+**当前节点：Phase 6.1 TaskWorkflow 状态机。**
 
 1. 用户 Pull 最新提交。
-2. 基于现有 Tool Contract / Registry / Argument Validation / WorkspaceSandbox / Permission Policy 冻结统一 Tool error/result contract。
-3. 新增 `runtime/tool_errors.py`、`runtime/tool_result.py` 与专项 contract tests。
-4. 验证 validation / permission / sandbox / runtime failure 分类、映射及安全错误信息。
-5. 运行专项测试。
-6. 运行全量 `pytest -q`。
-7. 用户验收通过后，将 5.6 标记完成并进入 Phase 6.1 TaskWorkflow 状态机。
+2. 运行 `pytest tests/test_tool_error_contract.py -q` 与 `pytest -q` 确认 Phase 5.6 基线。
+3. 运行 `pytest tests/test_workflow_state_machine_contract.py -q` 验收 6.1 第一阶段契约。
+4. 下一小步修改 `TaskWorkflow`，使 Developer / Tester / Reviewer stage outcome 与 TaskStatus transition 显式对应。
+5. 不在本阶段引入 scheduler / parallelism / retry。
+6. 完成 6.1 后再进入 6.2 Dependency-aware Scheduler。
