@@ -36,9 +36,9 @@ def _audit() -> ToolExecutionAudit:
     return ToolExecutionAudit(
         ToolExecutionHistory.from_dict(
             [
-                _record("TOOL-001"),
-                _record("TOOL-002", task_id="TASK-002", tool="write_file"),
-                _record("TOOL-003", role="tester", status="failed"),
+                _record("TOOL-001").to_dict(),
+                _record("TOOL-002", task_id="TASK-002", tool="write_file").to_dict(),
+                _record("TOOL-003", role="tester", status="failed").to_dict(),
             ]
         )
     )
