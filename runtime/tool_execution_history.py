@@ -102,14 +102,9 @@ class ToolExecutionHistory:
             adapter.save(record)
 
     def save_if_absent(self, adapter: "ToolExecutionPersistenceAdapter") -> int:
-        """Persist this history without failing on identical existing records."""
+        """Persist the whole history as one idempotent batch."""
         from .tool_execution_persistence import ToolExecutionPersistenceAdapter
 
         if not isinstance(adapter, ToolExecutionPersistenceAdapter):
             raise TypeError("adapter must be a ToolExecutionPersistenceAdapter")
-
-        persisted = 0
-        for record in self._records.values():
-            if adapter.save_if_absent(record):
-                persisted += 1
-        return persisted
+        return adapter.save_if_absent_many(self._records.values())
