@@ -163,9 +163,6 @@ class AgentContext:
         )
 
     def __getitem__(self, key: str) -> Any:
-        if key == "dependency_context":
-            return self.dependency_context
-
         values = self.to_dict()
         if key not in values:
             raise KeyError(key)
