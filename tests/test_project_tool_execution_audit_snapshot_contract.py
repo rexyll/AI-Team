@@ -97,6 +97,9 @@ def test_project_orchestrator_exposes_persisted_audit_snapshot(tmp_path):
 
     project = ProjectOrchestrator(agent_router=object())
     audit = project.audit_persisted("PROJECT-AUDIT-002", adapter)
+    snapshot = project.audit_snapshot_persisted("PROJECT-AUDIT-002", adapter)
 
     assert audit.summary()["total"] == 1
     assert [record.execution_id for record in audit.records(task_id="TASK-001")] == ["TOOL-001"]
+    assert snapshot["records"] == [_record("TOOL-001").to_dict()]
+    assert snapshot["summary"]["total"] == 1
