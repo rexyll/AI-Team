@@ -25,9 +25,9 @@ class TaskWorkflow:
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
         self.task_manager = task_manager
-        self.developer = developer
-        self.reviewer = reviewer
-        self.tester = tester
+        self._developer = developer
+        self._reviewer = reviewer
+        self._tester = tester
         self.agent_router = agent_router
         self.max_review_rounds = max_review_rounds
         self.state_change_hook = state_change_hook
@@ -57,6 +57,18 @@ class TaskWorkflow:
                 return agent
         return fallback
 
+    @property
+    def developer(self):
+        return self._agent("developer", self._developer)
+
+    @property
+    def reviewer(self):
+        return self._agent("reviewer", self._reviewer)
+
+    @property
+    def tester(self):
+        return self._agent("tester", self._tester)
+
     def _notify_state_change(self) -> None:
         if self.state_change_hook is not None:
             self.state_change_hook(self.task_manager)
@@ -72,7 +84,7 @@ class TaskWorkflow:
         self.task_manager.mark_running(task.id)
         self._notify_state_change()
         try:
-            developer = self._agent("developer", self.developer)
+            developer = self.developer
             result = normalize_agent_result(
                 developer.run(task),
                 expected_agent="developer",
