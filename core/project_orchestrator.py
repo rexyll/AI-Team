@@ -13,23 +13,7 @@ from runtime.task_validator import validate_plan
 
 
 class ProjectOrchestrator:
-    """
-    Project-level orchestration entry point.
-
-    ProjectOrchestrator owns the project lifecycle facade:
-
-        Requirement
-            -> PlannerAgent
-            -> validated Plan
-            -> PlanBuilder
-            -> TaskManager
-            -> Orchestrator
-            -> ProjectResult
-
-    The lower-level Orchestrator remains responsible only for executing
-    an already-created TaskManager. ProjectOrchestrator does not duplicate
-    dependency scheduling or per-task workflow state transitions.
-    """
+    """Project-level orchestration entry point."""
 
     PLANNER_TASK_ID = "PLAN-001"
 
@@ -37,10 +21,7 @@ class ProjectOrchestrator:
         self,
         agent_router: AgentRouter,
         plan_builder: PlanBuilder | None = None,
-        orchestrator_factory: Callable[
-            [TaskManager, AgentRouter],
-            Orchestrator,
-        ] | None = None,
+        orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -52,26 +33,17 @@ class ProjectOrchestrator:
             if orchestrator_factory is not None
             else self._default_orchestrator_factory
         )
-
         self.last_plan: dict[str, Any] | None = None
         self.last_task_manager: TaskManager | None = None
         self.last_result: ProjectResult | None = None
 
     @staticmethod
-    def _default_orchestrator_factory(
-        task_manager: TaskManager,
-        agent_router: AgentRouter,
-    ) -> Orchestrator:
-        return Orchestrator(
-            task_manager=task_manager,
-            agent_router=agent_router,
-        )
+    def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
+        return Orchestrator(task_manager=task_manager, agent_router=agent_router)
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
-        """Generate and validate the project task graph."""
         if not isinstance(requirement, str):
             raise TypeError("requirement must be a string")
-
         if not requirement.strip():
             raise ValueError("requirement cannot be empty")
 
@@ -83,79 +55,53 @@ class ProjectOrchestrator:
             role="planner",
             status="ready",
         )
-
         result = planner.run(planning_task)
-
         if not isinstance(result, dict):
             raise TypeError("PlannerAgent must return a dictionary")
-
         plan = result.get("plan")
         if not isinstance(plan, dict):
             raise ValueError("PlannerAgent result does not contain a valid plan")
-
         validate_plan(plan)
         self.last_plan = plan
         return plan
 
     def build_task_manager(self, plan: dict[str, Any]) -> TaskManager:
-        """Convert a validated Planner plan into a TaskManager."""
         if not isinstance(plan, dict):
             raise TypeError("plan must be a dictionary")
-
         task_manager = self.plan_builder.build_task_manager(plan)
         self.last_task_manager = task_manager
         return task_manager
 
     def create_orchestrator(self, task_manager: TaskManager) -> Orchestrator:
-        """Create the lower-level task execution Orchestrator."""
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
-
         return self.orchestrator_factory(task_manager, self.agent_router)
 
     def execute(self, task_manager: TaskManager) -> ProjectResult:
-        """Execute an already-built project task graph and return its result."""
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
-
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
         orchestrator.run()
-
         project_name = None
         if self.last_plan is not None:
             value = self.last_plan.get("project")
             if isinstance(value, str):
                 project_name = value
-
         result = ProjectResult.from_task_manager(task_manager, project=project_name)
         self.last_result = result
         return result
 
-    def resume(
-        self,
-        task_manager: TaskManager | None = None,
-    ) -> ProjectResult:
-        """Resume execution from the current in-memory TaskManager state."""
+    def resume(self, task_manager: TaskManager | None = None) -> ProjectResult:
         manager = task_manager if task_manager is not None else self.last_task_manager
         if manager is None:
             raise ValueError("no in-memory task manager is available to resume")
         if not isinstance(manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
-
         return self.execute(manager)
 
-    def resume_persisted(
-        self,
-        project_id: str,
-        adapter: ProjectPersistenceAdapter,
-    ) -> ProjectResult:
-        """Restore a persisted project snapshot without invoking the planner.
-
-        This phase restores the complete persistence boundary into runtime
-        objects. Actual continuation through the execution Orchestrator is
-        deliberately left to the next resume-integration phase.
-        """
+    def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
+        """Restore a persisted snapshot and continue its executable task state."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
 
@@ -167,20 +113,9 @@ class ProjectOrchestrator:
             self.last_plan = None
 
         self.last_task_manager = snapshot.task_manager
-        result = snapshot.result
-        if result is None:
-            result = ProjectResult.from_task_manager(
-                snapshot.task_manager,
-                project=(snapshot.plan or {}).get("project")
-                if snapshot.plan is not None
-                else None,
-            )
-
-        self.last_result = result
-        return result
+        return self.execute(snapshot.task_manager)
 
     def run(self, requirement: str) -> ProjectResult:
-        """Plan and execute a complete project through the project facade."""
         plan = self.create_plan(requirement)
         task_manager = self.build_task_manager(plan)
         return self.execute(task_manager)
