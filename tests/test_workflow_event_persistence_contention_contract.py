@@ -56,7 +56,7 @@ def test_concurrent_conflicting_writers_cannot_overwrite_event_identity(tmp_path
     assert len(idempotent) == 31
     assert len(conflicts) == 32
     persisted = adapter.load("EVENT-CONFLICT-001")
-    assert persisted in {first, second}
+    assert persisted == first or persisted == second
     assert adapter.list_ids() == ["EVENT-CONFLICT-001"]
     assert not list(tmp_path.glob("*.tmp"))
 
