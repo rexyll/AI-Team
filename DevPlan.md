@@ -147,7 +147,7 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 
 # 四、当前节点：8.6 Performance / Concurrency Contract
 
-## 8.6.1 Performance baseline — 开发中
+## 8.6.1 Performance baseline — 修正中
 
 已在当前开发分支新增 `tests/test_workflow_event_performance_contract.py`，建立第一版可重复 baseline contract：
 
@@ -157,12 +157,26 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 - total wall time
 - tasks/sec
 - events/sec
-- 固定 9 events/task 的语义校验
+- deterministic mock agents
 - 4 workers 相比 1 worker 的软并行收益门槛（>5%）
 
-基准测试只使用 deterministic mock agents，并通过极短固定 sleep 使并行收益可观察；不依赖真实 LLM、网络或外部服务。
+### 本轮发现与修正
 
-**当前状态：代码已提交，等待用户 Pull 后专项测试验证；尚未标记完成。**
+原始测试把 `9 events/task` 写死，但该 baseline router **只注册 Developer + Reviewer，没有 Tester**，且 Reviewer 首轮直接返回 `approved`。按照当前已经验收的 canonical workflow lifecycle，每个 task 实际产生 5 个事件：
+
+```text
+task_started
+developer_completed
+tester_skipped
+review_started
+reviewer_approved
+```
+
+因此原测试失败的 160/640/2560 事件分别对应 32/128/512 × 5，并非生产实现的性能或语义回归。根据 8.6.6 “本节点不为了通过 benchmark 修改业务语义”的纪律，本轮**不修改生产代码**，而是修正 benchmark contract，使测试与既有 workflow lifecycle 语义一致，同时增加逐 task event-type 校验，防止仅靠事件总数掩盖语义缺失。
+
+本轮修正 commit：`60d0c554`。
+
+**当前状态：等待用户 Pull 后专项测试验证；尚未标记完成。**
 
 专项命令：
 ```text
@@ -220,13 +234,14 @@ pytest tests/test_workflow_event_performance_contract.py -q
 - 4 worker 相比 1 worker 应体现可观并行收益；不要求线性扩展。
 - 事件持久化不得随 task 数量出现超线性明显退化。
 - query/projection 应保持只读且可重复。
+- benchmark 的事件数量必须由实际 workflow lifecycle 语义决定，不得为了满足性能测试人为增加事件。
 
 **本节点不为了通过 benchmark 修改业务语义。** 如果 benchmark 暴露结构性问题，再单独提出性能修复子节点。
 
 ## 8.6.7 测试文件
 
 计划新增：
-- `tests/test_workflow_event_performance_contract.py` ← 已新增，待验收
+- `tests/test_workflow_event_performance_contract.py` ← 已新增，当前正在修正 baseline contract
 - `tests/test_workflow_event_concurrency_contract.py`
 - `tests/test_orchestrator_scalability_contract.py`
 
@@ -303,6 +318,7 @@ pytest tests/test_workflow_event_performance_contract.py -q
 - 明确项目目标从“功能完整”升级为“可恢复、可审计、可验证、可并发、可维护的生产级 AI 软件开发团队”。
 - 确认 8.1–8.5 已完成，8.6 为当前唯一开发节点。
 - 将 8.6 从单纯 performance test 扩展为 Performance / Concurrency Contract，并新增 baseline、contention、query concurrency、scheduler scalability、failure+concurrency matrix、regression guard 六类开发环节。
-- 将 8.7 明确为 Documentation / Examples / Release Readiness。
 - 当前 HEAD 基线：`72c55e4`。
-- 开始实现 8.6.1：新增 `tests/test_workflow_event_performance_contract.py`，等待本地专项与全量测试验收。
+- 开始实现 8.6.1：新增 `tests/test_workflow_event_performance_contract.py`。
+- 8.6.1 首轮专项发现 benchmark 固定的 9 events/task 与当前 canonical baseline 场景不一致；确认生产生命周期正确值为 5 events/task，修正 benchmark contract 并增加逐 task event-type 语义校验。
+- 8.6.1 修正 commit：`60d0c554`；等待用户 Pull 后重新执行专项和全量测试。
