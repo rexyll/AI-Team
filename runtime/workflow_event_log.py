@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable, Protocol
 
 from .workflow_event import WorkflowEvent
+
+
+class WorkflowEventPersistenceSink(Protocol):
+    """Minimal durable-sink contract required by the in-memory event log."""
+
+    def save_if_absent(self, event: WorkflowEvent) -> bool:
+        """Persist an event idempotently and return whether a new record was written."""
+        ...
 
 
 class WorkflowEventConflictError(ValueError):
@@ -10,10 +18,30 @@ class WorkflowEventConflictError(ValueError):
 
 
 class WorkflowEventLog:
-    """Ordered in-memory index of immutable workflow events."""
+    """Ordered in-memory index of immutable workflow events.
 
-    def __init__(self) -> None:
+    A persistence sink is optional. When configured, a new event is durably
+    persisted before it becomes visible in the in-memory index. A persistence
+    failure therefore fails the append operation and does not leave an event in
+    memory that the durable sink rejected. Existing in-memory-only callers are
+    unchanged when no sink is supplied.
+    """
+
+    def __init__(self, persistence_sink: WorkflowEventPersistenceSink | None = None) -> None:
+        if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
+            raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
         self._events: dict[str, WorkflowEvent] = {}
+        self._persistence_sink = persistence_sink
+
+    @property
+    def persistence_sink(self) -> WorkflowEventPersistenceSink | None:
+        return self._persistence_sink
+
+    def set_persistence_sink(self, persistence_sink: WorkflowEventPersistenceSink | None) -> None:
+        """Attach or detach the optional durable event sink."""
+        if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
+            raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
+        self._persistence_sink = persistence_sink
 
     @staticmethod
     def _conflict(event_id: str) -> WorkflowEventConflictError:
@@ -21,11 +49,16 @@ class WorkflowEventLog:
             f"conflicting workflow event for event_id: {event_id}"
         )
 
+    def _persist_if_configured(self, event: WorkflowEvent) -> None:
+        if self._persistence_sink is not None:
+            self._persistence_sink.save_if_absent(event)
+
     def append(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
         if event.event_id in self._events:
             raise ValueError(f"event_id already exists: {event.event_id}")
+        self._persist_if_configured(event)
         self._events[event.event_id] = event
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
@@ -33,6 +66,7 @@ class WorkflowEventLog:
             raise TypeError("event must be a WorkflowEvent")
         existing = self._events.get(event.event_id)
         if existing is None:
+            self._persist_if_configured(event)
             self._events[event.event_id] = event
             return True
         if existing == event:
@@ -58,6 +92,8 @@ class WorkflowEventLog:
                 raise self._conflict(event.event_id)
             pending[event.event_id] = event
 
+        if self._persistence_sink is not None:
+            self._persistence_sink.save_if_absent_many(pending.values())
         self._events.update(pending)
         return len(pending)
 
@@ -73,13 +109,7 @@ class WorkflowEventLog:
 
     @staticmethod
     def _project_sort_key(event: WorkflowEvent) -> tuple[int, str, str]:
-        """Order a project's resumed marker after the recovered event stream.
-
-        ``project.resumed`` is a recovery boundary, not an ordinary task event.
-        It must remain the final marker in a project's event view even when the
-        host clock used to create the marker is earlier than timestamps already
-        persisted in that project's event stream.
-        """
+        """Order a project's resumed marker after the recovered event stream."""
         return (
             1 if event.event_type == "project.resumed" else 0,
             event.occurred_at,
