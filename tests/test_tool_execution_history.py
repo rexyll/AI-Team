@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.tool_execution_history import ToolExecutionHistory
+from runtime.tool_execution_history import ToolExecutionHistory, ToolExecutionConflictError
 from runtime.tool_execution_persistence import ToolExecutionPersistenceAdapter
 from runtime.tool_execution_record import ToolExecutionRecord
 
@@ -132,7 +132,7 @@ def test_tool_execution_persistence_save_if_absent_rejects_conflicting_record(tm
         output="different",
     )
 
-    with pytest.raises(FileExistsError):
+    with pytest.raises(ToolExecutionConflictError):
         adapter.save_if_absent(conflicting)
 
 
