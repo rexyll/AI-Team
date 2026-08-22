@@ -14,6 +14,30 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 
 
+class _OrchestratorWorkflowEventLog(WorkflowEventLog):
+    """Delegate workflow events while reserving task failure for Orchestrator.
+
+    TaskWorkflow owns stage-level success events, while Orchestrator owns the
+    task-level failure/retry lifecycle. Developer exceptions are re-raised by
+    TaskWorkflow, so forwarding ``developer_failed`` would duplicate the
+    authoritative ``task_failed`` event emitted here.
+    """
+
+    def __init__(self, delegate: WorkflowEventLog) -> None:
+        super().__init__()
+        self._delegate = delegate
+
+    def append(self, event: WorkflowEvent) -> None:
+        if event.event_type == "developer_failed":
+            return
+        self._delegate.append(event)
+
+    def append_if_absent(self, event: WorkflowEvent) -> bool:
+        if event.event_type == "developer_failed":
+            return False
+        return self._delegate.append_if_absent(event)
+
+
 class Orchestrator:
     """Schedule tasks and delegate per-task execution to the proper workflow."""
 
@@ -36,6 +60,11 @@ class Orchestrator:
         self.failure_classifier = failure_classifier or self._default_failure_classifier
         self._state_change_hook: Callable[[TaskManager], None] | None = None
         self._workflow_event_log = workflow_event_log
+        self._workflow_event_sink = (
+            _OrchestratorWorkflowEventLog(workflow_event_log)
+            if workflow_event_log is not None
+            else None
+        )
         self._project_id = project_id
 
     def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
@@ -141,7 +170,7 @@ class Orchestrator:
                     task_manager=self.task_manager,
                     agent_router=self.agent_router,
                     state_change_hook=self._persist_state_checkpoint,
-                    workflow_event_log=self._workflow_event_log,
+                    workflow_event_log=self._workflow_event_sink,
                     project_id=self._project_id,
                 )
                 workflow.execute(task.id)
