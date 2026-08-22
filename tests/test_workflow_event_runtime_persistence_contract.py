@@ -23,8 +23,8 @@ def _event(event_id: str = "EVENT-001") -> WorkflowEvent:
     )
 
 
-def test_runtime_sink_persists_new_events_and_keeps_in_memory_log():
-    adapter = WorkflowEventPersistenceAdapter("events")
+def test_runtime_sink_persists_new_events_and_keeps_in_memory_log(tmp_path):
+    adapter = WorkflowEventPersistenceAdapter(tmp_path)
     log = WorkflowEventLog(persistence_sink=adapter)
 
     log.append(_event())
@@ -41,7 +41,7 @@ def test_runtime_sink_is_optional_for_legacy_in_memory_callers():
     assert log.list_all() == [_event()]
 
 
-def test_runtime_sink_failure_is_visible_and_does_not_publish_to_memory(tmp_path):
+def test_runtime_sink_failure_is_visible_and_does_not_publish_to_memory():
     class FailingSink:
         def save_if_absent(self, event: WorkflowEvent) -> bool:
             raise OSError("durable event store unavailable")
@@ -93,7 +93,6 @@ def test_project_orchestrator_can_create_runtime_persisted_event_log(tmp_path):
         ]
     )
 
-    project.last_task_manager = manager
     project.resume(manager)
 
     assert project.workflow_event_log is not None
@@ -123,7 +122,12 @@ def test_runtime_event_persistence_does_not_write_project_snapshot(tmp_path):
         ]
     )
     result = project.resume(manager)
-    project_adapter.save("PROJECT-001", plan={"project": "demo", "summary": "demo", "tasks": []}, task_manager=manager, result=result)
+    project_adapter.save(
+        "PROJECT-001",
+        plan={"project": "demo", "summary": "demo", "tasks": []},
+        task_manager=manager,
+        result=result,
+    )
 
     snapshot = (tmp_path / "projects" / "PROJECT-001.json").read_text(encoding="utf-8")
     assert "workflow_event" not in snapshot
