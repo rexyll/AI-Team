@@ -152,7 +152,7 @@ class ProjectPersistenceAdapter:
 
         payload = self._build_payload(project_id, plan, task_manager, result, tool_execution_history)
         self._atomic_write(path, payload)
-        
+
     def list_ids(self) -> list[str]:
         """Return persisted project ids in stable lexical order."""
         return sorted(
@@ -312,7 +312,16 @@ class ProjectPersistenceAdapter:
         task_manager: TaskManager,
         result: ProjectResult | None,
     ) -> None:
-        """Validate only invariants that must survive persisted recovery."""
+        """Validate invariants that must survive persisted recovery.
+
+        ``completed_task_ids`` was added after the original project-result
+        persistence contract. Older callers can therefore construct a result
+        with the default empty tuple even when ``completed_tasks`` is non-zero.
+        An empty tuple is treated as an unspecified legacy field here; when the
+        field is populated, its identity-level value must exactly match task
+        state. New runtime results created by ``from_task_manager`` always
+        populate it, so checkpoints still get strict identity validation.
+        """
         tasks = task_manager.get_all_tasks()
         task_ids = [task.id for task in tasks]
         if len(task_ids) != len(set(task_ids)):
@@ -341,9 +350,15 @@ class ProjectPersistenceAdapter:
                     f"project snapshot result mismatch: {project_id}"
                 )
         actual_statuses = {task.id: task.status for task in tasks}
-        expected_completed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "completed"))
-        expected_failed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "failed"))
-        expected_blocked = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "blocked"))
+        expected_completed = tuple(
+            sorted(task_id for task_id, status in actual_statuses.items() if status == "completed")
+        )
+        expected_failed = tuple(
+            sorted(task_id for task_id, status in actual_statuses.items() if status == "failed")
+        )
+        expected_blocked = tuple(
+            sorted(task_id for task_id, status in actual_statuses.items() if status == "blocked")
+        )
         if result.total_tasks != len(tasks):
             raise ValueError(f"project snapshot result mismatch: {project_id}")
         if result.completed_tasks != len(expected_completed):
@@ -352,7 +367,7 @@ class ProjectPersistenceAdapter:
             raise ValueError(f"project snapshot result mismatch: {project_id}")
         if tuple(sorted(result.blocked_tasks)) != expected_blocked:
             raise ValueError(f"project snapshot result mismatch: {project_id}")
-        if tuple(sorted(result.completed_task_ids)) != expected_completed:
+        if result.completed_task_ids and tuple(sorted(result.completed_task_ids)) != expected_completed:
             raise ValueError(f"project snapshot result mismatch: {project_id}")
 
     @staticmethod
