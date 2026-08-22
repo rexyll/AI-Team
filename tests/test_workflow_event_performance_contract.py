@@ -13,7 +13,19 @@ from runtime.workflow_event_log import WorkflowEventLog
 
 
 PROJECT_ID = "PROJECT-PERFORMANCE-001"
-EVENTS_PER_TASK = 9
+# The baseline router intentionally registers only Developer + Reviewer, so
+# the canonical workflow skips Tester. A first-pass approval therefore emits
+# five lifecycle events per task:
+# task_started, developer_completed, tester_skipped, review_started,
+# reviewer_approved.
+EVENTS_PER_TASK = 5
+EXPECTED_EVENT_TYPES = [
+    "task_started",
+    "developer_completed",
+    "tester_skipped",
+    "review_started",
+    "reviewer_approved",
+]
 
 
 @dataclass
@@ -94,6 +106,8 @@ def _run_baseline(task_count: int, max_workers: int) -> _PerformanceMetrics:
     assert all(task.status == "completed" for task in tasks)
     assert len(log) == task_count * EVENTS_PER_TASK
     assert len({event.event_id for event in log.list_all()}) == len(log)
+    for task in tasks:
+        assert [event.event_type for event in log.list_for_task(task.id)] == EXPECTED_EVENT_TYPES
 
     return _PerformanceMetrics(
         task_count=task_count,
