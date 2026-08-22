@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .project_persistence import ProjectPersistenceAdapter
 from .workflow_event_log import WorkflowEventLog
 from .workflow_event_persistence import WorkflowEventPersistenceAdapter
 from .workflow_event_projection import WorkflowEventProjector, WorkflowProjectProjection, WorkflowTaskProjection
@@ -42,6 +43,30 @@ class WorkflowEventQueryService:
             raise TypeError("persistence must be a WorkflowEventPersistenceAdapter")
         log = persistence.load_log()
         return cls.from_log(log, project_id=project_id)
+
+    @classmethod
+    def from_persisted_project(
+        cls,
+        project_persistence: ProjectPersistenceAdapter,
+        event_persistence: WorkflowEventPersistenceAdapter,
+        *,
+        project_id: str,
+    ) -> "WorkflowEventQueryService":
+        """Build a diagnostic projection from independent project and event stores.
+
+        The project snapshot is loaded only to establish that the requested
+        project exists and is internally valid. Runtime state from that snapshot
+        is never exposed or used to overwrite the event-derived projection.
+        An empty event store is accepted for legacy snapshots and projects as an
+        ``unknown`` projection; a non-empty stream for another project fails via
+        the normal projection identity contract.
+        """
+        if not isinstance(project_persistence, ProjectPersistenceAdapter):
+            raise TypeError("project_persistence must be a ProjectPersistenceAdapter")
+        if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
+            raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter")
+        project_persistence.load(project_id)
+        return cls.from_persistence(event_persistence, project_id=project_id)
 
     @property
     def project_id(self) -> str:
