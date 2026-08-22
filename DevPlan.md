@@ -31,7 +31,7 @@
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 已完成。
 
-Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.4.1 / 7.4.2 / 7.4.3 / 7.5.1 / 7.5.2 / 7.5.3 / 7.5.4 / 7.5.5 / 7.5.6 已完成。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.4.1 / 7.4.2 / 7.4.3 / 7.5.1 / 7.5.2 / 7.5.3 / 7.5.4 / 7.5.5 / 7.5.6 / 7.6.1 / 7.6.2 / 7.6.3 / 7.6.4 / 7.6.5 已完成。
 
 ## <span style="color:green">√</span> 7.1 Task persistence contract
 ## <span style="color:green">√</span> 7.1.1 Task persistence adapter
@@ -78,38 +78,43 @@ pytest -q
 ### <span style="color:green">√</span> 7.6.2 WorkflowEventLog in-memory contract
 ### <span style="color:green">√</span> 7.6.3 WorkflowEventPersistenceAdapter filesystem contract
 ### <span style="color:green">√</span> 7.6.4 Workflow / Orchestrator lifecycle integration
+### <span style="color:green">√</span> 7.6.5 Filesystem query / ordering parity
 
-已覆盖 immutable event identity、JSON payload、append / append-if-absent / merge conflict 语义、filesystem atomic persistence、corruption / filename identity boundary，以及 TaskWorkflow / Orchestrator 的 task start / completion / failure / retry / review 生命周期事件。
+已覆盖 immutable event identity、JSON payload、append / append-if-absent / merge conflict 语义、filesystem atomic persistence、corruption / filename identity boundary、Workflow / Orchestrator 生命周期事件，以及 filesystem 与 in-memory event log 的全局/project/task 有序查询一致性。
 
 用户最终验收：
 
 ```text
 pytest -q
-807 passed in 2.35s
+813 passed in 2.42s
 ```
 
-7.6.1–7.6.4 当前正式完成。
+7.6.5 正式完成。
 
-## 7.6.5 Filesystem query / ordering parity
+## 7.6.6 Workflow event log rehydration / replay boundary
 
 ### 目标
-让 filesystem event persistence 与 `WorkflowEventLog` 提供一致的读取语义，避免当前 adapter 只能按 `event_id` 读取而无法直接恢复 project/task 有序事件流。
+在 filesystem query contract 之上建立明确的 event-log 恢复边界，使持久化事件能够一次性重新装载到独立的 `WorkflowEventLog`，为后续 project recovery / observability replay 提供稳定入口，同时不把持久化实现耦合进 Workflow 核心执行路径。
 
 ### 实施范围
-1. `WorkflowEventPersistenceAdapter` 增加 ordered event loading/query API。
-2. query 结果与 `WorkflowEventLog.list_all()`、`list_for_project()`、`list_for_task()` 使用相同排序规则。
-3. 读取过程中遇到 corrupt event 时必须明确失败，不静默跳过。
-4. 与现有 `event_id` duplicate / conflict / atomic batch semantics 保持不变。
-5. 增加 contract tests：全局顺序、project 过滤、task 过滤、空结果、corrupt event fail-fast。
-6. 不引入数据库、消息队列、外部 telemetry，也不修改现有 TaskWorkflow 状态语义。
-7. 专项测试通过后运行全量 `pytest -q`。
-8. 用户验收后更新 DevPlan，记录测试数量、耗时和 commit SHA，再进入 7.6.6。
+1. `WorkflowEventPersistenceAdapter` 增加 `load_log()`（或等价明确命名）API，返回独立的 `WorkflowEventLog` 实例。
+2. 恢复必须基于持久化文件的完整事件集合，并复用 `WorkflowEventLog.merge()` 的 identity / conflict semantics；不得直接操作其内部 `_events`。
+3. 恢复后的 log 与 filesystem adapter 的 `list_all()` 事件集合一致，并保持 `WorkflowEventLog` 自身的查询排序语义。
+4. 空目录应恢复为空 `WorkflowEventLog`，而不是返回 `None`。
+5. corrupt event、非法 event payload、重复 event_id conflict 必须明确失败；不得静默跳过或部分恢复。
+6. `load_log()` 返回的新对象必须与 adapter 后续操作、此前创建的 log 相互独立，修改恢复后的 log 不得影响磁盘或其他内存对象。
+7. 增加 contract tests：空恢复、完整恢复、顺序一致性、corruption fail-fast、对象独立性，以及 conflict 边界。
+8. 不修改 TaskWorkflow / Orchestrator 的执行语义，不把 event log 写入现有 project snapshot；本节点只建立 recovery / replay adapter boundary。
+9. 专项测试通过后运行全量 `pytest -q`。
+10. 用户验收后更新 DevPlan，记录测试数量、耗时和最终 commit SHA，再进入 7.6.7。
 
 ### 完成判定
-- filesystem adapter 可恢复完整有序事件流；
-- project/task 查询与 in-memory log 排序一致；
-- corruption 不被静默吞掉；
-- 7.5.x persistence / execution-history contract 无回归；
+- filesystem event stream 可恢复为独立 `WorkflowEventLog`；
+- 恢复使用既有 in-memory conflict contract；
+- corruption / conflict 不被吞掉；
+- 空目录得到空 log；
+- 不改变现有 Workflow / Orchestrator 行为；
+- 7.5.x 与 7.6.1–7.6.5 无回归；
 - 全量 `pytest -q` 通过；
 - 用户确认测试结果后才能标记 `√`。
 
@@ -129,20 +134,17 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：7.6.5 Filesystem query / ordering parity。**
+**当前节点：7.6.6 Workflow event log rehydration / replay boundary。**
 
 ### 本轮详细计划
-1. 在 `runtime/workflow_event_persistence.py` 实现 `list_all()`、`list_for_project()`、`list_for_task()`，必要时提供内部统一加载函数，复用 `WorkflowEvent` 校验逻辑。
-2. 使用与 `WorkflowEventLog` 完全一致的排序 key：
-   - 全局：`(project_id, task_id or "", occurred_at, event_id)`；
-   - project：`(occurred_at, event_id)`；
-   - task：`(occurred_at, event_id)`。
-3. 新增 `tests/test_workflow_event_persistence_query_contract.py`，覆盖正常查询、过滤、排序、空结果、corrupt fail-fast。
-4. 不修改 Workflow / Orchestrator 核心执行逻辑，不扩大本轮功能边界。
+1. 修改 `runtime/workflow_event_persistence.py`，引入 `WorkflowEventLog` 并实现 `load_log()`。
+2. `load_log()` 通过 `self._load_all_events()` 获取完整事件，再调用 `WorkflowEventLog.merge()` 完成恢复，不直接写内部字典。
+3. 新增 `tests/test_workflow_event_persistence_rehydration_contract.py`，覆盖空恢复、完整恢复、顺序、corrupt、对象独立和 conflict。
+4. 不修改 Workflow / Orchestrator 核心逻辑，不把 event log 放入 project snapshot。
 5. 完成后通知用户 Pull，用户执行专项测试：
-   `pytest tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py -q`
+   `pytest tests/test_workflow_event_persistence_rehydration_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py -q`
 6. 专项通过后用户执行全量 `pytest -q`。
-7. 用户确认全量通过后，我更新本节为 `√ 7.6.5` 并记录最终 SHA。
+7. 用户确认全量通过后，我更新本节为 `√ 7.6.6` 并记录最终 SHA。
 
 ---
 
@@ -169,3 +171,10 @@ pytest -q
 - 用户确认全量测试：`807 passed in 2.35s`。
 - WorkflowEvent immutable contract、in-memory log、filesystem persistence 以及 Workflow / Orchestrator lifecycle integration 正式完成。
 - 下一节点进入 7.6.5 Filesystem query / ordering parity。
+
+## 2026-08-22 — 7.6.5 验收
+- 用户确认全量测试：`813 passed in 2.42s`。
+- filesystem event persistence 增加 global / project / task ordered query API。
+- query ordering 与 `WorkflowEventLog` 保持 parity，并覆盖 corrupt event fail-fast 与 deterministic tie-breaker。
+- 7.6.5 Filesystem query / ordering parity 正式完成。
+- 下一节点进入 7.6.6 Workflow event log rehydration / replay boundary。
