@@ -1,6 +1,6 @@
 # AI-Team DevPlan
 
-> 分支：`refactor/runtime-architecture`  
+> 当前开发分支：`refactor/runtime-architecture-7.5.4-audit-consistency`  
 > 开发纪律：**GitHub 原始代码 → 小范围修改 → 专项测试 → 全量 pytest → 用户 Pull → 记录最终 SHA → DevPlan √ → 下一节点**
 
 ## 当前状态
@@ -11,12 +11,19 @@
 
 ```text
 pytest -q
-767 passed in 2.32s
+771 passed in 5.54s
+```
+
+Audit 专项验收基线：
+
+```text
+pytest -q tests/test_tool_execution_audit.py tests/test_tool_execution_audit_snapshot_contract.py tests/test_project_tool_execution_audit_contract.py
+11 passed in 0.66s
 ```
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 均已完成。
 
-Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 / 7.5.2 已完成；当前进入 **7.5.3 Audit / query observability boundary**。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 / 7.5.2 / 7.5.3 已完成；当前进入 **7.5.4 Cross-boundary Audit Consistency**。
 
 ---
 
@@ -87,28 +94,37 @@ Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.5.1 / 7.5.2 已完成；当前进入 **7
 ## <span style="color:green">√</span> 7.5 Tool execution logs
 ### <span style="color:green">√</span> 7.5.1 Tool log ownership / persistence contract
 ### <span style="color:green">√</span> 7.5.2 Project recovery tool-log integration
+### <span style="color:green">√</span> 7.5.3 Audit / query observability boundary
 
-7.5.2 已完成并通过用户全量验收。persisted project 的 canonical tool history 现在会在 `resume_persisted()` / `continue_persisted()` 恢复到 Task runtime context；旧的 task-local tool history 会被清除；继续执行和 checkpoint 使用同一 canonical ownership。
+7.5.3 已完成：`ToolExecutionAudit` 持有 detached canonical history snapshot；`records()` / `count()` / `summary()` 均基于 audit-owned snapshot；`snapshot()` 提供 persistence-safe detached representation；Project persistence / orchestrator 的 audit API 不污染 runtime state。
 
 用户验收基线：
 
 ```text
 pytest -q
-767 passed in 2.32s
+771 passed in 5.54s
 ```
 
-### <span style="color:orange">▶</span> 7.5.3 Audit / query observability boundary
+### <span style="color:orange">▶</span> 7.5.4 Cross-boundary Audit Consistency
 
 本节点目标：
 
-1. `ToolExecutionAudit` 只读，不向调用者暴露内部 mutable history；
-2. Audit 创建时固定 canonical history snapshot，后续 runtime history 变化不得改变已有 audit 查询结果；
-3. `records()` 返回 detached records；
-4. `count()` 与 `records()` 使用同一 snapshot / filter semantics；
-5. `summary()` 保持 deterministic aggregate contract；
-6. `ProjectPersistenceAdapter.audit()` / `ProjectOrchestrator.audit_persisted()` 继续只读取 persisted canonical history，不污染 runtime state。
+1. 明确 persisted canonical tool history 与 task-local runtime history 的边界关系；
+2. 增加只读 consistency report，能够区分缺失记录、额外记录、同 execution_id 的 payload 冲突；
+3. 保持显式 project-level history 的 canonical ownership，不因诊断 API 自动改写或拒绝 persisted snapshot；
+4. 通过 `ProjectPersistenceAdapter.audit_consistency()` 暴露 persistence boundary 的一致性报告；
+5. 通过 `ProjectOrchestrator.audit_consistency_persisted()` 提供项目级只读入口；
+6. 为后续 7.5.5 execution-history dedup / conflict semantics 建立明确的诊断基础。
 
-专项测试通过后执行全量 `pytest -q`，用户验收后再进入 7.6 Workflow event log。
+专项测试通过后执行全量 `pytest -q`，用户验收后标记 7.5.4，再进入 7.5.5。
+
+## ☐ 7.5.5 Execution-history dedup / conflict semantics
+
+目标：统一 execution_id 去重规则、重复记录等价性、冲突记录拒绝策略，并保证 persistence / recovery / audit 使用同一语义。
+
+## ☐ 7.5.6 Persistence atomic batch semantics
+
+目标：把多项 runtime observability 更新收敛为单一可恢复事务边界，验证失败时不得留下半更新 snapshot。
 
 ## ☐ 7.6 Workflow event log
 
@@ -140,9 +156,9 @@ Phase 7 的目标不是立即引入数据库，而是先建立稳定的 persiste
 
 # 当前下一动作
 
-**当前节点：7.5.3 Audit / query observability boundary。**
+**当前节点：7.5.4 Cross-boundary Audit Consistency。**
 
-1. 完成 Audit immutable snapshot / detached query contract；
-2. 增加 Audit 与 persisted canonical history 的隔离测试；
-3. 专项测试通过后执行全量 `pytest -q`；
-4. 用户全量验收通过后标记 7.5.3，再进入 7.6 Workflow event log。
+1. 专项测试 `tests/test_project_audit_consistency_contract.py`；
+2. 通过后执行全量 `pytest -q`；
+3. 用户验收并记录最终 SHA；
+4. 标记 7.5.4 完成后进入 7.5.5 execution-history dedup / conflict semantics。
