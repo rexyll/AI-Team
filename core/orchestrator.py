@@ -14,6 +14,10 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 
 
+class _CheckpointFailure(OSError):
+    """Signal a durable checkpoint failure without converting task state to failed."""
+
+
 class _OrchestratorWorkflowEventLog(WorkflowEventLog):
     """Delegate workflow events while reserving task failure for Orchestrator."""
 
@@ -70,8 +74,14 @@ class Orchestrator:
     def _persist_state_checkpoint(self, task_manager: TaskManager | None = None) -> None:
         """Emit a checkpoint using the workflow hook contract."""
         hook = self._state_change_hook
-        if hook is not None:
+        if hook is None:
+            return
+        try:
             hook(task_manager if task_manager is not None else self.task_manager)
+        except _CheckpointFailure:
+            raise
+        except OSError as exc:
+            raise _CheckpointFailure(str(exc)) from exc
 
     def _emit_event(self, event_type: str, task, *, payload: dict[str, Any] | None = None) -> None:
         if self._workflow_event_log is None:
@@ -183,6 +193,11 @@ class Orchestrator:
                 self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
 
+        except _CheckpointFailure:
+            # A checkpoint failure means durable state could not be confirmed.
+            # Do not mutate the in-memory task into a business-level failure;
+            # the caller may explicitly resume from this boundary.
+            raise
         except Exception as exc:
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
                 if task.status != "failed":
