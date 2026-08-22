@@ -218,11 +218,11 @@ reviewer_approved
 
 验收状态：**用户已确认专项测试和全量测试通过。**
 
-## ▶ 8.6.4 Scheduler scalability
+## √ 8.6.4 Scheduler scalability
 
-目标：验证 DependencyGraph + Orchestrator 在大量 ready tasks 下的调度规模能力，不改变已有生命周期语义。
+已完成 DependencyGraph + Orchestrator 大规模 ready-set 调度能力 contract，不改变既有生命周期语义。
 
-本节点新增 contract：`tests/test_orchestrator_scalability_contract.py`。
+测试文件：`tests/test_orchestrator_scalability_contract.py`。
 
 覆盖：
 - 512 个独立 ready tasks 不重复调度
@@ -233,29 +233,36 @@ reviewer_approved
 - root → 大规模 dependent tasks 的 dependency ordering 正确
 - 大规模 ready set 不破坏 DependencyScheduler 的决策边界
 
-当前状态：**测试已提交到 GitHub，等待用户 Pull 后专项验证。**
+验收状态：**用户已确认专项及全量测试通过。**
+
+## ▶ 8.6.5 Failure + concurrency matrix
+
+当前节点目标：把已经分别验证的 failure、retry、event persistence、query、reviewer revision、checkpoint 边界组合到同一套竞争条件 contract 中，证明现有协议在组合场景下仍保持语义一致。
+
+新增测试文件：`tests/test_workflow_event_failure_concurrency_matrix_contract.py`。
+
+覆盖：
+- worker 正在执行时 durable event persistence transient failure，并验证失败事件不会提前进入 memory log，后续 retry 可以继续完成
+- worker 并行执行期间持续进行 persistence-backed QueryService 查询，验证 query 无写副作用、无重复/丢失 event
+- partial task failure + retry 与其他 task 并发推进
+- reviewer revision 与其他 task 并发，同时进行 project query
+- checkpoint failure 边界下 event identity 不重复、不污染 durable/memory parity
+
+本节点原则：
+- 不新增 recovery protocol
+- 不改变既有 TaskWorkflow / Orchestrator lifecycle semantics
+- 只验证现有 failure、retry、checkpoint、event persistence 和 query 边界在竞争条件下的组合行为
+- 如果专项暴露真实生产缺陷，只修复当前 8.6.5 边界，不提前推进 8.6.6
 
 专项命令：
 ```text
-pytest tests/test_orchestrator_scalability_contract.py -q
+pytest tests/test_workflow_event_failure_concurrency_matrix_contract.py -q
 ```
 
 专项通过后再运行：
 ```text
 pytest -q
 ```
-
-## 8.6.5 Failure + concurrency matrix
-
-新增组合测试：
-- worker 正在执行时 persistence failure
-- worker 执行时 query
-- reviewer revision 与其他 task 并发
-- partial task failure + retry
-- project checkpoint 与 event persistence 同时失败
-- resume 后继续并行执行
-
-重点不是引入新的 recovery protocol，而是证明现有边界在竞争条件下仍成立。
 
 ## 8.6.6 Performance regression guard
 
@@ -276,9 +283,10 @@ pytest -q
 - `tests/test_workflow_event_performance_contract.py`
 - `tests/test_workflow_event_persistence_contention_contract.py`
 - `tests/test_workflow_event_concurrency_contract.py`
+- `tests/test_orchestrator_scalability_contract.py`
 
 当前新增：
-- `tests/test_orchestrator_scalability_contract.py` ← 8.6.4 验证中
+- `tests/test_workflow_event_failure_concurrency_matrix_contract.py` ← 8.6.5 验证中
 
 必要时复用现有：
 - `tests/test_workflow_event_long_running_contract.py`
