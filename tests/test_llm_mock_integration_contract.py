@@ -7,7 +7,7 @@ import pytest
 from agents.architect import ArchitectAgent, SYSTEM_PROMPT as ARCHITECT_SYSTEM_PROMPT
 from agents.planner import create_plan
 from agents.reviewer import ReviewerAgent, SYSTEM_PROMPT as REVIEWER_SYSTEM_PROMPT
-from agents.tester import TesterAgent, SYSTEM_PROMPT as TESTER_SYSTEM_PROMPT
+from agents.tester import TesterAgent as RuntimeTesterAgent, SYSTEM_PROMPT as TESTER_SYSTEM_PROMPT
 from runtime.llm.mock import MockLLM
 from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
@@ -98,7 +98,7 @@ def test_mock_llm_can_drive_architect_tester_and_reviewer_without_network():
     architect_result = ArchitectAgent(llm=architect_llm).run(
         _task(id="TASK-ARCH-001", role="architect", title="architecture")
     )
-    tester_result = TesterAgent(llm=tester_llm).run(_task())
+    tester_result = RuntimeTesterAgent(llm=tester_llm).run(_task())
     reviewer_result = ReviewerAgent(llm=reviewer_llm).run(
         _task(
             status="reviewing",
