@@ -1,267 +1,302 @@
 # AI-Team DevPlan
 
+> 项目仓库：`rexyll/AI-Team`
 > 当前唯一开发分支：`refactor/runtime-architecture-7.5.5-execution-history-semantics`
 >
-> **分支纪律：除非确有必要，禁止创建新分支、禁止随意切换分支。所有后续开发、修复、测试与 DevPlan 更新均在当前唯一开发分支进行。若确需创建/切换分支，必须先明确说明原因、目标分支、切换命令及返回当前开发分支的方法，并等待用户确认。**
+> **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。** 系统不是简单的多 Agent Demo，而是让 Planner / Architect / Developer / Tester / Reviewer / Orchestrator 形成稳定的软件工程闭环：用户需求 → 计划 → 依赖调度 → Agent 执行 → Tester 质量门禁 → Reviewer 审核/返工 → 项目结果 → 持久化恢复 → 事件审计与查询。
 >
-> **代码修改边界：AI 直接在 GitHub 当前开发分支修改代码；用户负责 Pull 到本地测试。**
+> **生产目标：** Agent 可替换、LLM 可替换、工具受权限控制、工作区受 sandbox 限制、运行状态可持久化、事件可恢复/投影/查询、失败边界可验证，并最终具备并发、长运行、性能、安全和文档示例等生产化基础。
 
-## 开发协作固定流程
+## 协作与分支纪律
 
-1. 根据 DevPlan 当前未完成节点制定本轮目标、涉及文件、实现边界和专项测试范围。
-2. AI 直接在当前唯一开发分支编写/修改代码；不得为了单个功能点创建临时分支或在历史分支间切换。
-3. AI 完成代码后通知用户 Pull；用户先运行专项测试，再运行全量 `pytest -q`。
-4. 测试失败时，用户发送实际错误；AI 只依据错误在同一分支修复，不推进下一节点、不顺手引入下一阶段功能。
-5. 用户确认全量测试通过后，AI 更新 DevPlan：标记任务完成、记录测试数量/耗时及最终 commit SHA。
-6. 完成一个节点后制定下一节点详细计划，等待用户发送“继续按计划推进工作”或同义明确指令后再编码。
-7. 若开发中发现 DevPlan 技术细节、顺序、边界或验收标准需要修改，必须先向用户说明原因和方案，未经确认不得修改已确认规划。
-
-## 分支安全原则
-
-- 当前唯一开发分支：`refactor/runtime-architecture-7.5.5-execution-history-semantics`。
-- 原则上不创建、不切换、不 merge/cherry-pick 其他分支。
-- 每次开始新节点，以用户提供的 `git branch -a`、`git status`、`git log` 为事实基线。
+1. 所有开发、修复、测试和 DevPlan 更新均在当前唯一开发分支进行。
+2. 不创建临时分支，不随意切换历史分支，不 merge/cherry-pick 其他分支；如确有必要必须先说明并获得确认。
+3. AI 直接在 GitHub 当前开发分支修改代码；用户 Pull 到本地运行专项测试和全量 `pytest -q`。
+4. 测试失败时只修复当前节点，不顺手推进下一节点。
+5. 用户确认全量测试通过后，记录验收结果和最终 SHA，再进入下一节点。
+6. 每个节点均遵循：规划 → GitHub 编码 → Pull → 专项测试 → 全量测试 → 验收 → DevPlan 更新。
 
 ---
 
-# 当前状态
+# 一、总体进度判断
 
-**Phase 7 — Persistence / Observability**
+## 已完成
 
-Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 已完成。
+- Phase 0–2：Agent 基础结构、Task/Workflow 生命周期、Tester/Reviewer Quality Gate、Dependency、Planner/Project Execution、AgentResult 统一契约。
+- Phase 3：AgentContext 正式化与迁移。
+- Phase 4：LLM 抽象与 Provider/Mock 注入。
+- Phase 5：Tool Contract、Registry、参数校验、Workspace Sandbox、权限策略和错误边界。
+- Phase 6：TaskWorkflow、Dependency-aware Orchestrator、并行执行、Retry/Resume、ProjectResult。
+- Phase 7：Tool execution history、Audit、Project Persistence、Workflow Event Log、Event Persistence、Recovery、Projection、Operational Query 全部完成。
+- Phase 8.1：跨 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端契约。
+- Phase 8.2：Failure Injection。
+- Phase 8.3：Security contract。
+- Phase 8.4：LLM Mock integration。
+- Phase 8.5：Long-running workflow / bounded parallel execution。
 
-7.1、7.1.1、7.2、7.3、7.4、7.4.1、7.4.2、7.4.3、7.5.1–7.5.6、7.6.1–7.6.11 已完成。
+## 当前判断
 
-## 7.5 Tool execution logs
+**架构基础已经达到“可工程化验证”的预期，但尚未达到最终生产化目标。**
 
-### <span style="color:green">√</span> 7.5.1 Tool log ownership / persistence contract
-### <span style="color:green">√</span> 7.5.2 Project recovery tool-log integration
-### <span style="color:green">√</span> 7.5.3 Audit / query observability boundary
-### <span style="color:green">√</span> 7.5.4 Cross-boundary Audit Consistency
-### <span style="color:green">√</span> 7.5.5 Execution-history dedup / conflict semantics
-### <span style="color:green">√</span> 7.5.6 Persistence atomic batch semantics
+目前最大的剩余风险不是基本功能正确性，而是：
 
-### 7.5.6 用户最终验收
+1. 高并发下事件持久化与内存事件顺序的性能/一致性边界。
+2. 长时间运行任务的资源、线程、事件数量增长和吞吐稳定性。
+3. 大规模任务数量下 Query / Projection / Persistence 的复杂度。
+4. 并发失败、超时、取消与恢复组合尚未形成系统化 contract matrix。
+5. 当前测试大量验证 correctness，但缺少明确的性能预算和回归基线。
+6. 文档和 examples 尚不足以证明系统可以被其他开发者独立部署、扩展和使用。
+
+因此调整 Phase 8：**8.6 不只是“跑性能测试”，而是建立 Production Performance & Concurrency Contract；8.7 再完成 Documentation / Examples / Release Readiness。**
+
+---
+
+# 二、Phase 7 — Persistence / Observability
+
+### √ 7.5.1–7.5.6 Tool execution history
+- ownership / persistence
+- project recovery
+- audit/query
+- cross-boundary consistency
+- dedup/conflict semantics
+- atomic batch persistence
+
+### √ 7.6.1–7.6.11 Workflow Event Log
+- immutable WorkflowEvent
+- in-memory EventLog
+- filesystem persistence
+- lifecycle integration
+- deterministic ordering/query
+- rehydration/replay
+- project recovery
+- runtime durable sink
+- read-only state projection
+- operational query boundary
+- compatibility matrix
+
+代表验收：
 ```text
-pytest -q
-788 passed in 2.26s
+7.6.11 专项：56 passed in 1.13s
+7.6.11 全量：850 passed in 2.74s
 ```
 
 ---
 
-# 7.6 Workflow event log
+# 三、Phase 8 — Production Hardening
 
-## 已完成范围
+## √ 8.1 Cross-boundary Contract Tests
 
-### <span style="color:green">√</span> 7.6.1 WorkflowEvent value object
-### <span style="color:green">√</span> 7.6.2 WorkflowEventLog in-memory contract
-### <span style="color:green">√</span> 7.6.3 WorkflowEventPersistenceAdapter filesystem contract
-### <span style="color:green">√</span> 7.6.4 Workflow / Orchestrator lifecycle integration
-### <span style="color:green">√</span> 7.6.5 Filesystem query / ordering parity
-### <span style="color:green">√</span> 7.6.6 Workflow event log rehydration / replay boundary
-### <span style="color:green">√</span> 7.6.7 Workflow event replay / project recovery integration
-### <span style="color:green">√</span> 7.6.8 Workflow event runtime persistence integration
-### <span style="color:green">√</span> 7.6.9 Workflow event replay / state projection
-### <span style="color:green">√</span> 7.6.10 Workflow event projection integration / operational query boundary
-### <span style="color:green">√</span> 7.6.11 Workflow event query contract hardening / compatibility matrix
+覆盖完整 Project → Workflow → EventLog → Persistence → Projection → Query 链路，并验证 memory/persistence/recovery semantic parity。
 
-### 7.6.6–7.6.8 结果摘要
-- filesystem event stream 支持 ordered query 与 `load_log()` rehydration。
-- project recovery 可独立恢复 workflow event log，并追加确定性的 `project.resumed` recovery marker。
-- runtime event log 支持可选 durable persistence sink，失败 fail-fast，且与 project snapshot 存储隔离。
+## √ 8.2 Failure Injection Tests
 
-### 7.6.6–7.6.8 用户验收
-```text
-7.6.6 专项：10 passed in 0.16s
-7.6.7 专项：32 passed in 0.95s
-7.6.7 全量：820 passed in 2.59s
-7.6.8 专项：38 passed in 1.01s
-7.6.8 全量：826 passed in 2.80s
-```
+Commit evidence：`e6002dd`。
 
-### 7.6.9 实现结果
-- 新增 `runtime/workflow_event_projection.py`。
-- 提供不可变 `WorkflowTaskProjection` / `WorkflowProjectProjection`。
-- 提供 `WorkflowEventProjector.project()`、`project_task()`、`replay_workflow_events()`。
-- replay 复用现有 `WorkflowEventLog._global_sort_key`，保持确定性排序语义。
-- 覆盖 task lifecycle、retry、failure、review revision / approval、`project.resumed`。
-- unknown event type 向前兼容；malformed / inconsistent known event fail-fast，并包含 `event_id`。
-- projection 纯读取，不写 filesystem、不追加 event、不修改 EventLog、TaskManager、ProjectResult。
-- 支持 project/task 两级查询：lifecycle、last event、retry、error、review status。
+覆盖：
+- durable event sink failure
+- event batch `os.replace()` failure
+- project snapshot update/save failure
+- pre-existing snapshot preservation
+- temporary file cleanup
+- failure 后 recovery boundary
 
-### <span style="color:green">√</span> 7.6.9 用户最终验收
-```text
-专项：40 passed in 1.06s
-全量：834 passed in 2.91s
-```
+测试文件：`tests/test_failure_injection_contract.py`。
 
-### 7.6.10 实现结果
-- 新增 `runtime/workflow_event_query.py`，建立 read-only operational query boundary。
-- 提供 `WorkflowEventQueryService.from_log()`、`from_persistence()` 与 `from_persisted_project()`。
-- project snapshot 仅负责存在性 / 合法性验证，不反向覆盖 event-derived projection。
-- 查询覆盖 project/task lifecycle、last event、retry、error、review status。
-- `as_dict()` 返回 detached diagnostic representation，不暴露 mutable runtime / persistence internals。
-- empty event stream 保持 legacy compatibility；missing project、identity mismatch、corrupt event fail-fast。
-- query / projection 不产生 filesystem 写入，并与原始 runtime / persistence 对象隔离。
+## √ 8.3 Security Tests
 
-### <span style="color:green">√</span> 7.6.10 用户最终验收
-```text
-专项：46 passed in 1.17s
-全量：840 passed in 3.05s
-```
+Commit evidence：`cbcaf17`。
 
-### 7.6.11 实现结果
-- 固化 `WorkflowEventQueryService` 输入校验、返回值和异常边界。
-- 建立 compatibility matrix：legacy empty stream、partial lifecycle、unknown future event、retry/failure/revision/approval、多轮生命周期及 malformed known event。
-- 验证 `from_log()` 与 `from_persistence()` 的 projection/query parity。
-- 验证乱序持久化文件仍保持 deterministic ordering。
-- 验证 query service、`as_dict()` 与原始 EventLog / persistence 对象之间的 isolation / immutability。
-- 保持 query / projection 纯 read-only，不改变 TaskManager、ProjectResult、WorkflowEvent ordering / identity / conflict semantics。
-- 新增 `tests/test_workflow_event_query_contract.py` 覆盖上述契约矩阵。
+覆盖：
+- Tool schema 参数校验
+- deny-by-default permission policy
+- WorkspaceSandbox path escape 防护
+- terminal shell expansion / command injection 防护
+- git transport/configuration escape 防护
 
-### <span style="color:green">√</span> 7.6.11 用户最终验收
-```text
-pytest tests/test_workflow_event_query_contract.py tests/test_workflow_event_query_integration.py tests/test_workflow_event_projection_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py tests/test_project_workflow_event_recovery_contract.py -q
-56 passed in 1.13s
+测试文件：`tests/test_security_contract.py`。
 
-pytest -q
-850 passed in 2.74s
-```
+## √ 8.4 LLM Mock Integration Tests
 
-7.6.11 Workflow event query contract hardening / compatibility matrix 正式验收完成。
+Commit evidence：`3bc9b0d`、`72c55e4`。
+
+覆盖：
+- ProviderLLM OpenAI-compatible mapping
+- MockLLM deterministic sequence / call snapshot
+- Architect / Tester / Reviewer 无网络执行
+- Planner mock repair flow
+- invalid generation argument validation
+- pytest collection warning 修复
+
+最终 warning 修复 commit：`72c55e4`。
+
+## √ 8.5 Long-running Workflow Tests
+
+覆盖 32 个并行长运行任务、Developer revision、Reviewer approval、事件持久化和 QueryService recovery semantics。
+
+核心契约：
+- bounded `max_workers`
+- 每个 task 两轮 Developer / Reviewer lifecycle
+- event 数量和 lifecycle 类型完整
+- persistence 与 in-memory event identity 一致
+- project/task query 最终均为 completed/approved
+- 并行调度产生的跨 task append 顺序不作为错误条件，identity/order contract 分层验证
+
+测试文件：`tests/test_workflow_event_long_running_contract.py`。
 
 ---
 
-# Phase 8 — Production Hardening
+# 四、当前节点：8.6 Performance / Concurrency Contract
 
-## <span style="color:green">√</span> 8.1 Cross-boundary Contract Tests
-## ☐ 8.2 Failure Injection Tests
-## ☐ 8.3 Security Tests
-## ☐ 8.4 LLM Mock Integration Tests
-## ☐ 8.5 Long-running Workflow Tests
-## ☐ 8.6 Performance / Concurrency Tests
-## ☐ 8.7 Documentation / Examples
+## 8.6.1 Performance baseline
 
-### 8.1 实现结果
-- 新增 `tests/test_workflow_event_end_to_end_contract.py`。
-- 覆盖 ProjectPersistence、独立 WorkflowEventPersistence、EventLog rehydration、Projection、QueryService 的完整跨边界链路。
-- 验证内存事件流、持久化事件流、project snapshot recovery 三种查询结果保持语义一致。
-- 覆盖 retry / failure / revision / approval 生命周期组合及 query snapshot isolation。
-- 覆盖乱序持久化后的 deterministic ordering 与 read-only side-effect boundary。
-- 用户随后完成代码兼容性修复并确认专项与全量测试均通过。
+建立可重复的基准测试，而不是只记录一次运行时间。
 
-### <span style="color:green">√</span> 8.1 用户最终验收
-```text
-专项：tests/test_workflow_event_end_to_end_contract.py —— 用户确认通过
-全量：pytest -q —— 用户确认通过
-```
+指标：
+- 任务数量：32 / 128 / 512
+- worker：1 / 4 / 8 / 16
+- event 数量及平均 event/task
+- total wall time
+- tasks/sec
+- events/sec
+- persistence writes/sec
+- query/project latency
+- memory growth
 
-8.1 Cross-boundary Contract Tests 正式完成，进入 Failure Injection Tests。
+要求：测试不依赖真实 LLM、网络或外部服务。
+
+## 8.6.2 Event persistence contention
+
+验证多个 worker 同时写入 event persistence：
+- 不产生 duplicate event
+- 不产生 conflicting event identity
+- 不遗失成功提交的 event
+- temporary files 最终清理
+- `list_ids()` 与 log identity parity 保持成立
+- persistence failure 不污染 in-memory log
+
+## 8.6.3 Concurrent query / projection
+
+在 workflow 持续追加 event 时并发执行：
+- `list_all()`
+- `list_for_project()`
+- `list_for_task()`
+- `WorkflowEventProjector`
+- `WorkflowEventQueryService`
+
+要求 read-only 查询不会产生写副作用或破坏 event identity。
+
+## 8.6.4 Scheduler scalability
+
+验证 DependencyGraph + Orchestrator 在大量 ready tasks 下：
+- 不重复调度
+- 不遗漏 task
+- worker 数量受 `max_workers` 约束
+- final lifecycle 全部收敛
+- event 数量与 task lifecycle 成正比
+
+## 8.6.5 Failure + concurrency matrix
+
+新增组合测试：
+- worker 正在执行时 persistence failure
+- worker 执行时 query
+- reviewer revision 与其他 task 并发
+- partial task failure + retry
+- project checkpoint 与 event persistence 同时失败
+- resume 后继续并行执行
+
+重点不是引入新的 recovery protocol，而是证明现有边界在竞争条件下仍成立。
+
+## 8.6.6 Performance regression guard
+
+建立最小性能预算，避免后续功能让吞吐/延迟出现无意识回归。
+
+初始目标采用相对基线：
+- 相同任务规模下，单 worker correctness baseline 作为基准。
+- 4 worker 相比 1 worker 应体现可观并行收益；不要求线性扩展。
+- 事件持久化不得随 task 数量出现超线性明显退化。
+- query/projection 应保持只读且可重复。
+
+**本节点不为了通过 benchmark 修改业务语义。** 如果 benchmark 暴露结构性问题，再单独提出性能修复子节点。
+
+## 8.6.7 测试文件
+
+计划新增：
+- `tests/test_workflow_event_performance_contract.py`
+- `tests/test_workflow_event_concurrency_contract.py`
+- `tests/test_orchestrator_scalability_contract.py`
+
+必要时复用现有：
+- `tests/test_workflow_event_long_running_contract.py`
+- `tests/test_workflow_event_persistence_contract.py`
+- `tests/test_workflow_event_query_contract.py`
+
+## 8.6 验收
+
+1. 专项测试全部通过。
+2. `pytest -q` 全量通过。
+3. 无新增 pytest warning。
+4. 记录 benchmark baseline、worker 配置、任务规模和最终 commit SHA。
+5. 若发现真实性能瓶颈，先记录问题并建立 8.6.x 修复节点，不直接扩大范围。
 
 ---
 
-# 当前下一动作
+# 五、调整后的 8.7 — Documentation / Examples / Release Readiness
 
-**当前节点：8.2 Failure Injection Tests。**
+8.7 不再只是补 README，而是完成最小可交付工程闭环：
 
-8.1 已建立 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端语义契约。下一步不改变现有业务状态机，而是验证持久化边界在故障注入下不会产生“内存成功但磁盘失败”“部分写入”“错误状态伪成功”等不一致状态。
+1. Architecture overview
+2. Agent extension guide
+3. LLM provider / MockLLM 使用方式
+4. Tool permission / WorkspaceSandbox 使用方式
+5. Project persistence / resume 使用方式
+6. Workflow event persistence / query 使用方式
+7. Failure / security boundary 说明
+8. Long-running / concurrency 配置说明
+9. 一个完整 demo project
+10. 本地测试与 CI 命令
+11. Production readiness checklist
+12. Known limitations
 
-## 8.2 详细计划
-
-1. **Workflow event durable sink failure**
-   - 注入 `save_if_absent()` 持久化失败。
-   - 验证 event 不进入 in-memory log。
-   - 验证异常向调用方传播，不伪造成功生命周期。
-
-2. **Workflow event batch atomicity**
-   - 注入 staged write / `os.replace()` 中途失败。
-   - 验证新事件不会留下 partial committed set。
-   - 验证已有事件不被破坏，临时文件被清理。
-
-3. **Project snapshot atomicity**
-   - 注入 project `save/update/checkpoint` 的 atomic replace 失败。
-   - 验证已有 snapshot 保持原内容。
-   - 验证失败后不存在残留 temporary snapshot。
-
-4. **Cross-boundary failure invariants**
-   - event persistence failure 不得让 WorkflowEventLog 暴露未持久化事件。
-   - project persistence failure 不得让旧 snapshot 被新状态覆盖。
-   - failure 后恢复读取仍应得到最后一个成功 checkpoint。
-
-5. **测试实现**
-   - 新增 `tests/test_failure_injection_contract.py`。
-   - 使用 pytest monkeypatch 注入 filesystem failure，不改变生产 API。
-   - 优先验证 observable state、filesystem contents、异常传播与 recovery parity。
-
-6. **明确不做**
-   - 不改变 WorkflowEvent identity、ordering、conflict semantics。
-   - 不改变 TaskManager / ProjectResult 状态机。
-   - 不引入 retry policy、自动补偿或新的 durability protocol。
-   - 不提前进入 8.3 Security Tests。
-
-7. **验收流程**
-   - AI 在当前唯一开发分支直接编码。
-   - 用户 Pull 后先运行 8.2 专项测试，再运行 `pytest -q`。
-   - 测试失败只修复 8.2，不推进 8.3。
-   - 用户确认全量通过后，再更新 DevPlan 并记录最终 commit SHA。
+验收目标：新开发者只依赖仓库文档即可理解系统边界，并能运行最小 demo。
 
 ---
 
-# DevPlan 变更记录
+# 六、最终目标 Definition of Done
 
-## 2026-08-22 — 协作与分支纪律
-- 固定唯一开发分支：`refactor/runtime-architecture-7.5.5-execution-history-semantics`。
-- 固定“规划 → GitHub 编码 → 用户 Pull → 专项测试 → 全量测试 → 用户验收 → DevPlan 更新 → 下一节点”闭环。
-- 测试失败时只针对实际错误在当前分支修复，不推进下一功能点。
+项目达到最终目标必须同时满足：
 
-## 2026-08-22 — 7.5.5 / 7.5.6 验收
-- 7.5.5：用户确认 `784 passed in 2.22s`。
-- 7.5.6：用户确认 `788 passed in 2.26s`。
+- [ ] Planner → Architect → Developer → Tester → Reviewer → ProjectResult 完整闭环。
+- [ ] Dependency-aware scheduling 正确。
+- [ ] Agent / LLM / Tool 可替换。
+- [ ] Tool 权限和 Workspace Sandbox 有安全边界。
+- [ ] Project / Task / Tool execution history 可持久化并恢复。
+- [ ] Workflow events 可持久化、重放、投影、查询。
+- [ ] Failure injection contract 完整。
+- [ ] Security contract 完整。
+- [ ] Mock LLM integration 可无网络验证。
+- [ ] Long-running workflow 可稳定运行。
+- [ ] Performance / concurrency contract 建立并有回归基线。
+- [ ] Documentation / Examples 足以独立使用。
+- [ ] 全量测试通过且无 warning。
 
-## 2026-08-22 — 7.6.1–7.6.4 验收
-- 用户确认全量 `807 passed in 2.35s`。
-- WorkflowEvent、in-memory log、filesystem persistence、Workflow / Orchestrator lifecycle integration 正式完成。
+---
 
-## 2026-08-22 — 7.6.5 验收
-- 用户确认全量 `813 passed in 2.42s`。
-- filesystem global / project / task ordered query 与 in-memory ordering parity 正式完成。
+# 七、当前工作纪律
 
-## 2026-08-22 — 7.6.6 验收
-- `WorkflowEventPersistenceAdapter.load_log()` 完成独立 event log rehydration。
-- 用户确认专项 `10 passed in 0.16s`。
+**当前只推进 8.6。**
 
-## 2026-08-22 — 7.6.7 验收
-- `ProjectOrchestrator.resume_persisted()` 支持独立 event persistence recovery。
-- 用户确认专项 `32 passed in 0.95s`、全量 `820 passed in 2.59s`。
+8.6 测试失败时只修复性能/并发相关问题；不提前进入 8.7。
 
-## 2026-08-22 — 7.6.8 验收
-- runtime durable event sink 与 ProjectOrchestrator runtime event persistence 完成。
-- 用户确认专项 `38 passed in 1.01s`、全量 `826 passed in 2.80s`。
-- 最终实现 commit：`4dec49cbb91bccf24eafead1d262a009aade2bbc`。
+用户确认 8.6 专项和全量测试通过后，再将 8.6 标记为 √，记录最终 SHA，并制定 8.7 的具体编码任务。
 
-## 2026-08-22 — 7.6.9 验收
-- 新增 deterministic, read-only workflow event state projection。
-- 用户确认专项 `40 passed in 1.06s`。
-- 用户确认全量 `834 passed in 2.91s`。
+---
 
-## 2026-08-22 — 7.6.10 验收
-- 新增 `runtime/workflow_event_query.py`，完成 persisted project + independent event persistence 的 operational query boundary。
-- 新增 `tests/test_workflow_event_query_integration.py`。
-- 用户确认专项 `46 passed in 1.17s`。
-- 用户确认全量 `840 passed in 3.05s`。
+# DevPlan 更新记录
 
-## 2026-08-22 — 7.6.11 验收
-- 完成 Workflow event query contract hardening / compatibility matrix。
-- 新增 `tests/test_workflow_event_query_contract.py`。
-- 用户确认专项 `56 passed in 1.13s`。
-- 用户确认全量 `850 passed in 2.74s`。
-- 7.6.11 正式完成，Phase 8 Production Hardening 进入 8.1 Cross-boundary Contract Tests。
-
-## 2026-08-22 — 8.1 验收
-- 新增 `tests/test_workflow_event_end_to_end_contract.py`，完成跨 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端契约覆盖。
-- 用户确认该专项测试通过，并确认全量 `pytest -q` 通过。
-- 8.1 正式完成，当前进入 8.2 Failure Injection Tests。
-
-## 2026-08-22 — 8.2 启动
-- 新增 `tests/test_failure_injection_contract.py`，开始验证 workflow event durable sink、event batch atomicity、project snapshot atomicity 与 recovery boundary。
-- 当前等待用户专项测试与全量测试验收。
+## 2026-08-22
+- 依据 GitHub 当前分支代码、DevPlan 与 commit history 重新校准项目进度。
+- 明确项目目标从“功能完整”升级为“可恢复、可审计、可验证、可并发、可维护的生产级 AI 软件开发团队”。
+- 确认 8.1–8.5 已完成，8.6 为当前唯一开发节点。
+- 将 8.6 从单纯 performance test 扩展为 Performance / Concurrency Contract，并新增 baseline、contention、query concurrency、scheduler scalability、failure+concurrency matrix、regression guard 六类开发环节。
+- 将 8.7 明确为 Documentation / Examples / Release Readiness。
+- 当前 HEAD 基线：`72c55e4`。
