@@ -10,10 +10,8 @@ from runtime.task_manager import TaskManager
 class ProjectResult:
     """Provider-independent summary of one project execution.
 
-    ``completed_task_ids`` was added as a persistence/recovery invariant.
-    It is intentionally backward-compatible with the original result
-    contract: callers that do not provide it continue to work, and legacy
-    serialized results without the field remain loadable.
+    ``completed_task_ids`` is the canonical identity-level representation of
+    completed tasks used by project persistence and recovery.
     """
 
     project: str | None
@@ -37,6 +35,12 @@ class ProjectResult:
 
         tasks = task_manager.get_all_tasks()
 
+        completed_task_ids = tuple(
+            task.id
+            for task in tasks
+            if task.status == "completed"
+        )
+
         failed = tuple(
             task.id
             for task in tasks
@@ -49,13 +53,7 @@ class ProjectResult:
             if task.status == "blocked"
         )
 
-        completed_ids = tuple(
-            task.id
-            for task in tasks
-            if task.status == "completed"
-        )
-
-        completed = len(completed_ids)
+        completed = len(completed_task_ids)
 
         success = bool(tasks) and completed == len(tasks)
 
@@ -74,57 +72,40 @@ class ProjectResult:
             completed_tasks=completed,
             failed_tasks=failed,
             blocked_tasks=blocked,
-            completed_task_ids=completed_ids,
+            completed_task_ids=completed_task_ids,
         )
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ProjectResult":
-        """Restore a ProjectResult from its JSON representation.
+        """Restore a ProjectResult from a persisted JSON-compatible payload."""
 
-        The loader accepts both the current representation and legacy
-        representations that do not contain ``completed_task_ids``.
-        """
         if not isinstance(payload, dict):
             raise TypeError("project result payload must be a dictionary")
 
-        required = (
-            "project",
-            "success",
-            "status",
-            "total_tasks",
-            "completed_tasks",
-            "failed_tasks",
-            "blocked_tasks",
-        )
-
-        missing = [key for key in required if key not in payload]
-        if missing:
-            raise ValueError(
-                f"project result payload is missing fields: {', '.join(missing)}"
-            )
-
-        project = payload["project"]
-        success = payload["success"]
-        status = payload["status"]
-        total_tasks = payload["total_tasks"]
-        completed_tasks = payload["completed_tasks"]
-        failed_tasks = payload["failed_tasks"]
-        blocked_tasks = payload["blocked_tasks"]
+        project = payload.get("project")
 
         if project is not None and not isinstance(project, str):
             raise ValueError("project must be a string or None")
 
+        success = payload.get("success")
         if not isinstance(success, bool):
             raise ValueError("success must be a boolean")
 
+        status = payload.get("status")
         if not isinstance(status, str):
             raise ValueError("status must be a string")
 
+        total_tasks = payload.get("total_tasks")
         if not isinstance(total_tasks, int) or isinstance(total_tasks, bool):
             raise ValueError("total_tasks must be an integer")
 
+        completed_tasks = payload.get("completed_tasks")
         if not isinstance(completed_tasks, int) or isinstance(completed_tasks, bool):
             raise ValueError("completed_tasks must be an integer")
+
+        failed_tasks = payload.get("failed_tasks", [])
+        blocked_tasks = payload.get("blocked_tasks", [])
+        completed_task_ids = payload.get("completed_task_ids", [])
 
         if not isinstance(failed_tasks, list):
             raise ValueError("failed_tasks must be a list")
@@ -132,26 +113,17 @@ class ProjectResult:
         if not isinstance(blocked_tasks, list):
             raise ValueError("blocked_tasks must be a list")
 
-        if any(not isinstance(task_id, str) for task_id in failed_tasks):
-            raise ValueError("failed_tasks must contain only strings")
-
-        if any(not isinstance(task_id, str) for task_id in blocked_tasks):
-            raise ValueError("blocked_tasks must contain only strings")
-
-        # Legacy snapshots did not contain completed_task_ids.
-        #
-        # In that case we cannot reconstruct the exact completed IDs from
-        # ProjectResult alone. Keep the field empty rather than inventing IDs.
-        completed_task_ids_payload = payload.get("completed_task_ids", [])
-
-        if not isinstance(completed_task_ids_payload, list):
+        if not isinstance(completed_task_ids, list):
             raise ValueError("completed_task_ids must be a list")
 
-        if any(
-            not isinstance(task_id, str)
-            for task_id in completed_task_ids_payload
-        ):
-            raise ValueError("completed_task_ids must contain only strings")
+        if not all(isinstance(item, str) for item in failed_tasks):
+            raise ValueError("failed_tasks must contain strings")
+
+        if not all(isinstance(item, str) for item in blocked_tasks):
+            raise ValueError("blocked_tasks must contain strings")
+
+        if not all(isinstance(item, str) for item in completed_task_ids):
+            raise ValueError("completed_task_ids must contain strings")
 
         return cls(
             project=project,
@@ -161,17 +133,13 @@ class ProjectResult:
             completed_tasks=completed_tasks,
             failed_tasks=tuple(failed_tasks),
             blocked_tasks=tuple(blocked_tasks),
-            completed_task_ids=tuple(completed_task_ids_payload),
+            completed_task_ids=tuple(completed_task_ids),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-friendly representation.
+        """Return a JSON-friendly, provider-independent representation."""
 
-        Preserve the original serialized contract when no completed task IDs
-        are available. New results produced from a TaskManager carry the
-        additional identity information required by persistence/recovery.
-        """
-        payload: dict[str, Any] = {
+        return {
             "project": self.project,
             "success": self.success,
             "status": self.status,
@@ -179,9 +147,5 @@ class ProjectResult:
             "completed_tasks": self.completed_tasks,
             "failed_tasks": list(self.failed_tasks),
             "blocked_tasks": list(self.blocked_tasks),
+            "completed_task_ids": list(self.completed_task_ids),
         }
-
-        if self.completed_task_ids:
-            payload["completed_task_ids"] = list(self.completed_task_ids)
-
-        return payload

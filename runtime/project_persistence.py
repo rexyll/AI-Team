@@ -152,6 +152,23 @@ class ProjectPersistenceAdapter:
 
         payload = self._build_payload(project_id, plan, task_manager, result, tool_execution_history)
         self._atomic_write(path, payload)
+        
+    def list_ids(self) -> list[str]:
+        """Return persisted project ids in stable lexical order."""
+        return sorted(
+            path.stem
+            for path in self.root.glob("*.json")
+            if path.is_file()
+        )
+
+    def delete(self, project_id: str) -> None:
+        """Delete exactly one persisted project snapshot."""
+        path = self._path(project_id)
+
+        if not path.is_file():
+            raise KeyError(project_id)
+
+        path.unlink()
 
     def checkpoint(
         self,
@@ -317,10 +334,12 @@ class ProjectPersistenceAdapter:
 
         if result is None:
             return
-        if result.project != project_id and plan is not None:
+        if result.project is not None and plan is not None:
             expected_project = plan.get("project")
             if expected_project is not None and result.project != expected_project:
-                raise ValueError(f"project snapshot result mismatch: {project_id}")
+                raise ValueError(
+                    f"project snapshot result mismatch: {project_id}"
+                )
         actual_statuses = {task.id: task.status for task in tasks}
         expected_completed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "completed"))
         expected_failed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "failed"))

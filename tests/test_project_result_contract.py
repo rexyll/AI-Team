@@ -53,14 +53,15 @@ def test_project_result_summarizes_successful_tasks():
     result = ProjectResult.from_task_manager(manager, project="demo")
 
     assert result == ProjectResult(
-        project="demo",
-        success=True,
-        status="completed",
-        total_tasks=2,
-        completed_tasks=2,
-        failed_tasks=(),
-        blocked_tasks=(),
-    )
+    project="demo",
+    success=True,
+    status="completed",
+    total_tasks=2,
+    completed_tasks=2,
+    failed_tasks=(),
+    blocked_tasks=(),
+    completed_task_ids=("TASK-001", "TASK-002"),
+)
 
 
 def test_project_result_summarizes_failed_tasks():
@@ -103,14 +104,15 @@ def test_project_result_to_dict_is_json_friendly():
     result = ProjectResult.from_task_manager(manager, project="demo")
 
     assert result.to_dict() == {
-        "project": "demo",
-        "success": False,
-        "status": "failed",
-        "total_tasks": 3,
-        "completed_tasks": 1,
-        "failed_tasks": ["TASK-002"],
-        "blocked_tasks": ["TASK-003"],
-    }
+    "project": "demo",
+    "success": False,
+    "status": "failed",
+    "total_tasks": 3,
+    "completed_tasks": 1,
+    "failed_tasks": ["TASK-002"],
+    "blocked_tasks": ["TASK-003"],
+    "completed_task_ids": ["TASK-001"],
+}
 
 
 def test_project_result_does_not_retain_task_manager_reference():
