@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from .tool_execution_history import ToolExecutionConflictError
 from .tool_execution_record import ToolExecutionRecord
 
 
@@ -56,8 +57,8 @@ class ToolExecutionPersistenceAdapter:
 
         Returns ``True`` when a new file is created and ``False`` when the
         exact same immutable record already exists. A conflicting record with
-        the same execution id is rejected so persisted history remains
-        append-only and immutable.
+        the same execution id is rejected with the same conflict type used by
+        in-memory history and recovery.
         """
         if not isinstance(record, ToolExecutionRecord):
             raise TypeError("record must be a ToolExecutionRecord")
@@ -67,7 +68,9 @@ class ToolExecutionPersistenceAdapter:
             existing = self.load(record.execution_id)
             if existing == record:
                 return False
-            raise FileExistsError(path)
+            raise ToolExecutionConflictError(
+                f"conflicting tool execution record for execution_id: {record.execution_id}"
+            )
 
         self.save(record)
         return True
@@ -78,8 +81,8 @@ class ToolExecutionPersistenceAdapter:
         Identical records already on disk are treated as idempotent. New
         records are staged before any target is replaced. If staging or the
         commit phase fails, files created by this batch are removed so callers
-        do not observe a deliberately partial batch. Conflicting records are
-        rejected before any write occurs.
+        do not observe a deliberately partial batch. Conflicting records use
+        the same ``ToolExecutionConflictError`` as in-memory history.
         """
         incoming = list(records)
         for record in incoming:
@@ -90,7 +93,7 @@ class ToolExecutionPersistenceAdapter:
         for record in incoming:
             existing = unique.get(record.execution_id)
             if existing is not None and existing != record:
-                raise ValueError(
+                raise ToolExecutionConflictError(
                     f"conflicting tool execution record for execution_id: {record.execution_id}"
                 )
             unique[record.execution_id] = record
@@ -101,7 +104,9 @@ class ToolExecutionPersistenceAdapter:
             if path.exists():
                 existing = self.load(execution_id)
                 if existing != record:
-                    raise FileExistsError(path)
+                    raise ToolExecutionConflictError(
+                        f"conflicting tool execution record for execution_id: {execution_id}"
+                    )
                 continue
             payload = json.dumps(record.to_dict(), ensure_ascii=False, indent=2)
             pending.append((path, payload))
