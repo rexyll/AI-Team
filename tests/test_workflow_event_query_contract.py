@@ -33,6 +33,12 @@ def _event(
     )
 
 
+def _log(events: list[WorkflowEvent]) -> WorkflowEventLog:
+    log = WorkflowEventLog()
+    log.merge(events)
+    return log
+
+
 def _complete_events() -> list[WorkflowEvent]:
     return [
         _event("EVENT-001", "task_started", "2026-08-22T10:00:00Z", {"status": "running"}),
@@ -57,7 +63,7 @@ def test_query_rejects_invalid_project_id():
 
 def test_partial_lifecycle_has_deterministic_task_and_project_status():
     query = WorkflowEventQueryService.from_log(
-        WorkflowEventLog(_complete_events()[:2]),
+        _log(_complete_events()[:2]),
         project_id=PROJECT_ID,
     )
 
@@ -71,7 +77,7 @@ def test_unknown_event_type_is_forward_compatible_and_preserves_last_event():
     events = _complete_events()[:2] + [
         _event("EVENT-003", "future.workflow.event", "2026-08-22T10:02:00Z", {"future": True}),
     ]
-    query = WorkflowEventQueryService.from_log(WorkflowEventLog(events), project_id=PROJECT_ID)
+    query = WorkflowEventQueryService.from_log(_log(events), project_id=PROJECT_ID)
 
     assert query.lifecycle(TASK_ID) == "review_pending"
     assert query.last_event == ("EVENT-003", "future.workflow.event", "2026-08-22T10:02:00Z")
@@ -96,7 +102,7 @@ def test_retry_failure_revision_approval_matrix_is_projected_deterministically()
         _event("EVENT-010", "review_started", "2026-08-22T10:09:00Z", {"status": "reviewing"}),
         _event("EVENT-011", "reviewer_approved", "2026-08-22T10:10:00Z", {"status": "completed"}),
     ]
-    query = WorkflowEventQueryService.from_log(WorkflowEventLog(events), project_id=PROJECT_ID)
+    query = WorkflowEventQueryService.from_log(_log(events), project_id=PROJECT_ID)
 
     assert query.lifecycle(TASK_ID) == "completed"
     assert query.retry(TASK_ID) == {"retry_attempt": 1, "max_retries": 2}
@@ -106,7 +112,7 @@ def test_retry_failure_revision_approval_matrix_is_projected_deterministically()
 
 
 def test_unknown_task_is_a_stable_key_error():
-    query = WorkflowEventQueryService.from_log(WorkflowEventLog(_complete_events()), project_id=PROJECT_ID)
+    query = WorkflowEventQueryService.from_log(_log(_complete_events()), project_id=PROJECT_ID)
     with pytest.raises(KeyError):
         query.task("TASK-MISSING")
     with pytest.raises(KeyError):
@@ -121,12 +127,12 @@ def test_malformed_known_event_fails_fast_with_event_identity():
         {"status": "approved"},
     )
     with pytest.raises(ValueError, match="EVENT-BAD"):
-        WorkflowEventQueryService.from_log(WorkflowEventLog([malformed]), project_id=PROJECT_ID)
+        WorkflowEventQueryService.from_log(_log([malformed]), project_id=PROJECT_ID)
 
 
 def test_log_and_persistence_sources_have_identical_query_results(tmp_path: Path):
     events = list(reversed(_complete_events()))
-    log_query = WorkflowEventQueryService.from_log(WorkflowEventLog(events), project_id=PROJECT_ID)
+    log_query = WorkflowEventQueryService.from_log(_log(events), project_id=PROJECT_ID)
 
     persistence = WorkflowEventPersistenceAdapter(tmp_path / "events")
     persistence.save_if_absent_many(events)
@@ -136,7 +142,7 @@ def test_log_and_persistence_sources_have_identical_query_results(tmp_path: Path
 
 
 def test_query_isolated_from_source_log_after_construction():
-    log = WorkflowEventLog(_complete_events())
+    log = _log(_complete_events())
     query = WorkflowEventQueryService.from_log(log, project_id=PROJECT_ID)
 
     log.append(_event("EVENT-005", "task_failed", "2026-08-22T10:04:00Z", {"status": "failed", "error": "late"}))
@@ -146,7 +152,7 @@ def test_query_isolated_from_source_log_after_construction():
 
 
 def test_as_dict_is_detached_at_nested_levels():
-    query = WorkflowEventQueryService.from_log(WorkflowEventLog(_complete_events()), project_id=PROJECT_ID)
+    query = WorkflowEventQueryService.from_log(_log(_complete_events()), project_id=PROJECT_ID)
     first = query.as_dict()
     first["tasks"].append({"task_id": "MUTATED"})
     first["tasks"][0]["review_status"] = "mutated"
