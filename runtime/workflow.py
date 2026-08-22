@@ -164,14 +164,6 @@ class TaskWorkflow:
             )
 
     def _agent(self, role: str, fallback=None):
-        """Resolve a stage agent from the router registry when available.
-
-        ``route()`` is intentionally not consulted here. Legacy routers used
-        by isolated workflow tests may implement route() as a guard that must
-        never be called. The explicit agent remains the compatibility fallback
-        when no registry API is available. This also keeps the router registry
-        as the sole dynamic source when ``get_agent()`` exists.
-        """
         get_agent = getattr(self.agent_router, "get_agent", None)
         if callable(get_agent):
             agent = get_agent(role)
@@ -192,12 +184,10 @@ class TaskWorkflow:
         return self._agent("reviewer", self._reviewer)
 
     def _checkpoint(self) -> None:
-        """Persist a workflow-stage boundary when a durable hook is installed."""
         if self._state_change_hook is not None:
             self._state_change_hook(self.task_manager)
 
     def _emit_event(self, event_type: str, task: Task, *, payload: dict[str, Any] | None = None) -> None:
-        """Append one workflow fact after the corresponding runtime mutation."""
         if self._workflow_event_log is None:
             return
         project_id = self._project_id or task.context.get("project_id")
@@ -215,7 +205,6 @@ class TaskWorkflow:
         )
 
     def _capture_developer_tool_history(self, task: Task) -> None:
-        """Attach immutable Developer tool evidence to the persisted task context."""
         history = getattr(self.developer, "tool_execution_history", None)
         if history is None or not hasattr(history, "to_dict"):
             return
@@ -251,6 +240,11 @@ class TaskWorkflow:
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
 
+            # The review lifecycle starts when the task enters review_pending,
+            # before the reviewer agent is invoked. This keeps the event log in
+            # the same causal order as the runtime lifecycle.
+            self._emit_event("review_started", task, payload={"status": task.status})
+            self._checkpoint()
             review_outcome = self._run_reviewer(task)
             review_action = self._apply_reviewer_outcome(task, review_outcome)
 
@@ -349,10 +343,6 @@ class TaskWorkflow:
             return StageOutcome.failure(WorkflowStage.REVIEWER, exc)
 
     def _apply_reviewer_outcome(self, task: Task, outcome: StageOutcome) -> str:
-        if task.status == "review_pending":
-            self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
-            self._emit_event("review_started", task, payload={"status": task.status})
-            self._checkpoint()
         if outcome.exception is not None:
             error = f"Reviewer execution failed: {outcome.exception}"
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
@@ -407,7 +397,14 @@ class TaskWorkflow:
         return "failed"
 
     def _build_context(self, task: Task) -> None:
-        """Build and persist dependency context for the current task."""
+        """Build and persist the legacy dependency-ID context for the task.
+
+        The context builder now returns a structured dependency mapping for
+        newer AgentContext consumers. Task.context, however, is a legacy
+        compatibility boundary and historically exposed a list of dependency
+        IDs. Preserve that shape here so enabling workflow event logging does
+        not alter legacy agent-visible state.
+        """
         all_tasks = {item.id: item for item in self.task_manager.get_all_tasks()}
         dependency_context = build_task_context(task, all_tasks)
-        task.context["dependencies"] = dependency_context
+        task.context["dependencies"] = list(dependency_context.keys())
