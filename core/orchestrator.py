@@ -1,4 +1,7 @@
 from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
 
 from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
@@ -7,6 +10,8 @@ from runtime.retry_policy import FailureKind, decide_retry
 from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
+from runtime.workflow_event import WorkflowEvent
+from runtime.workflow_event_log import WorkflowEventLog
 
 
 class Orchestrator:
@@ -18,38 +23,49 @@ class Orchestrator:
         agent_router: AgentRouter,
         max_workers: int = 4,
         failure_classifier: Callable[[BaseException], FailureKind] | None = None,
+        workflow_event_log: WorkflowEventLog | None = None,
+        project_id: str | None = None,
     ):
+        if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
+            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be a non-empty string or None")
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
-        self.failure_classifier = (
-            failure_classifier or self._default_failure_classifier
-        )
+        self.failure_classifier = failure_classifier or self._default_failure_classifier
         self._state_change_hook: Callable[[TaskManager], None] | None = None
+        self._workflow_event_log = workflow_event_log
+        self._project_id = project_id
 
-    def set_state_change_hook(
-        self,
-        hook: Callable[[TaskManager], None] | None,
-    ) -> None:
+    def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
         """Install an optional callback for durable task-state checkpoints."""
         if hook is not None and not callable(hook):
             raise TypeError("hook must be callable or None")
         self._state_change_hook = hook
 
-    def _persist_state_checkpoint(
-        self,
-        task_manager: TaskManager | None = None,
-    ) -> None:
-        """Emit a checkpoint using the workflow hook contract.
-
-        TaskWorkflow invokes stage checkpoints with its TaskManager argument,
-        while Orchestrator also emits checkpoints internally without an
-        argument. Accept both forms so the same bound method can safely cross
-        the Orchestrator -> Workflow boundary.
-        """
+    def _persist_state_checkpoint(self, task_manager: TaskManager | None = None) -> None:
+        """Emit a checkpoint using the workflow hook contract."""
         hook = self._state_change_hook
         if hook is not None:
             hook(task_manager if task_manager is not None else self.task_manager)
+
+    def _emit_event(self, event_type: str, task, *, payload: dict[str, Any] | None = None) -> None:
+        if self._workflow_event_log is None:
+            return
+        project_id = self._project_id or task.context.get("project_id")
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise ValueError("project_id is required when workflow_event_log is enabled")
+        self._workflow_event_log.append(
+            WorkflowEvent(
+                event_id=str(uuid4()),
+                event_type=event_type,
+                project_id=project_id,
+                task_id=task.id,
+                occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                payload=payload or {},
+            )
+        )
 
     @staticmethod
     def _default_failure_classifier(error: BaseException) -> FailureKind:
@@ -71,56 +87,33 @@ class Orchestrator:
                 break
 
             self._persist_state_checkpoint()
-            self.task_executor.run_layer(
-                ready_tasks,
-                self._execute_task,
-            )
+            self.task_executor.run_layer(ready_tasks, self._execute_task)
 
         print("\n" + "=" * 60)
-        print(
-            "AI TEAM FINISHED"
-            if self.task_manager.is_finished()
-            else "AI TEAM STOPPED"
-        )
+        print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED")
         print("=" * 60)
 
     def _get_executable_tasks(self):
-        """Use DependencyScheduler as the dependency decision source.
-
-        DependencyScheduler is read-only. TaskManager remains responsible
-        for applying ready/blocked lifecycle mutations.
-        """
-        scheduler = DependencyScheduler(
-            self.task_manager.get_all_tasks()
-        )
+        """Use DependencyScheduler as the dependency decision source."""
+        scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
 
         while True:
             blocked_decisions = scheduler.get_blocked_decisions()
             if not blocked_decisions:
                 break
-
             for decision in blocked_decisions:
                 self.task_manager.mark_blocked(
                     decision.task_id,
                     decision.reason or "Blocked by dependencies",
                 )
-
-            scheduler = DependencyScheduler(
-                self.task_manager.get_all_tasks()
-            )
+            scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
 
         scheduled_tasks = scheduler.get_ready_tasks()
-
         for task in scheduled_tasks:
             if task.status == "pending":
                 self.task_manager.mark_ready(task.id)
 
-        already_ready = [
-            task
-            for task in self.task_manager.get_all_tasks()
-            if task.status == "ready"
-        ]
-
+        already_ready = [task for task in self.task_manager.get_all_tasks() if task.status == "ready"]
         executable = []
         seen = set()
         for task in [*scheduled_tasks, *already_ready]:
@@ -138,12 +131,9 @@ class Orchestrator:
             context = build_task_context(task, self.task_manager.tasks)
             task.context = context
 
-            # The orchestrator owns the task execution boundary. Mark the
-            # task running before entering either the single-agent path or
-            # the Developer -> Tester -> Reviewer workflow so a persisted
-            # checkpoint never claims executable work is still merely ready.
             if task.status == "ready":
                 self.task_manager.mark_running(task.id)
+                self._emit_event("task_started", task, payload={"status": task.status})
                 self._persist_state_checkpoint()
 
             if task.role == "developer":
@@ -151,38 +141,31 @@ class Orchestrator:
                     task_manager=self.task_manager,
                     agent_router=self.agent_router,
                     state_change_hook=self._persist_state_checkpoint,
+                    workflow_event_log=self._workflow_event_log,
+                    project_id=self._project_id,
                 )
                 workflow.execute(task.id)
             else:
                 agent = self.agent_router.get_agent(task.role)
                 result = agent.run(task)
                 self.task_manager.mark_completed(task.id, result)
+                self._emit_event("task_completed", task, payload={"status": task.status})
 
-            # Developer workflow stages own their terminal checkpoints. A
-            # second checkpoint here would duplicate the final "completed"
-            # state and violate the stage-boundary contract. Single-agent
-            # roles still need their terminal checkpoint here.
             if task.role != "developer":
                 self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
 
         except Exception as exc:
             if task.status in {"running", "reviewing", "review_pending"}:
-                self.task_manager.mark_failed(
-                    task.id,
-                    f"{type(exc).__name__}: {exc}",
-                )
+                self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
+                self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error})
 
             self._apply_retry_policy(task, exc)
             self._persist_state_checkpoint()
             print(f"[Failed] {task.id}: {exc}")
 
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
-        """Apply retry policy after failure, at the Orchestrator boundary.
-
-        The policy is pure; TaskManager owns all retry/lifecycle mutation.
-        A denied decision leaves the failed Task untouched.
-        """
+        """Apply retry policy after failure, at the Orchestrator boundary."""
         if task.status != "failed":
             return False
 
@@ -200,10 +183,16 @@ class Orchestrator:
         if not decision.retry:
             return False
 
-        self.task_manager.retry_task(
-            task.id,
-            reason=decision.reason,
-            retryable=True,
+        self.task_manager.retry_task(task.id, reason=decision.reason, retryable=True)
+        self._emit_event(
+            "task_retrying",
+            task,
+            payload={
+                "status": task.status,
+                "retry_attempt": task.retry_attempt,
+                "max_retries": task.max_retries,
+                "reason": decision.reason,
+            },
         )
         return True
 
@@ -212,7 +201,4 @@ class Orchestrator:
         print("当前任务状态：")
         for task in self.task_manager.get_all_tasks():
             error = f" | {task.error}" if task.error else ""
-            print(
-                f"{task.id:<10}{task.status:<14}"
-                f"{task.role:<12}{task.title}{error}"
-            )
+            print(f"{task.id:<10}{task.status:<14}{task.role:<12}{task.title}{error}")
