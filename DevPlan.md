@@ -73,51 +73,42 @@ pytest -q
 ## 目标
 建立独立于最终 project snapshot 的 Workflow 事件日志 contract，使任务状态变化、调度、执行、重试、恢复等运行时事件具备可追踪、可排序、可持久化的 observability 语义，同时保持 Workflow 核心层不依赖具体存储实现。
 
-## 设计边界
-1. 先定义 provider-independent 的 immutable `WorkflowEvent` value object，不直接绑定数据库。
-2. 每个事件具备稳定 event identity、project/task scope、事件类型、发生时间及可序列化 payload。
-3. 同一 project/task scope 内必须具有确定排序语义，不依赖文件系统遍历顺序。
-4. 明确 event-id 重复、冲突、幂等语义，并与 7.5.5 的 execution-id identity 原则保持一致但不混淆两种身份。
-5. Workflow event log 与 project snapshot 分离：snapshot 表示当前状态，event log 表示状态演进历史。
-6. 第一阶段只建立 contract + filesystem adapter + Workflow integration boundary；不引入数据库、消息队列或外部 telemetry 平台。
-7. 事件写入失败不得静默伪造成功状态；具体 failure policy 在 integration contract 中明确。
-8. 不对现有 persistence、history、workflow 核心做无关重构。
+## 已完成范围
+### <span style="color:green">√</span> 7.6.1 WorkflowEvent value object
+### <span style="color:green">√</span> 7.6.2 WorkflowEventLog in-memory contract
+### <span style="color:green">√</span> 7.6.3 WorkflowEventPersistenceAdapter filesystem contract
+### <span style="color:green">√</span> 7.6.4 Workflow / Orchestrator lifecycle integration
 
-## 实施顺序
-1. 盘点当前 Workflow / Orchestrator 状态转换入口，确定最小事件集合。
-2. 新增 `WorkflowEvent` immutable value object 与 schema/serialization contract。
-3. 新增 `WorkflowEventLog` in-memory contract，定义 append / append-if-absent / conflict / ordered query 语义。
-4. 新增 `WorkflowEventPersistenceAdapter` filesystem 实现，保证单事件原子写入及读取校验。
-5. 增加 duplicate / conflict / ordering / corruption / failure-injection contract tests。
-6. 将最小事件集接入 `TaskWorkflow` / `ProjectOrchestrator`，优先覆盖 task state transition、retry、resume 等关键生命周期节点。
-7. 运行专项测试。
-8. 专项测试通过后运行全量 `pytest -q`。
-9. 用户验收后更新 DevPlan，记录测试数量、耗时及最终 commit SHA。
+已覆盖 immutable event identity、JSON payload、append / append-if-absent / merge conflict 语义、filesystem atomic persistence、corruption / filename identity boundary，以及 TaskWorkflow / Orchestrator 的 task start / completion / failure / retry / review 生命周期事件。
 
-## 建议最小事件类型
-- `task.created`
-- `task.ready`
-- `task.running`
-- `task.completed`
-- `task.failed`
-- `task.blocked`
-- `task.retrying`
-- `task.resumed`
-- `project.resumed`
+用户最终验收：
 
-实际事件集合以当前 Workflow 状态转换代码为准；若需要修改该集合或本节点边界，先向用户说明并获得确认。
+```text
+pytest -q
+807 passed in 2.35s
+```
 
-## 初步涉及文件
-- `runtime/` 下新增 Workflow event model / history / persistence adapter
-- 当前实际存在的 `TaskWorkflow` / `ProjectOrchestrator` 实现文件
-- `tests/` 下 Workflow event contract / persistence / integration tests
-- `DevPlan.md`
+7.6.1–7.6.4 当前正式完成。
 
-## 完成判定
-- Workflow event contract 独立于具体存储实现；
-- event identity、重复、冲突、排序语义有测试覆盖；
-- filesystem persistence 具备原子写入及 corruption boundary；
-- 最小生命周期事件能够从 Workflow / Orchestrator 产生；
+## 7.6.5 Filesystem query / ordering parity
+
+### 目标
+让 filesystem event persistence 与 `WorkflowEventLog` 提供一致的读取语义，避免当前 adapter 只能按 `event_id` 读取而无法直接恢复 project/task 有序事件流。
+
+### 实施范围
+1. `WorkflowEventPersistenceAdapter` 增加 ordered event loading/query API。
+2. query 结果与 `WorkflowEventLog.list_all()`、`list_for_project()`、`list_for_task()` 使用相同排序规则。
+3. 读取过程中遇到 corrupt event 时必须明确失败，不静默跳过。
+4. 与现有 `event_id` duplicate / conflict / atomic batch semantics 保持不变。
+5. 增加 contract tests：全局顺序、project 过滤、task 过滤、空结果、corrupt event fail-fast。
+6. 不引入数据库、消息队列、外部 telemetry，也不修改现有 TaskWorkflow 状态语义。
+7. 专项测试通过后运行全量 `pytest -q`。
+8. 用户验收后更新 DevPlan，记录测试数量、耗时和 commit SHA，再进入 7.6.6。
+
+### 完成判定
+- filesystem adapter 可恢复完整有序事件流；
+- project/task 查询与 in-memory log 排序一致；
+- corruption 不被静默吞掉；
 - 7.5.x persistence / execution-history contract 无回归；
 - 全量 `pytest -q` 通过；
 - 用户确认测试结果后才能标记 `√`。
@@ -138,17 +129,20 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：7.6 Workflow event log。**
+**当前节点：7.6.5 Filesystem query / ordering parity。**
 
-下一轮按固定流程：
-1. 读取当前 GitHub 分支实际 Workflow / Orchestrator 代码和现有测试；
-2. 明确 7.6 本轮实际修改范围与专项测试计划；
-3. 用户已经明确要求继续推进，因此直接在当前唯一开发分支编码；
-4. 完成后通知用户 Pull；
-5. 用户先运行专项测试，再运行全量 `pytest -q`；
-6. 若失败，在同一分支根据实际错误修复，不创建新分支；
-7. 用户确认全量通过后更新 DevPlan 并记录最终 SHA；
-8. 再制定下一节点计划。
+### 本轮详细计划
+1. 在 `runtime/workflow_event_persistence.py` 实现 `list_all()`、`list_for_project()`、`list_for_task()`，必要时提供内部统一加载函数，复用 `WorkflowEvent` 校验逻辑。
+2. 使用与 `WorkflowEventLog` 完全一致的排序 key：
+   - 全局：`(project_id, task_id or "", occurred_at, event_id)`；
+   - project：`(occurred_at, event_id)`；
+   - task：`(occurred_at, event_id)`。
+3. 新增 `tests/test_workflow_event_persistence_query_contract.py`，覆盖正常查询、过滤、排序、空结果、corrupt fail-fast。
+4. 不修改 Workflow / Orchestrator 核心执行逻辑，不扩大本轮功能边界。
+5. 完成后通知用户 Pull，用户执行专项测试：
+   `pytest tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py -q`
+6. 专项通过后用户执行全量 `pytest -q`。
+7. 用户确认全量通过后，我更新本节为 `√ 7.6.5` 并记录最终 SHA。
 
 ---
 
@@ -170,3 +164,8 @@ pytest -q
 - 用户确认全量测试：`788 passed in 2.26s`。
 - 7.5.6 Persistence atomic batch semantics 正式完成。
 - 下一节点进入 7.6 Workflow event log。
+
+## 2026-08-22 — 7.6.1–7.6.4 验收
+- 用户确认全量测试：`807 passed in 2.35s`。
+- WorkflowEvent immutable contract、in-memory log、filesystem persistence 以及 Workflow / Orchestrator lifecycle integration 正式完成。
+- 下一节点进入 7.6.5 Filesystem query / ordering parity。
