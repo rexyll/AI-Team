@@ -8,11 +8,21 @@ if TYPE_CHECKING:
     from .tool_execution_persistence import ToolExecutionPersistenceAdapter
 
 
+class ToolExecutionConflictError(ValueError):
+    """Raised when one execution id maps to different immutable records."""
+
+
 class ToolExecutionHistory:
     """Ordered in-memory index of immutable tool execution records."""
 
     def __init__(self) -> None:
         self._records: dict[str, ToolExecutionRecord] = {}
+
+    @staticmethod
+    def _conflict(execution_id: str) -> ToolExecutionConflictError:
+        return ToolExecutionConflictError(
+            f"conflicting tool execution record for execution_id: {execution_id}"
+        )
 
     def append(self, record: ToolExecutionRecord) -> None:
         if not isinstance(record, ToolExecutionRecord):
@@ -31,9 +41,7 @@ class ToolExecutionHistory:
             return True
         if existing == record:
             return False
-        raise ValueError(
-            f"conflicting tool execution record for execution_id: {record.execution_id}"
-        )
+        raise self._conflict(record.execution_id)
 
     def merge(self, records: Iterable[ToolExecutionRecord]) -> int:
         """Merge records atomically by execution-id identity.
@@ -52,14 +60,10 @@ class ToolExecutionHistory:
             if existing is None:
                 previous = pending.get(record.execution_id)
                 if previous is not None and previous != record:
-                    raise ValueError(
-                        f"conflicting tool execution record for execution_id: {record.execution_id}"
-                    )
+                    raise self._conflict(record.execution_id)
                 pending[record.execution_id] = record
             elif existing != record:
-                raise ValueError(
-                    f"conflicting tool execution record for execution_id: {record.execution_id}"
-                )
+                raise self._conflict(record.execution_id)
 
         self._records.update(pending)
         return len(pending)
@@ -89,8 +93,7 @@ class ToolExecutionHistory:
         if not isinstance(payload, list):
             raise TypeError("tool execution history payload must be a list")
         history = cls()
-        for item in payload:
-            history.append(ToolExecutionRecord.from_dict(item))
+        history.merge(ToolExecutionRecord.from_dict(item) for item in payload)
         return history
 
     def save(self, adapter: "ToolExecutionPersistenceAdapter") -> None:
