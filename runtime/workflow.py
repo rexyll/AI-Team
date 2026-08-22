@@ -354,7 +354,9 @@ class TaskWorkflow:
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
-            self._emit_event("reviewer_approved", task, payload=outcome.to_dict())
+            event_payload = outcome.to_dict()
+            event_payload["status"] = task.status
+            self._emit_event("reviewer_approved", task, payload=event_payload)
             self._checkpoint()
             return "completed"
         if outcome.status == "revision":
