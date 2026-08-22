@@ -61,21 +61,38 @@ class WorkflowEventLog:
         self._events.update(pending)
         return len(pending)
 
-    def list_all(self) -> list[WorkflowEvent]:
-        return sorted(
-            self._events.values(),
-            key=lambda event: (
-                event.project_id,
-                event.task_id if event.task_id is not None else "\uffff",
-                event.occurred_at,
-                event.event_id,
-            ),
+    @staticmethod
+    def _global_sort_key(event: WorkflowEvent) -> tuple[str, str, str, str]:
+        """Keep project-level lifecycle events after task events for global views."""
+        return (
+            event.project_id,
+            event.task_id if event.task_id is not None else "\uffff",
+            event.occurred_at,
+            event.event_id,
         )
+
+    @staticmethod
+    def _project_sort_key(event: WorkflowEvent) -> tuple[int, str, str]:
+        """Order a project's resumed marker after the recovered event stream.
+
+        ``project.resumed`` is a recovery boundary, not an ordinary task event.
+        It must remain the final marker in a project's event view even when the
+        host clock used to create the marker is earlier than timestamps already
+        persisted in that project's event stream.
+        """
+        return (
+            1 if event.event_type == "project.resumed" else 0,
+            event.occurred_at,
+            event.event_id,
+        )
+
+    def list_all(self) -> list[WorkflowEvent]:
+        return sorted(self._events.values(), key=self._global_sort_key)
 
     def list_for_project(self, project_id: str) -> list[WorkflowEvent]:
         return sorted(
             (event for event in self._events.values() if event.project_id == project_id),
-            key=lambda event: (event.occurred_at, event.event_id),
+            key=self._project_sort_key,
         )
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
