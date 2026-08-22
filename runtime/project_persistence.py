@@ -257,6 +257,39 @@ class ProjectPersistenceAdapter:
         snapshot = self.load(project_id)
         return ToolExecutionAudit(snapshot.tool_execution_history)
 
+    def audit_consistency(self, project_id: str) -> dict[str, Any]:
+        """Report whether persisted canonical history matches task-local history.
+
+        The report is observational only. It deliberately does not reject or
+        rewrite a snapshot because explicit project-level history remains the
+        canonical persisted representation. A mismatch is therefore useful
+        evidence of a boundary that has not yet been rehydrated into task
+        runtime contexts; continuation can then restore the canonical history.
+        """
+        snapshot = self.load(project_id)
+        canonical = snapshot.tool_execution_history.to_dict() if snapshot.tool_execution_history is not None else []
+        contextual = self._history_from_task_manager(snapshot.task_manager)
+        context_payload = contextual.to_dict() if contextual is not None else []
+
+        canonical_by_id = {item["execution_id"]: item for item in canonical}
+        context_by_id = {item["execution_id"]: item for item in context_payload}
+        canonical_ids = set(canonical_by_id)
+        context_ids = set(context_by_id)
+
+        return {
+            "project_id": project_id,
+            "consistent": canonical_by_id == context_by_id,
+            "canonical_count": len(canonical_by_id),
+            "task_context_count": len(context_by_id),
+            "missing_from_task_context": sorted(canonical_ids - context_ids),
+            "missing_from_canonical": sorted(context_ids - canonical_ids),
+            "conflicting_execution_ids": sorted(
+                execution_id
+                for execution_id in canonical_ids & context_ids
+                if canonical_by_id[execution_id] != context_by_id[execution_id]
+            ),
+        }
+
     @staticmethod
     def _validate_snapshot_consistency(
         project_id: str,
