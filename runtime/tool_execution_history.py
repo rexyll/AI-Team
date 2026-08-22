@@ -8,8 +8,14 @@ if TYPE_CHECKING:
     from .tool_execution_persistence import ToolExecutionPersistenceAdapter
 
 
-class ToolExecutionConflictError(ValueError):
-    """Raised when one execution id maps to different immutable records."""
+class ToolExecutionConflictError(FileExistsError, ValueError):
+    """Raised when one execution id maps to different immutable records.
+
+    The conflict is semantically a duplicate immutable execution identity, so
+    callers can catch this specific error. It also remains compatible with
+    older persistence callers that treated an occupied execution-id path as a
+    ``FileExistsError``.
+    """
 
 
 class ToolExecutionHistory:
