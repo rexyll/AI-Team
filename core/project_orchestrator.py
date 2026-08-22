@@ -12,6 +12,10 @@ from runtime.task_manager import TaskManager
 from runtime.task_validator import validate_plan
 from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
+from runtime.workflow_event import WorkflowEvent
+from runtime.workflow_event_log import WorkflowEventLog
+from uuid import uuid4
+from datetime import datetime, timezone
 
 
 class ProjectOrchestrator:
@@ -19,19 +23,58 @@ class ProjectOrchestrator:
 
     PLANNER_TASK_ID = "PLAN-001"
 
-    def __init__(self, agent_router: AgentRouter, plan_builder: PlanBuilder | None = None, orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None):
+    def __init__(
+        self,
+        agent_router: AgentRouter,
+        plan_builder: PlanBuilder | None = None,
+        orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None,
+        workflow_event_log: WorkflowEventLog | None = None,
+        project_id: str | None = None,
+    ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
+        if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
+            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be a non-empty string or None")
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
         self.last_plan: dict[str, Any] | None = None
         self.last_task_manager: TaskManager | None = None
         self.last_result: ProjectResult | None = None
+        self._workflow_event_log = workflow_event_log
+        self._project_id = project_id
 
     @staticmethod
     def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
         return Orchestrator(task_manager=task_manager, agent_router=agent_router)
+
+    def _resolved_project_id(self) -> str | None:
+        if self._project_id is not None:
+            return self._project_id
+        if self.last_plan is not None:
+            value = self.last_plan.get("project_id")
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    def _emit_project_event(self, event_type: str, *, payload: dict[str, Any] | None = None) -> None:
+        if self._workflow_event_log is None:
+            return
+        project_id = self._resolved_project_id()
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise ValueError("project_id is required when workflow_event_log is enabled")
+        self._workflow_event_log.append(
+            WorkflowEvent(
+                event_id=str(uuid4()),
+                event_type=event_type,
+                project_id=project_id,
+                task_id=None,
+                occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                payload=payload or {},
+            )
+        )
 
     @staticmethod
     def _restore_tool_execution_history(task_manager: TaskManager, history: ToolExecutionHistory | None) -> None:
@@ -77,7 +120,11 @@ class ProjectOrchestrator:
     def create_orchestrator(self, task_manager: TaskManager) -> Orchestrator:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
-        return self.orchestrator_factory(task_manager, self.agent_router)
+        try:
+            return self.orchestrator_factory(task_manager, self.agent_router)
+        except TypeError:
+            orchestrator = self.orchestrator_factory(task_manager, self.agent_router)
+            return orchestrator
 
     def execute(self, task_manager: TaskManager, *, state_change_hook: Callable[[TaskManager], None] | None = None) -> ProjectResult:
         if not isinstance(task_manager, TaskManager):
@@ -86,6 +133,9 @@ class ProjectOrchestrator:
             raise TypeError("state_change_hook must be callable or None")
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
+        if self._workflow_event_log is not None:
+            orchestrator._workflow_event_log = self._workflow_event_log
+            orchestrator._project_id = self._resolved_project_id()
         set_hook = getattr(orchestrator, "set_state_change_hook", None)
         if state_change_hook is not None and callable(set_hook):
             set_hook(state_change_hook)
@@ -105,6 +155,7 @@ class ProjectOrchestrator:
             raise ValueError("no in-memory task manager is available to resume")
         if not isinstance(manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
+        self._emit_project_event("project.resumed", payload={"source": "memory"})
         return self.execute(manager)
 
     def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
@@ -116,6 +167,7 @@ class ProjectOrchestrator:
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
         self.last_result = snapshot.result
+        self._emit_project_event("project.resumed", payload={"source": "persistence", "project_id": project_id})
         return snapshot.result or ProjectResult.from_task_manager(snapshot.task_manager, project=(snapshot.plan or {}).get("project") if snapshot.plan else None)
 
     def audit_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ToolExecutionAudit:
@@ -146,12 +198,7 @@ class ProjectOrchestrator:
 
         def persist_boundary(manager: TaskManager) -> None:
             boundary_result = ProjectResult.from_task_manager(manager, project=project_name)
-            adapter.update(
-                project_id,
-                plan=self.last_plan,
-                task_manager=manager,
-                result=boundary_result,
-            )
+            adapter.update(project_id, plan=self.last_plan, task_manager=manager, result=boundary_result)
 
         result = self.execute(snapshot.task_manager, state_change_hook=persist_boundary)
         persisted = adapter.load(project_id)
@@ -159,12 +206,7 @@ class ProjectOrchestrator:
             persisted.task_manager.get_task(task.id).status != task.status
             for task in self.last_task_manager.get_all_tasks()
         ):
-            adapter.update(
-                project_id,
-                plan=self.last_plan,
-                task_manager=self.last_task_manager,
-                result=result,
-            )
+            adapter.update(project_id, plan=self.last_plan, task_manager=self.last_task_manager, result=result)
         return result
 
     def run(self, requirement: str) -> ProjectResult:
