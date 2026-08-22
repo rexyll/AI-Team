@@ -59,12 +59,10 @@ class ProjectOrchestrator:
 
     @property
     def workflow_event_log(self) -> WorkflowEventLog | None:
-        """Return the currently attached in-memory workflow event log, if any."""
         return self._workflow_event_log
 
     @property
     def workflow_event_persistence(self) -> WorkflowEventPersistenceAdapter | None:
-        """Return the optional durable workflow event sink."""
         return self._workflow_event_persistence
 
     @staticmethod
@@ -98,7 +96,6 @@ class ProjectOrchestrator:
 
     @staticmethod
     def _restore_tool_execution_history(task_manager: TaskManager, history: ToolExecutionHistory | None) -> None:
-        """Rehydrate the canonical project history into task runtime contexts."""
         tasks = {task.id: task for task in task_manager.get_all_tasks()}
         for task in tasks.values():
             task.context.pop("tool_execution_history", None)
@@ -114,7 +111,7 @@ class ProjectOrchestrator:
             tasks[task_id].context["tool_execution_history"] = records
 
     def _rehydrate_workflow_event_log(self, project_id: str, event_persistence: WorkflowEventPersistenceAdapter | None) -> None:
-        """Optionally restore the independent workflow event stream for recovery."""
+        """Restore events for recovery without making recovery itself durable."""
         if event_persistence is None:
             return
         if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
@@ -122,7 +119,10 @@ class ProjectOrchestrator:
         self._workflow_event_log = event_persistence.load_log()
         self._workflow_event_persistence = event_persistence
         self._project_id = project_id
-        self._workflow_event_log.set_persistence_sink(event_persistence)
+
+    def _enable_runtime_event_persistence(self) -> None:
+        if self._workflow_event_log is not None and self._workflow_event_persistence is not None:
+            self._workflow_event_log.set_persistence_sink(self._workflow_event_persistence)
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
@@ -159,6 +159,7 @@ class ProjectOrchestrator:
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
         self.last_task_manager = task_manager
+        self._enable_runtime_event_persistence()
         orchestrator = self.create_orchestrator(task_manager)
         log = self._ensure_workflow_event_log()
         if log is not None:
@@ -200,13 +201,11 @@ class ProjectOrchestrator:
         return snapshot.result or ProjectResult.from_task_manager(snapshot.task_manager, project=(snapshot.plan or {}).get("project") if snapshot.plan else None)
 
     def audit_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ToolExecutionAudit:
-        """Return the canonical read-only audit view for a persisted project."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         return adapter.audit(project_id)
 
     def audit_consistency_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> dict[str, Any]:
-        """Return the persisted canonical-vs-task-context audit consistency report."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         return adapter.audit_consistency(project_id)
@@ -220,6 +219,7 @@ class ProjectOrchestrator:
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
         self._rehydrate_workflow_event_log(project_id, event_persistence)
+        self._enable_runtime_event_persistence()
         project_name = None
         if self.last_plan is not None:
             value = self.last_plan.get("project")
