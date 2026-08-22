@@ -58,7 +58,16 @@ def _save_project(adapter: ProjectPersistenceAdapter) -> ProjectResult:
             }
         ],
     }
-    result = ProjectResult.from_task_manager(manager, project="e2e-contract")
+    result = ProjectResult(
+        success=True,
+        project="e2e-contract",
+        summary="cross-boundary workflow event contract",
+        total_tasks=1,
+        completed_tasks=1,
+        failed_tasks=0,
+        pending_tasks=0,
+        tasks=[],
+    )
     adapter.save(PROJECT_ID, plan=plan, task_manager=manager, result=result)
     return result
 
@@ -100,7 +109,12 @@ def test_retry_failure_revision_and_approval_survive_rehydration_without_write_s
     events = [
         _event("EVENT-101", "task_started", "2026-08-22T11:00:00Z", payload={"status": "running"}),
         _event("EVENT-102", "developer_failed", "2026-08-22T11:01:00Z", payload={"status": "failed", "error": "temporary"}),
-        _event("EVENT-103", "task_retrying", "2026-08-22T11:02:00Z", payload={"retry_attempt": 1, "max_retries": 2}),
+        _event(
+            "EVENT-103",
+            "task_retrying",
+            "2026-08-22T11:02:00Z",
+            payload={"status": "ready", "retry_attempt": 1, "max_retries": 2, "reason": "temporary"},
+        ),
         _event("EVENT-104", "task_started", "2026-08-22T11:03:00Z", payload={"status": "running"}),
         _event("EVENT-105", "review_started", "2026-08-22T11:04:00Z", payload={"status": "reviewing"}),
         _event("EVENT-106", "reviewer_revision", "2026-08-22T11:05:00Z", payload={"status": "revision", "message": "add tests"}),
