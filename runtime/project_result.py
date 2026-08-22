@@ -1,20 +1,12 @@
-from __future__ import annotations
+"""Compatibility import for the canonical project execution result.
 
-from dataclasses import dataclass, field
-from typing import Any
+The canonical ``ProjectResult`` lives in ``core.project_result``.  Runtime
+callers historically imported it from this module, so keep this module as a
+single compatibility boundary rather than maintaining a second, structurally
+incompatible result type.  In particular, persistence type checks must see the
+same class regardless of which public import path a caller uses.
+"""
 
+from core.project_result import ProjectResult
 
-@dataclass
-class ProjectResult:
-    success: bool
-    project: str
-    summary: str
-    total_tasks: int
-    completed_tasks: int
-    failed_tasks: int
-    pending_tasks: int
-    tasks: list[Any] = field(default_factory=list)
-
-    @property
-    def failed(self) -> bool:
-        return self.failed_tasks > 0
+__all__ = ["ProjectResult"]
