@@ -91,7 +91,7 @@ def test_persisted_project_query_rehydrates_projection_without_runtime_state_exp
     assert query.lifecycle() == "completed"
     assert query.lifecycle(TASK_ID) == "completed"
     assert query.review_status(TASK_ID) == "approved"
-    assert query.retry(TASK_ID) == {"retry_attempt": 0, "max_retries": None}
+    assert query.retry(TASK_ID) == {"retry_attempt": 0, "max_retries": 0}
     assert query.error(TASK_ID) is None
     assert query.last_event == ("EVENT-004", "reviewer_approved", "2026-08-22T10:03:00Z")
 

@@ -107,7 +107,7 @@ class WorkflowEventQueryService:
             return self.projection.lifecycle_status
         return self.task(task_id).lifecycle_status
 
-    def retry(self, task_id: str) -> dict[str, int | None]:
+    def retry(self, task_id: str) -> dict[str, int]:
         state = self.task(task_id)
         return {
             "retry_attempt": state.retry_attempt,

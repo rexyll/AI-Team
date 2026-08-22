@@ -45,7 +45,7 @@ class WorkflowTaskProjection:
     last_event_type: str | None = None
     last_occurred_at: str | None = None
     retry_attempt: int = 0
-    max_retries: int | None = None
+    max_retries: int = 0
     error: str | None = None
     review_status: str | None = None
 
@@ -114,7 +114,7 @@ class WorkflowEventProjector:
                 last_event_type=state.get("last_event_type"),
                 last_occurred_at=state.get("last_occurred_at"),
                 retry_attempt=int(state.get("retry_attempt", 0)),
-                max_retries=state.get("max_retries"),
+                max_retries=int(state.get("max_retries", 0)),
                 error=state.get("error"),
                 review_status=state.get("review_status"),
             )
