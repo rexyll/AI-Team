@@ -42,7 +42,7 @@ class ProjectPersistenceAdapter:
     @staticmethod
     def _history_from_task_manager(task_manager: TaskManager) -> ToolExecutionHistory | None:
         """Extract Developer tool history embedded in task runtime snapshots."""
-        payload_by_id: dict[str, dict[str, Any]] = {}
+        payloads: list[dict[str, Any]] = []
         for task in task_manager.get_all_tasks():
             payload = task.context.get("tool_execution_history", [])
             if payload is None:
@@ -59,14 +59,11 @@ class ProjectPersistenceAdapter:
                     raise ValueError(
                         f"task {task.id} contains a tool execution record owned by another task"
                     )
-                existing = payload_by_id.get(execution_id)
-                if existing is not None and existing != item:
-                    raise ValueError(f"conflicting tool execution record: {execution_id}")
-                payload_by_id[execution_id] = item
+                payloads.append(item)
 
-        if not payload_by_id:
+        if not payloads:
             return None
-        return ToolExecutionHistory.from_dict(list(payload_by_id.values()))
+        return ToolExecutionHistory.from_dict(payloads)
 
     @staticmethod
     def _build_payload(
@@ -318,13 +315,26 @@ class ProjectPersistenceAdapter:
             if plan_ids and set(plan_ids) != set(task_ids):
                 raise ValueError(f"project snapshot plan/task identity mismatch: {project_id}")
 
-        if result is not None:
-            project_name = None
-            if plan is not None and isinstance(plan.get("project"), str):
-                project_name = plan["project"]
-            expected = ProjectResult.from_task_manager(task_manager, project=project_name)
-            if result != expected:
+        if result is None:
+            return
+        if result.project != project_id and plan is not None:
+            expected_project = plan.get("project")
+            if expected_project is not None and result.project != expected_project:
                 raise ValueError(f"project snapshot result mismatch: {project_id}")
+        actual_statuses = {task.id: task.status for task in tasks}
+        expected_completed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "completed"))
+        expected_failed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "failed"))
+        expected_blocked = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "blocked"))
+        if result.total_tasks != len(tasks):
+            raise ValueError(f"project snapshot result mismatch: {project_id}")
+        if result.completed_tasks != len(expected_completed):
+            raise ValueError(f"project snapshot result mismatch: {project_id}")
+        if tuple(sorted(result.failed_tasks)) != expected_failed:
+            raise ValueError(f"project snapshot result mismatch: {project_id}")
+        if tuple(sorted(result.blocked_tasks)) != expected_blocked:
+            raise ValueError(f"project snapshot result mismatch: {project_id}")
+        if tuple(sorted(result.completed_task_ids)) != expected_completed:
+            raise ValueError(f"project snapshot result mismatch: {project_id}")
 
     @staticmethod
     def _restore_result(payload: Any) -> ProjectResult | None:
@@ -332,55 +342,27 @@ class ProjectPersistenceAdapter:
             return None
         if not isinstance(payload, dict):
             raise ValueError("project payload result must be a dictionary or None")
-        required = {"project", "success", "status", "total_tasks", "completed_tasks", "failed_tasks", "blocked_tasks"}
-        if set(payload) != required:
-            raise ValueError("project payload result has an invalid schema")
-        failed_tasks = payload["failed_tasks"]
-        blocked_tasks = payload["blocked_tasks"]
-        if not isinstance(failed_tasks, list) or not isinstance(blocked_tasks, list):
-            raise ValueError("project result task collections must be lists")
-        if not isinstance(payload["success"], bool):
-            raise ValueError("project result success must be a boolean")
-        if not isinstance(payload["status"], str):
-            raise ValueError("project result status must be a string")
-        if not isinstance(payload["total_tasks"], int) or isinstance(payload["total_tasks"], bool):
-            raise ValueError("project result total_tasks must be an integer")
-        if not isinstance(payload["completed_tasks"], int) or isinstance(payload["completed_tasks"], bool):
-            raise ValueError("project result completed_tasks must be an integer")
-        return ProjectResult(
-            project=payload["project"],
-            success=payload["success"],
-            status=payload["status"],
-            total_tasks=payload["total_tasks"],
-            completed_tasks=payload["completed_tasks"],
-            failed_tasks=tuple(failed_tasks),
-            blocked_tasks=tuple(blocked_tasks),
-        )
-
-    def load_task_manager(self, project_id: str) -> TaskManager:
-        return self.load(project_id).task_manager
-
-    def delete(self, project_id: str) -> None:
-        path = self._path(project_id)
-        if not path.exists():
-            raise KeyError(project_id)
-        path.unlink()
-
-    def list_ids(self) -> list[str]:
-        return sorted(path.stem for path in self.root.glob("*.json") if path.is_file())
+        try:
+            return ProjectResult.from_dict(payload)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("project payload contains an invalid result") from exc
 
     @staticmethod
     def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".tmp", dir=path.parent, text=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{path.stem}-", suffix=".tmp", dir=path.parent, text=True
+        )
+        temp_path = Path(temporary)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, path)
+            os.replace(temp_path, path)
         except Exception:
             try:
-                os.unlink(temporary)
+                temp_path.unlink()
             except FileNotFoundError:
                 pass
             raise
