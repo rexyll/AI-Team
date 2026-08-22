@@ -185,8 +185,14 @@ class Orchestrator:
             print(f"[Completed] {task.id} ({task.status})")
 
         except Exception as exc:
-            if task.status in {"running", "reviewing", "review_pending"}:
-                self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
+            # TaskWorkflow owns stage transitions and therefore may already
+            # have moved the task to ``failed`` before re-raising an exception.
+            # The Orchestrator still owns the task-level failure lifecycle, so
+            # emit ``task_failed`` for both the pre-transition and post-
+            # transition failure states, before applying retry policy.
+            if task.status in {"running", "reviewing", "review_pending", "failed"}:
+                if task.status != "failed":
+                    self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
                 self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error})
 
             self._apply_retry_policy(task, exc)
