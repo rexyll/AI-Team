@@ -15,13 +15,7 @@ from runtime.workflow_event_log import WorkflowEventLog
 
 
 class _OrchestratorWorkflowEventLog(WorkflowEventLog):
-    """Delegate workflow events while reserving task failure for Orchestrator.
-
-    TaskWorkflow owns stage-level success events, while Orchestrator owns the
-    task-level failure/retry lifecycle. Developer exceptions are re-raised by
-    TaskWorkflow, so forwarding ``developer_failed`` would duplicate the
-    authoritative ``task_failed`` event emitted here.
-    """
+    """Delegate workflow events while reserving task failure for Orchestrator."""
 
     def __init__(self, delegate: WorkflowEventLog) -> None:
         super().__init__()
@@ -158,7 +152,12 @@ class Orchestrator:
 
         try:
             context = build_task_context(task, self.task_manager.tasks)
-            task.context = context
+            # The compatibility API may return [] for tasks without declared
+            # dependencies. That value is not a valid Task.context mapping.
+            # Keep Task.context canonical and let TaskWorkflow populate the
+            # legacy dependency field itself.
+            if isinstance(context, dict):
+                task.context["dependencies"] = context
 
             if task.status == "ready":
                 self.task_manager.mark_running(task.id)
@@ -185,11 +184,6 @@ class Orchestrator:
             print(f"[Completed] {task.id} ({task.status})")
 
         except Exception as exc:
-            # TaskWorkflow owns stage transitions and therefore may already
-            # have moved the task to ``failed`` before re-raising an exception.
-            # The Orchestrator still owns the task-level failure lifecycle, so
-            # emit ``task_failed`` for both the pre-transition and post-
-            # transition failure states, before applying retry policy.
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
                 if task.status != "failed":
                     self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
