@@ -134,7 +134,7 @@ pytest -q
 
 # Phase 8 — Production Hardening
 
-## ☐ 8.1 Cross-boundary Contract Tests
+## <span style="color:green">√</span> 8.1 Cross-boundary Contract Tests
 ## ☐ 8.2 Failure Injection Tests
 ## ☐ 8.3 Security Tests
 ## ☐ 8.4 LLM Mock Integration Tests
@@ -142,56 +142,68 @@ pytest -q
 ## ☐ 8.6 Performance / Concurrency Tests
 ## ☐ 8.7 Documentation / Examples
 
+### 8.1 实现结果
+- 新增 `tests/test_workflow_event_end_to_end_contract.py`。
+- 覆盖 ProjectPersistence、独立 WorkflowEventPersistence、EventLog rehydration、Projection、QueryService 的完整跨边界链路。
+- 验证内存事件流、持久化事件流、project snapshot recovery 三种查询结果保持语义一致。
+- 覆盖 retry / failure / revision / approval 生命周期组合及 query snapshot isolation。
+- 覆盖乱序持久化后的 deterministic ordering 与 read-only side-effect boundary。
+- 用户随后完成代码兼容性修复并确认专项与全量测试均通过。
+
+### <span style="color:green">√</span> 8.1 用户最终验收
+```text
+专项：tests/test_workflow_event_end_to_end_contract.py —— 用户确认通过
+全量：pytest -q —— 用户确认通过
+```
+
+8.1 Cross-boundary Contract Tests 正式完成，进入 Failure Injection Tests。
+
 ---
 
 # 当前下一动作
 
-**当前节点：8.1 Cross-boundary Contract Tests。**
+**当前节点：8.2 Failure Injection Tests。**
 
-7.6 Workflow event observability boundary 已完成。下一阶段进入 Production Hardening，第一步不是增加生产运行时能力，而是建立跨 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端契约测试，确保既有边界在后续 failure injection / security / performance 工作中不会回归。
+8.1 已建立 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端语义契约。下一步不改变现有业务状态机，而是验证持久化边界在故障注入下不会产生“内存成功但磁盘失败”“部分写入”“错误状态伪成功”等不一致状态。
 
-## 8.1 详细计划
+## 8.2 详细计划
 
-1. **End-to-end contract matrix**
-   - 覆盖完整 project lifecycle 产生的 workflow events。
-   - 覆盖 runtime event persistence、project persistence 与独立 event persistence 的组合。
-   - 覆盖 persisted → rehydrate → projection → query 全链路。
-   - 覆盖 retry、failure、revision、approval、project.resumed 等关键生命周期。
+1. **Workflow event durable sink failure**
+   - 注入 `save_if_absent()` 持久化失败。
+   - 验证 event 不进入 in-memory log。
+   - 验证异常向调用方传播，不伪造成功生命周期。
 
-2. **Cross-boundary invariants**
-   - project identity、task identity、event identity 全链路保持一致。
-   - EventLog 与 project snapshot 的职责边界保持独立。
-   - projection/query 只读，不改变 runtime state 或 persistence 内容。
-   - persistence 后恢复的结果与内存执行结果保持语义一致。
+2. **Workflow event batch atomicity**
+   - 注入 staged write / `os.replace()` 中途失败。
+   - 验证新事件不会留下 partial committed set。
+   - 验证已有事件不被破坏，临时文件被清理。
 
-3. **Recovery / ordering invariants**
-   - 乱序写入的事件恢复后保持 deterministic ordering。
-   - recovery marker 不覆盖历史事件。
-   - 重复恢复不会制造不符合 identity/conflict contract 的重复事件。
+3. **Project snapshot atomicity**
+   - 注入 project `save/update/checkpoint` 的 atomic replace 失败。
+   - 验证已有 snapshot 保持原内容。
+   - 验证失败后不存在残留 temporary snapshot。
 
-4. **Failure-boundary assertions**
-   - event persistence 失败不会伪造成功状态。
-   - project snapshot 与 event persistence 的独立失败边界保持清晰。
-   - query/projection 的读取失败不得产生写副作用。
+4. **Cross-boundary failure invariants**
+   - event persistence failure 不得让 WorkflowEventLog 暴露未持久化事件。
+   - project persistence failure 不得让旧 snapshot 被新状态覆盖。
+   - failure 后恢复读取仍应得到最后一个成功 checkpoint。
 
 5. **测试实现**
-   - 新增 `tests/test_workflow_event_end_to_end_contract.py`。
-   - 尽量复用现有 fixtures / public APIs，不复制内部实现逻辑。
-   - 测试应验证 observable contract，而不是绑定私有实现细节。
+   - 新增 `tests/test_failure_injection_contract.py`。
+   - 使用 pytest monkeypatch 注入 filesystem failure，不改变生产 API。
+   - 优先验证 observable state、filesystem contents、异常传播与 recovery parity。
 
 6. **明确不做**
-   - 不实现新的 event type。
    - 不改变 WorkflowEvent identity、ordering、conflict semantics。
    - 不改变 TaskManager / ProjectResult 状态机。
-   - 不引入消息队列、远程 event store 或 event-driven execution。
-   - 不提前进入 8.2 failure injection 的具体实现。
+   - 不引入 retry policy、自动补偿或新的 durability protocol。
+   - 不提前进入 8.3 Security Tests。
 
 7. **验收流程**
    - AI 在当前唯一开发分支直接编码。
-   - 完成后通知用户 Pull。
-   - 用户先运行 8.1 专项测试，再运行 `pytest -q`。
-   - 测试失败只修复 8.1，不推进 8.2。
-   - 用户确认全量通过后，再更新 DevPlan 并记录测试结果及最终 commit SHA。
+   - 用户 Pull 后先运行 8.2 专项测试，再运行 `pytest -q`。
+   - 测试失败只修复 8.2，不推进 8.3。
+   - 用户确认全量通过后，再更新 DevPlan 并记录最终 commit SHA。
 
 ---
 
@@ -244,3 +256,12 @@ pytest -q
 - 用户确认专项 `56 passed in 1.13s`。
 - 用户确认全量 `850 passed in 2.74s`。
 - 7.6.11 正式完成，Phase 8 Production Hardening 进入 8.1 Cross-boundary Contract Tests。
+
+## 2026-08-22 — 8.1 验收
+- 新增 `tests/test_workflow_event_end_to_end_contract.py`，完成跨 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端契约覆盖。
+- 用户确认该专项测试通过，并确认全量 `pytest -q` 通过。
+- 8.1 正式完成，当前进入 8.2 Failure Injection Tests。
+
+## 2026-08-22 — 8.2 启动
+- 新增 `tests/test_failure_injection_contract.py`，开始验证 workflow event durable sink、event batch atomicity、project snapshot atomicity 与 recovery boundary。
+- 当前等待用户专项测试与全量测试验收。
