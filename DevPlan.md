@@ -30,7 +30,7 @@
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 已完成。
 
-7.1、7.1.1、7.2、7.3、7.4、7.4.1、7.4.2、7.4.3、7.5.1–7.5.6、7.6.1–7.6.10 已完成。
+7.1、7.1.1、7.2、7.3、7.4、7.4.1、7.4.2、7.4.3、7.5.1–7.5.6、7.6.1–7.6.11 已完成。
 
 ## 7.5 Tool execution logs
 
@@ -40,8 +40,6 @@ Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / 
 ### <span style="color:green">√</span> 7.5.4 Cross-boundary Audit Consistency
 ### <span style="color:green">√</span> 7.5.5 Execution-history dedup / conflict semantics
 ### <span style="color:green">√</span> 7.5.6 Persistence atomic batch semantics
-
-7.5.5 统一 `execution_id` identity、幂等重复与 conflict 语义；7.5.6 补充 persistence failure-injection / partial-write / atomic batch contract。
 
 ### 7.5.6 用户最终验收
 ```text
@@ -65,6 +63,7 @@ pytest -q
 ### <span style="color:green">√</span> 7.6.8 Workflow event runtime persistence integration
 ### <span style="color:green">√</span> 7.6.9 Workflow event replay / state projection
 ### <span style="color:green">√</span> 7.6.10 Workflow event projection integration / operational query boundary
+### <span style="color:green">√</span> 7.6.11 Workflow event query contract hardening / compatibility matrix
 
 ### 7.6.6–7.6.8 结果摘要
 - filesystem event stream 支持 ordered query 与 `load_log()` rehydration。
@@ -89,47 +88,53 @@ pytest -q
 - unknown event type 向前兼容；malformed / inconsistent known event fail-fast，并包含 `event_id`。
 - projection 纯读取，不写 filesystem、不追加 event、不修改 EventLog、TaskManager、ProjectResult。
 - 支持 project/task 两级查询：lifecycle、last event、retry、error、review status。
-- 覆盖 persisted → rehydrate → projection 以及对象隔离、无 persistence side effect。
 
 ### <span style="color:green">√</span> 7.6.9 用户最终验收
 ```text
-pytest tests/test_workflow_event_projection_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py tests/test_project_workflow_event_recovery_contract.py -q
-40 passed in 1.06s
-
-pytest -q
-834 passed in 2.91s
+专项：40 passed in 1.06s
+全量：834 passed in 2.91s
 ```
-
-7.6.9 Workflow event replay / state projection 正式验收完成。
 
 ### 7.6.10 实现结果
 - 新增 `runtime/workflow_event_query.py`，建立 read-only operational query boundary。
-- 提供 `WorkflowEventQueryService.from_log()` 与 `from_persistence()`，统一复用现有 event rehydration + projection 能力。
-- 提供 `from_persisted_project()`，可从 project snapshot + 独立 event persistence 构建诊断 projection。
+- 提供 `WorkflowEventQueryService.from_log()`、`from_persistence()` 与 `from_persisted_project()`。
 - project snapshot 仅负责存在性 / 合法性验证，不反向覆盖 event-derived projection。
-- 查询能力覆盖 project/task lifecycle、last event、retry、error、review status。
-- `as_dict()` 返回 detached diagnostic representation，禁止暴露 mutable TaskManager、EventLog internals 或 persistence internals。
-- 明确 empty event stream 的 legacy compatibility：返回 `unknown` projection。
-- missing project、identity mismatch、corrupt event 保持 fail-fast。
-- query / projection 不产生 filesystem 写入，且与原始 runtime / persistence 对象隔离。
-- 新增 `tests/test_workflow_event_query_integration.py`，覆盖 persisted → rehydrate → query、empty/missing stream、identity mismatch、corrupt event、object isolation、no-write side effect。
+- 查询覆盖 project/task lifecycle、last event、retry、error、review status。
+- `as_dict()` 返回 detached diagnostic representation，不暴露 mutable runtime / persistence internals。
+- empty event stream 保持 legacy compatibility；missing project、identity mismatch、corrupt event fail-fast。
+- query / projection 不产生 filesystem 写入，并与原始 runtime / persistence 对象隔离。
 
 ### <span style="color:green">√</span> 7.6.10 用户最终验收
 ```text
-pytest tests/test_workflow_event_query_integration.py tests/test_workflow_event_projection_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py tests/test_project_workflow_event_recovery_contract.py -q
-46 passed in 1.17s
-
-pytest -q
-840 passed in 3.05s
+专项：46 passed in 1.17s
+全量：840 passed in 3.05s
 ```
 
-7.6.10 Workflow event projection integration / operational query boundary 正式验收完成。
+### 7.6.11 实现结果
+- 固化 `WorkflowEventQueryService` 输入校验、返回值和异常边界。
+- 建立 compatibility matrix：legacy empty stream、partial lifecycle、unknown future event、retry/failure/revision/approval、多轮生命周期及 malformed known event。
+- 验证 `from_log()` 与 `from_persistence()` 的 projection/query parity。
+- 验证乱序持久化文件仍保持 deterministic ordering。
+- 验证 query service、`as_dict()` 与原始 EventLog / persistence 对象之间的 isolation / immutability。
+- 保持 query / projection 纯 read-only，不改变 TaskManager、ProjectResult、WorkflowEvent ordering / identity / conflict semantics。
+- 新增 `tests/test_workflow_event_query_contract.py` 覆盖上述契约矩阵。
+
+### <span style="color:green">√</span> 7.6.11 用户最终验收
+```text
+pytest tests/test_workflow_event_query_contract.py tests/test_workflow_event_query_integration.py tests/test_workflow_event_projection_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py tests/test_project_workflow_event_recovery_contract.py -q
+56 passed in 1.13s
+
+pytest -q
+850 passed in 2.74s
+```
+
+7.6.11 Workflow event query contract hardening / compatibility matrix 正式验收完成。
 
 ---
 
 # Phase 8 — Production Hardening
 
-## ☐ 8.1 Contract Tests
+## ☐ 8.1 Cross-boundary Contract Tests
 ## ☐ 8.2 Failure Injection Tests
 ## ☐ 8.3 Security Tests
 ## ☐ 8.4 LLM Mock Integration Tests
@@ -141,53 +146,52 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：7.6.11 Workflow event query contract hardening / compatibility matrix。**
+**当前节点：8.1 Cross-boundary Contract Tests。**
 
-7.6.10 已完成并通过用户专项及全量验收。下一节点继续围绕现有 event query / projection 能力做契约硬化，不进入 event-driven execution 或消息系统。
+7.6 Workflow event observability boundary 已完成。下一阶段进入 Production Hardening，第一步不是增加生产运行时能力，而是建立跨 Project → Workflow → EventLog → Persistence → Projection → Query 的端到端契约测试，确保既有边界在后续 failure injection / security / performance 工作中不会回归。
 
-## 7.6.11 详细计划
+## 8.1 详细计划
 
-1. **Query contract stabilization**
-   - 固化 `WorkflowEventQueryService` 的输入校验、返回值和异常边界。
-   - 明确 project-level 与 task-level 查询在无事件、未知 task、无 review、无 retry 情况下的行为。
-   - 保持所有查询 read-only，不允许隐式改变 projection 或 runtime state。
+1. **End-to-end contract matrix**
+   - 覆盖完整 project lifecycle 产生的 workflow events。
+   - 覆盖 runtime event persistence、project persistence 与独立 event persistence 的组合。
+   - 覆盖 persisted → rehydrate → projection → query 全链路。
+   - 覆盖 retry、failure、revision、approval、project.resumed 等关键生命周期。
 
-2. **Compatibility matrix**
-   - 覆盖 legacy empty event stream。
-   - 覆盖仅有部分 lifecycle event 的历史 stream。
-   - 覆盖 unknown event type 与未来扩展 event type。
-   - 覆盖 retry / failure / revision / approval 多轮事件组合。
-   - 明确 known malformed event 的 fail-fast contract。
+2. **Cross-boundary invariants**
+   - project identity、task identity、event identity 全链路保持一致。
+   - EventLog 与 project snapshot 的职责边界保持独立。
+   - projection/query 只读，不改变 runtime state 或 persistence 内容。
+   - persistence 后恢复的结果与内存执行结果保持语义一致。
 
-3. **Persistence / rehydration parity**
-   - 验证 `from_log()` 与 `from_persistence()` 对同一事件集合产生完全一致的 projection / query 结果。
-   - 验证不同文件写入顺序不会改变 query 结果。
-   - 验证独立 event persistence recovery 后仍保持 deterministic ordering。
+3. **Recovery / ordering invariants**
+   - 乱序写入的事件恢复后保持 deterministic ordering。
+   - recovery marker 不覆盖历史事件。
+   - 重复恢复不会制造不符合 identity/conflict contract 的重复事件。
 
-4. **Isolation / immutability**
-   - 验证 `WorkflowEventQueryService` 不暴露 EventLog 内部容器、TaskManager 或 persistence adapter。
-   - 修改 `as_dict()` 返回值不得污染后续查询。
-   - 修改原始 EventLog / persistence 返回对象不得污染已经构造的 query service projection。
+4. **Failure-boundary assertions**
+   - event persistence 失败不会伪造成功状态。
+   - project snapshot 与 event persistence 的独立失败边界保持清晰。
+   - query/projection 的读取失败不得产生写副作用。
 
-5. **测试**
-   - 新增 `tests/test_workflow_event_query_contract.py` 或等价 contract test。
-   - 保持 7.6.1–7.6.10 全部测试无回归。
-   - 专项测试覆盖 query API、compatibility matrix、rehydration parity、immutability / isolation。
+5. **测试实现**
+   - 新增 `tests/test_workflow_event_end_to_end_contract.py`。
+   - 尽量复用现有 fixtures / public APIs，不复制内部实现逻辑。
+   - 测试应验证 observable contract，而不是绑定私有实现细节。
 
 6. **明确不做**
-   - 不实现 event-driven execution。
-   - 不实现自动恢复执行。
-   - 不引入消息队列、远程 event store、compaction、archive、stream processor。
+   - 不实现新的 event type。
+   - 不改变 WorkflowEvent identity、ordering、conflict semantics。
    - 不改变 TaskManager / ProjectResult 状态机。
-   - 不改变 WorkflowEvent ordering / identity / conflict semantics。
-   - 不扩展为写操作 API；7.6.11 仍保持纯 read-only observability boundary。
+   - 不引入消息队列、远程 event store 或 event-driven execution。
+   - 不提前进入 8.2 failure injection 的具体实现。
 
 7. **验收流程**
    - AI 在当前唯一开发分支直接编码。
    - 完成后通知用户 Pull。
-   - 用户先专项测试，再 `pytest -q`。
-   - 测试失败只修复 7.6.11，不推进 7.6.12。
-   - 用户确认全量通过后，再更新 DevPlan 并记录测试结果和最终 commit SHA。
+   - 用户先运行 8.1 专项测试，再运行 `pytest -q`。
+   - 测试失败只修复 8.1，不推进 8.2。
+   - 用户确认全量通过后，再更新 DevPlan 并记录测试结果及最终 commit SHA。
 
 ---
 
@@ -227,14 +231,16 @@ pytest -q
 - 新增 deterministic, read-only workflow event state projection。
 - 用户确认专项 `40 passed in 1.06s`。
 - 用户确认全量 `834 passed in 2.91s`。
-- 7.6.9 Workflow event replay / state projection 正式完成。
-- 当前进入 7.6.10 Workflow event projection integration / operational query boundary。
 
 ## 2026-08-22 — 7.6.10 验收
 - 新增 `runtime/workflow_event_query.py`，完成 persisted project + independent event persistence 的 operational query boundary。
 - 新增 `tests/test_workflow_event_query_integration.py`。
 - 用户确认专项 `46 passed in 1.17s`。
 - 用户确认全量 `840 passed in 3.05s`。
-- 实现 commits：`cc96e28`、`4940366`。
-- 7.6.10 Workflow event projection integration / operational query boundary 正式完成。
-- 当前进入 7.6.11 Workflow event query contract hardening / compatibility matrix。
+
+## 2026-08-22 — 7.6.11 验收
+- 完成 Workflow event query contract hardening / compatibility matrix。
+- 新增 `tests/test_workflow_event_query_contract.py`。
+- 用户确认专项 `56 passed in 1.13s`。
+- 用户确认全量 `850 passed in 2.74s`。
+- 7.6.11 正式完成，Phase 8 Production Hardening 进入 8.1 Cross-boundary Contract Tests。
