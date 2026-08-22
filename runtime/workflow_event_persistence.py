@@ -154,7 +154,7 @@ class WorkflowEventPersistenceAdapter:
             events,
             key=lambda event: (
                 event.project_id,
-                event.task_id or "",
+                event.task_id if event.task_id is not None else "\uffff",
                 event.occurred_at,
                 event.event_id,
             ),
