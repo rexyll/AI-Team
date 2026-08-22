@@ -147,9 +147,9 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 
 # 四、当前节点：8.6 Performance / Concurrency Contract
 
-## 8.6.1 Performance baseline — 修正中
+## √ 8.6.1 Performance baseline
 
-已在当前开发分支新增 `tests/test_workflow_event_performance_contract.py`，建立第一版可重复 baseline contract：
+已完成第一版可重复 baseline contract：
 
 - 任务数量：32 / 128 / 512
 - worker baseline：1
@@ -160,9 +160,7 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 - deterministic mock agents
 - 4 workers 相比 1 worker 的软并行收益门槛（>5%）
 
-### 本轮发现与修正
-
-原始测试把 `9 events/task` 写死，但该 baseline router **只注册 Developer + Reviewer，没有 Tester**，且 Reviewer 首轮直接返回 `approved`。按照当前已经验收的 canonical workflow lifecycle，每个 task 实际产生 5 个事件：
+本节点确认 benchmark 必须服从 canonical workflow lifecycle 语义：当前 baseline router 只注册 Developer + Reviewer，Reviewer 首轮直接 `approved` 时，每个 task 产生 5 个事件：
 
 ```text
 task_started
@@ -172,37 +170,56 @@ review_started
 reviewer_approved
 ```
 
-因此原测试失败的 160/640/2560 事件分别对应 32/128/512 × 5，并非生产实现的性能或语义回归。根据 8.6.6 “本节点不为了通过 benchmark 修改业务语义”的纪律，本轮**不修改生产代码**，而是修正 benchmark contract，使测试与既有 workflow lifecycle 语义一致，同时增加逐 task event-type 校验，防止仅靠事件总数掩盖语义缺失。
+因此 benchmark 不通过人为增加事件数量来满足测试，而是根据实际 workflow lifecycle 校正 contract。
 
-本轮修正 commit：`60d0c554`。
+验收状态：**已通过，用户确认本地专项及全量测试通过。**
 
-**当前状态：等待用户 Pull 后专项测试验证；尚未标记完成。**
+## √ 8.6.2 Event persistence contention
 
-专项命令：
-```text
-pytest tests/test_workflow_event_performance_contract.py -q
-```
+已完成并发持久化 contention contract，并修复生产实现边界。
 
-## 8.6.2 Event persistence contention
-
-验证多个 worker 同时写入 event persistence：
-- 不产生 duplicate event
-- 不产生 conflicting event identity
-- 不遗失成功提交的 event
+验证：
+- 多 worker 同时写入不产生 duplicate event
+- conflicting event identity 不覆盖既有 immutable event
+- 成功提交的 event 不遗失
 - temporary files 最终清理
 - `list_ids()` 与 log identity parity 保持成立
-- persistence failure 不污染 in-memory log
+- batch `os.replace()` failure 不产生 partial publication
+- failure rollback 不污染 pre-existing events
 
-## 8.6.3 Concurrent query / projection
+生产实现增加 adapter 级写入锁，并保持 filesystem atomic publication；批量写入继续使用 `os.replace()` 作为 failure-injection / atomic publication boundary。
 
-在 workflow 持续追加 event 时并发执行：
+修复 commit：`0e34ccf`。
+
+验收状态：**专项及全量测试已通过。**
+
+## ▶ 8.6.3 Concurrent query / projection
+
+目标：在 workflow 持续追加 event 时并发执行：
 - `list_all()`
 - `list_for_project()`
 - `list_for_task()`
 - `WorkflowEventProjector`
 - `WorkflowEventQueryService`
 
-要求 read-only 查询不会产生写副作用或破坏 event identity。
+要求：
+- read-only 查询不会产生写副作用
+- 查询不会破坏 event identity
+- projection/query 只观察稳定 event snapshot
+- concurrent append 不产生 `RuntimeError`、partial dict iteration 或重复/丢失 event
+- 使用 durable sink 时 memory/persistence identity 保持一致
+- 并发 reader 对同一稳定快照得到语义等价结果
+
+生产实现已增加 `WorkflowEventLog` 实例级 `RLock`，保护 append / merge / list / get / serialization 等边界，使查询与投影在并发追加期间基于稳定 snapshot 工作。
+
+实现 commit：`afeca23`。
+
+专项测试：`tests/test_workflow_event_concurrency_contract.py`，当前等待用户 Pull 后验证。
+
+专项命令：
+```text
+pytest tests/test_workflow_event_concurrency_contract.py -q
+```
 
 ## 8.6.4 Scheduler scalability
 
@@ -241,9 +258,10 @@ pytest tests/test_workflow_event_performance_contract.py -q
 ## 8.6.7 测试文件
 
 计划新增：
-- `tests/test_workflow_event_performance_contract.py` ← 已新增，当前正在修正 baseline contract
-- `tests/test_workflow_event_concurrency_contract.py`
-- `tests/test_orchestrator_scalability_contract.py`
+- `tests/test_workflow_event_performance_contract.py` ← 已完成
+- `tests/test_workflow_event_persistence_contention_contract.py` ← 已完成
+- `tests/test_workflow_event_concurrency_contract.py` ← 已新增，当前 8.6.3 验证中
+- `tests/test_orchestrator_scalability_contract.py` ← 待 8.6.4
 
 必要时复用现有：
 - `tests/test_workflow_event_long_running_contract.py`
@@ -252,6 +270,7 @@ pytest tests/test_workflow_event_performance_contract.py -q
 
 ## 8.6 验收
 
+每个 8.6.x 子节点遵循：
 1. 专项测试全部通过。
 2. `pytest -q` 全量通过。
 3. 无新增 pytest warning。
@@ -260,65 +279,13 @@ pytest tests/test_workflow_event_performance_contract.py -q
 
 ---
 
-# 五、调整后的 8.7 — Documentation / Examples / Release Readiness
+# 五、下一阶段：Phase 8.7 Documentation / Examples / Release Readiness
 
-8.7 不再只是补 README，而是完成最小可交付工程闭环：
-
-1. Architecture overview
-2. Agent extension guide
-3. LLM provider / MockLLM 使用方式
-4. Tool permission / WorkspaceSandbox 使用方式
-5. Project persistence / resume 使用方式
-6. Workflow event persistence / query 使用方式
-7. Failure / security boundary 说明
-8. Long-running / concurrency 配置说明
-9. 一个完整 demo project
-10. 本地测试与 CI 命令
-11. Production readiness checklist
-12. Known limitations
-
-验收目标：新开发者只依赖仓库文档即可理解系统边界，并能运行最小 demo。
-
----
-
-# 六、最终目标 Definition of Done
-
-项目达到最终目标必须同时满足：
-
-- [ ] Planner → Architect → Developer → Tester → Reviewer → ProjectResult 完整闭环。
-- [ ] Dependency-aware scheduling 正确。
-- [ ] Agent / LLM / Tool 可替换。
-- [ ] Tool 权限和 Workspace Sandbox 有安全边界。
-- [ ] Project / Task / Tool execution history 可持久化并恢复。
-- [ ] Workflow events 可持久化、重放、投影、查询。
-- [ ] Failure injection contract 完整。
-- [ ] Security contract 完整。
-- [ ] Mock LLM integration 可无网络验证。
-- [ ] Long-running workflow 可稳定运行。
-- [ ] Performance / concurrency contract 建立并有回归基线。
-- [ ] Documentation / Examples 足以独立使用。
-- [ ] 全量测试通过且无 warning。
-
----
-
-# 七、当前工作纪律
-
-**当前只推进 8.6。**
-
-8.6 测试失败时只修复性能/并发相关问题；不提前进入 8.7。
-
-用户确认 8.6 专项和全量测试通过后，再将 8.6 标记为 √，记录最终 SHA，并制定 8.7 的具体编码任务。
-
----
-
-# DevPlan 更新记录
-
-## 2026-08-22
-- 依据 GitHub 当前分支代码、DevPlan 与 commit history 重新校准项目进度。
-- 明确项目目标从“功能完整”升级为“可恢复、可审计、可验证、可并发、可维护的生产级 AI 软件开发团队”。
-- 确认 8.1–8.5 已完成，8.6 为当前唯一开发节点。
-- 将 8.6 从单纯 performance test 扩展为 Performance / Concurrency Contract，并新增 baseline、contention、query concurrency、scheduler scalability、failure+concurrency matrix、regression guard 六类开发环节。
-- 当前 HEAD 基线：`72c55e4`。
-- 开始实现 8.6.1：新增 `tests/test_workflow_event_performance_contract.py`。
-- 8.6.1 首轮专项发现 benchmark 固定的 9 events/task 与当前 canonical baseline 场景不一致；确认生产生命周期正确值为 5 events/task，修正 benchmark contract 并增加逐 task event-type 语义校验。
-- 8.6.1 修正 commit：`60d0c554`；等待用户 Pull 后重新执行专项和全量测试。
+在 8.6 完整验收后进入：
+- deployment / setup documentation
+- Agent / LLM / Tool extension examples
+- persistence / recovery usage example
+- event query / audit example
+- production configuration checklist
+- release readiness checklist
+- final end-to-end smoke test
