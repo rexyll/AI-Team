@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .workflow_event import WorkflowEvent
-from .workflow_event_log import WorkflowEventConflictError
+from .workflow_event_log import WorkflowEventConflictError, WorkflowEventLog
 
 
 class WorkflowEventPersistenceAdapter:
@@ -135,6 +135,18 @@ class WorkflowEventPersistenceAdapter:
     def _load_all_events(self) -> list[WorkflowEvent]:
         """Load every persisted event and fail fast on a corrupt event file."""
         return [self.load(event_id) for event_id in self.list_ids()]
+
+    def load_log(self) -> WorkflowEventLog:
+        """Rehydrate a new in-memory event log from every persisted event.
+
+        Each event is reconstructed from disk, so the returned log is independent
+        from the persistence adapter and from any previously loaded event objects.
+        ``WorkflowEventLog.merge`` provides the canonical identity/conflict
+        semantics for the replay boundary.
+        """
+        log = WorkflowEventLog()
+        log.merge(self._load_all_events())
+        return log
 
     @staticmethod
     def _sort_all(events: Iterable[WorkflowEvent]) -> list[WorkflowEvent]:
