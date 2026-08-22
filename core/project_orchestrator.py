@@ -23,14 +23,7 @@ class ProjectOrchestrator:
 
     PLANNER_TASK_ID = "PLAN-001"
 
-    def __init__(
-        self,
-        agent_router: AgentRouter,
-        plan_builder: PlanBuilder | None = None,
-        orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None,
-        workflow_event_log: WorkflowEventLog | None = None,
-        project_id: str | None = None,
-    ):
+    def __init__(self, agent_router: AgentRouter, plan_builder: PlanBuilder | None = None, orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None, workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
@@ -65,16 +58,7 @@ class ProjectOrchestrator:
         project_id = self._resolved_project_id()
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id is required when workflow_event_log is enabled")
-        self._workflow_event_log.append(
-            WorkflowEvent(
-                event_id=str(uuid4()),
-                event_type=event_type,
-                project_id=project_id,
-                task_id=None,
-                occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                payload=payload or {},
-            )
-        )
+        self._workflow_event_log.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=project_id, task_id=None, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload=payload or {}))
 
     @staticmethod
     def _restore_tool_execution_history(task_manager: TaskManager, history: ToolExecutionHistory | None) -> None:
@@ -120,11 +104,7 @@ class ProjectOrchestrator:
     def create_orchestrator(self, task_manager: TaskManager) -> Orchestrator:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
-        try:
-            return self.orchestrator_factory(task_manager, self.agent_router)
-        except TypeError:
-            orchestrator = self.orchestrator_factory(task_manager, self.agent_router)
-            return orchestrator
+        return self.orchestrator_factory(task_manager, self.agent_router)
 
     def execute(self, task_manager: TaskManager, *, state_change_hook: Callable[[TaskManager], None] | None = None) -> ProjectResult:
         if not isinstance(task_manager, TaskManager):
@@ -202,10 +182,7 @@ class ProjectOrchestrator:
 
         result = self.execute(snapshot.task_manager, state_change_hook=persist_boundary)
         persisted = adapter.load(project_id)
-        if persisted.result != result or any(
-            persisted.task_manager.get_task(task.id).status != task.status
-            for task in self.last_task_manager.get_all_tasks()
-        ):
+        if persisted.result != result or any(persisted.task_manager.get_task(task.id).status != task.status for task in self.last_task_manager.get_all_tasks()):
             adapter.update(project_id, plan=self.last_plan, task_manager=self.last_task_manager, result=result)
         return result
 
