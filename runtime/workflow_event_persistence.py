@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +17,11 @@ class WorkflowEventPersistenceAdapter:
     def __init__(self, root: str | os.PathLike[str]) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # Serialize writers sharing one adapter instance.  The filesystem
+        # publication remains atomic, while the lock closes the check/write
+        # window for batch operations and gives deterministic rollback semantics
+        # under concurrent thread contention.
+        self._write_lock = threading.RLock()
 
     @staticmethod
     def _validate_id(event_id: str) -> str:
@@ -33,32 +39,34 @@ class WorkflowEventPersistenceAdapter:
     def save(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
-        path = self._path(event.event_id)
-        if path.exists():
-            raise FileExistsError(path)
-        self._atomic_write(path, event.to_dict(), exclusive=True)
+        with self._write_lock:
+            path = self._path(event.event_id)
+            if path.exists():
+                raise FileExistsError(path)
+            self._atomic_write(path, event.to_dict(), exclusive=True)
 
     def save_if_absent(self, event: WorkflowEvent) -> bool:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
-        path = self._path(event.event_id)
-        if path.exists():
-            existing = self.load(event.event_id)
-            if existing == event:
-                return False
-            raise WorkflowEventConflictError(
-                f"conflicting workflow event for event_id: {event.event_id}"
-            )
-        try:
-            self._exclusive_write(path, event.to_dict())
-            return True
-        except FileExistsError:
-            existing = self.load(event.event_id)
-            if existing == event:
-                return False
-            raise WorkflowEventConflictError(
-                f"conflicting workflow event for event_id: {event.event_id}"
-            )
+        with self._write_lock:
+            path = self._path(event.event_id)
+            if path.exists():
+                existing = self.load(event.event_id)
+                if existing == event:
+                    return False
+                raise WorkflowEventConflictError(
+                    f"conflicting workflow event for event_id: {event.event_id}"
+                )
+            try:
+                self._exclusive_write(path, event.to_dict())
+                return True
+            except FileExistsError:
+                existing = self.load(event.event_id)
+                if existing == event:
+                    return False
+                raise WorkflowEventConflictError(
+                    f"conflicting workflow event for event_id: {event.event_id}"
+                )
 
     def save_if_absent_many(self, events: Iterable[WorkflowEvent]) -> int:
         incoming = list(events)
@@ -75,34 +83,40 @@ class WorkflowEventPersistenceAdapter:
                 )
             unique[event.event_id] = event
 
-        created: list[Path] = []
-        try:
-            for event_id, event in unique.items():
-                path = self._path(event_id)
-                if path.exists():
-                    existing = self.load(event_id)
-                    if existing != event:
-                        raise WorkflowEventConflictError(
-                            f"conflicting workflow event for event_id: {event_id}"
-                        )
-                    continue
-                try:
-                    self._exclusive_write(path, event.to_dict())
-                    created.append(path)
-                except FileExistsError:
-                    existing = self.load(event_id)
-                    if existing != event:
-                        raise WorkflowEventConflictError(
-                            f"conflicting workflow event for event_id: {event_id}"
-                        )
-            return len(created)
-        except Exception:
-            for path in created:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-            raise
+        with self._write_lock:
+            created: list[Path] = []
+            try:
+                for event_id, event in unique.items():
+                    path = self._path(event_id)
+                    if path.exists():
+                        existing = self.load(event_id)
+                        if existing != event:
+                            raise WorkflowEventConflictError(
+                                f"conflicting workflow event for event_id: {event_id}"
+                            )
+                        continue
+                    try:
+                        # Use the same atomic replace primitive as the single
+                        # snapshot writer.  The adapter-level lock makes the
+                        # exclusive pre-check deterministic for concurrent
+                        # callers, while os.replace remains the failure-injection
+                        # and atomic-publication boundary.
+                        self._atomic_write(path, event.to_dict(), exclusive=True)
+                        created.append(path)
+                    except FileExistsError:
+                        existing = self.load(event_id)
+                        if existing != event:
+                            raise WorkflowEventConflictError(
+                                f"conflicting workflow event for event_id: {event_id}"
+                            )
+                return len(created)
+            except Exception:
+                for path in created:
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                raise
 
     def load(self, event_id: str) -> WorkflowEvent:
         path = self._path(event_id)
