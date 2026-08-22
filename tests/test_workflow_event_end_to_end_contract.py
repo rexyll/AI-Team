@@ -78,17 +78,12 @@ def test_persisted_rehydration_projection_and_query_are_semantically_equivalent(
     _save_project(project_adapter)
 
     events = _lifecycle_events()
-    # Deliberately persist in reverse chronological order; query semantics must
-    # remain deterministic after filesystem rehydration.
     event_adapter.save_if_absent_many(reversed(events))
 
     memory_log = WorkflowEventLog()
     memory_log.merge(events)
     memory_query = WorkflowEventQueryService.from_log(memory_log, project_id=PROJECT_ID)
-    persisted_query = WorkflowEventQueryService.from_persistence(
-        event_adapter,
-        project_id=PROJECT_ID,
-    )
+    persisted_query = WorkflowEventQueryService.from_persistence(event_adapter, project_id=PROJECT_ID)
     recovered_query = WorkflowEventQueryService.from_persisted_project(
         project_adapter,
         event_adapter,
