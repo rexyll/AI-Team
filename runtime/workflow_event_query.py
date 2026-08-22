@@ -15,10 +15,17 @@ class WorkflowEventQueryService:
 
     The service deliberately owns no mutable runtime state and never writes to
     persistence. A projection is created once from the supplied event log and
-    all query methods return immutable projection objects or scalar facts.
+    all query methods return immutable projection objects or detached scalar
+    diagnostic values.
     """
 
     projection: WorkflowProjectProjection
+
+    @staticmethod
+    def _require_non_empty_string(value: str, name: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string")
+        return value
 
     @classmethod
     def from_log(
@@ -29,6 +36,7 @@ class WorkflowEventQueryService:
     ) -> "WorkflowEventQueryService":
         if not isinstance(event_log, WorkflowEventLog):
             raise TypeError("event_log must be a WorkflowEventLog")
+        project_id = cls._require_non_empty_string(project_id, "project_id")
         return cls(WorkflowEventProjector.project(event_log, project_id=project_id))
 
     @classmethod
@@ -41,6 +49,7 @@ class WorkflowEventQueryService:
         """Build a query service from an independently rehydrated event stream."""
         if not isinstance(persistence, WorkflowEventPersistenceAdapter):
             raise TypeError("persistence must be a WorkflowEventPersistenceAdapter")
+        project_id = cls._require_non_empty_string(project_id, "project_id")
         log = persistence.load_log()
         return cls.from_log(log, project_id=project_id)
 
@@ -65,6 +74,7 @@ class WorkflowEventQueryService:
             raise TypeError("project_persistence must be a ProjectPersistenceAdapter")
         if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
             raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter")
+        project_id = cls._require_non_empty_string(project_id, "project_id")
         project_persistence.load(project_id)
         return cls.from_persistence(event_persistence, project_id=project_id)
 
@@ -89,6 +99,7 @@ class WorkflowEventQueryService:
         )
 
     def task(self, task_id: str) -> WorkflowTaskProjection:
+        task_id = self._require_non_empty_string(task_id, "task_id")
         return self.projection.task(task_id)
 
     def lifecycle(self, task_id: str | None = None) -> str:
