@@ -31,7 +31,7 @@
 
 Phase 3 Context Lifecycle Governance、Phase 4 LLM Abstraction、Phase 5 Tool / Sandbox Architecture、Phase 6 Workflow / Project Orchestrator 已完成。
 
-Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.4.1 / 7.4.2 / 7.4.3 / 7.5.1 / 7.5.2 / 7.5.3 / 7.5.4 / 7.5.5 / 7.5.6 / 7.6.1 / 7.6.2 / 7.6.3 / 7.6.4 / 7.6.5 / 7.6.6 / 7.6.7 已完成。
+Phase 7.1 / 7.1.1 / 7.2 / 7.3 / 7.4 / 7.4.1 / 7.4.2 / 7.4.3 / 7.5.1 / 7.5.2 / 7.5.3 / 7.5.4 / 7.5.5 / 7.5.6 / 7.6.1 / 7.6.2 / 7.6.3 / 7.6.4 / 7.6.5 / 7.6.6 / 7.6.7 / 7.6.8 已完成。
 
 ## <span style="color:green">√</span> 7.1 Task persistence contract
 ## <span style="color:green">√</span> 7.1.1 Task persistence adapter
@@ -81,8 +81,9 @@ pytest -q
 ### <span style="color:green">√</span> 7.6.5 Filesystem query / ordering parity
 ### <span style="color:green">√</span> 7.6.6 Workflow event log rehydration / replay boundary
 ### <span style="color:green">√</span> 7.6.7 Workflow event replay / project recovery integration
+### <span style="color:green">√</span> 7.6.8 Workflow event runtime persistence integration
 
-已覆盖 immutable event identity、JSON payload、append / append-if-absent / merge conflict 语义、filesystem atomic persistence、corruption / filename identity boundary、Workflow / Orchestrator 生命周期事件、filesystem 与 in-memory event log 的全局/project/task 有序查询一致性、从 filesystem 一次性恢复独立 `WorkflowEventLog`，以及 project recovery 时独立恢复 event stream 的最小集成边界。
+已覆盖 immutable event identity、JSON payload、append / append-if-absent / merge conflict 语义、filesystem atomic persistence、corruption / filename identity boundary、Workflow / Orchestrator 生命周期事件、filesystem 与 in-memory event log 的全局/project/task 有序查询一致性、从 filesystem 一次性恢复独立 `WorkflowEventLog`、project recovery 时独立恢复 event stream，以及 runtime event sink 的可选 durable persistence 边界。
 
 ### 7.6.7 实现结果
 - `ProjectOrchestrator.resume_persisted()` 增加可选 `event_persistence` 注入入口。
@@ -106,43 +107,68 @@ pytest -q
 
 7.6.7 已正式验收完成。
 
+### 7.6.8 实现结果
+- `WorkflowEventLog` 增加可选 persistence sink，默认仍保持纯 in-memory legacy 行为。
+- runtime 新事件先通过 durable sink 持久化，再进入内存事件索引；persistence failure fail-fast，不静默吞错。
+- sink 复用 `WorkflowEventPersistenceAdapter` 已有 append-if-absent / conflict semantics，不复制 event identity 规则。
+- `ProjectOrchestrator` 增加 runtime workflow event persistence 注入边界，runtime event stream 可以直接落盘。
+- runtime persistence 不改变 TaskManager / ProjectResult 状态机，不因写盘失败重试 agent/tool。
+- project snapshot 与 workflow event stream 保持存储隔离。
+- 覆盖 enabled / disabled sink、idempotency / conflict、failure injection、ordering、recovery 与 snapshot isolation。
+
+### 7.6.8 用户最终验收
+
+```text
+pytest tests/test_workflow_event_runtime_persistence_contract.py tests/test_workflow_event_persistence_query_contract.py tests/test_workflow_event_contract.py tests/test_workflow_event_persistence_contract.py tests/test_workflow_event_integration.py tests/test_workflow_event_orchestrator_integration.py tests/test_project_workflow_event_recovery_contract.py -q
+38 passed in 1.01s
+
+pytest -q
+826 passed in 2.80s
+```
+
+最终实现 commit：`4dec49cbb91bccf24eafead1d262a009aade2bbc`。
+
+7.6.8 Workflow event runtime persistence integration 正式验收完成。
+
 ---
 
-# 7.6.8 Workflow event runtime persistence integration
+# 7.6.9 Workflow event replay / state projection
 
 ## 目标
-在 7.6.7 project recovery 集成基础上，建立 **运行时 workflow event stream 的持久化边界**：当 Workflow / Orchestrator 已经通过 `WorkflowEventLog` 产生生命周期事件时，为上层提供可选的 persistence sink，使事件能够在运行过程中落盘，而不是只能在 recovery 时被读取。
+在 7.6.6 的 event log rehydration、7.6.7 project recovery、7.6.8 runtime persistence 基础上，建立一个**只读、确定性、无副作用的 workflow event replay / state projection 层**：能够从已经持久化或恢复的事件流计算任务 / 项目在某个事件边界上的可观察状态，用于审计、恢复诊断和后续 replay 能力建设。
 
-本节点只解决 **event log → persistence** 的运行时持久化，不改变现有 Workflow / Orchestrator 生命周期语义，也不实现 event-driven replay。
+本节点只做 **event stream → read-only projection**，不让 replay 反向驱动 Agent、TaskWorkflow 或 Orchestrator，也不直接修改 TaskManager / ProjectResult。
 
 ## 实施范围
-1. 明确 `WorkflowEventLog` 与 `WorkflowEventPersistenceAdapter` 的职责边界：in-memory log 继续作为运行时事件索引，filesystem adapter 作为可选 durable sink；Workflow 核心层不得直接依赖 filesystem 实现。
-2. 为 `WorkflowEventLog` 或上层 orchestration boundary 增加最小的 persistence sink 注入机制；旧的仅使用 in-memory log 的调用方必须完全兼容。
-3. 新事件产生后支持持久化到 `WorkflowEventPersistenceAdapter`，复用 `append_if_absent` / batch semantics，不重复实现 event identity / conflict 规则。
-4. persistence failure 必须有明确 contract：不得静默吞错；需要定义事件已经进入内存但 durable write 失败时的可观察行为，避免形成隐式的数据一致性假设。
-5. 不允许 persistence sink 反向驱动 Workflow，不允许因为写盘失败自动重试 agent/tool，也不修改 TaskManager / ProjectResult 状态机。
-6. 保持 `project.resumed` 等 recovery marker 的现有查询排序语义，不因为 runtime persistence 引入重复或顺序漂移。
-7. 增加 contract / integration tests，至少覆盖：
-   - enabled sink 下新事件可被查询并持久化；
-   - disabled sink 的 legacy 行为不变；
-   - duplicate event id 保持 idempotent / conflict semantics；
-   - persistence failure fail-fast 且错误不被吞掉；
-   - batch / atomic persistence 不产生半批次 event 文件；
-   - in-memory 与 filesystem query ordering 保持一致；
-   - runtime persistence 不修改 TaskManager / ProjectResult；
-   - project recovery 可以读取 runtime 已持久化的事件。
-8. 不在本节点实现事件压缩、归档、远程数据库、消息队列或 event-driven replay。
-9. 专项测试通过后运行全量 `pytest -q`。
-10. 用户验收后更新 DevPlan，记录测试数量、耗时和最终 commit SHA，再进入 7.6.9。
+1. 新增最小 replay / projection API，输入 `WorkflowEvent` 序列或 `WorkflowEventLog`，输出不可变或调用方不可修改的 projection snapshot。
+2. 定义当前已有生命周期事件的 projection 规则，至少覆盖：`task_started`、`developer_completed`、`developer_failed`、`tester_skipped`、`tester_completed`、`tester_failed`、`review_started`、`reviewer_approved`、`reviewer_revision`、`task_failed`、`task_retrying`、`task_completed`、`project.resumed`。
+3. projection 必须按 event log 的确定性排序消费事件；相同 `occurred_at` 时复用现有 event ordering / tie-breaker 语义，不自行定义第二套排序规则。
+4. 对未知 event type 采用明确且稳定的兼容策略：默认保留事件但不改变已知 projection state，不得因为未来新增事件类型导致旧 replay 失败。
+5. 对 malformed / inconsistent event payload 提供 fail-fast contract；错误必须指出事件 identity，不能静默产生错误状态。
+6. replay 必须是纯读取操作：不得写 filesystem、不得追加 event、不得修改原 `WorkflowEventLog`、不得修改 TaskManager / ProjectResult。
+7. 为 project / task 两级 projection 提供最小查询能力，至少能够回答：当前生命周期状态、最后一次已知事件、retry 次数、最后已知错误 / review 状态等已有事件可推导信息。
+8. 增加 contract / integration tests，覆盖：
+   - 空 event stream；
+   - 单 task 正常完成 replay；
+   - retry / failure / revision 多轮 replay；
+   - `project.resumed` recovery marker；
+   - deterministic ordering；
+   - unknown event compatibility；
+   - malformed payload fail-fast；
+   - projection 与原 event log / TaskManager 对象隔离；
+   - replay 无 persistence side effect；
+   - persisted event stream → rehydrated log → projection 的完整链路。
+9. 不在本节点实现 event-driven execution、自动恢复执行、消息队列 consumer、远程 event store、事件压缩或归档。
+10. 专项测试通过后运行全量 `pytest -q`。
+11. 用户验收后更新 DevPlan，记录测试数量、耗时和最终 commit SHA，再规划 7.6.10。
 
 ## 完成判定
-- Workflow event stream 可以通过可选 sink 在运行时持久化；
-- legacy in-memory-only 调用方保持兼容；
-- persistence 复用现有 event identity / conflict / atomic batch semantics；
-- persistence failure 可观察且不被吞掉；
-- event persistence 不改变 Workflow / Orchestrator 执行语义；
-- project recovery 能读取 runtime 已持久化的 event stream；
-- 7.5.x 与 7.6.1–7.6.7 无回归；
+- 已持久化 workflow event stream 可以被确定性 replay 为只读 projection；
+- projection 不产生任何 runtime / persistence side effect；
+- 已知 lifecycle events 的状态转换语义稳定；
+- unknown event type 向前兼容；
+- malformed / inconsistent event fail-fast；
+- 7.6.1–7.6.8 无回归；
 - 全量 `pytest -q` 通过；
 - 用户确认测试结果后才能标记 `√`。
 
@@ -162,16 +188,17 @@ pytest -q
 
 # 当前下一动作
 
-**当前节点：7.6.8 Workflow event runtime persistence integration。**
+**当前节点：7.6.9 Workflow event replay / state projection。**
 
 ### 下一轮详细计划
-1. 先检查 `WorkflowEventLog`、`WorkflowEventPersistenceAdapter`、`Orchestrator`、`TaskWorkflow` 当前事件产生路径，确定最小 persistence sink 接入点。
-2. 设计可选 sink API，默认保持现有 in-memory-only 行为，不强迫 legacy caller 配置 persistence。
-3. 实现事件 append 与 durable persistence 的一致性边界；不得复制已有 event identity / conflict / ordering 逻辑。
-4. 增加专项 contract / integration tests，覆盖成功持久化、legacy 兼容、duplicate/conflict、failure injection、atomic batch、ordering 和 recovery。
-5. 仅修改本节点所需 runtime / core / test 文件，不提前实现 event replay、归档或远程存储。
+1. 先检查现有 `WorkflowEvent`、`WorkflowEventLog`、`WorkflowEventPersistenceAdapter` 以及生命周期事件产生路径，整理已有 event type 与 payload schema，不重复定义已经存在的事件语义。
+2. 设计独立的 read-only projection 模块，优先保持纯函数 / value-object 风格，不让 projection 层依赖 Agent、TaskManager 或具体 persistence adapter。
+3. 定义 task / project projection 的最小状态模型与事件转换表，并明确 retry、failure、revision、resume marker 的边界。
+4. 增加 replay contract tests，再补 persisted event stream → rehydrate → projection integration test。
+5. 增加 malformed / unknown event failure / compatibility tests，确保未来事件扩展不会破坏历史 replay。
 6. 完成代码后通知用户 Pull；用户先运行专项测试，再运行全量 `pytest -q`。
-7. 用户确认全量通过后，我更新 DevPlan 为 `√ 7.6.8` 并记录最终 commit SHA。
+7. 测试失败时只修复 7.6.9 当前问题，不推进下一节点。
+8. 用户确认全量通过后，我更新 DevPlan 为 `√ 7.6.9` 并记录最终 commit SHA。
 
 ---
 
@@ -223,3 +250,13 @@ pytest -q
 - 用户确认全量测试：`820 passed in 2.59s`。
 - 7.6.7 Workflow event replay / project recovery integration 正式完成。
 - 下一节点进入 7.6.8 Workflow event runtime persistence integration。
+
+## 2026-08-22 — 7.6.8 验收
+- `WorkflowEventLog` 增加可选 durable persistence sink，legacy in-memory-only caller 保持兼容。
+- runtime event persistence 复用既有 append-if-absent / conflict semantics，并保持 failure fail-fast。
+- `ProjectOrchestrator` 支持 runtime workflow event persistence；event stream 与 project snapshot 保持独立存储边界。
+- 用户确认专项测试：`38 passed in 1.01s`。
+- 用户确认全量测试：`826 passed in 2.80s`。
+- 最终实现 commit：`4dec49cbb91bccf24eafead1d262a009aade2bbc`。
+- 7.6.8 Workflow event runtime persistence integration 正式完成。
+- 下一节点进入 7.6.9 Workflow event replay / state projection。
