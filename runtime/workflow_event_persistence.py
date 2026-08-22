@@ -53,8 +53,6 @@ class WorkflowEventPersistenceAdapter:
             self._exclusive_write(path, event.to_dict())
             return True
         except FileExistsError:
-            # Another worker won the create race. Re-read the durable record
-            # and apply the same immutable identity/conflict semantics.
             existing = self.load(event.event_id)
             if existing == event:
                 return False
@@ -92,9 +90,6 @@ class WorkflowEventPersistenceAdapter:
                     self._exclusive_write(path, event.to_dict())
                     created.append(path)
                 except FileExistsError:
-                    # A concurrent worker may have created this event between
-                    # the existence check and the exclusive create. Its exact
-                    # immutable payload is now the source of truth.
                     existing = self.load(event_id)
                     if existing != event:
                         raise WorkflowEventConflictError(
@@ -102,8 +97,6 @@ class WorkflowEventPersistenceAdapter:
                         )
             return len(created)
         except Exception:
-            # Only remove files created by this invocation. Never delete a
-            # concurrent worker's successful record.
             for path in created:
                 try:
                     path.unlink()
@@ -125,17 +118,9 @@ class WorkflowEventPersistenceAdapter:
         return event
 
     def _load_all_events(self) -> list[WorkflowEvent]:
-        """Load every persisted event and fail fast on a corrupt event file."""
         return [self.load(event_id) for event_id in self.list_ids()]
 
     def load_log(self) -> WorkflowEventLog:
-        """Rehydrate a new in-memory event log from every persisted event.
-
-        Each event is reconstructed from disk, so the returned log is independent
-        from the persistence adapter and from any previously loaded event objects.
-        ``WorkflowEventLog.merge`` provides the canonical identity/conflict
-        semantics for the replay boundary.
-        """
         log = WorkflowEventLog()
         log.merge(self._load_all_events())
         return log
@@ -157,11 +142,9 @@ class WorkflowEventPersistenceAdapter:
         return sorted(events, key=lambda event: (event.occurred_at, event.event_id))
 
     def list_all(self) -> list[WorkflowEvent]:
-        """Return all persisted events using WorkflowEventLog's global order."""
         return self._sort_all(self._load_all_events())
 
     def list_for_project(self, project_id: str) -> list[WorkflowEvent]:
-        """Return one project's persisted events in deterministic chronological order."""
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
         return self._sort_scoped(
@@ -169,7 +152,6 @@ class WorkflowEventPersistenceAdapter:
         )
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
-        """Return one task's persisted events in deterministic chronological order."""
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
         return self._sort_scoped(
@@ -187,18 +169,34 @@ class WorkflowEventPersistenceAdapter:
 
     @staticmethod
     def _exclusive_write(path: Path, payload: dict) -> None:
-        """Create the final event file exactly once, even under writer races."""
+        """Publish a fully written event exactly once under concurrent writers.
+
+        The final pathname is never visible until the JSON document is complete.
+        A completed temporary file is linked into the destination with an
+        exclusive create operation; a competing writer receives FileExistsError
+        without ever observing a partially written destination file.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        fd = os.open(path, flags)
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{path.stem}-", suffix=".tmp", dir=path.parent, text=True
+        )
+        temp_path = Path(temporary)
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
                 fd = -1
                 json.dump(payload, handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
+
+            try:
+                os.link(temp_path, path)
+            except FileExistsError:
+                raise
+            finally:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
         except Exception:
             if fd != -1:
                 try:
@@ -206,7 +204,7 @@ class WorkflowEventPersistenceAdapter:
                 except OSError:
                     pass
             try:
-                path.unlink()
+                temp_path.unlink()
             except FileNotFoundError:
                 pass
             raise
