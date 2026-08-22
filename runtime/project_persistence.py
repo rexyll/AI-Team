@@ -44,7 +44,14 @@ class ProjectPersistenceAdapter:
         """Extract Developer tool history embedded in task runtime snapshots."""
         payloads: list[dict[str, Any]] = []
         for task in task_manager.get_all_tasks():
-            payload = task.context.get("tool_execution_history", [])
+            task_context = getattr(task, "context", {})
+            # ``Task.context`` is canonicalized as a mapping, but snapshots
+            # produced by the legacy compatibility API may contain ``[]``.
+            # Such a value has no embedded tool history and must not prevent a
+            # project checkpoint from being persisted.
+            if not isinstance(task_context, dict):
+                continue
+            payload = task_context.get("tool_execution_history", [])
             if payload is None:
                 continue
             if not isinstance(payload, list):
@@ -164,10 +171,8 @@ class ProjectPersistenceAdapter:
     def delete(self, project_id: str) -> None:
         """Delete exactly one persisted project snapshot."""
         path = self._path(project_id)
-
         if not path.is_file():
             raise KeyError(project_id)
-
         path.unlink()
 
     def checkpoint(
@@ -179,14 +184,7 @@ class ProjectPersistenceAdapter:
         result: ProjectResult,
         tool_execution_history: ToolExecutionHistory | None = None,
     ) -> None:
-        """Commit one complete runtime checkpoint as a single atomic snapshot.
-
-        A checkpoint is deliberately stricter than ``update``: it represents a
-        recoverable runtime boundary, so a complete ProjectResult is required
-        and must describe exactly the supplied TaskManager state. All
-        validation happens before the atomic replacement, preserving the
-        previous snapshot when the candidate state is invalid.
-        """
+        """Commit one complete runtime checkpoint as a single atomic snapshot."""
         if not isinstance(result, ProjectResult):
             raise TypeError("result must be a ProjectResult")
 
@@ -272,14 +270,7 @@ class ProjectPersistenceAdapter:
         return ToolExecutionAudit(snapshot.tool_execution_history)
 
     def audit_consistency(self, project_id: str) -> dict[str, Any]:
-        """Report whether persisted canonical history matches task-local history.
-
-        The report is observational only. It deliberately does not reject or
-        rewrite a snapshot because explicit project-level history remains the
-        canonical persisted representation. A mismatch is therefore useful
-        evidence of a boundary that has not yet been rehydrated into task
-        runtime contexts; continuation can then restore the canonical history.
-        """
+        """Report whether persisted canonical history matches task-local history."""
         snapshot = self.load(project_id)
         canonical = snapshot.tool_execution_history.to_dict() if snapshot.tool_execution_history is not None else []
         contextual = self._history_from_task_manager(snapshot.task_manager)
@@ -312,16 +303,7 @@ class ProjectPersistenceAdapter:
         task_manager: TaskManager,
         result: ProjectResult | None,
     ) -> None:
-        """Validate invariants that must survive persisted recovery.
-
-        ``completed_task_ids`` was added after the original project-result
-        persistence contract. Older callers can therefore construct a result
-        with the default empty tuple even when ``completed_tasks`` is non-zero.
-        An empty tuple is treated as an unspecified legacy field here; when the
-        field is populated, its identity-level value must exactly match task
-        state. New runtime results created by ``from_task_manager`` always
-        populate it, so checkpoints still get strict identity validation.
-        """
+        """Validate invariants that must survive persisted recovery."""
         tasks = task_manager.get_all_tasks()
         task_ids = [task.id for task in tasks]
         if len(task_ids) != len(set(task_ids)):
@@ -346,19 +328,11 @@ class ProjectPersistenceAdapter:
         if result.project is not None and plan is not None:
             expected_project = plan.get("project")
             if expected_project is not None and result.project != expected_project:
-                raise ValueError(
-                    f"project snapshot result mismatch: {project_id}"
-                )
+                raise ValueError(f"project snapshot result mismatch: {project_id}")
         actual_statuses = {task.id: task.status for task in tasks}
-        expected_completed = tuple(
-            sorted(task_id for task_id, status in actual_statuses.items() if status == "completed")
-        )
-        expected_failed = tuple(
-            sorted(task_id for task_id, status in actual_statuses.items() if status == "failed")
-        )
-        expected_blocked = tuple(
-            sorted(task_id for task_id, status in actual_statuses.items() if status == "blocked")
-        )
+        expected_completed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "completed"))
+        expected_failed = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "failed"))
+        expected_blocked = tuple(sorted(task_id for task_id, status in actual_statuses.items() if status == "blocked"))
         if result.total_tasks != len(tasks):
             raise ValueError(f"project snapshot result mismatch: {project_id}")
         if result.completed_tasks != len(expected_completed):
