@@ -193,7 +193,7 @@ reviewer_approved
 
 验收状态：**专项及全量测试已通过。**
 
-## ▶ 8.6.3 Concurrent query / projection
+## √ 8.6.3 Concurrent query / projection
 
 目标：在 workflow 持续追加 event 时并发执行：
 - `list_all()`
@@ -214,21 +214,36 @@ reviewer_approved
 
 实现 commit：`afeca23`。
 
-专项测试：`tests/test_workflow_event_concurrency_contract.py`，当前等待用户 Pull 后验证。
+专项测试：`tests/test_workflow_event_concurrency_contract.py`。
+
+验收状态：**用户已确认专项测试和全量测试通过。**
+
+## ▶ 8.6.4 Scheduler scalability
+
+目标：验证 DependencyGraph + Orchestrator 在大量 ready tasks 下的调度规模能力，不改变已有生命周期语义。
+
+本节点新增 contract：`tests/test_orchestrator_scalability_contract.py`。
+
+覆盖：
+- 512 个独立 ready tasks 不重复调度
+- 不遗漏任何 task
+- 每个 task 恰好执行一次
+- `max_workers=4` 时实际 active worker 不超过 4
+- 所有 task 最终收敛到 `completed`
+- root → 大规模 dependent tasks 的 dependency ordering 正确
+- 大规模 ready set 不破坏 DependencyScheduler 的决策边界
+
+当前状态：**测试已提交到 GitHub，等待用户 Pull 后专项验证。**
 
 专项命令：
 ```text
-pytest tests/test_workflow_event_concurrency_contract.py -q
+pytest tests/test_orchestrator_scalability_contract.py -q
 ```
 
-## 8.6.4 Scheduler scalability
-
-验证 DependencyGraph + Orchestrator 在大量 ready tasks 下：
-- 不重复调度
-- 不遗漏 task
-- worker 数量受 `max_workers` 约束
-- final lifecycle 全部收敛
-- event 数量与 task lifecycle 成正比
+专项通过后再运行：
+```text
+pytest -q
+```
 
 ## 8.6.5 Failure + concurrency matrix
 
@@ -257,11 +272,13 @@ pytest tests/test_workflow_event_concurrency_contract.py -q
 
 ## 8.6.7 测试文件
 
-计划新增：
-- `tests/test_workflow_event_performance_contract.py` ← 已完成
-- `tests/test_workflow_event_persistence_contention_contract.py` ← 已完成
-- `tests/test_workflow_event_concurrency_contract.py` ← 已新增，当前 8.6.3 验证中
-- `tests/test_orchestrator_scalability_contract.py` ← 待 8.6.4
+已完成：
+- `tests/test_workflow_event_performance_contract.py`
+- `tests/test_workflow_event_persistence_contention_contract.py`
+- `tests/test_workflow_event_concurrency_contract.py`
+
+当前新增：
+- `tests/test_orchestrator_scalability_contract.py` ← 8.6.4 验证中
 
 必要时复用现有：
 - `tests/test_workflow_event_long_running_contract.py`
