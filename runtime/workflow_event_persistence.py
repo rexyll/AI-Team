@@ -132,6 +132,46 @@ class WorkflowEventPersistenceAdapter:
             raise ValueError("workflow event identity does not match filename")
         return event
 
+    def _load_all_events(self) -> list[WorkflowEvent]:
+        """Load every persisted event and fail fast on a corrupt event file."""
+        return [self.load(event_id) for event_id in self.list_ids()]
+
+    @staticmethod
+    def _sort_all(events: Iterable[WorkflowEvent]) -> list[WorkflowEvent]:
+        return sorted(
+            events,
+            key=lambda event: (
+                event.project_id,
+                event.task_id or "",
+                event.occurred_at,
+                event.event_id,
+            ),
+        )
+
+    @staticmethod
+    def _sort_scoped(events: Iterable[WorkflowEvent]) -> list[WorkflowEvent]:
+        return sorted(events, key=lambda event: (event.occurred_at, event.event_id))
+
+    def list_all(self) -> list[WorkflowEvent]:
+        """Return all persisted events using WorkflowEventLog's global order."""
+        return self._sort_all(self._load_all_events())
+
+    def list_for_project(self, project_id: str) -> list[WorkflowEvent]:
+        """Return one project's persisted events in deterministic chronological order."""
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise ValueError("project_id must be a non-empty string")
+        return self._sort_scoped(
+            event for event in self._load_all_events() if event.project_id == project_id
+        )
+
+    def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
+        """Return one task's persisted events in deterministic chronological order."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must be a non-empty string")
+        return self._sort_scoped(
+            event for event in self._load_all_events() if event.task_id == task_id
+        )
+
     def list_ids(self) -> list[str]:
         return sorted(path.stem for path in self.root.glob("*.json") if path.is_file())
 
