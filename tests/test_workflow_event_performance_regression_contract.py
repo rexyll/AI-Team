@@ -80,13 +80,23 @@ def test_regression_guard_keeps_canonical_workflow_event_budget() -> None:
         role = "developer"
 
         def run(self, task: Task) -> dict:
-            return {"status": "completed", "task_id": task.id}
+            return {
+                "status": "completed",
+                "agent": "developer",
+                "task_id": task.id,
+                "message": "canonical workflow event budget regression guard",
+            }
 
     class _Reviewer:
         role = "reviewer"
 
         def run(self, task: Task) -> dict:
-            return {"status": "approved", "task_id": task.id}
+            return {
+                "status": "approved",
+                "agent": "reviewer",
+                "task_id": task.id,
+                "message": "canonical workflow event budget regression guard approved",
+            }
 
     router = AgentRouter()
     router.register("developer", _Developer())
