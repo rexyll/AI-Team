@@ -49,8 +49,18 @@ class WorkflowEventPersistenceAdapter:
             raise WorkflowEventConflictError(
                 f"conflicting workflow event for event_id: {event.event_id}"
             )
-        self._atomic_write(path, event.to_dict(), exclusive=False)
-        return True
+        try:
+            self._exclusive_write(path, event.to_dict())
+            return True
+        except FileExistsError:
+            # Another worker won the create race. Re-read the durable record
+            # and apply the same immutable identity/conflict semantics.
+            existing = self.load(event.event_id)
+            if existing == event:
+                return False
+            raise WorkflowEventConflictError(
+                f"conflicting workflow event for event_id: {event.event_id}"
+            )
 
     def save_if_absent_many(self, events: Iterable[WorkflowEvent]) -> int:
         incoming = list(events)
@@ -67,51 +77,33 @@ class WorkflowEventPersistenceAdapter:
                 )
             unique[event.event_id] = event
 
-        pending: list[tuple[Path, str]] = []
-        for event_id, event in unique.items():
-            path = self._path(event_id)
-            if path.exists():
-                existing = self.load(event_id)
-                if existing != event:
-                    raise WorkflowEventConflictError(
-                        f"conflicting workflow event for event_id: {event_id}"
-                    )
-                continue
-            pending.append(
-                (path, json.dumps(event.to_dict(), ensure_ascii=False, indent=2))
-            )
-
-        staged: list[tuple[Path, Path]] = []
         created: list[Path] = []
         try:
-            for path, payload in pending:
-                fd, temporary = tempfile.mkstemp(
-                    prefix=f".{path.stem}-", suffix=".tmp", dir=self.root, text=True
-                )
-                temp_path = Path(temporary)
+            for event_id, event in unique.items():
+                path = self._path(event_id)
+                if path.exists():
+                    existing = self.load(event_id)
+                    if existing != event:
+                        raise WorkflowEventConflictError(
+                            f"conflicting workflow event for event_id: {event_id}"
+                        )
+                    continue
                 try:
-                    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-                        handle.write(payload)
-                        handle.flush()
-                        os.fsync(handle.fileno())
-                except Exception:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-                staged.append((temp_path, path))
-
-            for temp_path, path in staged:
-                os.replace(temp_path, path)
-                created.append(path)
-            return len(pending)
+                    self._exclusive_write(path, event.to_dict())
+                    created.append(path)
+                except FileExistsError:
+                    # A concurrent worker may have created this event between
+                    # the existence check and the exclusive create. Its exact
+                    # immutable payload is now the source of truth.
+                    existing = self.load(event_id)
+                    if existing != event:
+                        raise WorkflowEventConflictError(
+                            f"conflicting workflow event for event_id: {event_id}"
+                        )
+            return len(created)
         except Exception:
-            for temp_path, _ in staged:
-                try:
-                    temp_path.unlink()
-                except FileNotFoundError:
-                    pass
+            # Only remove files created by this invocation. Never delete a
+            # concurrent worker's successful record.
             for path in created:
                 try:
                     path.unlink()
@@ -192,6 +184,32 @@ class WorkflowEventPersistenceAdapter:
         if not path.is_file():
             raise KeyError(event_id)
         path.unlink()
+
+    @staticmethod
+    def _exclusive_write(path: Path, payload: dict) -> None:
+        """Create the final event file exactly once, even under writer races."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        fd = os.open(path, flags)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                fd = -1
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception:
+            if fd != -1:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
     @staticmethod
     def _atomic_write(path: Path, payload: dict, *, exclusive: bool) -> None:
