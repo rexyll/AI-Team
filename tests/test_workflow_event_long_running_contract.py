@@ -106,7 +106,13 @@ def test_many_parallel_workflow_tasks_preserve_lifecycle_and_persisted_query_sem
     # intentionally absent, so each workflow round also emits tester_skipped.
     expected_events_per_task = 9
     assert len(log) == TASK_COUNT * expected_events_per_task
-    assert persistence.list_ids() == [event.event_id for event in log.list_all()]
+
+    # Parallel execution makes the global append order scheduler-dependent.
+    # Persistence exposes IDs in deterministic filename order, while the log
+    # exposes canonical workflow-event order. The durable and in-memory
+    # representations must therefore agree on event identity, not incidental
+    # cross-task scheduling order.
+    assert set(persistence.list_ids()) == {event.event_id for event in log.list_all()}
 
     for task in tasks:
         event_types = [event.event_type for event in log.list_for_task(task.id)]
