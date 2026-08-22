@@ -24,11 +24,25 @@ class ProjectOrchestrator:
 
     PLANNER_TASK_ID = "PLAN-001"
 
-    def __init__(self, agent_router: AgentRouter, plan_builder: PlanBuilder | None = None, orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None, workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None):
+    def __init__(
+        self,
+        agent_router: AgentRouter,
+        plan_builder: PlanBuilder | None = None,
+        orchestrator_factory: Callable[[TaskManager, AgentRouter], Orchestrator] | None = None,
+        workflow_event_log: WorkflowEventLog | None = None,
+        project_id: str | None = None,
+        workflow_event_persistence: WorkflowEventPersistenceAdapter | None = None,
+    ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if workflow_event_persistence is not None and not isinstance(
+            workflow_event_persistence, WorkflowEventPersistenceAdapter
+        ):
+            raise TypeError(
+                "workflow_event_persistence must be a WorkflowEventPersistenceAdapter or None"
+            )
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
         self.agent_router = agent_router
@@ -38,16 +52,31 @@ class ProjectOrchestrator:
         self.last_task_manager: TaskManager | None = None
         self.last_result: ProjectResult | None = None
         self._workflow_event_log = workflow_event_log
+        self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
+        if self._workflow_event_log is not None and workflow_event_persistence is not None:
+            self._workflow_event_log.set_persistence_sink(workflow_event_persistence)
 
     @property
     def workflow_event_log(self) -> WorkflowEventLog | None:
         """Return the currently attached in-memory workflow event log, if any."""
         return self._workflow_event_log
 
+    @property
+    def workflow_event_persistence(self) -> WorkflowEventPersistenceAdapter | None:
+        """Return the optional durable workflow event sink."""
+        return self._workflow_event_persistence
+
     @staticmethod
     def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
         return Orchestrator(task_manager=task_manager, agent_router=agent_router)
+
+    def _ensure_workflow_event_log(self) -> WorkflowEventLog | None:
+        if self._workflow_event_log is None and self._workflow_event_persistence is not None:
+            self._workflow_event_log = WorkflowEventLog(
+                persistence_sink=self._workflow_event_persistence
+            )
+        return self._workflow_event_log
 
     def _resolved_project_id(self) -> str | None:
         if self._project_id is not None:
@@ -59,12 +88,13 @@ class ProjectOrchestrator:
         return None
 
     def _emit_project_event(self, event_type: str, *, payload: dict[str, Any] | None = None) -> None:
-        if self._workflow_event_log is None:
+        log = self._ensure_workflow_event_log()
+        if log is None:
             return
         project_id = self._resolved_project_id()
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id is required when workflow_event_log is enabled")
-        self._workflow_event_log.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=project_id, task_id=None, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload=payload or {}))
+        log.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=project_id, task_id=None, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload=payload or {}))
 
     @staticmethod
     def _restore_tool_execution_history(task_manager: TaskManager, history: ToolExecutionHistory | None) -> None:
@@ -90,7 +120,9 @@ class ProjectOrchestrator:
         if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
             raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter or None")
         self._workflow_event_log = event_persistence.load_log()
+        self._workflow_event_persistence = event_persistence
         self._project_id = project_id
+        self._workflow_event_log.set_persistence_sink(event_persistence)
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
@@ -128,8 +160,9 @@ class ProjectOrchestrator:
             raise TypeError("state_change_hook must be callable or None")
         self.last_task_manager = task_manager
         orchestrator = self.create_orchestrator(task_manager)
-        if self._workflow_event_log is not None:
-            orchestrator._workflow_event_log = self._workflow_event_log
+        log = self._ensure_workflow_event_log()
+        if log is not None:
+            orchestrator._workflow_event_log = log
             orchestrator._project_id = self._resolved_project_id()
         set_hook = getattr(orchestrator, "set_state_change_hook", None)
         if state_change_hook is not None and callable(set_hook):
@@ -154,12 +187,7 @@ class ProjectOrchestrator:
         return self.execute(manager)
 
     def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter, *, event_persistence: WorkflowEventPersistenceAdapter | None = None) -> ProjectResult:
-        """Restore persisted project state without starting execution.
-
-        Workflow events are recovered only when an event persistence adapter is
-        explicitly supplied. The event stream remains independent of the
-        project snapshot and is never embedded in project persistence.
-        """
+        """Restore persisted project state without starting execution."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         snapshot = adapter.load(project_id)
