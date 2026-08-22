@@ -92,6 +92,16 @@ class Task:
                 "Task payload missing required fields: " + ", ".join(missing)
             )
 
+        # Older/manual project snapshots may encode optional mapping fields as
+        # JSON null. Normalize those values to the dataclass defaults before
+        # contract validation; malformed non-mapping values still fail through
+        # the normal Task contract.
+        def _mapping(key: str) -> dict[str, Any]:
+            value = payload.get(key)
+            if value is None:
+                return {}
+            return dict(value)
+
         task = cls(
             id=payload["id"],
             title=payload["title"],
@@ -102,11 +112,11 @@ class Task:
             error=payload.get("error"),
             review_round=payload.get("review_round", 0),
             dependencies=list(payload.get("dependencies", [])),
-            result=dict(payload.get("result", {})),
-            context=dict(payload.get("context", {})),
-            review_result=dict(payload.get("review_result", {})),
+            result=_mapping("result"),
+            context=_mapping("context"),
+            review_result=_mapping("review_result"),
             review_history=list(payload.get("review_history", [])),
-            test_result=dict(payload.get("test_result", {})),
+            test_result=_mapping("test_result"),
             test_history=list(payload.get("test_history", [])),
             retry_attempt=payload.get("retry_attempt", 0),
             max_retries=payload.get("max_retries", 0),
