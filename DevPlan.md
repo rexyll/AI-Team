@@ -147,22 +147,27 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 
 # 四、当前节点：8.6 Performance / Concurrency Contract
 
-## 8.6.1 Performance baseline
+## 8.6.1 Performance baseline — 开发中
 
-建立可重复的基准测试，而不是只记录一次运行时间。
+已在当前开发分支新增 `tests/test_workflow_event_performance_contract.py`，建立第一版可重复 baseline contract：
 
-指标：
 - 任务数量：32 / 128 / 512
-- worker：1 / 4 / 8 / 16
-- event 数量及平均 event/task
+- worker baseline：1
+- parallel comparison：4
 - total wall time
 - tasks/sec
 - events/sec
-- persistence writes/sec
-- query/project latency
-- memory growth
+- 固定 9 events/task 的语义校验
+- 4 workers 相比 1 worker 的软并行收益门槛（>5%）
 
-要求：测试不依赖真实 LLM、网络或外部服务。
+基准测试只使用 deterministic mock agents，并通过极短固定 sleep 使并行收益可观察；不依赖真实 LLM、网络或外部服务。
+
+**当前状态：代码已提交，等待用户 Pull 后专项测试验证；尚未标记完成。**
+
+专项命令：
+```text
+pytest tests/test_workflow_event_performance_contract.py -q
+```
 
 ## 8.6.2 Event persistence contention
 
@@ -221,7 +226,7 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 ## 8.6.7 测试文件
 
 计划新增：
-- `tests/test_workflow_event_performance_contract.py`
+- `tests/test_workflow_event_performance_contract.py` ← 已新增，待验收
 - `tests/test_workflow_event_concurrency_contract.py`
 - `tests/test_orchestrator_scalability_contract.py`
 
@@ -300,3 +305,4 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 - 将 8.6 从单纯 performance test 扩展为 Performance / Concurrency Contract，并新增 baseline、contention、query concurrency、scheduler scalability、failure+concurrency matrix、regression guard 六类开发环节。
 - 将 8.7 明确为 Documentation / Examples / Release Readiness。
 - 当前 HEAD 基线：`72c55e4`。
+- 开始实现 8.6.1：新增 `tests/test_workflow_event_performance_contract.py`，等待本地专项与全量测试验收。
