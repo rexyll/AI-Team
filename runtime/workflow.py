@@ -98,20 +98,7 @@ class WorkflowStage(str, Enum):
 
 
 class TaskWorkflow:
-    """Execute one task through Developer/Tester/Reviewer iterations.
-
-    AgentRouter is the preferred source of stage agents. Explicit agent
-    arguments remain a compatibility boundary for legacy/test routers that do
-    not expose the full AgentRouter registry API. When a router exposes
-    ``get_agent()``, the router-resolved instance is authoritative and explicit
-    agents must match it.
-
-    ``workflow_event_log`` is an optional observability boundary. When
-    supplied, TaskWorkflow emits immutable lifecycle facts after successful
-    state/data mutations. Event logging never replaces TaskManager as the
-    lifecycle authority and remains disabled for legacy callers that do not
-    opt into the event log.
-    """
+    """Execute one task through Developer/Tester/Reviewer iterations."""
 
     def __init__(
         self,
@@ -143,6 +130,7 @@ class TaskWorkflow:
         self._developer = developer
         self._reviewer = reviewer
         self._tester = tester
+        self._last_checkpoint_status: str | None = None
 
         self._validate_explicit_agent("developer", developer)
         self._validate_explicit_agent("reviewer", reviewer)
@@ -184,8 +172,15 @@ class TaskWorkflow:
         return self._agent("reviewer", self._reviewer)
 
     def _checkpoint(self) -> None:
-        if self._state_change_hook is not None:
-            self._state_change_hook(self.task_manager)
+        if self._state_change_hook is None:
+            return
+        task_statuses = [task.status for task in self.task_manager.get_all_tasks()]
+        current_status = task_statuses[0] if len(task_statuses) == 1 else None
+        if current_status is not None and current_status == self._last_checkpoint_status:
+            return
+        if current_status is not None:
+            self._last_checkpoint_status = current_status
+        self._state_change_hook(self.task_manager)
 
     def _emit_event(self, event_type: str, task: Task, *, payload: dict[str, Any] | None = None) -> None:
         if self._workflow_event_log is None:
@@ -240,11 +235,10 @@ class TaskWorkflow:
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
 
-            # The review lifecycle starts when the task enters review_pending,
-            # before the reviewer agent is invoked. This keeps the event log in
-            # the same causal order as the runtime lifecycle.
             self._emit_event("review_started", task, payload={"status": task.status})
-            self._checkpoint()
+            # The tester success / tester-skip checkpoint already records the
+            # REVIEWING boundary. Do not emit a second checkpoint for the
+            # review-start observability event.
             review_outcome = self._run_reviewer(task)
             review_action = self._apply_reviewer_outcome(task, review_outcome)
 
@@ -399,14 +393,11 @@ class TaskWorkflow:
         return "failed"
 
     def _build_context(self, task: Task) -> None:
-        """Build and persist the legacy dependency-ID context for the task.
-
-        The context builder now returns a structured dependency mapping for
-        newer AgentContext consumers. Task.context, however, is a legacy
-        compatibility boundary and historically exposed a list of dependency
-        IDs. Preserve that shape here so enabling workflow event logging does
-        not alter legacy agent-visible state.
-        """
+        """Build and persist the legacy dependency mapping for the task."""
         all_tasks = {item.id: item for item in self.task_manager.get_all_tasks()}
         dependency_context = build_task_context(task, all_tasks)
-        task.context["dependencies"] = list(dependency_context.keys())
+        # Task.context is still the legacy compatibility surface used by
+        # existing agents/tests. Keep the full dependency mapping here; the
+        # newer AgentContext independently exposes dependency IDs plus the
+        # structured dependency_context snapshot.
+        task.context["dependencies"] = dependency_context
