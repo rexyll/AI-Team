@@ -141,6 +141,14 @@ class ContextBuilder:
 def build_task_context(
     task: Task,
     all_tasks: dict[str, Task],
-) -> dict[str, Any]:
-    """Backward-compatible functional API."""
+) -> dict[str, Any] | list[str]:
+    """Backward-compatible functional API.
+
+    Historically Workflow stored ``[]`` for tasks with no declared
+    dependencies. Preserve that legacy shape at this compatibility boundary,
+    while tasks that declare dependencies continue to expose the structured
+    dependency mapping used by context-flow consumers.
+    """
+    if not task.dependencies:
+        return []
     return LegacyDependencyBridge(all_tasks).build(task)
