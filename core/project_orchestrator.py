@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from uuid import uuid4
+from datetime import datetime, timezone
 
 from core.orchestrator import Orchestrator
 from core.project_result import ProjectResult
@@ -14,8 +16,7 @@ from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
-from uuid import uuid4
-from datetime import datetime, timezone
+from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
 
 
 class ProjectOrchestrator:
@@ -38,6 +39,11 @@ class ProjectOrchestrator:
         self.last_result: ProjectResult | None = None
         self._workflow_event_log = workflow_event_log
         self._project_id = project_id
+
+    @property
+    def workflow_event_log(self) -> WorkflowEventLog | None:
+        """Return the currently attached in-memory workflow event log, if any."""
+        return self._workflow_event_log
 
     @staticmethod
     def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
@@ -76,6 +82,15 @@ class ProjectOrchestrator:
             records_by_task.setdefault(task_id, []).append(record)
         for task_id, records in records_by_task.items():
             tasks[task_id].context["tool_execution_history"] = records
+
+    def _rehydrate_workflow_event_log(self, project_id: str, event_persistence: WorkflowEventPersistenceAdapter | None) -> None:
+        """Optionally restore the independent workflow event stream for recovery."""
+        if event_persistence is None:
+            return
+        if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
+            raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter or None")
+        self._workflow_event_log = event_persistence.load_log()
+        self._project_id = project_id
 
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
@@ -138,8 +153,13 @@ class ProjectOrchestrator:
         self._emit_project_event("project.resumed", payload={"source": "memory"})
         return self.execute(manager)
 
-    def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
-        """Restore persisted project state without starting execution."""
+    def resume_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter, *, event_persistence: WorkflowEventPersistenceAdapter | None = None) -> ProjectResult:
+        """Restore persisted project state without starting execution.
+
+        Workflow events are recovered only when an event persistence adapter is
+        explicitly supplied. The event stream remains independent of the
+        project snapshot and is never embedded in project persistence.
+        """
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         snapshot = adapter.load(project_id)
@@ -147,6 +167,7 @@ class ProjectOrchestrator:
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
         self.last_result = snapshot.result
+        self._rehydrate_workflow_event_log(project_id, event_persistence)
         self._emit_project_event("project.resumed", payload={"source": "persistence", "project_id": project_id})
         return snapshot.result or ProjectResult.from_task_manager(snapshot.task_manager, project=(snapshot.plan or {}).get("project") if snapshot.plan else None)
 
@@ -162,7 +183,7 @@ class ProjectOrchestrator:
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
         return adapter.audit_consistency(project_id)
 
-    def continue_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter) -> ProjectResult:
+    def continue_persisted(self, project_id: str, adapter: ProjectPersistenceAdapter, *, event_persistence: WorkflowEventPersistenceAdapter | None = None) -> ProjectResult:
         """Restore a persisted project and execute only its unfinished work."""
         if not isinstance(adapter, ProjectPersistenceAdapter):
             raise TypeError("adapter must be a ProjectPersistenceAdapter")
@@ -170,6 +191,7 @@ class ProjectOrchestrator:
         self.last_plan = snapshot.plan
         self.last_task_manager = snapshot.task_manager
         self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
+        self._rehydrate_workflow_event_log(project_id, event_persistence)
         project_name = None
         if self.last_plan is not None:
             value = self.last_plan.get("project")
