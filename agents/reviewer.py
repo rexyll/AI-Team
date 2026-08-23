@@ -45,6 +45,9 @@ APPROVED
 REVISION_REQUIRED
 
 并说明具体原因。
+
+输出的第一行必须只包含 APPROVED 或 REVISION_REQUIRED 这两个词之一，
+不要加粗、不要编号、不要附加任何其他文字；原因说明放在后续行。
 """
 
 
@@ -228,10 +231,21 @@ REVISION_REQUIRED
 
         text = result.strip().upper()
 
+        # Fast path: verdict-first responses (the documented contract).
         if text.startswith("REVISION_REQUIRED"):
             return "revision"
 
         if text.startswith("APPROVED"):
+            return "approved"
+
+        # Real models frequently reason first and state the verdict later,
+        # or wrap it in markdown. Scan the whole response for the verdict
+        # tokens. A revision signal anywhere wins: an approval gate must
+        # stay conservative on ambiguous evidence (deny-by-default).
+        if "REVISION_REQUIRED" in text:
+            return "revision"
+
+        if "APPROVED" in text:
             return "approved"
 
         raise ValueError(

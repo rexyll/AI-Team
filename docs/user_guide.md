@@ -80,11 +80,16 @@ python -c "from config.model import get_client; get_client(); print('provider co
 
 ### 4.1 运行前检查清单
 
-```powershell
-git status --short
-```
+Developer 的所有文件操作都发生在**仓库之外的独立工作区**：
+`F:\workspace\_coding_workspace\AI-Team\projects\`（由 `security/workspace.py` 定义，与代码仓库物理隔离，详见 §6.1）。
 
-**务必确认输出为空（工作区干净）。** 原因见 §6.1：Developer 生成的文件会落在仓库目录内，干净的工作区是事后识别"哪些文件是本次运行产物"的唯一依据。
+运行前建议清理上次实验的残留，避免旧文件干扰模型的探索：
+
+```powershell
+Get-ChildItem F:\workspace\_coding_workspace\AI-Team\projects
+# 需要时删除指定实验目录（不影响 git 仓库）
+Remove-Item -Recurse -Force F:\workspace\_coding_workspace\AI-Team\projects\<实验名>
+```
 
 ### 4.2 选择第一个需求
 
@@ -151,13 +156,14 @@ python main.py "..." *>&1 | Tee-Object -FilePath runs\run-01.log
 
 ## 6. 已知边界（务必了解）
 
-### 6.1 工作区即仓库根目录
+### 6.1 工作区与仓库物理隔离
 
-Developer 的文件工具受 sandbox 保护，但 sandbox 根目录默认就是**仓库根目录**（`security/workspace.DEFAULT_SANDBOX = WorkspaceSandbox(PROJECT_ROOT)`）。因此：
+Developer 的文件工具受 sandbox 保护，授权根目录是 `AI-Team\projects\`——**仓库的兄弟目录**，而非仓库本身（定义见 `security/workspace.py` 的 `PROJECT_ROOT`）。因此：
 
-- 生成文件会出现在仓库目录树内；
-- 请始终在需求中指定 `workspace/<实验名>/` 作为输出目录；
-- 运行后用 `git status --short` 核对产物，实验结束删除即可，**不要提交实验产物**。
+- 生成的代码**天然不会进入 git 仓库**，无需担心污染版本库；
+- 需求中写的相对路径（如 `workspace/demo01/converter.py`）都落在 `projects\` 内部；
+- 逃逸出该根目录的路径会被拒绝（有安全契约守卫）；
+- 实验产物按目录归档管理，用完可整目录删除。
 
 ### 6.2 CLI 运行是"即时性"的
 
@@ -187,6 +193,7 @@ python examples/persistence_recovery.py
 |---|---|---|
 | `RuntimeError: AGNES_API_KEY is not configured.` | `.env` 缺失/键名错误，且发生在首次真实调用时 | 检查 `.env`（§3.1），重新运行 |
 | `[ERROR] ValueError: Planner 在多次尝试后仍无法生成合法计划` | 模型连续 3 次产不出合法计划 JSON | 换更明确的需求措辞重试；或检查 `AGNES_MODEL` 是否指向具备 JSON 输出能力的模型 |
+| `Tester execution failed: ...` | Tester 阶段异常，错误信息会携带真实原因 | 若提示判定词缺失等解析问题，说明模型输出完全不含结论词，换模型或简化任务；实现类问题按 DevPlan 立项 |
 | 卡在 Developer 阶段很久 | 工具循环接近 50 步上限 | 属正常重试行为；若频繁出现，说明任务对当前模型过难，缩小需求 |
 | Tester 反复 TEST_FAILED | 质量门禁真实生效 | 查看任务 error 字段与产物代码，判断是模型能力还是需求歧义 |
 | 连接超时/401 | BASE_URL 或密钥无效 | 用 §3.2 的验证命令隔离排查 |

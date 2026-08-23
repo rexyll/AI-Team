@@ -41,6 +41,9 @@ TEST_PASSED
 TEST_FAILED
 
 并说明具体原因。
+
+输出的第一行必须只包含 TEST_PASSED 或 TEST_FAILED 这两个词之一，
+不要加粗、不要编号、不要附加任何其他文字；原因说明放在后续行。
 """
 
 
@@ -188,11 +191,22 @@ TEST_FAILED
 
         text = result.strip().upper()
 
+        # Fast path: verdict-first responses (the documented contract).
         if text.startswith("TEST_PASSED"):
             return "passed"
 
         if text.startswith("TEST_FAILED"):
             return "failed"
+
+        # Real models frequently reason first and state the verdict later,
+        # or wrap it in markdown. Scan the whole response for the verdict
+        # tokens. Any failure signal wins: a conservative quality gate must
+        # never pass a task on ambiguous evidence (deny-by-default).
+        if "TEST_FAILED" in text:
+            return "failed"
+
+        if "TEST_PASSED" in text:
+            return "passed"
 
         raise ValueError(
             "Tester returned invalid decision. "

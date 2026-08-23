@@ -278,7 +278,12 @@ class TaskWorkflow:
         if outcome.exception is not None:
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.EXECUTION_FAILURE)
-            self.task_manager.record_error(task.id, outcome.result_dict.get("message", "Tester execution failed"))
+            # Surface the real exception so operators can diagnose gate
+            # failures without re-running; mirrors the reviewer path.
+            self.task_manager.record_error(
+                task.id,
+                f"Tester execution failed: {outcome.exception}",
+            )
             self._emit_event("tester_failed", task, payload=outcome.to_dict())
             self._checkpoint()
             return

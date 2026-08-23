@@ -486,3 +486,18 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 
 - 发布 commit：`051ed7d`
 - Tag：`v0.9.0-rc`（已推送至 origin）
+
+### 8.9 真实运行缺陷修复（v0.9.0-rc 首次实战反馈）
+
+首次 Agnes 真实运行暴露三问题，修复方案经用户确认（全面加固）：
+
+1. **Tester 判定解析过脆（主因）**：原实现要求响应以 TEST_PASSED/TEST_FAILED 开头，真实模型的"推理在前、结论在后"或 markdown 加粗输出全部误杀。已改为前缀快速路径 + 全文判定词扫描；失败信号优先（TEST_FAILED 存在即 failed），与 deny-by-default 哲学一致。Reviewer 同款加固（REVISION_REQUIRED 优先）。
+2. **Tester 异常透传缺失**：workflow 的 tester 异常分支只记录兜底文案，真实异常被吞。已对齐 reviewer 路径携带异常原文。
+3. **user_guide 工作区描述错误**：实际 sandbox 根为仓库外 `AI-Team\projects\`（物理隔离设计），已更正 §4.1/§6.1/§7。
+
+配套：两角色 system prompt 增加首行结论格式要求；新增 `tests/test_quality_gate_parsing_contract.py`（判定解析 ×12 场景 + workflow 异常透传契约）。
+
+专项测试：`tests/test_quality_gate_parsing_contract.py`、`tests/test_tester.py`、`tests/test_tester_reviewer_context.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。**
