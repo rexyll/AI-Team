@@ -325,3 +325,7 @@ reviewer_approved
 - 当前支持的 canonical runtime contract 概览
 
 完成后再进入 extension examples 与 release readiness 节点。
+
+### 8.7.2 Agent / LLM / Tool / Persistence extension examples
+
+### 8.7.3 Persistence / Recovery and Event Query / Audit example
