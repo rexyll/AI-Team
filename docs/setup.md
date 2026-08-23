@@ -33,7 +33,7 @@ The full agent/provider import chain requires two declared third-party dependenc
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pins the versions validated by the local development environment (`openai`, `python-dotenv`). Contract tests themselves stay network-independent through mock injection; the provider dependency is required because importing the agent modules eagerly constructs the OpenAI-compatible client in `config/model.py`. See `docs/production_configuration.md` for the full configuration checklist.
+`requirements.txt` pins the versions validated by the local development environment (`openai`, `python-dotenv`). Contract tests themselves stay network-independent through mock injection; `config/model.py` imports both packages and resolves the shared client lazily on first provider use. See `docs/production_configuration.md` for the full configuration checklist.
 
 Verify the interpreter:
 

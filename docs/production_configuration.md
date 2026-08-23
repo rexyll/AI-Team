@@ -33,11 +33,11 @@ These are required because `config/model.py` imports both packages unconditional
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Provider base URL |
 | `AGNES_MODEL` | no | `agnes-2.5-flash` | Model identifier passed to chat calls |
 
-**Import-time behavior warning:** `config/model.py` validates `AGNES_API_KEY` and eagerly constructs the OpenAI client during module import. Any import chain that reaches it (`import agents.base`, `runtime.llm.provider`, or running `main.py` in provider mode) raises immediately when the key is missing. Configure the environment before importing agent modules; do not treat this as a lazy failure.
+**Lazy provider resolution:** importing the agent chain is side-effect free. `config/model.py` no longer validates the API key or constructs a client at import time; the client is built lazily on the first actual completion request (`ProviderLLM` resolves it through `config.get_client()`). Key-less environments can therefore import and test agent modules freely — only real provider calls require the configuration above, and a missing key fails with a clear `RuntimeError` at that moment.
 
 ## 4. Network-free execution (mock mode)
 
-For local verification without provider access, inject `MockLLM` (`runtime/llm/mock.py`) through the agent constructor's `llm=` parameter, exactly as the contract tests do. `BaseAgent(llm=None)` defaults to `ProviderLLM()`, which uses the eager client from §3. Mock mode never touches the network and produces deterministic responses.
+For local verification without provider access, inject `MockLLM` (`runtime/llm/mock.py`) through the agent constructor's `llm=` parameter, exactly as the contract tests do. `BaseAgent(llm=None)` defaults to `ProviderLLM()`, which resolves the shared client lazily on first use (see §3). Mock mode never touches the network and produces deterministic responses.
 
 ## 5. Workspace sandbox
 

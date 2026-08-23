@@ -445,3 +445,21 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 2. **版本化发布**：打 tag（如 v0.9.0-rc），以 release_readiness 检查单为门禁走一次正式发布流程
 3. **新能力规划（Phase 9 候选）**：在现有生产化基座上扩展新方向，需先明确产品目标再立项
 4. **真实 LLM 端到端验证**：用配置好的 provider 跑通一次完整真实项目（当前所有验收均为 mock 注入）
+
+---
+
+# 七、Phase 8.8 技术债清理（发布前维护节点）
+
+## 8.8 惰性初始化与 CLI 修正
+
+- `config/model.py`：移除导入期 `AGNES_API_KEY` 强制校验与急切 OpenAI client 构造；新增 `get_client()`（首次调用时校验并缓存，导入零副作用）
+- `runtime/llm/provider.py`：客户端改为惰性解析——构造 ProviderLLM 零副作用，首次 generate/generate_with_tools 时经 `config.get_client()` 解析；model 默认改为 None→AGNES_MODEL 解析
+- `main.py`：`run_project` 改走 canonical 三步流程（create_plan/build_task_manager/execute），返回 `(task_manager, result)`；CLI 新增 PROJECT RESULT 摘要输出（修正遗留的返回类型不匹配）
+- 死导入清理：architect/tester/reviewer 移除未使用的 `ask_ai` 导入（planner 保留供 legacy 分支与既有 monkeypatch 测试）
+- 文档同步：production_configuration.md §3/§4、release_readiness.md §4、setup.md §3 全部更新为惰性语义
+- 新增 `tests/test_lazy_provider_initialization_contract.py`：子进程级守卫——无 `AGNES_API_KEY` 时 `import main`、provider 导入、ProviderLLM 构造必须成功；`get_client()` 仅在无钥实际使用时 RuntimeError；客户端缓存语义
+
+专项测试：`tests/test_lazy_provider_initialization_contract.py`、`tests/test_main.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。**

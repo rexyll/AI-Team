@@ -73,13 +73,22 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
     class FakeRouter:
         pass
 
+    class FakeProjectResult:
+        success = True
+        status = "completed"
+        total_tasks = 1
+        completed_tasks = 1
+
     class FakeProjectOrchestrator:
         def __init__(self, agent_router):
             captured["router"] = agent_router
 
-        def run(self, requirement):
+        def create_plan(self, requirement):
             captured["requirement"] = requirement
+            return {"project": "demo", "summary": "s", "tasks": []}
 
+        def build_task_manager(self, plan):
+            captured["plan"] = plan
             return FakeTaskManager(
                 [
                     FakeTask(
@@ -90,6 +99,10 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
                     )
                 ]
             )
+
+        def execute(self, task_manager):
+            captured["executed_task_manager"] = task_manager
+            return FakeProjectResult()
 
     def fake_create_agent_router():
         router = FakeRouter()
@@ -108,13 +121,17 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
         FakeProjectOrchestrator,
     )
 
-    result = main.run_project(
+    task_manager, result = main.run_project(
         "开发一个个人记账软件"
     )
 
     assert isinstance(
-        result,
+        task_manager,
         FakeTaskManager,
+    )
+    assert isinstance(
+        result,
+        FakeProjectResult,
     )
 
     assert captured["router"] is captured["created_router"]
@@ -123,19 +140,28 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
         captured["requirement"]
         == "开发一个个人记账软件"
     )
+    assert captured["executed_task_manager"] is task_manager
 
 
 def test_main_executes_requirement(monkeypatch, capsys):
+    class FakeProjectResult:
+        success = True
+        status = "completed"
+        total_tasks = 2
+        completed_tasks = 2
+
     class FakeProjectOrchestrator:
         def __init__(self, agent_router):
             self.agent_router = agent_router
 
-        def run(self, requirement):
+        def create_plan(self, requirement):
             assert (
                 requirement
                 == "开发个人记账软件"
             )
+            return {"project": "demo", "summary": "s", "tasks": []}
 
+        def build_task_manager(self, plan):
             return FakeTaskManager(
                 [
                     FakeTask(
@@ -152,6 +178,9 @@ def test_main_executes_requirement(monkeypatch, capsys):
                     ),
                 ]
             )
+
+        def execute(self, task_manager):
+            return FakeProjectResult()
 
     monkeypatch.setattr(
         main,

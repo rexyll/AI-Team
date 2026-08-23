@@ -40,7 +40,7 @@ This checklist is the release gate for the AI-Team runtime. A release may only b
 ## 4. Known limitations (accepted for this release)
 
 - Python 3.14 required (PEP 649 lazy annotations); earlier interpreters fail at import
-- `config/model.py` eagerly constructs the provider client at import time and requires `AGNES_API_KEY`; lazy initialization is deferred to a post-release refactor node
+- Provider client construction is lazy, but real provider calls still require `AGNES_API_KEY` and fail with a clear `RuntimeError` on first use when unconfigured
 - Network shares are unvalidated for persistence roots (atomic rename requirement)
 - Windows-first platform; other platforms are unvalidated
 

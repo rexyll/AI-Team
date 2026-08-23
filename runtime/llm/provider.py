@@ -2,28 +2,43 @@ from __future__ import annotations
 
 from typing import Any
 
-from config.model import AGNES_MODEL, client
+from config.model import AGNES_MODEL
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
 class ProviderLLM(BaseLLM):
-    """BaseLLM adapter for the project's OpenAI-compatible provider client."""
+    """BaseLLM adapter for the project's OpenAI-compatible provider client.
+
+    The underlying client is resolved lazily on first completion request:
+    constructing a ProviderLLM (directly or through a default agent) never
+    touches the provider configuration, keeping the agent import chain and
+    object construction side-effect free.
+    """
 
     def __init__(
         self,
         *,
-        model: str = AGNES_MODEL,
-        client_instance: Any = client,
+        model: str | None = None,
+        client_instance: Any = None,
     ) -> None:
-        if not isinstance(model, str):
+        resolved_model = AGNES_MODEL if model is None else model
+        if not isinstance(resolved_model, str):
             raise TypeError("ProviderLLM model must be a string")
-        if not model.strip():
+        if not resolved_model.strip():
             raise ValueError("ProviderLLM model must be a non-empty string")
-        if client_instance is None:
-            raise ValueError("ProviderLLM client_instance is required")
 
-        self.model = model
-        self.client = client_instance
+        self.model = resolved_model
+        self._client_override = client_instance
+        self._client: Any = client_instance
+
+    @property
+    def client(self) -> Any:
+        """Resolve the provider client on first access via config.get_client()."""
+        if self._client is None:
+            from config.model import get_client
+
+            self._client = get_client()
+        return self._client
 
     def generate(
         self,

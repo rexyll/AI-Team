@@ -1,5 +1,5 @@
 from agents.base import BaseAgent
-from config.model import ask_ai
+
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view

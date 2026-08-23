@@ -38,9 +38,14 @@ def run_project(requirement: str):
         agent_router=router,
     )
 
-    return project_orchestrator.run(
-        requirement
-    )
+    # The canonical three-step project flow: the orchestrator's run()
+    # returns a ProjectResult only, while the CLI reports both the
+    # per-task statuses and the project-level result.
+    plan = project_orchestrator.create_plan(requirement)
+    task_manager = project_orchestrator.build_task_manager(plan)
+    result = project_orchestrator.execute(task_manager)
+
+    return task_manager, result
 
 
 def main() -> int:
@@ -55,7 +60,7 @@ def main() -> int:
         )
 
     try:
-        task_manager = run_project(
+        task_manager, result = run_project(
             requirement
         )
 
@@ -65,6 +70,16 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    print()
+    print("=" * 60)
+    print("PROJECT RESULT")
+    print("=" * 60)
+    print(
+        f"success={result.success} "
+        f"status={result.status} "
+        f"completed={result.completed_tasks}/{result.total_tasks}"
+    )
 
     print()
     print("=" * 60)
