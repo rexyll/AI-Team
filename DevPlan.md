@@ -406,6 +406,42 @@ B. 发布就绪交付：
 - `tests/test_release_readiness_smoke_contract.py`：真 Planner/Architect/Developer/Tester/Reviewer + MockLLM 注入，零网络贯穿 用户需求 → 编排执行 → 事件持久化 → 重启恢复 → 跨存储查询 → 真实工具历史审计
 
 专项测试：`tests/test_developer_llm_injection_contract.py`、`tests/test_release_documentation_contract.py`、`tests/test_release_readiness_smoke_contract.py`。
-最终 commit：（验收后记录）
+最终 commit：`9c3c026`。
 
-验收状态：**待用户确认专项及全量测试通过。**
+验收状态：**用户已确认专项及全量测试通过（931 passed, 0 warnings）。**
+
+迭代记录：
+- 首轮全量暴露 llm_base 签名注解契约回归（新增代码引入 future import 所致，已移除恢复急切注解）
+- 性能契约 [512] 出现单次瞬时失败；沙盒 16 轮同参数压测（含并行与高频线程切换）零复现，总事件数始终精确 2560，判定为环境时序偶发，复跑全绿
+
+**8.7 当前状态：全部节点验收通过。Phase 8（Production Hardening）整体收官。**
+
+---
+
+# 六、Phase 8 收官评估与后续候选方向
+
+## 收官评估
+
+Phase 0–8 全部节点验收完成，生产化目标逐项达成：
+
+- Agent / LLM 可替换：构造器注入贯穿全部五类 agent（本轮修复了 Developer/Planner 两处绕过注入的契约破坏）
+- 工具受权限控制、工作区受 sandbox 限制：deny-by-default + 路径逃逸防护有安全契约守卫
+- 运行状态可持久化、事件可恢复/投影/查询：跨存储恢复等价性与只读审计有端到端冒烟门禁
+- 失败边界可验证：故障注入、竞争矩阵、性能回归基线齐备
+- 文档与示例：setup、production configuration、release readiness、五个可独立运行示例
+
+发布就绪检查单：`docs/release_readiness.md`。
+
+## 遗留技术债（按优先级，均已有契约测试或文档记录在案）
+
+1. `config/model.py` 惰性初始化重构：消除导入即建 OpenAI client 的副作用与 `AGNES_API_KEY` 强制前置
+2. `main.py` 的 `run_project` 返回类型与 `ProjectOrchestrator.run()` 实际返回的 `ProjectResult` 不匹配（CLI 展示层遗留问题）
+3. architect/tester/reviewer 中未使用的 `ask_ai` 导入清理
+4. 性能契约 [512] 环境时序偶发：已复跑全绿并留档，后续若再现按 8.7.5 迭代记录的取证协议处理
+
+## 后续方向（待产品决策）
+
+1. **技术债清理节点（Phase 8.8 候选）**：惰性初始化重构 + main.py 返回类型修正 + 死导入清理，一次性收口
+2. **版本化发布**：打 tag（如 v0.9.0-rc），以 release_readiness 检查单为门禁走一次正式发布流程
+3. **新能力规划（Phase 9 候选）**：在现有生产化基座上扩展新方向，需先明确产品目标再立项
+4. **真实 LLM 端到端验证**：用配置好的 provider 跑通一次完整真实项目（当前所有验收均为 mock 注入）
