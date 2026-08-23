@@ -1,8 +1,15 @@
+import sys
 from pathlib import Path
 
-from runtime.workflow_event import WorkflowEvent
-from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
-from runtime.workflow_event_query import WorkflowEventQueryService
+# Bootstrap repository-root imports so the file runs standalone
+# (``python examples/persistence_query.py``) as well as via pytest.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from runtime.workflow_event import WorkflowEvent  # noqa: E402
+from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter  # noqa: E402
+from runtime.workflow_event_query import WorkflowEventQueryService  # noqa: E402
 
 
 PROJECT_ID = "PROJECT-EXAMPLE-001"

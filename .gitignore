@@ -51,3 +51,6 @@ temp/
 # Runtime generated files
 runtime/data/
 runtime/cache/
+
+# backup files
+*.bak

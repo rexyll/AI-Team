@@ -1,4 +1,13 @@
-from runtime.llm.base import BaseLLM
+import sys
+from pathlib import Path
+
+# Bootstrap repository-root imports so the file runs standalone
+# (``python examples/custom_llm.py``) as well as via pytest.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from runtime.llm.base import BaseLLM  # noqa: E402
 
 
 class ExampleLLM(BaseLLM):

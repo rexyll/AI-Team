@@ -59,6 +59,25 @@ python examples/persistence_query.py
 
 The example writes only under its configured example data directory. Query construction is read-only and does not mutate the event store.
 
+## Persistence and Recovery Walkthrough
+
+`persistence_recovery.py` walks one small project through the full durable story on the current contracts:
+
+1. canonical `Task` objects embed their own tool execution history
+2. atomic project snapshot save plus an immutable workflow event stream
+3. simulated process restart - fresh adapters rehydrate state from disk only
+4. recovery parity check over task statuses and `ProjectResult`
+5. cross-store query through `WorkflowEventQueryService.from_persisted_project`
+6. read-only `ToolExecutionAudit` filtering and `audit_consistency()` reporting
+
+Run from the repository root:
+
+```powershell
+python examples/persistence_recovery.py
+```
+
+Every invocation writes under an isolated `./data/example-recovery/run-*` directory, so repeated runs never conflict with a previous snapshot. Query, projection, and audit construction after the restart boundary is read-only and never mutates either store.
+
 ## Contract rule
 
 Examples are documentation of the current API, not compatibility shims for legacy APIs. When a canonical runtime contract changes, update the example and its contract test in the same DevPlan node.

@@ -1,7 +1,15 @@
+import sys
+from pathlib import Path
 from typing import Any
 
-from config.tools_schema import TOOLS_SCHEMA
-from tools.registry import ToolRegistry
+# Bootstrap repository-root imports so the file runs standalone
+# (``python examples/custom_tool.py``) as well as via pytest.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from config.tools_schema import TOOLS_SCHEMA  # noqa: E402
+from tools.registry import ToolRegistry  # noqa: E402
 
 
 CUSTOM_TOOL_SCHEMA = {

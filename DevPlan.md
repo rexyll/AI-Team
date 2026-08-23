@@ -11,10 +11,10 @@
 
 1. 所有开发、修复、测试和 DevPlan 更新均在当前唯一开发分支进行。
 2. 不创建临时分支，不随意切换历史分支，不 merge/cherry-pick 其他分支；如确有必要必须先说明并获得确认。
-3. AI 直接在 GitHub 当前开发分支修改代码；用户 Pull 到本地运行专项测试和全量 `pytest -q`。
+3. AI在本地修改代码；
 4. 测试失败时只修复当前节点，不顺手推进下一节点。
 5. 用户确认全量测试通过后，记录验收结果和最终 SHA，再进入下一节点。
-6. 每个节点均遵循：规划 → GitHub 编码 → Pull → 专项测试 → 全量测试 → 验收 → DevPlan 更新。
+6. 每个节点均遵循：规划 → GitHub 编码 → 专项测试 → 全量测试 → 验收 → 用户push→DevPlan 更新。
 
 ---
 
@@ -313,19 +313,38 @@ reviewer_approved
 4. 每个 8.7.x 节点仍遵循：规划 → GitHub 编码 → Pull → 专项测试/示例验证 → 全量测试 → 验收 → DevPlan 更新。
 5. 8.7 阶段不改变已经验收的核心 workflow lifecycle semantics，除非专项验证发现真实缺陷。
 
-### 8.7.1 Documentation baseline & setup guide
+### √ 8.7.1 Documentation baseline & setup guide
 
-下一节点首先建立：
-- 项目安装与虚拟环境 setup
-- 最小运行流程
-- 测试运行方式
-- Agent / LLM provider 配置入口
-- Tool registry / permission / workspace sandbox 配置入口
-- persistence / recovery 基本使用说明
-- 当前支持的 canonical runtime contract 概览
+已建立 `docs/setup.md` 并验收，覆盖：
+- 项目安装与虚拟环境 setup（§2–§3，requirements.txt 当前保持为空属预期契约）
+- 最小运行流程与 CLI 入口（§4，`python main.py "<requirement>"`）
+- 测试运行方式与全量验收门禁（§5，`pytest -q` 为每节点最终门禁）
+- Agent / LLM provider 配置入口（§6–§7）
+- Tool registry / permission / workspace sandbox 配置入口（§8）
+- persistence / recovery 基本使用说明（§9）
+- 当前支持的 canonical runtime contract 概览（§10）
 
-完成后再进入 extension examples 与 release readiness 节点。
+README 已链接 setup guide 与 DevPlan。
 
-### 8.7.2 Agent / LLM / Tool / Persistence extension examples
+专项测试：`tests/test_documentation_setup_contract.py`。
+最终 commit：`817388e`。
+
+验收状态：**用户已确认专项及全量测试通过。**
+
+### √ 8.7.2 Agent / LLM / Tool / Persistence extension examples
+
+已完成可独立运行的扩展示例包并验收：
+- `examples/custom_agent.py`：BaseAgent 子类、稳定 role、Task → AgentResult 契约
+- `examples/custom_llm.py`：BaseLLM.generate() provider 边界，生产集成不进入编排层
+- `examples/custom_tool.py`：ToolRegistry 注册 + function-call schema，不绕过参数校验/权限/sandbox 边界
+- `examples/persistence_query.py`：durable event 存储 + 只读 WorkflowEventQueryService 查询
+- `examples/README.md`：扩展边界与安全边界说明（registry 非授权边界等）
+
+示例契约规则：示例是当前 API 的文档而非兼容垫片；canonical contract 变化时示例与契约测试同节点更新。
+
+专项测试：`tests/test_extension_examples_contract.py`。
+最终 commit：`b79b4c5`。
+
+验收状态：**用户已确认专项及全量测试通过。**
 
 ### 8.7.3 Persistence / Recovery and Event Query / Audit example
