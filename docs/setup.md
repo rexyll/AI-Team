@@ -7,7 +7,7 @@ This guide describes the current canonical setup and runtime entry points for th
 The repository currently targets:
 
 - Windows 11
-- Python 3.14
+- Python 3.14 (required; `tools/registry.py` depends on PEP 649 lazy annotation evaluation and fails to import on Python <= 3.13)
 - Git
 - Docker (optional for development workflows that require it)
 - VS Code (optional)
@@ -27,7 +27,13 @@ If PowerShell execution policy prevents activation, use the Python executable in
 
 ## 3. Install dependencies
 
-The repository currently keeps `requirements.txt` empty because the runtime and contract tests do not declare third-party runtime dependencies there. Keep the environment reproducible by installing project dependencies only when the repository explicitly adds them.
+The full agent/provider import chain requires two declared third-party dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+`requirements.txt` pins the versions validated by the local development environment (`openai`, `python-dotenv`). Contract tests themselves stay network-independent through mock injection; the provider dependency is required because importing the agent modules eagerly constructs the OpenAI-compatible client in `config/model.py`. See `docs/production_configuration.md` for the full configuration checklist.
 
 Verify the interpreter:
 

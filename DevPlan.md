@@ -347,4 +347,21 @@ README 已链接 setup guide 与 DevPlan。
 
 验收状态：**用户已确认专项及全量测试通过。**
 
-### 8.7.3 Persistence / Recovery and Event Query / Audit example
+### √ 8.7.3 Persistence / Recovery and Event Query / Audit example
+
+已完成 `examples/persistence_recovery.py` 并验收，单文件覆盖完整持久化叙事：
+- canonical Task 内嵌 tool execution history（与生产 Developer 流一致）
+- 原子项目快照保存 + canonical lifecycle 事件流持久化（事件携带投影层要求的 status payload 契约）
+- 模拟进程重启：重启边界之后全部使用全新 adapter 实例，仅从磁盘恢复
+- 恢复等价校验：task statuses 与 ProjectResult 语义一致
+- 跨存储恢复查询：`WorkflowEventQueryService.from_persisted_project()`
+- 只读审计：`ToolExecutionAudit.records()/summary()` 过滤查询与 `audit_consistency()` 双链路一致性报告
+
+同节点修复（经用户确认）：四个 `examples/*.py` 补齐仓库根路径自举，使 README 声称的独立运行方式真实可用；顺带确认 `tools/registry.py` 仅兼容 Python≥3.14（类级 `def list` 遮蔽 + 急切注解求值），与官方环境承诺一致。
+
+遗留记录（转入 8.7.4 production configuration checklist）：`config/model.py` 导入即急切实例化 OpenAI 客户端并强制要求 `AGNES_API_KEY`；openai、python-dotenv 为未声明依赖。
+
+专项测试：`tests/test_persistence_recovery_example_contract.py`。
+最终 commit：`7cb8b96`。
+
+验收状态：**用户已确认专项及全量测试通过。**
