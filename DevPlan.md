@@ -460,6 +460,26 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 - 新增 `tests/test_lazy_provider_initialization_contract.py`：子进程级守卫——无 `AGNES_API_KEY` 时 `import main`、provider 导入、ProviderLLM 构造必须成功；`get_client()` 仅在无钥实际使用时 RuntimeError；客户端缓存语义
 
 专项测试：`tests/test_lazy_provider_initialization_contract.py`、`tests/test_main.py`。
-最终 commit：（验收后记录）
+最终 commit：`68b4e3f`。
 
-验收状态：**待用户确认专项及全量测试通过。**
+验收状态：**用户已确认专项及全量测试通过。**
+
+迭代记录：无钥使用守卫首版未考虑开发者 `.env` 经 `load_dotenv()` 灌回密钥的场景，已改为"导入后、首次使用前"显式移除环境变量，精确覆盖契约边界。
+
+---
+
+# 八、版本化发布：v0.9.0-rc
+
+## 发布门禁核验（以 docs/release_readiness.md 检查单为准）
+
+- 全量测试绿、零 warning（HEAD `68b4e3f`）
+- 发布冒烟契约与文档完备性契约在套件内全绿
+- 四份发布文档齐备且交叉引用
+- Phase 0–8 验收台账完整，各节点均含 commit SHA
+
+## 发布物
+
+- 新增 `CHANGELOG.md`：v0.9.0-rc 条目（Added / Fixed / Changed / Known limitations）
+- Tag `v0.9.0-rc`：由用户在本地打标并推送
+
+发布验收状态：**待用户完成打标推送。**
