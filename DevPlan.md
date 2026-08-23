@@ -145,7 +145,7 @@ Commit evidence：`3bc9b0d`、`72c55e4`。
 
 ---
 
-# 四、当前节点：8.6 Performance / Concurrency Contract
+# 四、Phase 8.6 — Performance / Concurrency Contract
 
 ## √ 8.6.1 Performance baseline
 
@@ -235,11 +235,11 @@ reviewer_approved
 
 验收状态：**用户已确认专项及全量测试通过。**
 
-## ▶ 8.6.5 Failure + concurrency matrix
+## √ 8.6.5 Failure + concurrency matrix
 
-当前节点目标：把已经分别验证的 failure、retry、event persistence、query、reviewer revision、checkpoint 边界组合到同一套竞争条件 contract 中，证明现有协议在组合场景下仍保持语义一致。
+已完成 failure、retry、event persistence、query、reviewer revision、checkpoint 边界的竞争条件组合 contract，并修复 checkpoint failure 边界下 task state 被错误标记为 failed 的生产缺陷。
 
-新增测试文件：`tests/test_workflow_event_failure_concurrency_matrix_contract.py`。
+测试文件：`tests/test_workflow_event_failure_concurrency_matrix_contract.py`。
 
 覆盖：
 - worker 正在执行时 durable event persistence transient failure，并验证失败事件不会提前进入 memory log，后续 retry 可以继续完成
@@ -248,65 +248,55 @@ reviewer_approved
 - reviewer revision 与其他 task 并发，同时进行 project query
 - checkpoint failure 边界下 event identity 不重复、不污染 durable/memory parity
 
-本节点原则：
-- 不新增 recovery protocol
-- 不改变既有 TaskWorkflow / Orchestrator lifecycle semantics
-- 只验证现有 failure、retry、checkpoint、event persistence 和 query 边界在竞争条件下的组合行为
-- 如果专项暴露真实生产缺陷，只修复当前 8.6.5 边界，不提前推进 8.6.6
+修复 commit：`38aca25`。
 
-专项命令：
-```text
-pytest tests/test_workflow_event_failure_concurrency_matrix_contract.py -q
-```
+验收状态：**用户已确认专项及全量测试通过。**
 
-专项通过后再运行：
-```text
-pytest -q
-```
+## √ 8.6.6 Performance regression guard
 
-## 8.6.6 Performance regression guard
+已建立最小性能预算，防止后续功能让吞吐/延迟出现无意识回归。
 
-建立最小性能预算，避免后续功能让吞吐/延迟出现无意识回归。
-
-初始目标采用相对基线：
+初始目标：
 - 相同任务规模下，单 worker correctness baseline 作为基准。
 - 4 worker 相比 1 worker 应体现可观并行收益；不要求线性扩展。
 - 事件持久化不得随 task 数量出现超线性明显退化。
 - query/projection 应保持只读且可重复。
 - benchmark 的事件数量必须由实际 workflow lifecycle 语义决定，不得为了满足性能测试人为增加事件。
 
-**本节点不为了通过 benchmark 修改业务语义。** 如果 benchmark 暴露结构性问题，再单独提出性能修复子节点。
+新增回归测试文件：`tests/test_workflow_event_performance_regression_contract.py`。
 
-## 8.6.7 测试文件
+测试同时验证 canonical workflow lifecycle 下每个 task 恰好产生 5 个事件，不通过人为增加事件数量满足预算。
 
-已完成：
+最后修复 commit：`345f876`（align 8.6.6 regression guard with current AgentResult contract）。
+
+验收状态：**用户已确认专项及全量测试通过。**
+
+## √ 8.6.7 Test coverage consolidation
+
+8.6 Performance / Concurrency Contract 所需测试矩阵已经落地并完成验收，当前测试集合包括：
 - `tests/test_workflow_event_performance_contract.py`
+- `tests/test_workflow_event_performance_regression_contract.py`
 - `tests/test_workflow_event_persistence_contention_contract.py`
 - `tests/test_workflow_event_concurrency_contract.py`
 - `tests/test_orchestrator_scalability_contract.py`
-
-当前新增：
-- `tests/test_workflow_event_failure_concurrency_matrix_contract.py` ← 8.6.5 验证中
-
-必要时复用现有：
+- `tests/test_workflow_event_failure_concurrency_matrix_contract.py`
 - `tests/test_workflow_event_long_running_contract.py`
 - `tests/test_workflow_event_persistence_contract.py`
 - `tests/test_workflow_event_query_contract.py`
 
-## 8.6 验收
-
-每个 8.6.x 子节点遵循：
-1. 专项测试全部通过。
+验收标准：
+1. 8.6.x 专项测试全部通过。
 2. `pytest -q` 全量通过。
 3. 无新增 pytest warning。
-4. 记录 benchmark baseline、worker 配置、任务规模和最终 commit SHA。
-5. 若发现真实性能瓶颈，先记录问题并建立 8.6.x 修复节点，不直接扩大范围。
+4. benchmark baseline、worker 配置、任务规模和最终 commit SHA 已具备可追溯证据。
+
+**Phase 8.6 当前状态：全部验收通过。**
 
 ---
 
 # 五、下一阶段：Phase 8.7 Documentation / Examples / Release Readiness
 
-在 8.6 完整验收后进入：
+8.6 完整验收后进入 8.7，目标为：
 - deployment / setup documentation
 - Agent / LLM / Tool extension examples
 - persistence / recovery usage example
@@ -314,3 +304,24 @@ pytest -q
 - production configuration checklist
 - release readiness checklist
 - final end-to-end smoke test
+
+## 8.7 推进原则
+
+1. 先读取并整理现有文档、examples 与当前实际 API，禁止按旧接口编写示例。
+2. 示例必须使用当前 canonical AgentResult / Task / WorkflowEvent / persistence / query contract。
+3. 文档示例必须可以独立运行或明确说明最小运行前置条件。
+4. 每个 8.7.x 节点仍遵循：规划 → GitHub 编码 → Pull → 专项测试/示例验证 → 全量测试 → 验收 → DevPlan 更新。
+5. 8.7 阶段不改变已经验收的核心 workflow lifecycle semantics，除非专项验证发现真实缺陷。
+
+### 8.7.1 Documentation baseline & setup guide
+
+下一节点首先建立：
+- 项目安装与虚拟环境 setup
+- 最小运行流程
+- 测试运行方式
+- Agent / LLM provider 配置入口
+- Tool registry / permission / workspace sandbox 配置入口
+- persistence / recovery 基本使用说明
+- 当前支持的 canonical runtime contract 概览
+
+完成后再进入 extension examples 与 release readiness 节点。
