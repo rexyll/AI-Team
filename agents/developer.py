@@ -2,7 +2,6 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from config.model import client, AGNES_MODEL
 from tools.registry import TOOL_REGISTRY, TOOLS
 from agents.base import BaseAgent
 from runtime.task import Task
@@ -208,17 +207,14 @@ class DeveloperAgent(BaseAgent):
         tool_calls: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = client.chat.completions.create(
-                model=AGNES_MODEL,
-                messages=messages,
+            response = self.llm.generate_with_tools(
+                messages,
                 tools=TOOL_REGISTRY.schemas(),
                 tool_choice="auto",
             )
 
-            message = response.choices[0].message
-
-            if not message.tool_calls:
-                content = message.content or ""
+            if not response.tool_calls:
+                content = response.content or ""
 
                 data = self._build_result_data(
                     content=content,
@@ -238,23 +234,23 @@ class DeveloperAgent(BaseAgent):
             messages.append(
                 {
                     "role": "assistant",
-                    "content": message.content,
+                    "content": response.content,
                     "tool_calls": [
                         {
-                            "id": tool_call.id,
+                            "id": tool_call.call_id,
                             "type": "function",
                             "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments,
                             },
                         }
-                        for tool_call in message.tool_calls
+                        for tool_call in response.tool_calls
                     ],
                 }
             )
 
-            for tool_call in message.tool_calls:
-                tool_name = tool_call.function.name
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.name
                 started_at = datetime.now(timezone.utc).isoformat()
                 status = "completed"
                 result: Any = None
@@ -264,7 +260,7 @@ class DeveloperAgent(BaseAgent):
                 print(f"\n[Tool] {tool_name}")
 
                 try:
-                    arguments = json.loads(tool_call.function.arguments)
+                    arguments = json.loads(tool_call.arguments)
                 except (TypeError, json.JSONDecodeError) as exc:
                     status = "invalid_arguments"
                     error = {
@@ -279,12 +275,12 @@ class DeveloperAgent(BaseAgent):
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call.id,
+                            "tool_call_id": tool_call.call_id,
                             "content": result,
                         }
                     )
                     self._record_tool_execution(
-                        execution_id=tool_call.id,
+                        execution_id=tool_call.call_id,
                         task_id=context.task_id,
                         tool_name=tool_name,
                         started_at=started_at,
@@ -305,12 +301,12 @@ class DeveloperAgent(BaseAgent):
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call.id,
+                            "tool_call_id": tool_call.call_id,
                             "content": result,
                         }
                     )
                     self._record_tool_execution(
-                        execution_id=tool_call.id,
+                        execution_id=tool_call.call_id,
                         task_id=context.task_id,
                         tool_name=tool_name,
                         started_at=started_at,
@@ -382,13 +378,13 @@ class DeveloperAgent(BaseAgent):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tool_call.call_id,
                         "content": str(result),
                     }
                 )
 
                 self._record_tool_execution(
-                    execution_id=tool_call.id,
+                    execution_id=tool_call.call_id,
                     task_id=context.task_id,
                     tool_name=tool_name,
                     started_at=started_at,

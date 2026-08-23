@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from config.model import ask_ai
+from runtime.llm.base import BaseLLM
 from runtime.task_validator import validate_plan
 from agents.base import BaseAgent
 from runtime.task import Task
@@ -257,7 +258,18 @@ def _build_repair_prompt(
     请只输出最终 JSON。
     """
 
-def create_plan(requirement: str) -> dict:
+def create_plan(requirement: str, *, llm: BaseLLM | None = None) -> dict:
+    """Create a validated plan for ``requirement``.
+
+    When ``llm`` is provided, all completions route through the injected
+    :class:`BaseLLM` (constructor-injection contract). When omitted, the
+    legacy module-level provider entry point is used so existing callers
+    and monkeypatch-based tests keep working unchanged.
+    """
+
+    if llm is not None and not isinstance(llm, BaseLLM):
+        raise TypeError("create_plan llm must implement BaseLLM")
+
     prompt = f"""
 请根据下面的软件需求制定开发计划：
 
@@ -277,10 +289,16 @@ def create_plan(requirement: str) -> dict:
                 error=last_error,
             )
 
-        response = ask_ai(
-            prompt=current_prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
+        if llm is not None:
+            response = llm.generate(
+                current_prompt,
+                system_prompt=SYSTEM_PROMPT,
+            )
+        else:
+            response = ask_ai(
+                prompt=current_prompt,
+                system_prompt=SYSTEM_PROMPT,
+            )
 
         last_response = response
 
@@ -312,7 +330,7 @@ class PlannerAgent(BaseAgent):
                 f"got {type(task).__name__}"
             )
 
-        plan = create_plan(task.description)
+        plan = create_plan(task.description, llm=self.llm)
 
         return {
             "status": "planner_completed",

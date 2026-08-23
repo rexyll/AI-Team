@@ -365,3 +365,47 @@ README 已链接 setup guide 与 DevPlan。
 最终 commit：`7cb8b96`。
 
 验收状态：**用户已确认专项及全量测试通过。**
+
+### √ 8.7.4 Production Configuration Checklist
+
+已完成生产配置清单并验收：
+- `requirements.txt` 精确锁定 `openai==3.1.0`、`python-dotenv==1.2.3`（版本取自本地 .venv 实测）
+- 新增 `docs/production_configuration.md`：Python 3.14 硬性依据（tools/registry.py PEP 649 依赖）、环境变量表与导入期急切实例化警告、MockLLM 无网络模式、workspace sandbox 默认值与覆盖方式、持久化原子重命名存储要求、只读操作契约、部署前验证命令
+- `setup.md` §1/§3 修正为真实依赖契约陈述
+- 契约测试含跨文件一致性检查：`config/model.py` 第三方导入必须全部在 requirements.txt 锁定
+
+处理深度（经用户确认）：文档化 + 声明依赖；不改运行时代码；惰性化重构留待 Phase 8 后独立评估。
+
+专项测试：`tests/test_production_configuration_contract.py`。
+最终 commit：`49f5c62`。
+
+验收状态：**用户已确认专项及全量测试通过。**
+
+### 8.7.5 DeveloperAgent LLM 注入修复 & Release Readiness & Final End-to-End Smoke Test
+
+Phase 8 收官节点（经用户确认采用"先修缺陷再冒烟"路线）。
+
+A. LLM 注入与事件持久化缺陷修复——专项验证发现的三个真实缺陷：
+- 缺陷①：`DeveloperAgent.run()` 绕过注入的 `self.llm` 直接调用模块级 provider client
+- 缺陷②：`PlannerAgent`（经 `create_plan`→`ask_ai`）同样绕过注入契约
+- 缺陷③：`ProjectOrchestrator.execute()` 装配内部 Orchestrator 时只补挂 `_workflow_event_log` 未重建 `_workflow_event_sink`，TaskWorkflow 全部生命周期事件（developer_completed/tester/review/approved）被静默丢弃、不落盘——主入口运行真实项目时恢复审计链断裂
+
+修复落地：
+- `runtime/llm/base.py`：新增提供者中立的 `LLMToolCall` / `LLMResponse` 契约与 `generate_with_tools()` 默认降级实现（仅实现 generate() 的自定义子类零改动兼容）
+- `runtime/llm/provider.py`：ProviderLLM 实现原生工具调用到中立契约的映射
+- `runtime/llm/mock.py`：MockLLM 支持脚本化工具调用轮次（`tool_script`），既有构造签名向后兼容；脚本耗尽后降级为固定终答防止死循环
+- `agents/developer.py`：工具循环改走 `self.llm.generate_with_tools()`，移除对 `config.model` 全局 client 的依赖
+- `agents/planner.py`：`create_plan` 增加可选 `llm` 参数（默认 None 走旧路径，既有 monkeypatch 测试零破坏），`PlannerAgent.run` 改走 `self.llm`
+- `core/orchestrator.py`：新增公开 `set_workflow_event_log()`，统一重建 log 与 sink
+- `core/project_orchestrator.py`：`execute()` 改走该 setter，工作流级事件恢复正常持久化
+
+B. 发布就绪交付：
+- `docs/release_readiness.md`：逐项链接验收证据的发布门禁清单（含已接受的限制项）
+- `tests/test_developer_llm_injection_contract.py`：注入边界回归守卫（脚本化工具调用驱动真实工具在沙盒工作区执行、纯文本降级、脚本耗尽终答、非法脚本拒绝）
+- `tests/test_release_documentation_contract.py`：四份发布文档完备性与交叉引用
+- `tests/test_release_readiness_smoke_contract.py`：真 Planner/Architect/Developer/Tester/Reviewer + MockLLM 注入，零网络贯穿 用户需求 → 编排执行 → 事件持久化 → 重启恢复 → 跨存储查询 → 真实工具历史审计
+
+专项测试：`tests/test_developer_llm_injection_contract.py`、`tests/test_release_documentation_contract.py`、`tests/test_release_readiness_smoke_contract.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。**

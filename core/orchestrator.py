@@ -71,6 +71,34 @@ class Orchestrator:
             raise TypeError("hook must be callable or None")
         self._state_change_hook = hook
 
+    def set_workflow_event_log(
+        self,
+        log: WorkflowEventLog | None,
+        *,
+        project_id: str | None = None,
+    ) -> None:
+        """Attach (or replace) the durable workflow event log.
+
+        Rebuilding ``_workflow_event_sink`` here is essential: it is derived
+        from the log at construction time, and callers that attach the log
+        after construction (e.g. ProjectOrchestrator.execute) would otherwise
+        leave the sink as ``None``, silently dropping every workflow-level
+        lifecycle event from durable persistence.
+        """
+        if log is not None and not isinstance(log, WorkflowEventLog):
+            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (
+            not isinstance(project_id, str) or not project_id.strip()
+        ):
+            raise ValueError("project_id must be a non-empty string or None")
+
+        self._workflow_event_log = log
+        self._workflow_event_sink = (
+            _OrchestratorWorkflowEventLog(log) if log is not None else None
+        )
+        if project_id is not None:
+            self._project_id = project_id
+
     def _persist_state_checkpoint(self, task_manager: TaskManager | None = None) -> None:
         """Emit a checkpoint using the workflow hook contract."""
         hook = self._state_change_hook

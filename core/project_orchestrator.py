@@ -163,8 +163,14 @@ class ProjectOrchestrator:
         orchestrator = self.create_orchestrator(task_manager)
         log = self._ensure_workflow_event_log()
         if log is not None:
-            orchestrator._workflow_event_log = log
-            orchestrator._project_id = self._resolved_project_id()
+            # Route through the public setter so the workflow event sink is
+            # rebuilt together with the log; patching the log attribute alone
+            # left the sink as None and silently dropped all workflow-level
+            # lifecycle events from durable persistence.
+            orchestrator.set_workflow_event_log(
+                log,
+                project_id=self._resolved_project_id(),
+            )
         set_hook = getattr(orchestrator, "set_state_change_hook", None)
         if state_change_hook is not None and callable(set_hook):
             set_hook(state_change_hook)

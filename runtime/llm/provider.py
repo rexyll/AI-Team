@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from config.model import AGNES_MODEL, client
-from runtime.llm.base import BaseLLM
+from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
 class ProviderLLM(BaseLLM):
@@ -51,3 +51,37 @@ class ProviderLLM(BaseLLM):
         )
 
         return response.choices[0].message.content or ""
+
+    def generate_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str = "auto",
+    ) -> LLMResponse:
+        """Native tool-calling completion mapped to the neutral LLMResponse."""
+        if not isinstance(messages, list) or not messages:
+            raise TypeError("ProviderLLM messages must be a non-empty list")
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = list(tools)
+            kwargs["tool_choice"] = tool_choice
+
+        response = self.client.chat.completions.create(**kwargs)
+
+        message = response.choices[0].message
+        raw_tool_calls = getattr(message, "tool_calls", None) or []
+        tool_calls = tuple(
+            LLMToolCall(
+                call_id=tool_call.id,
+                name=tool_call.function.name,
+                arguments=tool_call.function.arguments,
+            )
+            for tool_call in raw_tool_calls
+        )
+
+        return LLMResponse(content=message.content, tool_calls=tool_calls)
