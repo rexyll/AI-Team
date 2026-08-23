@@ -4,11 +4,11 @@ AI-powered software development team.
 
 ## Current status
 
-The runtime has completed Phase 8.6 Performance / Concurrency Contract and is now in **Phase 8.7 Documentation / Examples / Release Readiness**.
+**v0.9.1** — Phase 0–8 (Production Hardening) is fully accepted, and the runtime has been validated end to end against a real OpenAI-compatible provider (planning, coding, testing, review closed loop on real tasks).
 
 The current development branch is:
 
-`refactor/runtime-architecture-7.5.5-execution-history-semantics`
+`main`
 
 See [`DevPlan.md`](DevPlan.md) for the complete implementation and acceptance history.
 
@@ -35,14 +35,17 @@ python main.py "Build a small personal expense tracker"
 
 For the complete setup, configuration, persistence/recovery, security boundaries, and canonical workflow lifecycle guide, see [`docs/setup.md`](docs/setup.md).
 
+For running the team against a real LLM provider (Agnes), including configuration, a first-run walkthrough, known boundaries, and troubleshooting, see [`docs/user_guide.md`](docs/user_guide.md).
+
 ## Architecture
 
-- Team Leader Agent
-- Product Manager Agent
-- Architect Agent
-- Developer Agent
-- QA Agent
-- Code Reviewer Agent
+Five specialized agents form a closed development loop:
+
+- Planner Agent — requirement decomposition and task graph
+- Architect Agent — structure and interface design
+- Developer Agent — implementation, test authoring, and fixes
+- Tester Agent — test-evidence review with TEST_PASSED / TEST_FAILED verdicts
+- Reviewer Agent — final approval gate (APPROVED / REVISION_REQUIRED)
 
 The current runtime separates Agent routing, task orchestration, workflow lifecycle, durable workflow-event persistence, read-only projection, and operational query boundaries.
 

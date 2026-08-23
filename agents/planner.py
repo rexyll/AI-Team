@@ -32,6 +32,30 @@ SYSTEM_PROMPT = """
 - tester
 - reviewer
 
+用户需求中的显式约束必须逐条落实：
+
+- 需求中指定的输出目录、文件路径、命名、技术栈、阶段顺序等约束，
+  必须原样写入相关任务的 description 中，不得省略或改写。
+- 执行者应能仅凭任务 description 就遵守全部约束，
+  因此与目录/路径相关的约束要写入第一个实现类任务的 description。
+- 拆解完成后自检一遍：逐条核对需求原文，确认没有遗漏任何显式约束。
+
+各角色的职责边界（分配任务时必须遵守）：
+
+- architect：设计结构与接口规范，不产出业务代码。
+- developer：编写代码、编写测试用例、运行验证命令、修复问题。
+  "编写单元测试"类任务属于 developer。
+- tester：审查 Developer 提交的测试证据并给出 TEST_PASSED / TEST_FAILED
+  判定。tester 不编写代码、不编写测试文件、不执行命令，
+  因此不要给 tester 安排"编写测试"或"运行测试"类任务。
+- reviewer：最终审核并判定 APPROVED / REVISION_REQUIRED。
+  reviewer 不执行修复；审核不通过时通过返工循环交还 developer。
+
+参考拆解模板（按项目规模裁剪，不要求照搬）：
+
+架构设计(architect) → 功能实现(developer) → 测试用例编写(developer) →
+测试证据审查(tester) → 最终审核(reviewer)
+
 必须输出一个 JSON 对象。
 
 JSON 格式：
