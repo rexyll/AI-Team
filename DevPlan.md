@@ -498,6 +498,33 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 配套：两角色 system prompt 增加首行结论格式要求；新增 `tests/test_quality_gate_parsing_contract.py`（判定解析 ×12 场景 + workflow 异常透传契约）。
 
 专项测试：`tests/test_quality_gate_parsing_contract.py`、`tests/test_tester.py`、`tests/test_tester_reviewer_context.py`。
-最终 commit：（验收后记录）
+最终 commit：`0989c12`。
 
-验收状态：**待用户确认专项及全量测试通过。**
+验收状态：**用户已确认专项及全量测试通过（19 passed 专项，全量无失败无 warning；过程中修复新测试文件自身的 TesterAgent PytestCollectionWarning，别名导入）。**
+
+### √ 8.9.1 真实 Provider 端到端验证记录
+
+2026-08-23 使用 Agnes 真实模型执行完整闭环验证（需求：摄氏度↔华氏度转换 CLI 工具）：
+
+**结果：6/6 任务完成，PROJECT RESULT success=True——首个真实模型端到端闭环。**
+
+- Planner 拆解 6 任务（architect×1 / developer×3 / tester×2），依赖链正确调度
+- Developer 表现：探索工作区、编写实现与 26 个测试用例（含往返转换与绝对零度边界）、主动运行 pytest 全绿、自主修复自身引入的 ModuleNotFoundError、清理临时验证文件
+- **8.9 修复实战验证：Tester 两连过，解析加固零误杀**
+- 安全层实战全部正确拦截：工作区外路径逃逸、管道/链式命令、未授权可执行文件（dir/ls/mkdir/new-item/get-childitem）；且模型每次被拒后能换策略合规重试
+
+已识别不完美（留作后续观察项）：
+
+1. 需求遵循偏差：用户指定的输出目录未进入计划；前期产物误入残留包 accounting_db/，末位验证任务才补齐目标目录
+2. Tester 定位为证据审查者而非测试执行者（设计使然，使用者须知悉）
+3. 效率：60+ 次工具调用中大量消耗在无关残留目录的探索上——再次印证运行前清理 projects\ 的必要性（user_guide §4.1）
+
+验证产物：`projects\demo01\`（temperature.py / test_temperature.py 26 passed / verify_temperature.py）。
+
+### 8.10 版本化发布 v0.9.1
+
+以 8.9 修复经真实环境验证有效为依据，发布 `v0.9.1`：
+- 包含 8.9 质量门禁加固 + 8.9.1 验证记录
+- 门禁：全量 pytest 通过（已完成）+ 真实闭环验证（已完成）
+
+发布状态：**待用户打标推送。**
