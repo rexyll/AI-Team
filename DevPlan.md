@@ -482,4 +482,7 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 - 新增 `CHANGELOG.md`：v0.9.0-rc 条目（Added / Fixed / Changed / Known limitations）
 - Tag `v0.9.0-rc`：由用户在本地打标并推送
 
-发布验收状态：**待用户完成打标推送。**
+发布验收状态：**已完成。**
+
+- 发布 commit：`051ed7d`
+- Tag：`v0.9.0-rc`（已推送至 origin）
