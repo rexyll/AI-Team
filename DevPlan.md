@@ -1,7 +1,7 @@
 # AI-Team DevPlan
 
 > 项目仓库：`rexyll/AI-Team`
-> 当前唯一开发分支：`main`（2026-08-23 由 refactor/runtime-architecture-7.5.5-execution-history-semantics 迁移而来；旧主线已留档于标签 `backup/legacy-main`）
+> 当前唯一开发分支：`refactor/runtime-architecture-7.5.5-execution-history-semantics`
 >
 > **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。** 系统不是简单的多 Agent Demo，而是让 Planner / Architect / Developer / Tester / Reviewer / Orchestrator 形成稳定的软件工程闭环：用户需求 → 计划 → 依赖调度 → Agent 执行 → Tester 质量门禁 → Reviewer 审核/返工 → 项目结果 → 持久化恢复 → 事件审计与查询。
 >
@@ -11,10 +11,10 @@
 
 1. 所有开发、修复、测试和 DevPlan 更新均在当前唯一开发分支进行。
 2. 不创建临时分支，不随意切换历史分支，不 merge/cherry-pick 其他分支；如确有必要必须先说明并获得确认。
-3. AI在本地修改代码；
+3. AI 直接在 GitHub 当前开发分支修改代码；用户 Pull 到本地运行专项测试和全量 `pytest -q`。
 4. 测试失败时只修复当前节点，不顺手推进下一节点。
 5. 用户确认全量测试通过后，记录验收结果和最终 SHA，再进入下一节点。
-6. 每个节点均遵循：规划 → GitHub 编码 → 专项测试 → 全量测试 → 验收 → 用户push→DevPlan 更新。
+6. 每个节点均遵循：规划 → GitHub 编码 → Pull → 专项测试 → 全量测试 → 验收 → DevPlan 更新。
 
 ---
 
@@ -313,7 +313,16 @@ reviewer_approved
 4. 每个 8.7.x 节点仍遵循：规划 → GitHub 编码 → Pull → 专项测试/示例验证 → 全量测试 → 验收 → DevPlan 更新。
 5. 8.7 阶段不改变已经验收的核心 workflow lifecycle semantics，除非专项验证发现真实缺陷。
 
-### √ 8.7.1 Documentation baseline & setup guide
+### 8.7.1 Documentation baseline & setup guide
+
+下一节点首先建立：
+- 项目安装与虚拟环境 setup
+- 最小运行流程
+- 测试运行方式
+- Agent / LLM provider 配置入口
+- Tool registry / permission / workspace sandbox 配置入口
+- persistence / recovery 基本使用说明
+- 当前支持的 canonical runtime contract 概览
 
 已建立 `docs/setup.md` 并验收，覆盖：
 - 项目安装与虚拟环境 setup（§2–§3，requirements.txt 当前保持为空属预期契约）
@@ -575,3 +584,24 @@ Phase 0–8 全部节点验收完成，生产化目标逐项达成：
 - 补充 `docs/user_guide.md` 链接（随发布文档网络）
 
 验收状态：**随 9.1 一并验收。**
+
+## 9.3 GBK 控制台日志崩溃修复（真实运行第二轮反馈）
+
+run4 提示词效果验证运行暴露平台级缺陷：输出重定向（管道/Tee/CI）时 Python 回落系统区域编码（中文 Windows = GBK），agent 进度打印一旦包含非 GBK 字符（如 ñ）即 UnicodeEncodeError，直接杀死整个任务（本次 TASK-004 因此失败）。
+
+修复：`main.py` 新增 `_ensure_log_safe_streams()` 护栏——CLI 入口将 stdout/stderr `reconfigure(errors="replace")`，不可编码字符降级替换而非致命；对无 `reconfigure` 能力的捕获流（如测试框架）安全跳过。文件读写工具已确认原生 UTF-8，无需改动。
+
+配套契约：`tests/test_console_logging_contract.py`（源码接线检查 + 双流功能注入 + 无 reconfigure 容错）。
+
+**9.1 提示词强化真实验证记分卡**：
+
+| 观察项 | 结果 | 证据 |
+|---|---|---|
+| 角色语义漂移 | ✅ **修复生效** | "编写 pytest 单元测试"分配给 developer；tester 任务为"测试证据审查"；reviewer 任务为"最终项目审核"——完全符合新边界 |
+| 可运行性自检 | ✅ 生效迹象明确 | developer 对 CLI 以空串、边界输入等做了十余次实测后才汇报完成 |
+| 路径约束落实 | ❌ 未生效 | 产物仍落在 `projects\stringkit\` 而非 `workspace/stringkit/`——仅靠 prompt 条款不足，需升级到计划校验层规则（列入 9.4 候选）|
+
+专项测试：`tests/test_console_logging_contract.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。**

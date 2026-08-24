@@ -7,6 +7,25 @@ from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 
 
+def _ensure_log_safe_streams() -> None:
+    """Make console logging resilient to unencodable characters.
+
+    When output is redirected (pipes, Tee-Object, CI logs), Python falls
+    back to the legacy locale codepage (e.g. GBK on Chinese Windows).
+    Tool payloads routinely contain characters outside such codepages;
+    printing them must degrade gracefully instead of killing a running
+    task, so streams are reconfigured to replace unencodable characters.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError):
+                # Stream may already be detached (e.g. under test capture).
+                pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="AI Team - AI Software Development Team"
@@ -49,6 +68,8 @@ def run_project(requirement: str):
 
 
 def main() -> int:
+    _ensure_log_safe_streams()
+
     parser = build_parser()
     args = parser.parse_args()
 
