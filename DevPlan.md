@@ -706,9 +706,25 @@ Phase 4 "LLM 可替换"契约的完整体现：每个角色可独立绑定 (prov
 初始绑定（用户确认）：五角色统一 `stealth/ox-alpha @ openrouter`。
 
 专项测试：`tests/test_role_model_config_contract.py`。
-最终 commit：（验收后记录）
+最终 commit：`6acc50d`。
 
-验收状态：**待用户确认专项及全量测试通过。真实验收方式：配置 OPENROUTER_API_KEY 后运行 stringkit 需求，观察各角色实际调用的 provider/model。**
+验收状态：**用户已确认专项及全量测试通过（含过时文档契约同步更新）。真实运行验收进行中——五角色经 OpenRouter 调用 stealth/ox-alpha。**
+
+### √ 9.6.1 瞬态失败指数退避（Ox Alpha 冒烟实战反馈）
+
+首次冒烟即命中 `stealth/ox-alpha` 上游共享池 429（管线本身全通：密钥/slug/请求格式均正确）。为避免全量运行中途被瞬态限流杀死，ProviderLLM 新增重试边界：
+
+- `_post_chat` 统一包装 `generate/generate_with_tools` 的 completions 调用
+- 可重试集合 {429, 500, 502, 503, 504}；指数退避 2s→4s→…；尊重数字型 Retry-After 头取较大值
+- `LLM_MAX_ATTEMPTS` / `LLM_BACKOFF_SECONDS` 环境变量可调；非可重试错误与预算耗尽立即抛出
+- 每次重试打印 `[LLM] profile/model transient NNN; retry i/N in Xs` 透明日志
+
+配套契约：`tests/test_llm_retry_backoff_contract.py` ×5（退避序列/不可重试即败/预算耗尽/Retry-After 尊重/tools 路径共享边界）。
+
+开发中自检修复两处测试自身缺陷：假客户端缺 `.chat` 包装层、退避公式 off-by-one（首轮 1s 而非 2s）。
+
+专项测试：`tests/test_llm_retry_backoff_contract.py`。
+验收状态：**沙盒 5/5 通过；随 9.6 一并由用户本地门禁验收。**
 
 ## √ 9.7 文档同步（随 9.6）
 

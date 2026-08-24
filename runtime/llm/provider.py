@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
 
 from config.model import AGNES_MODEL, get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
+
+
+# Transient upstream failures worth retrying with backoff: shared-pool
+# rate limits (e.g. OpenRouter free tiers) and gateway blips. Anything
+# else (auth, bad request, unknown model) must fail immediately.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _status_code_of(exc: BaseException) -> int | None:
+    """Best-effort HTTP status extraction from an SDK exception."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    message = str(exc)
+    for code in sorted(RETRYABLE_STATUS_CODES):
+        if f"Error code: {code}" in message:
+            return code
+    return None
 
 
 class ProviderLLM(BaseLLM):
@@ -50,6 +70,61 @@ class ProviderLLM(BaseLLM):
             self._client = get_client_for(self.provider_profile)
         return self._client
 
+    def _max_attempts(self) -> int:
+        try:
+            return max(1, int(os.getenv("LLM_MAX_ATTEMPTS", "4")))
+        except ValueError:
+            return 4
+
+    def _backoff_seconds(self, attempt: int, exc: BaseException) -> float:
+        base = 2.0
+        try:
+            base = float(os.getenv("LLM_BACKOFF_SECONDS", "2"))
+        except ValueError:
+            pass
+
+        # Honor a numeric Retry-After header when the SDK surfaces one.
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        raw = None
+        if headers is not None and hasattr(headers, "get"):
+            try:
+                raw = headers.get("retry-after") or headers.get("Retry-After")
+            except Exception:
+                raw = None
+        try:
+            hint = float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            hint = 0.0
+
+        return max(base * (2 ** (attempt - 1)), hint)
+
+    def _post_chat(self, **kwargs: Any):
+        """POST /chat/completions with transient-failure backoff.
+
+        Retries 429/5xx with exponential backoff (honoring Retry-After when
+        present) so upstream shared-pool rate limits degrade to slower runs
+        instead of killing mid-project tasks. Non-retryable failures and
+        exhausted budgets raise immediately.
+        """
+        max_attempts = self._max_attempts()
+        attempt = 0
+
+        while True:
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                code = _status_code_of(exc)
+                attempt += 1
+                if code not in RETRYABLE_STATUS_CODES or attempt >= max_attempts:
+                    raise
+                wait = self._backoff_seconds(attempt, exc)
+                print(
+                    f"[LLM] {self.provider_profile}/{self.model} transient {code}; "
+                    f"retry {attempt}/{max_attempts - 1} in {wait:.0f}s"
+                )
+                time.sleep(wait)
+
     def generate(
         self,
         prompt: str,
@@ -68,7 +143,7 @@ class ProviderLLM(BaseLLM):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
+        response = self._post_chat(
             model=self.model,
             messages=messages,
             temperature=temperature,
@@ -96,7 +171,7 @@ class ProviderLLM(BaseLLM):
             kwargs["tools"] = list(tools)
             kwargs["tool_choice"] = tool_choice
 
-        response = self.client.chat.completions.create(**kwargs)
+        response = self._post_chat(**kwargs)
 
         message = response.choices[0].message
         raw_tool_calls = getattr(message, "tool_calls", None) or []
