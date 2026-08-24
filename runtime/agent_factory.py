@@ -6,8 +6,10 @@ from agents.planner import PlannerAgent
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
 
+from config.model import resolve_role_llm_spec
 from runtime.agent_config import AgentConfig
 from runtime.agent_router import AgentRouter
+from runtime.llm.provider import ProviderLLM
 
 
 AgentConfigMap = Mapping[str, AgentConfig]
@@ -157,31 +159,60 @@ def create_agent_router(
     router = AgentRouter()
 
     # ------------------------------------------------------------------
-    # Register agents.
+    # Resolve per-role (provider, model) bindings and build one LLM each.
+    # Bindings come from the environment: {ROLE}_PROVIDER / {ROLE}_MODEL,
+    # falling back to DEFAULT_PROVIDER and profile defaults.
+    # ------------------------------------------------------------------
+    role_llms: dict[str, ProviderLLM] = {}
+
+    for role in supported_roles:
+        provider_name, model_id = resolve_role_llm_spec(role)
+        role_llms[role] = ProviderLLM(
+            model=model_id,
+            provider_profile=provider_name,
+        )
+
+    # ------------------------------------------------------------------
+    # Register agents with their role-bound LLMs.
     # ------------------------------------------------------------------
     router.register(
         "architect",
-        ArchitectAgent(effective_configs["architect"]),
+        ArchitectAgent(
+            effective_configs["architect"],
+            llm=role_llms["architect"],
+        ),
     )
 
     router.register(
         "developer",
-        DeveloperAgent(effective_configs["developer"]),
+        DeveloperAgent(
+            effective_configs["developer"],
+            llm=role_llms["developer"],
+        ),
     )
 
     router.register(
         "tester",
-        TesterAgent(effective_configs["tester"]),
+        TesterAgent(
+            effective_configs["tester"],
+            llm=role_llms["tester"],
+        ),
     )
 
     router.register(
         "reviewer",
-        ReviewerAgent(effective_configs["reviewer"]),
+        ReviewerAgent(
+            effective_configs["reviewer"],
+            llm=role_llms["reviewer"],
+        ),
     )
 
     router.register(
         "planner",
-        PlannerAgent(effective_configs["planner"]),
+        PlannerAgent(
+            effective_configs["planner"],
+            llm=role_llms["planner"],
+        ),
     )
 
     return router

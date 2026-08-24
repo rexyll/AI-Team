@@ -49,30 +49,39 @@ pytest -q
 
 ---
 
-## 3. 配置 Agnes 大模型
+## 3. 配置大模型（多 Provider，按角色绑定）
 
 ### 3.1 创建 `.env` 文件
 
-在**仓库根目录**创建 `.env`（已被 gitignore，不会入库）：
+在**仓库根目录**创建 `.env`（已被 gitignore，不会入库）。模板见 `.env.example`。通过 OpenRouter 使用 Ox Alpha 的最小配置：
 
 ```ini
-AGNES_API_KEY=你的密钥
-# 以下两项可选，不填使用默认值
-# AGNES_BASE_URL=https://apihub.agnes-ai.com/v1
-# AGNES_MODEL=agnes-2.5-flash
+OPENROUTER_API_KEY=sk-or-v1-你的密钥
+DEFAULT_PROVIDER=openrouter
+
+# 五个角色统一用 Ox Alpha（也可逐角色换成其他 slug）
+PLANNER_MODEL=stealth/ox-alpha
+ARCHITECT_MODEL=stealth/ox-alpha
+DEVELOPER_MODEL=stealth/ox-alpha
+TESTER_MODEL=stealth/ox-alpha
+REVIEWER_MODEL=stealth/ox-alpha
 ```
+
+模型 slug 从 [openrouter.ai/models](https://openrouter.ai/models) 页面复制。混合搭配示例（Planner/Reviewer 用强模型、Tester 用便宜档）同样只需改这几行。
 
 ### 3.2 验证配置
 
 ```powershell
-python -c "from config.model import get_client; get_client(); print('provider config OK')"
+python -c "from config.model import resolve_role_llm_spec; print([resolve_role_llm_spec(r) for r in ('planner','developer')])"
 ```
 
-- 输出 `provider config OK`：密钥有效，客户端构造成功（此步不发任何网络请求）。
-- 报错 `RuntimeError: AGNES_API_KEY is not configured.`：`.env` 未被读取或键名拼写错误。
-- 报错其他异常（连接类）：通常是 `AGNES_BASE_URL` 不对。
+输出各角色绑定的 `(provider, model)` 即为解析成功（此步不发网络请求、不需要密钥）。真实调用时的密钥校验发生在首次请求：
 
-> 说明：自 v0.9.0-rc 起 provider 客户端为**惰性构造**——导入任何模块都不需要密钥，只有真正发起模型调用时才校验并构造客户端。
+```powershell
+python -c "from config.model import get_client_for; get_client_for('openrouter'); print('openrouter config OK')"
+```
+
+> 说明：provider 客户端为**惰性构造**——导入与对象构造都不需要密钥；每个 provider 一个独立缓存客户端，缺密钥时在首次真实使用处报 `RuntimeError` 并指明变量名。
 
 ---
 

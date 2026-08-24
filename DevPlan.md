@@ -1,7 +1,7 @@
 # AI-Team DevPlan
 
 > 项目仓库：`rexyll/AI-Team`
-> 当前唯一开发分支：`refactor/runtime-architecture-7.5.5-execution-history-semantics`
+> 当前唯一开发分支：`main`（2026-08-23 由 refactor/runtime-architecture-7.5.5-execution-history-semantics 迁移而来；旧主线已留档于标签 `backup/legacy-main`）
 >
 > **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。** 系统不是简单的多 Agent Demo，而是让 Planner / Architect / Developer / Tester / Reviewer / Orchestrator 形成稳定的软件工程闭环：用户需求 → 计划 → 依赖调度 → Agent 执行 → Tester 质量门禁 → Reviewer 审核/返工 → 项目结果 → 持久化恢复 → 事件审计与查询。
 >
@@ -627,10 +627,7 @@ stringkit 同需求第三轮：7/7 任务完成，success=True，耗时 19 分 3
 
 遗留小瑕疵：`stringkit/tests/test_results.txt` 未清理。
 
-**9.4 候选（待规划）：路径约束计划校验层**——在 validate_plan 或 Planner 输出后处理中强制需求原文中的路径 token 出现于任务 description；同时评估是否将 workspace 根直接指向需求指定目录。
-
-## 9.4 路径约束计划校验层
-
+**9.4 候选（待规划）：路径约束计划校验层**
 针对三轮复现的"需求路径约束不进计划"，放弃继续调 prompt，改用**确定性后处理**：
 
 1. **新增 `runtime/plan_constraints.py`**（纯函数、零依赖、可独立单测）：
@@ -649,3 +646,82 @@ stringkit 同需求第三轮：7/7 任务完成，success=True，耗时 19 分 3
 最终 commit：`a5f8fa9`（v1）＋逐任务修订待提交。
 
 验收状态：**专项及全量测试已过、代码已入库；真实验收进行中——第四次运行 stringkit 需求，产物必须落在 `projects\workspace\stringkit\` 且日志出现注入标记。**
+
+## √ 9.4 路径约束计划校验层
+
+针对三次复现的“需求路径约束不进计划”，放弃继续调 prompt，改用确定性后处理：
+
+1. **新增 `runtime/plan_constraints.py`**（纯函数、零依赖、可独立单测）：
+   - `extract_required_paths(requirement)`：从需求原文提取目录型路径 token（排除文件型 spec、URL、无斜杠单词、畸形双斜杠）
+   - `apply_path_constraints(plan, dirs)`：逐任务检查并注入【用户约束】行，幂等可重入
+2. **planner 接线**：`create_plan` 解析成功后调用 `_enforce_requirement_paths`，注入时打印透明日志
+3. **契约测试** `tests/test_plan_constraint_injection_contract.py` ×11，含 run5 “计划级提及不等于覆盖”回归
+
+v1→v2 修订：v1 的存在性检查是计划级的（run5 失败根因），v2 改为逐任务检查与注入，见 9.4.1。
+
+专项测试：`tests/test_plan_constraint_injection_contract.py`。
+最终 commit：`a5f8fa9`（v1）；v2 修订随门禁可观测性提交入库。
+
+验收状态：**用户已确认测试通过；真实落点验收升级至 9.8 结构化重定向方案解决。**
+
+## √ 9.5 门禁可观测性与终态修复
+
+run6 暴露：tester 未通过路径是裸 `continue`，无耗尽保护且零控制台输出；TASK-002 因此卡死 running，项目 1/8 提前终止。
+
+修复（runtime/workflow.py）：
+- 每轮每阶段打印 `[Gate] 任务 轮次/上限: 阶段=判定`
+- tester 未通过路径新增耗尽兜底：轮次耗尽后 `record_error + mark_failed + task_failed 事件`，错误信息携带最后门禁状态（run6 回归契约 test_workflow_gate_visibility_contract.py::test_tester_rejection_rounds_terminate_explicitly）
+- reviewer 返工分支同步记录轮次来源
+
+配套契约：`tests/test_workflow_gate_visibility_contract.py` ×3。
+最终 commit：随门禁可观测性提交入库。
+
+验收状态：**用户已确认测试通过。**
+
+### √ 9.4.1  门禁轨迹首战记分（run7，含 v2 逐任务语义实战）
+
+run7 因 Agnes 免费额度 429 耗尽而中途终止（T003/T004 failed，余者 blocked），但已产出决定性验证数据：
+
+1. **门禁轨迹可观测性 ✅**：`[Gate]` 行完整记录了 TASK-002 三轮判定（tester=failed → passed → passed；reviewer=revision → approved），并驱动真实返工循环走通。run6 的"隐形卡死"之谜就此破案：当时同款三轮循环全程不可见。
+2. **v2 逐任务语义实战 ✅**：本轮 Planner 自行将约束写入每个任务描述，日志正确打印"无需注入"分支（双向可观测生效）。
+3. **角色映射第四轮稳定 ✅**：测试编写归 developer（T4/T5），tester=证据审查（T7），reviewer=最终审核（T8）。
+
+**路径约束终审定谳**：本轮约束文本已进入全部任务描述（模型自查确认），Developer 也确实"知道"该约束——但产物依然落在 `projects\stringkit\` 且出现 `stringkit\stringkit\` 双层嵌套混乱。至此证明：**提示词、描述注入、模型自查三种文本层手段全部无效**，模型把任务标题中的字面相对路径视为权威。唯一可靠方案是结构化强制（沙盒根目录重定向），立项 9.6。
+
+附带发现：Developer 在真实运行中执行了 `pip install pytest-cov`（宿主机网络可达 pypi）——工具权限策略允许 pip 值得在安全评审中复议。
+
+---
+
+
+## √ 9.6 多 Provider 按角色模型配置
+
+Phase 4 "LLM 可替换"契约的完整体现：每个角色可独立绑定 (provider, model)，支持 OpenRouter 等任意 OpenAI 兼容端点。
+
+1. **`config/model.py` 多 Profile 化**：`ProviderProfile` 注册表（agnes/openrouter，均可经 `{PREFIX}_BASE_URL/_MODEL` 覆盖）+ `get_client_for(profile)` 每 profile 独立惰性客户端缓存 + `resolve_role_llm_spec(role)` 动态解析 `{ROLE}_PROVIDER/{ROLE}_MODEL` → `DEFAULT_PROVIDER` → profile 默认。解析全部调用时读环境（测试与运行期热切换友好）。旧 `get_client()/ask_ai()` 行为不变。
+2. **`ProviderLLM` 增加 `provider_profile` 参数**：显式模型+profile 组合；仅传 model 保持 Agnes 兼容语义；客户端仍惰性解析。
+3. **工厂接线**：`create_agent_router` 为五角色各构建绑定 LLM 注入构造器——`{ROLE}_MODEL` 缺省回落 profile 默认。
+4. **配置界面即 `.env`**：新增 `.env.example` 模板；切换全模型 = 改 `DEFAULT_PROVIDER` 一行；单点换角色 = 加一行 `{ROLE}_MODEL`。
+5. **契约测试** `tests/test_role_model_config_contract.py` ×10：profile 默认值/覆盖/未知拒绝、逐角色绑定与回退、每 profile 客户端缓存隔离、缺凭据惰性报错、工厂注入断言（含 agents 链）。
+
+初始绑定（用户确认）：五角色统一 `stealth/ox-alpha @ openrouter`。
+
+专项测试：`tests/test_role_model_config_contract.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。真实验收方式：配置 OPENROUTER_API_KEY 后运行 stringkit 需求，观察各角色实际调用的 provider/model。**
+
+## √ 9.7 文档同步（随 9.6）
+
+- `docs/production_configuration.md` §3 重写为多 Provider 表格与角色绑定规则
+- `docs/user_guide.md` §3 改为 OpenRouter + Ox Alpha 最小配置指引
+- 新增 `.env.example` 入库
+
+验收状态：**随 9.6 一并验收。**
+
+---
+
+## 后续候选（按优先级）
+
+- **9.8 沙盒根目录重定向（原 9.6 提案，路径约束的结构化终解）**：`main.py --workspace` 将沙盒根重定向到需求指定目录
+- **429 退避重试**：对 provider 速率限制错误增加指数退避（本轮实战暴露）
+- **pip 白名单复议**：Developer 已可在沙盒内 pip install 第三方包（run5 实测），安全评审需明确策略

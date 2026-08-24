@@ -23,17 +23,42 @@ pip install -r requirements.txt
 
 These are required because `config/model.py` imports both packages unconditionally. Contract tests themselves stay network-independent through mock injection (see §3).
 
-## 3. Provider configuration (environment variables)
+## 3. Provider configuration (multi-provider, per-role)
 
-`config/model.py` reads the following variables (a `.env` file at the repository root is honored through `load_dotenv()`):
+Since Phase 9.6 the runtime supports multiple provider profiles and per-role model bindings. All variables are read from the environment (a `.env` file at the repository root is honored through `load_dotenv()`); copy `.env.example` as a starting point.
 
-| Variable | Required | Default | Purpose |
+### 3.1 Provider profiles
+
+| Profile | Credential variable | Default base URL | Default model |
 |---|---|---|---|
-| `AGNES_API_KEY` | yes | — | API key for the OpenAI-compatible provider |
-| `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Provider base URL |
-| `AGNES_MODEL` | no | `agnes-2.5-flash` | Model identifier passed to chat calls |
+| `agnes` | `AGNES_API_KEY` | `https://apihub.agnes-ai.com/v1` | `agnes-2.5-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `stealth/ox-alpha` |
 
-**Lazy provider resolution:** importing the agent chain is side-effect free. `config/model.py` no longer validates the API key or constructs a client at import time; the client is built lazily on the first actual completion request (`ProviderLLM` resolves it through `config.get_client()`). Key-less environments can therefore import and test agent modules freely — only real provider calls require the configuration above, and a missing key fails with a clear `RuntimeError` at that moment.
+Optional per-profile overrides: `{PREFIX}_BASE_URL`, `{PREFIX}_MODEL`.
+
+### 3.2 Global default and per-role bindings
+
+| Variable | Purpose |
+|---|---|
+| `DEFAULT_PROVIDER` | Profile used by roles without an explicit binding (`agnes`) |
+| `{ROLE}_PROVIDER` | Per-role profile override (`PLANNER_PROVIDER`, ...) |
+| `{ROLE}_MODEL` | Per-role model id (`PLANNER_MODEL`, ...) |
+
+Roles: `planner / architect / developer / tester / reviewer`. Resolution order per role: `{ROLE}_MODEL` → bound profile's default model; provider: `{ROLE}_PROVIDER` → `DEFAULT_PROVIDER`.
+
+Example — all five roles on Ox Alpha via OpenRouter:
+
+```ini
+DEFAULT_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
+PLANNER_MODEL=stealth/ox-alpha
+ARCHITECT_MODEL=stealth/ox-alpha
+DEVELOPER_MODEL=stealth/ox-alpha
+TESTER_MODEL=stealth/ox-alpha
+REVIEWER_MODEL=stealth/ox-alpha
+```
+
+**Lazy provider resolution:** importing the agent chain is side-effect free. Clients are built lazily on first actual completion request via `config.get_client_for(profile)` (one cached client per profile); a missing credential fails with a clear `RuntimeError` naming its env var at that moment.
 
 ## 4. Network-free execution (mock mode)
 

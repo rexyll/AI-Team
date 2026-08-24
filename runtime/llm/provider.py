@@ -2,42 +2,52 @@ from __future__ import annotations
 
 from typing import Any
 
-from config.model import AGNES_MODEL
+from config.model import AGNES_MODEL, get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
 class ProviderLLM(BaseLLM):
-    """BaseLLM adapter for the project's OpenAI-compatible provider client.
+    """BaseLLM adapter for OpenAI-compatible provider clients.
 
-    The underlying client is resolved lazily on first completion request:
-    constructing a ProviderLLM (directly or through a default agent) never
-    touches the provider configuration, keeping the agent import chain and
-    object construction side-effect free.
+    Supports multiple provider profiles (see ``config.model``): pass an
+    explicit ``model`` and/or ``provider_profile`` name; when omitted,
+    both resolve to the Agnes defaults for backward compatibility. The
+    underlying client is resolved lazily on first completion request, so
+    construction never touches provider credentials.
     """
 
     def __init__(
         self,
         *,
         model: str | None = None,
+        provider_profile: str | None = None,
         client_instance: Any = None,
     ) -> None:
-        resolved_model = AGNES_MODEL if model is None else model
+        if model is not None and provider_profile is None:
+            # Legacy single-provider form: bare model means Agnes default.
+            resolved_model = model
+            resolved_profile = "agnes"
+        else:
+            profile = get_provider_profile(provider_profile)
+            resolved_profile = profile.name
+            resolved_model = model if model is not None else profile.default_model
+
         if not isinstance(resolved_model, str):
             raise TypeError("ProviderLLM model must be a string")
         if not resolved_model.strip():
             raise ValueError("ProviderLLM model must be a non-empty string")
 
+        self.provider_profile = resolved_profile
         self.model = resolved_model
-        self._client_override = client_instance
         self._client: Any = client_instance
 
     @property
     def client(self) -> Any:
-        """Resolve the provider client on first access via config.get_client()."""
+        """Resolve the provider client lazily via ``config.get_client_for``."""
         if self._client is None:
-            from config.model import get_client
+            from config.model import get_client_for
 
-            self._client = get_client()
+            self._client = get_client_for(self.provider_profile)
         return self._client
 
     def generate(
