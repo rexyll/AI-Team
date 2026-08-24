@@ -57,11 +57,17 @@ def test_production_checklist_documents_provider_and_runtime_contract() -> None:
         "# AI-Team Production Configuration Checklist",
         "Python 3.14",
         "pip install -r requirements.txt",
+        # 多 Provider 注册表：两个 profile 的凭据变量均须在案。
         "AGNES_API_KEY",
-        "AGNES_BASE_URL",
-        "AGNES_MODEL",
+        "OPENROUTER_API_KEY",
+        "DEFAULT_PROVIDER",
+        # 角色绑定与 Ox Alpha 初始模型。
+        "{ROLE}_MODEL",
+        "PLANNER_MODEL",
+        "stealth/ox-alpha",
+        # 惰性解析语义（9.3 引入，9.6 起按 profile 解析）。
         "Lazy provider resolution",
-        "config.get_client()",
+        "config.get_client_for(profile)",
         "MockLLM",
         "DEFAULT_SANDBOX",
         "os.replace()",
