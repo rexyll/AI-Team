@@ -81,11 +81,13 @@ def _profile(name: str) -> ProviderProfile:
 _FALLBACK_BASE_URLS = {
     "agnes": "https://apihub.agnes-ai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "deepseek": "https://api.deepseek.com"
 }
 
 _FALLBACK_MODELS = {
     "agnes": "agnes-2.5-flash",
     "openrouter": "stealth/ox-alpha",
+    "deepseek": "deepseek-v4-flash",
 }
 
 

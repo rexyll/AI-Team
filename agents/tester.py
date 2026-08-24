@@ -42,8 +42,12 @@ TEST_FAILED
 
 并说明具体原因。
 
-输出的第一行必须只包含 TEST_PASSED 或 TEST_FAILED 这两个词之一，
-不要加粗、不要编号、不要附加任何其他文字；原因说明放在后续行。
+硬性格式要求（违反会导致判定无效）：
+
+1. 输出的第一行必须只包含英文单词 TEST_PASSED 或 TEST_FAILED，
+   不要加粗、不要编号、不要附加任何其他文字或标点；
+2. 判定必须以该英文标记表达——禁止仅用中文"通过/失败"表述结论；
+3. 原因说明放在后续行，可使用中文。
 """
 
 
@@ -208,7 +212,9 @@ TEST_FAILED
         if "TEST_PASSED" in text:
             return "passed"
 
+        response_head = text.replace("\n", " ")[:200]
         raise ValueError(
             "Tester returned invalid decision. "
-            "Expected TEST_PASSED or TEST_FAILED."
+            "Expected TEST_PASSED or TEST_FAILED. "
+            f"Response head: {response_head!r}"
         )

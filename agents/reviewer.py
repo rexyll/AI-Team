@@ -49,8 +49,12 @@ REVISION_REQUIRED
 
 并说明具体原因。
 
-输出的第一行必须只包含 APPROVED 或 REVISION_REQUIRED 这两个词之一，
-不要加粗、不要编号、不要附加任何其他文字；原因说明放在后续行。
+硬性格式要求（违反会导致判定无效）：
+
+1. 输出的第一行必须只包含英文单词 APPROVED 或 REVISION_REQUIRED，
+   不要加粗、不要编号、不要附加任何其他文字或标点；
+2. 判定必须以该英文标记表达——禁止仅用中文"通过/需返工"表述结论；
+3. 原因说明放在后续行，可使用中文。
 """
 
 
@@ -251,7 +255,9 @@ REVISION_REQUIRED
         if "APPROVED" in text:
             return "approved"
 
+        response_head = text.replace("\n", " ")[:200]
         raise ValueError(
             "Reviewer returned invalid decision. "
-            "Expected APPROVED or REVISION_REQUIRED."
+            "Expected APPROVED or REVISION_REQUIRED. "
+            f"Response head: {response_head!r}"
         )

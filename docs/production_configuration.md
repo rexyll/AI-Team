@@ -33,6 +33,7 @@ Since Phase 9.6 the runtime supports multiple provider profiles and per-role mod
 |---|---|---|---|
 | `agnes` | `AGNES_API_KEY` | `https://apihub.agnes-ai.com/v1` | `agnes-2.5-flash` |
 | `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `stealth/ox-alpha` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` | `deepseek-v4-flash` |
 
 Optional per-profile overrides: `{PREFIX}_BASE_URL`, `{PREFIX}_MODEL`.
 
