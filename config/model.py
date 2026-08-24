@@ -78,29 +78,92 @@ def _profile(name: str) -> ProviderProfile:
     )
 
 
-_FALLBACK_BASE_URLS = {
-    "agnes": "https://apihub.agnes-ai.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "deepseek": "https://api.deepseek.com"
+# Built-in fallbacks so the three known providers work out of the box.
+# Any additional provider can be declared purely via environment:
+#   LLM_PROVIDERS=agnes,openrouter,deepseek,<new-name>
+#   <NEW-NAME>_API_KEY=... / <NEW-NAME>_BASE_URL=... / <NEW-NAME>_MODEL=...
+_BUILTIN_FALLBACKS = {
+    "agnes": {
+        "base_url": "https://apihub.agnes-ai.com/v1",
+        "model": "agnes-2.5-flash",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "stealth/ox-alpha",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+    },
 }
 
-_FALLBACK_MODELS = {
-    "agnes": "agnes-2.5-flash",
-    "openrouter": "stealth/ox-alpha",
-    "deepseek": "deepseek-v4-flash",
-}
+_BUILTIN_ORDER = ["agnes", "openrouter", "deepseek"]
+
+
+def declared_provider_names() -> list[str]:
+    """Return all usable provider profile names, order-stable.
+
+    Built-ins are always available; ``LLM_PROVIDERS`` (comma-separated)
+    registers additional arbitrary profiles dynamically.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    raw = os.getenv("LLM_PROVIDERS", "")
+    for item in raw.split(","):
+        name = item.strip().lower()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    for builtin in _BUILTIN_ORDER:
+        if builtin not in seen:
+            seen.add(builtin)
+            names.append(builtin)
+
+    return names
 
 
 def get_provider_profile(name: str | None = None) -> ProviderProfile:
-    """Resolve a provider profile by name (default: ``DEFAULT_PROVIDER``)."""
+    """Resolve a provider profile by name (default: ``DEFAULT_PROVIDER``).
+
+    Profiles are built dynamically from the current environment:
+
+    - base URL:  ``{NAME}_BASE_URL``  else built-in fallback (if known)
+    - model:     ``{NAME}_MODEL``     else built-in fallback (if known)
+
+    An unknown provider name is accepted only when BOTH its credential
+    variable and base URL are set in the environment — enabling fully
+    dynamic endpoints without code changes.
+    """
     key = (name if name is not None else os.getenv("DEFAULT_PROVIDER", "agnes"))
     key = str(key).strip().lower()
-    if key not in _FALLBACK_BASE_URLS:
+
+    prefix = key.upper()
+    api_key_env = f"{prefix}_API_KEY"
+    base_url = os.getenv(f"{prefix}_BASE_URL")
+    model = os.getenv(f"{prefix}_MODEL")
+
+    builtin = _BUILTIN_FALLBACKS.get(key)
+    if builtin is not None:
+        base_url = base_url or builtin["base_url"]
+        model = model or builtin["model"]
+    elif base_url is None:
+        available = ", ".join(declared_provider_names())
         raise ValueError(
             f"Unknown provider profile: {key!r}. "
-            f"Supported: {sorted(_FALLBACK_BASE_URLS)}"
+            f"Set {prefix}_API_KEY and {prefix}_BASE_URL to register it, "
+            f"or use one of: {available}"
         )
-    return _profile(key)
+
+    return ProviderProfile(
+        name=key,
+        api_key_env=api_key_env,
+        default_base_url=base_url,
+        default_model=model
+        if model is not None
+        else (builtin["model"] if builtin else ""),
+    )
 
 
 def get_client_for(profile_name: str | None = None):
