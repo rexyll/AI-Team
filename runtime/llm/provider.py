@@ -107,26 +107,51 @@ class ProviderLLM(BaseLLM):
     def _post_chat(self, **kwargs: Any):
         """POST /chat/completions with transient-failure backoff.
 
-        Retries 429/5xx with exponential backoff (honoring Retry-After when
-        present) so upstream shared-pool rate limits degrade to slower runs
-        instead of killing mid-project tasks. Non-retryable failures and
-        exhausted budgets raise immediately.
+        Two retry dimensions:
+        1. HTTP-level: 429/5xx with exponential backoff.
+        2. Content-level: empty responses from reasoning-style models
+           (thinking consumes output budget → content="") are retried
+           so they degrade to slower runs instead of poisoning downstream
+           gates with unparseable verdicts.
+
+        Non-retryable failures raise immediately.
         """
         max_attempts = self._max_attempts()
-        attempt = 0
+        http_attempt = 0
+        empty_attempt = 0
 
         while True:
             try:
-                return self.client.chat.completions.create(**kwargs)
+                response = self.client.chat.completions.create(**kwargs)
+
+                # ── Empty-content guard ──
+                message = response.choices[0].message
+                content = getattr(message, "content", None)
+                raw_calls = getattr(message, "tool_calls", None)
+
+                if not (content and str(content).strip()) and not raw_calls:
+                    empty_attempt += 1
+                    if empty_attempt >= max_attempts:
+                        return response  # 返回最后一次空响应，由上层处理
+                    wait = self._backoff_seconds(empty_attempt, None)
+                    print(
+                        f"[LLM] {self.provider_profile}/{self.model} "
+                        f"empty response; retrying ({empty_attempt}/{max_attempts})"
+                    )
+                    time.sleep(wait)
+                    continue
+
+                return response
+
             except Exception as exc:
                 code = _status_code_of(exc)
-                attempt += 1
-                if code not in RETRYABLE_STATUS_CODES or attempt >= max_attempts:
+                http_attempt += 1
+                if code not in RETRYABLE_STATUS_CODES or http_attempt >= max_attempts:
                     raise
-                wait = self._backoff_seconds(attempt, exc)
+                wait = self._backoff_seconds(http_attempt, exc)
                 print(
                     f"[LLM] {self.provider_profile}/{self.model} transient {code}; "
-                    f"retry {attempt}/{max_attempts - 1} in {wait:.0f}s"
+                    f"retry {http_attempt}/{max_attempts - 1} in {wait:.0f}s"
                 )
                 time.sleep(wait)
 
