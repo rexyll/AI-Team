@@ -5,6 +5,7 @@ from typing import Any
 
 from config.model import ask_ai
 from runtime.llm.base import BaseLLM
+from runtime.plan_constraints import apply_path_constraints, extract_required_paths
 from runtime.task_validator import validate_plan
 from agents.base import BaseAgent
 from runtime.task import Task
@@ -327,7 +328,8 @@ def create_plan(requirement: str, *, llm: BaseLLM | None = None) -> dict:
         last_response = response
 
         try:
-            return _parse_plan_response(response)
+            plan = _parse_plan_response(response)
+            return _enforce_requirement_paths(requirement, plan)
 
         except ValueError as exc:
             last_error = exc
@@ -339,6 +341,25 @@ def create_plan(requirement: str, *, llm: BaseLLM | None = None) -> dict:
                 ) from exc
 
     raise RuntimeError("Planner retry loop exited unexpectedly")
+
+
+def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
+    """Mechanically enforce requirement-level path constraints on the plan.
+
+    Prompt guidance alone proved insufficient across three real-provider
+    runs (plans kept dropping the mandated output directory). This step
+    deterministically injects any missing directory constraint into every
+    task description, so downstream agents cannot miss it.
+    """
+    required_dirs = extract_required_paths(requirement)
+    if not required_dirs:
+        return plan
+
+    injected = apply_path_constraints(plan, required_dirs)
+    if injected:
+        print(f"[Planner] 已注入路径约束: {injected}")
+
+    return plan
 
 
 class PlannerAgent(BaseAgent):

@@ -628,3 +628,22 @@ stringkit 同需求第三轮：7/7 任务完成，success=True，耗时 19 分 3
 遗留小瑕疵：`stringkit/tests/test_results.txt` 未清理。
 
 **9.4 候选（待规划）：路径约束计划校验层**——在 validate_plan 或 Planner 输出后处理中强制需求原文中的路径 token 出现于任务 description；同时评估是否将 workspace 根直接指向需求指定目录。
+
+## 9.4 路径约束计划校验层
+
+针对三轮复现的"需求路径约束不进计划"，放弃继续调 prompt，改用**确定性后处理**：
+
+1. **新增 `runtime/plan_constraints.py`**（纯函数、零依赖、可独立单测）：
+   - `extract_required_paths(requirement)`：从需求原文提取目录型路径 token（排除文件型 spec、URL、无斜杠单词、畸形双斜杠）
+   - `apply_path_constraints(plan, dirs)`：缺失的目录约束以【用户约束】行注入**全部**任务描述（含 architect/reviewer，保持全链路可见），幂等可重入
+2. **planner 接线**：`create_plan` 解析成功后调用 `_enforce_requirement_paths`，注入时打印透明日志
+3. **契约测试**：`tests/test_plan_constraint_injection_contract.py`（提取语义 ×5、注入与幂等 ×4、参数防御 ×2、真实需求回归）
+
+设计取舍：不采用"校验失败打回重试"方案——机械注入保证 100% 落实且不消耗额外模型调用；prompt 条款保留作为第一道防线。
+
+开发过程中修复自检发现的正则边界缺陷：单段目录+尾斜杠（如 `src/`）因段量词 `+` 无法匹配，调整为 `*` 并增加双斜杠过滤。沙盒 14 组断言全过，含实验二真实需求文本回归。
+
+专项测试：`tests/test_plan_constraint_injection_contract.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认。真实验收方式：commit 后第四次运行 stringkit 需求，产物必须落在 `projects\workspace\stringkit\`。**
