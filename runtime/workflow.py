@@ -208,7 +208,12 @@ class TaskWorkflow:
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
 
-        for _ in range(self.max_review_rounds):
+        # Reason captured from the last non-passing gate, used when the
+        # round budget is exhausted below (previously this path silently
+        # left the task in a non-terminal state, stalling the project).
+        last_gate_note = "unknown"
+
+        for round_index in range(1, self.max_review_rounds + 1):
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
                 self._emit_event("task_started", task, payload={"status": task.status})
@@ -219,21 +224,34 @@ class TaskWorkflow:
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
             self._apply_developer_outcome(task, developer_outcome)
+            print(
+                f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
+                f"developer={developer_outcome.status}"
+            )
 
             if task.status == "failed":
                 return task
 
             if self.tester is not None:
                 tester_outcome = self._run_tester(task)
-                if not self._handle_tester_result(task, tester_outcome):
+                tester_passed = self._handle_tester_result(task, tester_outcome)
+                print(
+                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
+                    f"tester={tester_outcome.status}"
+                )
+                if not tester_passed:
                     if task.status == "failed":
                         return task
-                    if tester_outcome.status != "passed":
-                        continue
+                    last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
+                    continue
             else:
                 self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
+                print(
+                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
+                    "tester=skipped"
+                )
 
             self._emit_event("review_started", task, payload={"status": task.status})
             # The tester success / tester-skip checkpoint already records the
@@ -241,14 +259,36 @@ class TaskWorkflow:
             # review-start observability event.
             review_outcome = self._run_reviewer(task)
             review_action = self._apply_reviewer_outcome(task, review_outcome)
+            print(
+                f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
+                f"reviewer={review_outcome.status}"
+            )
 
             if review_action == "completed":
                 return task
             if review_action == "failed":
                 return task
             if review_action == "revision":
+                last_gate_note = f"reviewer 要求返工（第 {round_index} 轮）"
                 continue
 
+        # Round budget exhausted through the tester-continue path without a
+        # terminal verdict (the reviewer path fails explicitly inside its
+        # own handler). Terminate loudly instead of leaving the task in a
+        # non-terminal limbo that stalls the whole project scheduler.
+        reason = (
+            f"质量门禁在 {self.max_review_rounds} 轮内未通过"
+            f"（最后状态: {last_gate_note}）"
+        )
+        print(f"[Gate] {task.id}: {reason}")
+        self.task_manager.record_error(task.id, reason)
+        self.task_manager.mark_failed(task.id, reason)
+        self._emit_event(
+            "task_failed",
+            task,
+            payload={"status": task.status, "error": reason},
+        )
+        self._checkpoint()
         return task
 
     def _transition_to_declared_target(self, task: Task, stage: str, outcome: WorkflowOutcomeKind) -> None:
