@@ -357,7 +357,11 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
 
     injected = apply_path_constraints(plan, required_dirs)
     if injected:
-        print(f"[Planner] 已注入路径约束: {injected}")
+        print(f"[Planner] 已将缺失的路径约束注入任务描述: {injected}")
+    else:
+        print(
+            f"[Planner] 路径约束已由模型逐任务落实，无需注入: {required_dirs}"
+        )
 
     return plan
 

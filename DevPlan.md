@@ -643,7 +643,9 @@ stringkit 同需求第三轮：7/7 任务完成，success=True，耗时 19 分 3
 
 开发过程中修复自检发现的正则边界缺陷：单段目录+尾斜杠（如 `src/`）因段量词 `+` 无法匹配，调整为 `*` 并增加双斜杠过滤。沙盒 14 组断言全过，含实验二真实需求文本回归。
 
+**v2 修订（run5 真实验收暴露设计缺陷）**：v1 的存在性检查是计划级的——只要任意一个任务描述提到过路径即整体跳过注入。run5 中模型恰好把约束句子抄进了单个任务描述，导致其余任务全部漏防、产物再次落错位置。v2 改为**逐任务检查与注入**：每个任务独立判断、独立补齐；planner 日志改为双向可观测（注入时与"模型已自行落实"时都打印）。新增回归契约 `test_plan_wide_mention_does_not_cover_other_tasks` 固化该语义。
+
 专项测试：`tests/test_plan_constraint_injection_contract.py`。
-最终 commit：`a5f8fa9`。
+最终 commit：`a5f8fa9`（v1）＋逐任务修订待提交。
 
 验收状态：**专项及全量测试已过、代码已入库；真实验收进行中——第四次运行 stringkit 需求，产物必须落在 `projects\workspace\stringkit\` 且日志出现注入标记。**

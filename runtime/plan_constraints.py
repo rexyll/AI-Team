@@ -69,12 +69,15 @@ def extract_required_paths(requirement: str) -> list[str]:
 def apply_path_constraints(plan: dict, required_dirs: list[str]) -> list[str]:
     """Inject missing directory constraints into every task description.
 
-    A constraint line is appended to *all* task descriptions (including
-    architect/reviewer tasks) so downstream roles keep seeing the mandate
-    even when they do not touch files themselves. Idempotent: directories
-    already mentioned in any description are skipped.
+    The check is **per task**: a directory counts as covered only when it
+    appears in *that task's* description. Plan-wide mentions (e.g. the
+    model copying the requirement sentence into a single architect task)
+    do NOT cover other tasks - real-provider runs showed exactly that
+    failure mode, where one task echoed the constraint while developers
+    wrote elsewhere.
 
-    Returns the list of directories that were actually injected.
+    Returns the list of directories for which at least one task received
+    an injected constraint line.
     """
     if not isinstance(plan, dict):
         raise TypeError("plan must be a dictionary")
@@ -90,21 +93,24 @@ def apply_path_constraints(plan: dict, required_dirs: list[str]) -> list[str]:
     injected: list[str] = []
 
     for directory in required_dirs:
-        existing_blob = "\n".join(
-            str(task.get("description", "")) for task in tasks
-        ).lower()
+        key = directory.lower()
+        updated_tasks = 0
 
-        if directory.lower() in existing_blob:
-            continue
-
-        constraint_line = (
-            f"{_CONSTRAINT_MARKER}所有文件必须放在 {directory}/ 目录下。"
-        )
         for task in tasks:
-            description = str(task.get("description", "")).rstrip()
-            separator = "\n" if description else ""
-            task["description"] = f"{description}{separator}{constraint_line}"
+            description = str(task.get("description", ""))
+            if key in description.lower():
+                continue
 
-        injected.append(directory)
+            constraint_line = (
+                f"{_CONSTRAINT_MARKER}所有文件必须放在 {directory}/ 目录下。"
+            )
+            separator = "\n" if description.rstrip() else ""
+            task["description"] = (
+                f"{description.rstrip()}{separator}{constraint_line}"
+            )
+            updated_tasks += 1
+
+        if updated_tasks:
+            injected.append(directory)
 
     return injected
