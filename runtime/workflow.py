@@ -10,6 +10,7 @@ from runtime.workflow_transition import (
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from enum import Enum
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -205,6 +206,41 @@ class TaskWorkflow:
             return
         task.context["tool_execution_history"] = history.to_dict()
 
+    def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
+        """Run one gate stage, tolerating transient invalid verdict shapes.
+
+        Reasoning-style upstream models occasionally return empty or
+        unparseable completions. Such responses are retried with a fresh
+        completion (bounded, no task-state changes) so they degrade to
+        slower rounds instead of terminal failures; only a *parseable*
+        verdict or a hard exception is returned to the caller.
+        """
+        try:
+            extra_attempts = max(
+                0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2"))
+            )
+        except ValueError:
+            extra_attempts = 2
+
+        outcome = run_gate()
+        for _ in range(extra_attempts):
+            if outcome.exception is not None:
+                break
+            if stage == "tester" and outcome.status in ("passed", "failed"):
+                break
+            if stage == "reviewer" and outcome.status in (
+                "approved",
+                "revision",
+                "failed",
+            ):
+                break
+            print(
+                f"[Gate] {stage}=invalid({outcome.status}); "
+                "retrying with fresh completion"
+            )
+            outcome = run_gate()
+        return outcome
+
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
 
@@ -256,7 +292,9 @@ class TaskWorkflow:
                 return task
 
             if self.tester is not None:
-                tester_outcome = self._run_tester(task)
+                tester_outcome = self._run_gate_with_invalid_tolerance(
+                    lambda: self._run_tester(task), stage="tester"
+                )
                 tester_passed = self._handle_tester_result(task, tester_outcome)
                 print(
                     f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
@@ -289,7 +327,9 @@ class TaskWorkflow:
             # The tester success / tester-skip checkpoint already records the
             # REVIEWING boundary. Do not emit a second checkpoint for the
             # review-start observability event.
-            review_outcome = self._run_reviewer(task)
+            review_outcome = self._run_gate_with_invalid_tolerance(
+                lambda: self._run_reviewer(task), stage="reviewer"
+            )
             review_action = self._apply_reviewer_outcome(task, review_outcome)
             print(
                 f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "

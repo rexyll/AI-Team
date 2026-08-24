@@ -232,6 +232,31 @@ class DeveloperAgent(BaseAgent):
             if not response.tool_calls:
                 content = response.content or ""
 
+                # Deny-by-default artifact guard: a developer turn that
+                # ends without ANY tool invocations has produced nothing
+                # verifiable. Text-only "success" reports previously
+                # masked no-op rounds (real-provider incident).
+                if not changed_files and not command_results and not tool_calls:
+                    return AgentResult(
+                        status="failed",
+                        agent=self.role,
+                        task_id=context.task_id,
+                        message=(
+                            "Developer produced no artifacts: zero tool "
+                            "calls, zero file changes, zero commands. "
+                            f"Final text head: {content[:200]}"
+                        ),
+                        data={
+                            "validation": {
+                                "tool_call_count": 0,
+                                "test_command_count": 0,
+                                "files_changed_count": 0,
+                                "no_artifact_completion": True,
+                            },
+                            "report": content,
+                        },
+                    )
+
                 data = self._build_result_data(
                     content=content,
                     changed_files=changed_files,

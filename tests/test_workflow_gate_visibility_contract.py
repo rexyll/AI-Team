@@ -177,6 +177,98 @@ def test_tester_rejection_prints_verdict_note(capsys) -> None:
     assert "no implementation artifacts" in output
 
 
+def test_reviewer_invalid_verdicts_tolerated_then_recover(capsys) -> None:
+    """Transient empty/garbage reviewer responses are retried inline (no
+    state change) and the gate recovers once a parseable verdict arrives."""
+
+    class _SequencedReviewer(_StubReviewer):
+        def __init__(self, statuses):
+            super().__init__("approved")
+            self._statuses = list(statuses)
+
+        def run(self, task: Task) -> AgentResult:
+            self.calls += 1
+            status = (
+                self._statuses.pop(0)
+                if self._statuses
+                else "approved"
+            )
+            result = super().run(task)
+            if self._statuses or True:
+                pass
+            return AgentResult(
+                status=status,
+                agent=self.role,
+                task_id=task.id,
+                message=f"verdict {status}",
+            )
+
+    developer = _StubDeveloper()
+    tester = _StubTester("passed")
+    reviewer = _SequencedReviewer(["weird", "weird", "approved"])
+    router = _router_with(developer=developer, tester=tester, reviewer=reviewer)
+
+    workflow = TaskWorkflow(
+        task_manager=_manager("TASK-GATE-003"),
+        developer=developer,
+        reviewer=reviewer,
+        agent_router=router,
+        tester=tester,
+    )
+
+    result = workflow.execute("TASK-GATE-003")
+
+    assert result.status == "completed"
+    # 不变量：前两轮各容忍一次无效判定后，第三次给出可解析通过判定。
+    assert reviewer.calls >= 3
+    output = capsys.readouterr().out
+    assert output.count("retrying with fresh completion") >= 2
+
+
+def test_tester_persistent_inconclusive_fails_without_limbo(capsys) -> None:
+    developer = _StubDeveloper()
+    tester = _StubTester("inconclusive")
+    reviewer = _StubReviewer("approved")
+    router = _router_with(developer=developer, tester=tester, reviewer=reviewer)
+
+    workflow = TaskWorkflow(
+        task_manager=_manager("TASK-GATE-004"),
+        developer=developer,
+        reviewer=reviewer,
+        agent_router=router,
+        tester=tester,
+        max_review_rounds=2,
+    )
+
+    result = workflow.execute("TASK-GATE-004")
+
+    # 无悬挂：终态明确为失败，错误信息可诊断。
+    assert result.status == "failed"
+    assert "inconclusive" in (result.error or "")
+
+
+def test_developer_zero_artifact_completion_fails_loudly() -> None:
+    """run9-11 regression: a text-only turn with ZERO tool invocations must
+    fail loudly instead of masquerading as a successful implementation."""
+
+    from agents.developer import DeveloperAgent
+    from runtime.llm.mock import MockLLM
+
+    agent = DeveloperAgent(llm=MockLLM("我已完成实现，一切正常。"))
+    task = Task(
+        id="T-ZERO",
+        title="zero-artifact regression",
+        description="implement the module",
+        role="developer",
+    )
+
+    result = agent.run(task)
+
+    assert result.status == "failed"
+    assert "no artifacts" in result.message
+    assert result.data["validation"]["tool_call_count"] == 0
+
+
 def test_developer_prompt_pins_rework_hard_rules() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "agents" / "developer.py"

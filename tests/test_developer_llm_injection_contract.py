@@ -81,7 +81,9 @@ def test_run_routes_through_injected_mock_and_executes_real_tool(
     assert record.arguments["path"] == "notes.txt"
 
 
-def test_text_only_mock_completes_without_tool_calls(tmp_path, monkeypatch) -> None:
+def test_text_only_completion_fails_with_no_artifact_reason(tmp_path, monkeypatch) -> None:
+    """9.8 artifact guard: a text-only turn produces nothing verifiable and
+    must fail loudly (deny-by-default) instead of masquerading as success."""
     monkeypatch.setattr(
         workspace_module,
         "DEFAULT_SANDBOX",
@@ -91,13 +93,14 @@ def test_text_only_mock_completes_without_tool_calls(tmp_path, monkeypatch) -> N
     agent = DeveloperAgent(llm=MockLLM("plain final answer"))
     result = agent.run(_make_task())
 
-    assert result.status == "completed"
-    assert result.message == "plain final answer"
+    assert result.status == "failed"
+    assert "no artifacts" in result.message
+    assert "plain final answer" in result.message
     assert result.data["validation"]["tool_call_count"] == 0
     assert len(agent.tool_execution_history) == 0
 
 
-def test_script_exhaustion_falls_back_to_final_answer(tmp_path, monkeypatch) -> None:
+def test_script_exhaustion_surfaces_terminal_text_in_failure(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         workspace_module,
         "DEFAULT_SANDBOX",
@@ -107,8 +110,9 @@ def test_script_exhaustion_falls_back_to_final_answer(tmp_path, monkeypatch) -> 
     agent = DeveloperAgent(llm=MockLLM("terminal answer"))
     result = agent.run(_make_task())
 
-    assert result.status == "completed"
-    assert result.message == "terminal answer"
+    # 脚本耗尽后的终答仍会上浮——但载体是失败结果而非伪装成功。
+    assert result.status == "failed"
+    assert "terminal answer" in result.message
 
 
 @pytest.mark.parametrize(
