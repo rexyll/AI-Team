@@ -240,9 +240,16 @@ class TaskWorkflow:
                     f", tool_calls={validation.get('tool_call_count', '?')}, "
                     f"files_changed={validation.get('files_changed_count', '?')}"
                 )
+            message_head = ""
+            if developer_outcome.result is not None:
+                raw_message = (developer_outcome.result.message or "").strip()
+                message_head = raw_message.replace("\n", " ")[:120]
+                if len(raw_message) > 120:
+                    message_head += "…"
             print(
                 f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                f"developer={developer_outcome.status}{dev_metrics}"
+                f"developer={developer_outcome.status}{dev_metrics} | "
+                f"{message_head}"
             )
 
             if task.status == "failed":
