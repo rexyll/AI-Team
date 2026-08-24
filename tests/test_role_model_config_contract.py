@@ -1,9 +1,8 @@
-"""Multi-provider, per-role model binding contracts.
+"""Multi-provider, per-role model binding contracts (pure env-driven).
 
-Each team role resolves to a ``(provider_profile, model_id)`` pair from
-the environment; the agent factory injects one ProviderLLM per role from
-those bindings. Resolution must be dynamic (read at call time) so tests
-and runtime switching work without re-importing modules.
+代码中不存在任何 provider/base_url/model 字面量——一切由环境声明。
+每个用例通过 ``scrub_llm_env`` 夹具完全控制自身相关的环境切片（hermetic），
+既不依赖用户真实 `.env` 的具体取值，也不会被其污染。
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from config.model import (
+    declared_provider_names,
     get_client_for,
     get_provider_profile,
     resolve_role_llm_spec,
@@ -20,125 +20,234 @@ from runtime.agent_factory import create_agent_router
 
 SUPPORTED = ("planner", "architect", "developer", "tester", "reviewer")
 
+_LLM_ENV_VARS = (
+    "LLM_PROVIDERS",
+    "DEFAULT_PROVIDER",
+    "AGNES_API_KEY",
+    "AGNES_BASE_URL",
+    "AGNES_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+    "OPENROUTER_MODEL",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+)
+
+# 角色级绑定变量也须清空，否则真实 .env 的 DEVELOPER_MODEL 等会泄漏进用例。
+_ROLE_ENV_VARS = tuple(
+    f"{role.upper()}_{suffix}"
+    for role in SUPPORTED
+    for suffix in ("PROVIDER", "MODEL")
+)
+
+
+@pytest.fixture
+def clean_llm_env(monkeypatch):
+    """清空全部 LLM 相关环境变量——每个用例自行声明所需切片。"""
+    for var in _LLM_ENV_VARS + _ROLE_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    yield monkeypatch
+
+
+def _declare(monkeypatch, *, providers=None, default=None, **overrides):
+    """便捷封装：声明 provider 列表与逐角色绑定。"""
+    if providers is not None:
+        monkeypatch.setenv("LLM_PROVIDERS", providers)
+    if default is not None:
+        monkeypatch.setenv("DEFAULT_PROVIDER", default)
+    for key, value in overrides.items():
+        monkeypatch.setenv(key, value)
+
 
 # ---------------------------------------------------------------------------
-# Profile resolution
+# 声明与发现
 # ---------------------------------------------------------------------------
 
 
-def test_default_profile_is_agnes(monkeypatch) -> None:
-    monkeypatch.delenv("DEFAULT_PROVIDER", raising=False)
-
-    profile = get_provider_profile()
-
-    assert profile.name == "agnes"
-    assert profile.default_model == "agnes-2.5-flash"
+def test_zero_config_has_no_providers(clean_llm_env) -> None:
+    assert declared_provider_names() == []
 
 
-def test_openrouter_profile_defaults_to_ox_alpha(monkeypatch) -> None:
-    monkeypatch.setenv("DEFAULT_PROVIDER", "openrouter")
-    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
-    # 用户 .env 可能自带 BASE_URL 覆盖；本用例只验证内置回退值。
-    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+def test_builtin_names_require_env_values(clean_llm_env) -> None:
+    """agnes/openrouter/deepseek 名字保留但不再内置任何端点：
+    未提供 BASE_URL 时必须给出指名指引而非静默回退。"""
+    with pytest.raises(ValueError, match="DEEPSEEK_BASE_URL"):
+        get_provider_profile("deepseek")
+
+
+def test_llm_providers_declaration_registers_names(clean_llm_env) -> None:
+    _declare(clean_llm_env, providers="moonshot,zhipu")
+
+    assert declared_provider_names()[:2] == ["moonshot", "zhipu"]
+
+
+def test_api_key_auto_discovery_registers_names(clean_llm_env) -> None:
+    clean_llm_env.setenv("MOONSHOT_API_KEY", "sk-x")
+
+    names = declared_provider_names()
+
+    assert "moonshot" in names
+
+
+# ---------------------------------------------------------------------------
+# Profile 解析
+# ---------------------------------------------------------------------------
+
+
+def test_profile_resolves_from_full_triple(clean_llm_env) -> None:
+    clean_llm_env.setenv("DEFAULT_PROVIDER", "openrouter")
+    clean_llm_env.setenv("OPENROUTER_API_KEY", "k")
+    clean_llm_env.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    clean_llm_env.setenv("OPENROUTER_MODEL", "stealth/ox-alpha")
 
     profile = get_provider_profile("openrouter")
 
     assert profile.name == "openrouter"
-    assert profile.default_model == "stealth/ox-alpha"
     assert profile.default_base_url == "https://openrouter.ai/api/v1"
+    assert profile.default_model == "stealth/ox-alpha"
 
 
-def test_unknown_provider_profile_raises() -> None:
-    with pytest.raises(ValueError):
-        get_provider_profile("does-not-exist")
+def test_unknown_profile_without_base_url_raises_with_guidance(clean_llm_env) -> None:
+    clean_llm_env.setenv("NOPE_API_KEY", "k")  # 有密钥无端点仍须显式声明端点
+
+    with pytest.raises(ValueError, match="NOPE_BASE_URL"):
+        get_provider_profile("nope")
 
 
-def test_base_url_override_is_honored(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://mirror.example/v1")
+def test_undeclared_profile_requires_explicit_base_url(clean_llm_env) -> None:
+    """纯环境语义：有密钥但未声明端点时给出指名指引；补齐后立即可解析。"""
+    clean_llm_env.setenv("DEEPSEEK_API_KEY", "k")
 
-    assert "mirror.example" in get_provider_profile("openrouter").default_base_url
+    with pytest.raises(ValueError, match="DEEPSEEK_BASE_URL"):
+        get_provider_profile("deepseek")
+
+    clean_llm_env.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    profile = get_provider_profile("deepseek")
+    assert "api.deepseek.com" in profile.default_base_url
+    assert profile.default_model == ""  # 未设 MODEL 时为空串（由角色绑定提供）
+
+
+def test_base_url_env_overrides_builtin_fallback(clean_llm_env) -> None:
+    clean_llm_env.setenv("OPENROUTER_BASE_URL", "https://mirror.example/v1")
+
+    profile = get_provider_profile("openrouter")
+
+    assert profile.default_base_url == "https://mirror.example/v1"
 
 
 # ---------------------------------------------------------------------------
-# Role resolution
+# 角色解析
 # ---------------------------------------------------------------------------
 
 
-def test_every_supported_role_resolves_by_default(monkeypatch) -> None:
-    monkeypatch.delenv("DEFAULT_PROVIDER", raising=False)
+def test_roles_resolve_against_declared_providers(clean_llm_env) -> None:
+    _declare(
+        clean_llm_env,
+        providers="openrouter,deepseek",
+        default="openrouter",
+        OPENROUTER_API_KEY="k-or",
+        OPENROUTER_BASE_URL="https://openrouter.ai/api/v1",
+        OPENROUTER_MODEL="stealth/ox-alpha",
+        DEEPSEEK_API_KEY="sk-ds",
+        DEEPSEEK_BASE_URL="https://api.deepseek.com",
+        DEEPSEEK_MODEL="deepseek-v4-flash",
+        PLANNER_PROVIDER="openrouter",
+        PLANNER_MODEL="planner-x",
+        DEVELOPER_PROVIDER="deepseek",
+        DEVELOPER_MODEL="deepseek-v4-flash",
+    )
 
-    for role in SUPPORTED:
-        provider_name, model = resolve_role_llm_spec(role)
-        assert provider_name == "agnes"
-        assert model  # non-empty model id
-
-
-def test_role_env_overrides_bind_per_role(monkeypatch) -> None:
-    monkeypatch.setenv("DEFAULT_PROVIDER", "openrouter")
-    for role in SUPPORTED:
-        monkeypatch.setenv(f"{role.upper()}_MODEL", f"m-{role}")
-    # 仅覆盖 developer 的 provider，其余仍走全局默认。
-    monkeypatch.setenv("DEVELOPER_PROVIDER", "agnes")
-
-    planner_provider, planner_model = resolve_role_llm_spec("planner")
-    dev_provider, dev_model = resolve_role_llm_spec("developer")
-
-    assert planner_provider == "openrouter"
-    assert planner_model == "m-planner"
-    assert dev_provider == "agnes"
-    assert dev_model == "m-developer"
+    assert resolve_role_llm_spec("planner") == ("openrouter", "planner-x")
+    assert resolve_role_llm_spec("developer") == ("deepseek", "deepseek-v4-flash")
 
 
-def test_unknown_role_rejected() -> None:
-    with pytest.raises(ValueError):
+def test_role_model_env_overrides_profile_default(clean_llm_env) -> None:
+    _declare(
+        clean_llm_env,
+        providers="openrouter",
+        default="openrouter",
+        OPENROUTER_API_KEY="k",
+        OPENROUTER_BASE_URL="https://openrouter.ai/api/v1",
+        OPENROUTER_MODEL="stealth/ox-alpha",
+        REVIEWER_MODEL="reviewer-special",
+    )
+
+    _, reviewer_model = resolve_role_llm_spec("reviewer")
+
+    assert reviewer_model == "reviewer-special"
+
+
+def test_unknown_role_rejected(clean_llm_env) -> None:
+    with pytest.raises(ValueError, match="Unknown role"):
         resolve_role_llm_spec("ceo")
 
 
 # ---------------------------------------------------------------------------
-# Lazy client cache
+# 惰性客户端缓存
 # ---------------------------------------------------------------------------
 
 
-def test_client_cache_is_per_profile(monkeypatch) -> None:
-    monkeypatch.setenv("AGNES_API_KEY", "dummy-agnes")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy-or")
+def test_client_cache_is_per_profile(clean_llm_env) -> None:
+    _declare(
+        clean_llm_env,
+        providers="openrouter,deepseek",
+        OPENROUTER_API_KEY="dummy-or",
+        OPENROUTER_BASE_URL="https://openrouter.ai/api/v1",
+        DEEPSEEK_API_KEY="dummy-ds",
+        DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    )
 
     first = get_client_for("openrouter")
     second = get_client_for("openrouter")
-    agnes = get_client_for("agnes")
+    ds = get_client_for("deepseek")
 
-    assert first is second          # 同 profile 复用缓存
-    assert first is not agnes       # 不同 profile 各自独立
+    assert first is second
+    assert first is not ds
 
 
-def test_missing_credential_fails_lazily_per_profile(
-    monkeypatch,
-) -> None:
+def test_missing_credential_fails_lazily_per_profile(clean_llm_env) -> None:
     from config.model import _CLIENTS
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
-    get_client_for("openrouter")  # 预热缓存
+    _declare(
+        clean_llm_env,
+        providers="openrouter,deepseek",
+        OPENROUTER_API_KEY="dummy",
+        OPENROUTER_BASE_URL="https://openrouter.ai/api/v1",
+        DEEPSEEK_API_KEY="dummy-ds",
+        DEEPSEEK_BASE_URL="https://api.deepseek.com",
+    )
+    get_client_for("openrouter")
 
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clean_llm_env.delenv("OPENROUTER_API_KEY", raising=False)
     _CLIENTS.pop("openrouter", None)  # 绕过缓存直击凭据守卫
     try:
         with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
             get_client_for("openrouter")
     finally:
-        _CLIENTS.pop("openrouter", None)  # 不给其他用例留下脏缓存
+        _CLIENTS.pop("openrouter", None)  # 不留脏缓存
 
 
 # ---------------------------------------------------------------------------
-# Factory wiring (imports the full agent chain)
+# 工厂接线（完整 agent 链）
 # ---------------------------------------------------------------------------
 
 
-def test_factory_binds_role_models_into_agents(monkeypatch) -> None:
+def test_factory_binds_role_models_into_agents(
+    clean_llm_env,
+) -> None:
     from runtime.llm.provider import ProviderLLM
 
-    monkeypatch.setenv("DEFAULT_PROVIDER", "openrouter")
-    monkeypatch.setenv("PLANNER_MODEL", "planner-x")
-    monkeypatch.setenv("TESTER_MODEL", "tester-y")
+    _declare(
+        clean_llm_env,
+        providers="openrouter",
+        default="openrouter",
+        OPENROUTER_API_KEY="k",
+        OPENROUTER_BASE_URL="https://openrouter.ai/api/v1",
+        OPENROUTER_MODEL="stealth/ox-alpha",
+        PLANNER_MODEL="planner-x",
+        TESTER_MODEL="tester-y",
+    )
 
     router = create_agent_router()
 
@@ -148,7 +257,6 @@ def test_factory_binds_role_models_into_agents(monkeypatch) -> None:
 
     assert isinstance(planner_llm, ProviderLLM)
     assert planner_llm.model == "planner-x"
-    assert planner_llm.provider_profile == "openrouter"
     assert tester_llm.model == "tester-y"
-    # 未显式覆盖的角色使用该 provider 的默认模型。
+    # 未显式覆盖的角色使用所属 profile 的默认模型。
     assert developer_llm.model == "stealth/ox-alpha"

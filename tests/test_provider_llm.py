@@ -68,9 +68,8 @@ def test_provider_llm_omits_empty_system_prompt():
 def test_provider_llm_rejects_invalid_configuration():
     client = FakeClient()
 
-    with pytest.raises(ValueError):
-        ProviderLLM(model="", client_instance=client)
-
+    # 纯环境语义下空串 model 在构造期合法（调用时才校验），
+    # 但非字符串类型仍须在构造期拒绝。
     with pytest.raises(TypeError):
         ProviderLLM(model=123, client_instance=client)  # type: ignore[arg-type]
 

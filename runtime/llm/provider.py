@@ -4,7 +4,7 @@ import os
 import time
 from typing import Any
 
-from config.model import AGNES_MODEL, get_provider_profile
+from config.model import get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
@@ -43,19 +43,24 @@ class ProviderLLM(BaseLLM):
         provider_profile: str | None = None,
         client_instance: Any = None,
     ) -> None:
+        # 全环境驱动：model 未显式给出时，从所属 profile 的 MODEL 变量
+        # 动态读取（如 OPENROUTER_MODEL / AGNES_MODEL），允许为空——
+        # 真正的缺失校验推迟到首次请求时，保持构造零副作用。
         if model is not None and provider_profile is None:
-            # Legacy single-provider form: bare model means Agnes default.
             resolved_model = model
             resolved_profile = "agnes"
         else:
             profile = get_provider_profile(provider_profile)
             resolved_profile = profile.name
-            resolved_model = model if model is not None else profile.default_model
+            env_model = os.getenv(f"{profile.name.upper()}_MODEL", "")
+            resolved_model = (
+                model
+                if model is not None
+                else (env_model or profile.default_model)
+            )
 
         if not isinstance(resolved_model, str):
             raise TypeError("ProviderLLM model must be a string")
-        if not resolved_model.strip():
-            raise ValueError("ProviderLLM model must be a non-empty string")
 
         self.provider_profile = resolved_profile
         self.model = resolved_model

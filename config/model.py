@@ -28,14 +28,9 @@ load_dotenv()
 
 
 # Legacy Agnes constants kept for backward-compatible imports elsewhere.
-AGNES_BASE_URL = os.getenv(
-    "AGNES_BASE_URL",
-    "https://apihub.agnes-ai.com/v1",
-)
-AGNES_MODEL = os.getenv(
-    "AGNES_MODEL",
-    "agnes-2.5-flash",
-)
+# Values are pure environment reads — no endpoint/model literals in code.
+AGNES_BASE_URL = os.getenv("AGNES_BASE_URL")
+AGNES_MODEL = os.getenv("AGNES_MODEL")
 
 
 SUPPORTED_ROLES: tuple[str, ...] = (
@@ -61,51 +56,17 @@ class ProviderProfile:
         return os.getenv(self.api_key_env)
 
 
-def _profile(name: str) -> ProviderProfile:
-    """Build a profile from the *current* environment (dynamic by design)."""
-    prefix = name.upper()
-    return ProviderProfile(
-        name=name,
-        api_key_env=f"{prefix}_API_KEY",
-        default_base_url=os.getenv(
-            f"{prefix}_BASE_URL",
-            _FALLBACK_BASE_URLS[name],
-        ),
-        default_model=os.getenv(
-            f"{prefix}_MODEL",
-            _FALLBACK_MODELS[name],
-        ),
-    )
-
-
-# Built-in fallbacks so the three known providers work out of the box.
-# Any additional provider can be declared purely via environment:
-#   LLM_PROVIDERS=agnes,openrouter,deepseek,<new-name>
-#   <NEW-NAME>_API_KEY=... / <NEW-NAME>_BASE_URL=... / <NEW-NAME>_MODEL=...
-_BUILTIN_FALLBACKS = {
-    "agnes": {
-        "base_url": "https://apihub.agnes-ai.com/v1",
-        "model": "agnes-2.5-flash",
-    },
-    "openrouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "model": "stealth/ox-alpha",
-    },
-    "deepseek": {
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-flash",
-    },
-}
-
-_BUILTIN_ORDER = ["agnes", "openrouter", "deepseek"]
-
-
 def declared_provider_names() -> list[str]:
     """Return all usable provider profile names, order-stable.
 
-    Built-ins are always available; ``LLM_PROVIDERS`` (comma-separated)
-    registers additional arbitrary profiles dynamically.
+    Two sources, merged:
+
+    1. ``LLM_PROVIDERS`` — explicit comma-separated declaration;
+    2. auto-discovery — any environment variable named ``<X>_API_KEY``
+       implicitly declares provider ``x``.
     """
+    import re
+
     names: list[str] = []
     seen: set[str] = set()
 
@@ -116,54 +77,60 @@ def declared_provider_names() -> list[str]:
             seen.add(name)
             names.append(name)
 
-    for builtin in _BUILTIN_ORDER:
-        if builtin not in seen:
-            seen.add(builtin)
-            names.append(builtin)
+    pattern = re.compile(r"^([A-Z0-9]+)_API_KEY$")
+    for var in os.environ:
+        m = pattern.match(var)
+        if m:
+            name = m.group(1).lower()
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
 
     return names
 
 
 def get_provider_profile(name: str | None = None) -> ProviderProfile:
-    """Resolve a provider profile by name (default: ``DEFAULT_PROVIDER``).
+    """Resolve a provider profile by name (default: first declared).
 
     Profiles are built dynamically from the current environment:
 
-    - base URL:  ``{NAME}_BASE_URL``  else built-in fallback (if known)
-    - model:     ``{NAME}_MODEL``     else built-in fallback (if known)
+    - credential: ``{NAME}_API_KEY``   (required at call time)
+    - base URL:   ``{NAME}_BASE_URL``  (required)
+    - model:      ``{NAME}_MODEL``     (optional)
 
-    An unknown provider name is accepted only when BOTH its credential
-    variable and base URL are set in the environment — enabling fully
-    dynamic endpoints without code changes.
+    There are NO built-in providers in code — everything lives in `.env`.
     """
-    key = (name if name is not None else os.getenv("DEFAULT_PROVIDER", "agnes"))
-    key = str(key).strip().lower()
+    key = str(name if name is not None else _first_declared_provider())
+    key = key.strip().lower()
 
     prefix = key.upper()
     api_key_env = f"{prefix}_API_KEY"
     base_url = os.getenv(f"{prefix}_BASE_URL")
-    model = os.getenv(f"{prefix}_MODEL")
-
-    builtin = _BUILTIN_FALLBACKS.get(key)
-    if builtin is not None:
-        base_url = base_url or builtin["base_url"]
-        model = model or builtin["model"]
-    elif base_url is None:
-        available = ", ".join(declared_provider_names())
+    if base_url is None:
+        available = ", ".join(declared_provider_names()) or "(none)"
         raise ValueError(
             f"Unknown provider profile: {key!r}. "
-            f"Set {prefix}_API_KEY and {prefix}_BASE_URL to register it, "
-            f"or use one of: {available}"
+            f"Set {prefix}_API_KEY + {prefix}_BASE_URL + optional "
+            f"{prefix}_MODEL in the environment, or use one of: {available}"
         )
 
     return ProviderProfile(
         name=key,
         api_key_env=api_key_env,
         default_base_url=base_url,
-        default_model=model
-        if model is not None
-        else (builtin["model"] if builtin else ""),
+        default_model=os.getenv(f"{prefix}_MODEL", ""),
     )
+
+
+def _first_declared_provider() -> str:
+    names = declared_provider_names()
+    if not names:
+        raise ValueError(
+            "No LLM providers configured. Declare at least one in the "
+            "environment, e.g.: OPENROUTER_API_KEY=... + "
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1"
+        )
+    return names[0]
 
 
 def get_client_for(profile_name: str | None = None):
