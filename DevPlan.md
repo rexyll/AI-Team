@@ -784,7 +784,24 @@ run9/10/11 三轮中，developer 角色全部以 `tool_calls=0` 的纯文本回�
 专项测试：`tests/test_sandbox_redirection_contract.py`。
 最终 commit：（验收后记录）
 
-验收状态：**待用户确认专项及全量测试通过。真实验收方式：第五次运行 stringkit 需求，日志出现 `[Workspace] 沙盒根已重定向` 且产物必须落在 `projects\workspace\stringkit\`。**
+### √ 9.8.1 重定向机制实战验收（run15，Ox Alpha + DeepSeek 混合编队）
+
+第六次 stringkit 运行，**6/6 任务完成，success=True**：
+
+- ✅ **重定向首行生效**：`[Workspace] 沙盒根已重定向到需求指定目录: ...\projects\workspace`
+- ✅ **物理落位正确**：Developer 写 `workspace/stringkit/utils.py`，实际落在 `projects\workspace\stringkit\utils.py`——四轮攻坚的路径问题正式终结
+- ✅ **混合编队首闭环**：Planner/Architect/Tester/Reviewer = Ox Alpha（OpenRouter）；Developer = DeepSeek-v4-flash（官方直连）——9.6 按角色配置架构实战验证
+- ✅ **门禁轨迹全程可见**：每任务判定链清晰
+- ✅ **模型自主纠错再现**：自检发现 count_vowels 元音计数与 FOO BAR BAZ 大写转换两处断言错误后，修正实现而非盲改测试，并补充纯函数性测试
+
+角色分工实测：architect×1 / developer×2 / tester×1 / reviewer×1，tester 首轮通过（DeepSeek 判定合规），零返工。
+
+验收状态：**用户确认 success=True。9.x 真实运行质量提升阶段全部收官。**
+
+## 后续候选（按优先级）
+
+- **v0.9.3 版本化发布**：以本轮全绿为依据打标
+- **pip 白名单复议**：安全评审需明确策略（沿用前记）
 
 ## 后续候选（按优先级）
 
