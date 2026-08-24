@@ -224,9 +224,25 @@ class TaskWorkflow:
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
             self._apply_developer_outcome(task, developer_outcome)
+            result_data = (
+                developer_outcome.result.data
+                if developer_outcome.result is not None
+                else None
+            )
+            validation = (
+                result_data.get("validation", {})
+                if isinstance(result_data, dict)
+                else {}
+            )
+            dev_metrics = ""
+            if validation:
+                dev_metrics = (
+                    f", tool_calls={validation.get('tool_call_count', '?')}, "
+                    f"files_changed={validation.get('files_changed_count', '?')}"
+                )
             print(
                 f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                f"developer={developer_outcome.status}"
+                f"developer={developer_outcome.status}{dev_metrics}"
             )
 
             if task.status == "failed":
@@ -243,6 +259,15 @@ class TaskWorkflow:
                     if task.status == "failed":
                         return task
                     last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
+                    verdict = (
+                        tester_outcome.result.message
+                        if tester_outcome.result is not None
+                        else ""
+                    )
+                    print(
+                        f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
+                        f"tester note: {verdict[:160]}"
+                    )
                     continue
             else:
                 self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
