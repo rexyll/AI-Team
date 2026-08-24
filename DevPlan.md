@@ -758,8 +758,24 @@ Phase 4 "LLM 可替换"契约的完整体现：每个角色可独立绑定 (prov
 
 ---
 
+## √ 9.8 沙盒根目录重定向（路径约束的结构化终解）
+
+四轮真实运行跨两模型证明文本层手段对路径约束无效。本节点改为**结构化强制**：需求含显式输出目录时，运行前把沙盒根锚定到该目录的父级，使模型的相对路径物理落位正确——模型零配合需求。
+
+1. **`security/workspace.py`**：新增 `set_default_workspace_root()`（运行期热替换默认沙盒）+ `get_default_workspace_root()` + 纯函数 `anchor_workspace_root(base, mandated)`（锚定规则：保留除末段外的完整父链，末段由 agent 写文件时自然生成）
+2. **`main.py`**：新增 `--projects-base` 参数；`run_project` 启动前经 `extract_required_paths` 检测需求约束 → 重定向沙盒根并打印透明日志；未含约束的需求回落默认根
+3. 逃逸防护在重定向后的根上依然完整生效
+
+配套契约：`tests/test_sandbox_redirection_contract.py` ×10（锚定规则、重定向后相对解析、逃逸防护存活、requirement→anchor→落点全链推演、CLI 接线源码钉扎）。
+
+文档同步：user_guide §4.1/§6.1 更新为自动重定向语义。
+
+专项测试：`tests/test_sandbox_redirection_contract.py`。
+最终 commit：（验收后记录）
+
+验收状态：**待用户确认专项及全量测试通过。真实验收方式：第五次运行 stringkit 需求，日志出现 `[Workspace] 沙盒根已重定向` 且产物必须落在 `projects\workspace\stringkit\`。**
+
 ## 后续候选（按优先级）
 
-- **9.8 沙盒根目录重定向（原 9.6 提案，路径约束的结构化终解）**：`main.py --workspace` 将沙盒根重定向到需求指定目录
-- **429 退避重试**：对 provider 速率限制错误增加指数退避（本轮实战暴露）
+- **429 退避重试**：✅ 已随 9.6.1 落地（LLM_MAX_ATTEMPTS / LLM_BACKOFF_SECONDS 可调）
 - **pip 白名单复议**：Developer 已可在沙盒内 pip install 第三方包（run5 实测），安全评审需明确策略

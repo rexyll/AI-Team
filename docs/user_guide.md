@@ -89,10 +89,12 @@ python -c "from config.model import get_client_for; get_client_for('openrouter')
 
 ### 4.1 运行前检查清单
 
-Developer 的所有文件操作都发生在**仓库之外的独立工作区**：
-`F:\workspace\_coding_workspace\AI-Team\projects\`（由 `security/workspace.py` 定义，与代码仓库物理隔离，详见 §6.1）。
+Developer 的所有文件操作都发生在**仓库之外的独立工作区**
+`F:\workspace\_coding_workspace\AI-Team\projects\`（详见 §6.1）。
 
-运行前建议清理上次实验的残留，避免旧文件干扰模型的探索：
+自 v0.9.3 起，若需求指定了输出目录（如 `workspace/demo01/`），运行前会把沙盒根**自动重定向**到该目录的父级——模型写的相对路径将物理落位在正确位置，无需模型配合。
+
+仍建议每次运行前清理上次实验残留，避免旧文件干扰模型探索：
 
 ```powershell
 Get-ChildItem F:\workspace\_coding_workspace\AI-Team\projects
@@ -165,14 +167,16 @@ python main.py "..." *>&1 | Tee-Object -FilePath runs\run-01.log
 
 ## 6. 已知边界（务必了解）
 
-### 6.1 工作区与仓库物理隔离
+### 6.1 工作区与仓库物理隔离 + 自动重定向
 
-Developer 的文件工具受 sandbox 保护，授权根目录是 `AI-Team\projects\`——**仓库的兄弟目录**，而非仓库本身（定义见 `security/workspace.py` 的 `PROJECT_ROOT`）。因此：
+Developer 的文件工具受 sandbox 保护，授权根目录默认为 `AI-Team\projects\`（仓库的兄弟目录，定义见 `security/workspace.py`）。
 
-- 生成的代码**天然不会进入 git 仓库**，无需担心污染版本库；
-- 需求中写的相对路径（如 `workspace/demo01/converter.py`）都落在 `projects\` 内部；
-- 逃逸出该根目录的路径会被拒绝（有安全契约守卫）；
-- 实验产物按目录归档管理，用完可整目录删除。
+自 v0.9.3 起：**需求中指定的输出目录会自动重定向沙盒根**。例如需求写"所有文件放在 workspace/stringkit/ 目录下"，运行时沙盒根即锚定为 `projects\workspace\`——模型写的 `stringkit/utils.py` 物理落位为 `projects\workspace\stringkit\utils.py`，无需模型配合。
+
+- 生成的代码**天然不会进入 git 仓库**；
+- 未指定路径的需求回落到默认根 `projects\`；
+- 逃逸出根目录的路径会被拒绝（安全契约守卫）；
+- 实验产物按目录归档，整目录删除即可。
 
 ### 6.2 CLI 运行是"即时性"的
 

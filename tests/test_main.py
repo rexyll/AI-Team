@@ -219,7 +219,7 @@ def test_main_returns_error_when_project_fails(
     monkeypatch,
     capsys,
 ):
-    def failing_run_project(requirement):
+    def failing_run_project(*args, **kwargs):
         raise RuntimeError(
             "project execution failed"
         )

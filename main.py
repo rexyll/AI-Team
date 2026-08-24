@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
+from runtime.plan_constraints import extract_required_paths
+from security.workspace import PROJECT_ROOT, set_default_workspace_root
 
 
 def _ensure_log_safe_streams() -> None:
@@ -37,10 +40,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project requirement to execute.",
     )
 
+    parser.add_argument(
+        "--projects-base",
+        default=None,
+        help=(
+            "Base directory for project sandboxes "
+            f"(default: {PROJECT_ROOT})."
+        ),
+    )
+
     return parser
 
 
-def run_project(requirement: str):
+def run_project(requirement: str, *, projects_base: str | None = None):
     if not isinstance(requirement, str):
         raise TypeError(
             "requirement must be a string"
@@ -50,6 +62,29 @@ def run_project(requirement: str):
         raise ValueError(
             "requirement cannot be empty"
         )
+
+    # Structural path-constraint enforcement (9.8): when the requirement
+    # mandates an output directory ("所有文件放在 workspace/stringkit/"),
+    # redirect the sandbox root so relative tool paths land there by
+    # construction. Text-level hints alone failed across two models.
+    mandated_dirs = extract_required_paths(requirement)
+    base = Path(projects_base) if projects_base else Path(PROJECT_ROOT)
+    if mandated_dirs:
+        from security.workspace import (
+            anchor_workspace_root,
+            set_default_workspace_root,
+        )
+
+        anchored = anchor_workspace_root(base, mandated_dirs[0])
+        set_default_workspace_root(anchored)
+        print(
+            f"[Workspace] 沙盒根已重定向到需求指定目录: {anchored}"
+            f"（产物将物理落位于 {mandated_dirs[0]}/ 之下）"
+        )
+    else:
+        from security.workspace import set_default_workspace_root
+
+        set_default_workspace_root(base)
 
     router = create_agent_router()
 
@@ -82,7 +117,8 @@ def main() -> int:
 
     try:
         task_manager, result = run_project(
-            requirement
+            requirement,
+            projects_base=args.projects_base,
         )
 
     except Exception as exc:
