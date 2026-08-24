@@ -1,7 +1,8 @@
 # AI-Team DevPlan
 
 > 项目仓库：`rexyll/AI-Team`
-> 当前唯一开发分支：`main`（2026-08-23 由 refactor/runtime-architecture-7.5.5-execution-history-semantics 迁移而来；旧主线已留档于标签 `backup/legacy-main`）
+> 当前唯一开发分支：`main`
+> 最新标签：`v0.9.3`（混合编队验证 + 多 Provider 按角色配置 + 沙盒重定向）
 >
 > **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。** 系统不是简单的多 Agent Demo，而是让 Planner / Architect / Developer / Tester / Reviewer / Orchestrator 形成稳定的软件工程闭环：用户需求 → 计划 → 依赖调度 → Agent 执行 → Tester 质量门禁 → Reviewer 审核/返工 → 项目结果 → 持久化恢复 → 事件审计与查询。
 >
