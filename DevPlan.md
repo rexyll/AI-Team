@@ -644,6 +644,6 @@ stringkit 同需求第三轮：7/7 任务完成，success=True，耗时 19 分 3
 开发过程中修复自检发现的正则边界缺陷：单段目录+尾斜杠（如 `src/`）因段量词 `+` 无法匹配，调整为 `*` 并增加双斜杠过滤。沙盒 14 组断言全过，含实验二真实需求文本回归。
 
 专项测试：`tests/test_plan_constraint_injection_contract.py`。
-最终 commit：（验收后记录）
+最终 commit：`a5f8fa9`。
 
-验收状态：**待用户确认。真实验收方式：commit 后第四次运行 stringkit 需求，产物必须落在 `projects\workspace\stringkit\`。**
+验收状态：**专项及全量测试已过、代码已入库；真实验收进行中——第四次运行 stringkit 需求，产物必须落在 `projects\workspace\stringkit\` 且日志出现注入标记。**
