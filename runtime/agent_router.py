@@ -10,11 +10,7 @@ class AgentRouter:
         self.agents: dict[str, object] = {}
         self.developers: list[object] = []
 
-    def register(
-        self,
-        agent_or_role,
-        agent: object | None = None,
-    ) -> None:
+    def register(self, agent_or_role, agent: object | None = None) -> None:
         if agent is None:
             agent = agent_or_role
             if not isinstance(agent, BaseAgent):
@@ -30,24 +26,17 @@ class AgentRouter:
                 if not isinstance(agent_role, str) or not agent_role.strip():
                     raise ValueError("agent.role must be a non-empty string")
                 if role != agent_role.strip():
-                    raise ValueError(
-                        f"Agent role mismatch: registered role '{role}' "
-                        f"does not match agent.role '{agent_role}'"
-                    )
-
+                    raise ValueError(f"Agent role mismatch: registered role '{role}' does not match agent.role '{agent_role}'")
         if not isinstance(role, str) or not role.strip():
             raise ValueError("Agent role must be a non-empty string")
         role = role.strip()
-
         if role in self.agents:
             raise ValueError(f"Agent role already registered: {role}")
-
         self.agents[role] = agent
         if role == "developer":
             self.developers = [agent]
 
     def register_developer_pool(self, agents: list[object]) -> None:
-        """Register multiple Developer agents sharing the same logical role."""
         if not isinstance(agents, list) or not agents:
             raise ValueError("developer pool must contain at least one agent")
         if any(not isinstance(agent, BaseAgent) for agent in agents):
@@ -63,11 +52,13 @@ class AgentRouter:
         return self.agents.get(role)
 
     def get_developers(self) -> list[object]:
-        """Return a shallow copy of the configured Developer pool."""
+        """Return the current singleton registry entry, or the full pool."""
+        if len(self.developers) == 1:
+            current = self.agents.get("developer")
+            return [current] if current is not None else []
         return list(self.developers)
 
     def get_developer_for_task(self, task_id: str) -> object:
-        """Select a stable Developer from the pool using SHA-256."""
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
         if not self.developers:
