@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from agents.base import BaseAgent
@@ -58,6 +60,84 @@ REVISION_REQUIRED
 """
 
 
+DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS = 16000
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _truncate_text(value: Any, limit: int) -> str:
+    """Render a value for the reviewer without allowing unbounded prompt growth."""
+    text = value if isinstance(value, str) else str(value)
+    if len(text) <= limit:
+        return text
+
+    marker = f"\n...[truncated {len(text) - limit} chars]...\n"
+    if len(marker) >= limit:
+        return text[:limit]
+
+    head = (limit - len(marker)) // 2
+    tail = limit - len(marker) - head
+    return text[:head] + marker + text[-tail:]
+
+
+def _compact_developer_result(result: Any, limit: int) -> str:
+    """Keep review evidence while bounding large code/report payloads.
+
+    Developer results can contain complete test files or long command output.
+    The reviewer still receives the canonical metadata and high-value evidence
+    fields first; verbose report/code text is bounded with a head/tail marker.
+    """
+    if not isinstance(result, dict):
+        return _truncate_text(result, limit)
+
+    compact: dict[str, Any] = {}
+    for key in ("status", "agent", "task_id"):
+        if key in result:
+            compact[key] = result[key]
+
+    message = result.get("message")
+    if message:
+        compact["message"] = _truncate_text(message, min(2000, limit))
+
+    data = result.get("data")
+    if isinstance(data, dict):
+        compact_data: dict[str, Any] = {}
+
+        # Preserve objective evidence ahead of verbose free-form reports.
+        for key in ("files_changed", "tests", "validation", "summary"):
+            if key in data:
+                compact_data[key] = data[key]
+
+        for key in ("implementation", "architecture", "report"):
+            if key in data:
+                compact_data[key] = _truncate_text(
+                    data[key],
+                    min(6000, max(1000, limit // 3)),
+                )
+
+        for key, value in data.items():
+            if key not in compact_data:
+                compact_data[key] = _truncate_text(
+                    value,
+                    min(2000, max(500, limit // 8)),
+                )
+
+        compact["data"] = compact_data
+    elif "data" in result:
+        compact["data"] = _truncate_text(result["data"], min(4000, limit))
+
+    return _truncate_text(
+        json.dumps(compact, ensure_ascii=False, indent=2, default=str),
+        limit,
+    )
+
+
 class ReviewerAgent(BaseAgent):
 
     @property
@@ -98,6 +178,18 @@ class ReviewerAgent(BaseAgent):
     @staticmethod
     def _build_prompt(context: AgentContext) -> str:
         view = context_view(context, "reviewer")
+        developer_result = _compact_developer_result(
+            view["task_result"],
+            _positive_env_int(
+                "REVIEWER_MAX_DEVELOPER_RESULT_CHARS",
+                DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS,
+            ),
+        )
+        tester_feedback = _truncate_text(view["tester_feedback"], 8000)
+        reviewer_feedback = _truncate_text(view["reviewer_feedback"], 6000)
+        dependency_context = _truncate_text(view["dependency_context"], 8000)
+        history = _truncate_text(view["history"], 4000)
+        metadata = _truncate_text(view["metadata"], 4000)
 
         return f"""
 请审核下面的开发任务。
@@ -116,35 +208,35 @@ Description:
 {view['task_description']}
 
 ====================
-DEVELOPER RESULT
+DEVELOPER RESULT (BOUNDED)
 ====================
 
-{view['task_result']}
+{developer_result}
 
 ====================
 TESTER RESULT
 ====================
 
-{view['tester_feedback']}
+{tester_feedback}
 
 ====================
 PREVIOUS REVIEW RESULT
 ====================
 
-{view['reviewer_feedback']}
+{reviewer_feedback}
 
 ====================
 UPSTREAM CONTEXT
 ====================
 
-{view['dependency_context']}
+{dependency_context}
 
 ====================
 EXECUTION CONTEXT
 ====================
 
-history={view['history']}
-metadata={view['metadata']}
+history={history}
+metadata={metadata}
 review_round={view['review_round']}
 
 ====================
@@ -173,6 +265,9 @@ REVIEW REQUIREMENTS
 - 如果 Tester PASSED，也必须检查 Developer 是否真正满足任务要求。
 - 不要声称执行了没有执行的测试。
 - 不要修改代码。
+- DEVELOPER RESULT 可能因为上下文预算而被截断；截断标记表示省略了
+  非核心的长文本，不代表测试证据本身被删除。应优先依据 files_changed、tests、
+  validation、Tester 结论以及任务要求做判断。
 
 最终必须给出：
 
