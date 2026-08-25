@@ -67,20 +67,34 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         ArchitectAgent(effective_configs["architect"], llm=role_llms["architect"]),
     )
 
-    developer_agents: list[DeveloperAgent] = []
     developer_count = get_developer_count()
     base_config = effective_configs["developer"]
+    developer_agents: list[DeveloperAgent] = []
+
     for index in range(1, developer_count + 1):
         provider_name, model_id = resolve_developer_llm_spec(index)
-        developer_config = AgentConfig(
-            role="developer",
-            model=model_id,
-            temperature=base_config.temperature,
-            max_tokens=base_config.max_tokens,
-            enabled=base_config.enabled,
-            system_prompt=base_config.system_prompt,
-            extra={**base_config.extra, "developer_id": f"developer-{index}"},
-        )
+
+        # Preserve the legacy explicit AgentConfig object when the caller
+        # deliberately supplies a single Developer configuration. For the
+        # environment-driven default path, or a multi-Developer pool, the
+        # resolved model and stable developer identity are materialized into
+        # each individual AgentConfig.
+        if developer_count == 1 and configs is not None and "developer" in configs:
+            developer_config = base_config
+        else:
+            developer_config = AgentConfig(
+                role="developer",
+                model=model_id,
+                temperature=base_config.temperature,
+                max_tokens=base_config.max_tokens,
+                enabled=base_config.enabled,
+                system_prompt=base_config.system_prompt,
+                extra={
+                    **base_config.extra,
+                    "developer_id": f"developer-{index}",
+                },
+            )
+
         developer_agents.append(
             DeveloperAgent(
                 developer_config,
@@ -90,6 +104,7 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
                 ),
             )
         )
+
     router.register_developer_pool(developer_agents)
 
     router.register(
