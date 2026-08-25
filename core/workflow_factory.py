@@ -13,16 +13,25 @@ def create_task_workflow(
     state_change_hook: Callable[[TaskManager], None] | None = None,
     workflow_event_log: WorkflowEventLog | None = None,
     project_id: str | None = None,
+    developer=None,
 ) -> TaskWorkflow:
-    """Build the canonical Developer -> Tester -> Reviewer workflow."""
+    """Build the canonical Developer -> Tester -> Reviewer workflow.
 
-    developer = agent_router.get_agent("developer")
+    ``developer`` can be supplied by the project orchestrator to select a
+    specific member of the configured Developer pool. When omitted, the
+    router's legacy singleton Developer is used.
+    """
+    selected_developer = (
+        developer
+        if developer is not None
+        else agent_router.get_agent("developer")
+    )
     tester = agent_router.get_agent("tester")
     reviewer = agent_router.get_agent("reviewer")
 
     return TaskWorkflow(
         task_manager=task_manager,
-        developer=developer,
+        developer=selected_developer,
         tester=tester,
         reviewer=reviewer,
         agent_router=agent_router,
