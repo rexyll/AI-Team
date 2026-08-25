@@ -81,7 +81,7 @@ class ProviderLLM(BaseLLM):
         except ValueError:
             return 4
 
-    def _backoff_seconds(self, attempt: int, exc: BaseException) -> float:
+    def _backoff_seconds(self, attempt: int, exc: BaseException | None) -> float:
         base = 2.0
         try:
             base = float(os.getenv("LLM_BACKOFF_SECONDS", "2"))
@@ -89,7 +89,7 @@ class ProviderLLM(BaseLLM):
             pass
 
         # Honor a numeric Retry-After header when the SDK surfaces one.
-        response = getattr(exc, "response", None)
+        response = getattr(exc, "response", None) if exc is not None else None
         headers = getattr(response, "headers", None)
         raw = None
         if headers is not None and hasattr(headers, "get"):
@@ -104,17 +104,32 @@ class ProviderLLM(BaseLLM):
 
         return max(base * (2 ** (attempt - 1)), hint)
 
+    @staticmethod
+    def _has_content_or_tool_calls(response: Any) -> bool:
+        """Return whether a completion contains usable assistant output."""
+        try:
+            message = response.choices[0].message
+        except (AttributeError, IndexError, TypeError):
+            return False
+
+        content = getattr(message, "content", None)
+        raw_calls = getattr(message, "tool_calls", None)
+        return bool(content and str(content).strip()) or bool(raw_calls)
+
     def _post_chat(self, **kwargs: Any):
         """POST /chat/completions with transient-failure backoff.
 
         Two retry dimensions:
         1. HTTP-level: 429/5xx with exponential backoff.
-        2. Content-level: empty responses from reasoning-style models
-           (thinking consumes output budget → content="") are retried
-           so they degrade to slower runs instead of poisoning downstream
-           gates with unparseable verdicts.
+        2. Content-level: a successful response with neither usable text nor
+           tool calls. Reasoning-style models can consume the output budget
+           before emitting visible content; retrying here keeps that provider
+           quirk from poisoning downstream parsing and review gates.
 
-        Non-retryable failures raise immediately.
+        Non-retryable failures raise immediately. After the content retry
+        budget is exhausted, the final provider response is returned so the
+        existing upper layer remains responsible for reporting malformed
+        output.
         """
         max_attempts = self._max_attempts()
         http_attempt = 0
@@ -124,15 +139,11 @@ class ProviderLLM(BaseLLM):
             try:
                 response = self.client.chat.completions.create(**kwargs)
 
-                # ── Empty-content guard ──
-                message = response.choices[0].message
-                content = getattr(message, "content", None)
-                raw_calls = getattr(message, "tool_calls", None)
-
-                if not (content and str(content).strip()) and not raw_calls:
+                if not self._has_content_or_tool_calls(response):
                     empty_attempt += 1
                     if empty_attempt >= max_attempts:
-                        return response  # 返回最后一次空响应，由上层处理
+                        return response
+
                     wait = self._backoff_seconds(empty_attempt, None)
                     print(
                         f"[LLM] {self.provider_profile}/{self.model} "
