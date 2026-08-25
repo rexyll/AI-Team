@@ -3,10 +3,7 @@ from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 from runtime.result_normalizer import normalize_agent_result
 from runtime.context_builder import build_task_context
-from runtime.workflow_transition import (
-    WorkflowOutcomeKind,
-    get_workflow_transition,
-)
+from runtime.workflow_transition import WorkflowOutcomeKind, get_workflow_transition
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from enum import Enum
@@ -17,7 +14,6 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from runtime.agent_result import AgentResult
-
 
 MAX_REVIEW_ROUNDS = 3
 
@@ -141,20 +137,20 @@ class TaskWorkflow:
     def _validate_explicit_agent(self, role: str, agent) -> None:
         if agent is None:
             return
+        get_developers = getattr(self.agent_router, "get_developers", None)
+        get_agent = getattr(self.agent_router, "get_agent", None)
         if role == "developer":
-            get_developers = getattr(self.agent_router, "get_developers", None)
-            if callable(get_developers):
-                pool = get_developers()
-                if agent in pool:
-                    return
-            get_agent = getattr(self.agent_router, "get_agent", None)
+            # A minimal legacy router/test double may not expose either registry API.
+            if not callable(get_developers) and not callable(get_agent):
+                return
+            if callable(get_developers) and agent in get_developers():
+                return
             if callable(get_agent) and agent is get_agent(role):
                 return
             raise ValueError(
-                "TaskWorkflow developer agent must belong to the router's Developer pool"
+                "TaskWorkflow developer agent must be the instance registered by the router"
             )
 
-        get_agent = getattr(self.agent_router, "get_agent", None)
         if not callable(get_agent):
             return
         registered = get_agent(role)
@@ -175,7 +171,14 @@ class TaskWorkflow:
 
     @property
     def developer(self):
-        return self._developer
+        # Preserve an explicitly selected pool member; for legacy singleton
+        # workflows follow the router dynamically so replacement is observable.
+        get_developers = getattr(self.agent_router, "get_developers", None)
+        if callable(get_developers):
+            pool = get_developers()
+            if self._developer in pool:
+                return self._developer
+        return self._agent("developer", self._developer)
 
     @property
     def tester(self):
@@ -220,12 +223,10 @@ class TaskWorkflow:
         task.context["tool_execution_history"] = history.to_dict()
 
     def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
-        """Run one gate stage, tolerating transient invalid verdict shapes."""
         try:
             extra_attempts = max(0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2")))
         except ValueError:
             extra_attempts = 2
-
         outcome = run_gate()
         for _ in range(extra_attempts):
             if outcome.exception is not None:
@@ -272,6 +273,8 @@ class TaskWorkflow:
             )
 
             if task.status == "failed":
+                if developer_outcome.exception is not None:
+                    raise developer_outcome.exception
                 return task
 
             if self.tester is not None:
@@ -285,6 +288,8 @@ class TaskWorkflow:
                 )
                 if not tester_passed:
                     if task.status == "failed":
+                        if tester_outcome.exception is not None:
+                            raise tester_outcome.exception
                         return task
                     last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
                     verdict = tester_outcome.result.message if tester_outcome.result is not None else ""
@@ -314,6 +319,8 @@ class TaskWorkflow:
             if review_action == "completed":
                 return task
             if review_action == "failed":
+                if review_outcome.exception is not None:
+                    raise review_outcome.exception
                 return task
             if review_action == "revision":
                 last_gate_note = f"reviewer 要求返工（第 {round_index} 轮）"
@@ -442,5 +449,5 @@ class TaskWorkflow:
 
     def _build_context(self, task: Task) -> None:
         context = build_task_context(task, self.task_manager.tasks)
-        if isinstance(context, dict):
-            task.context["dependencies"] = context
+        # Keep the compatibility context field even when there are no dependencies.
+        task.context["dependencies"] = context
