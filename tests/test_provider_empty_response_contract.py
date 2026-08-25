@@ -59,6 +59,26 @@ def test_empty_content_returns_last_response_after_retry_budget(monkeypatch):
     assert client.chat.completions.calls == 2
 
 
+def test_whitespace_only_content_is_normalized_after_retry_budget(monkeypatch):
+    monkeypatch.setenv("LLM_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("LLM_BACKOFF_SECONDS", "0")
+    monkeypatch.setattr("runtime.llm.provider.time.sleep", lambda _: None)
+
+    client = _FakeClient([_response("\n\t"), _response("   ")])
+    llm = ProviderLLM(model="test-model", client_instance=client)
+
+    assert llm.generate("review this") == ""
+    assert client.chat.completions.calls == 2
+
+
+def test_meaningful_content_preserves_leading_and_trailing_whitespace():
+    client = _FakeClient([_response("  APPROVED  ")])
+    llm = ProviderLLM(model="test-model", client_instance=client)
+
+    assert llm.generate("review this") == "  APPROVED  "
+    assert client.chat.completions.calls == 1
+
+
 def test_tool_call_response_is_not_treated_as_empty(monkeypatch):
     monkeypatch.setenv("LLM_BACKOFF_SECONDS", "0")
     sleeps = []
