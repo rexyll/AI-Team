@@ -116,6 +116,20 @@ class ProviderLLM(BaseLLM):
         raw_calls = getattr(message, "tool_calls", None)
         return bool(content and str(content).strip()) or bool(raw_calls)
 
+    @staticmethod
+    def _normalized_content(content: Any) -> str:
+        """Normalize provider text at the public string boundary.
+
+        Whitespace-only content is semantically empty. This matters when
+        the content-level retry budget is exhausted: the final provider
+        response may contain ``" "`` or newlines rather than ``""``.
+        Keep meaningful leading/trailing whitespace untouched.
+        """
+        if content is None:
+            return ""
+        text = str(content)
+        return "" if not text.strip() else text
+
     def _post_chat(self, **kwargs: Any):
         """POST /chat/completions with transient-failure backoff.
 
@@ -191,7 +205,7 @@ class ProviderLLM(BaseLLM):
             max_tokens=max_tokens,
         )
 
-        return response.choices[0].message.content or ""
+        return self._normalized_content(response.choices[0].message.content)
 
     def generate_with_tools(
         self,
@@ -225,4 +239,7 @@ class ProviderLLM(BaseLLM):
             for tool_call in raw_tool_calls
         )
 
-        return LLMResponse(content=message.content, tool_calls=tool_calls)
+        return LLMResponse(
+            content=self._normalized_content(message.content),
+            tool_calls=tool_calls,
+        )
