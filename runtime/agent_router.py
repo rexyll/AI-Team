@@ -1,3 +1,5 @@
+import hashlib
+
 from agents.base import BaseAgent
 
 
@@ -65,12 +67,13 @@ class AgentRouter:
         return list(self.developers)
 
     def get_developer_for_task(self, task_id: str) -> object:
-        """Select a stable Developer from the pool using task-id hashing."""
+        """Select a stable Developer from the pool using SHA-256."""
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
         if not self.developers:
             raise KeyError("No developer agents are registered")
-        index = sum(ord(char) for char in task_id) % len(self.developers)
+        digest = hashlib.sha256(task_id.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:8], "big") % len(self.developers)
         return self.developers[index]
 
     def route(self, role: str) -> object:
