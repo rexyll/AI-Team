@@ -77,14 +77,7 @@ class Orchestrator:
         *,
         project_id: str | None = None,
     ) -> None:
-        """Attach (or replace) the durable workflow event log.
-
-        Rebuilding ``_workflow_event_sink`` here is essential: it is derived
-        from the log at construction time, and callers that attach the log
-        after construction (e.g. ProjectOrchestrator.execute) would otherwise
-        leave the sink as ``None``, silently dropping every workflow-level
-        lifecycle event from durable persistence.
-        """
+        """Attach (or replace) the durable workflow event log."""
         if log is not None and not isinstance(log, WorkflowEventLog):
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (
@@ -100,7 +93,6 @@ class Orchestrator:
             self._project_id = project_id
 
     def _persist_state_checkpoint(self, task_manager: TaskManager | None = None) -> None:
-        """Emit a checkpoint using the workflow hook contract."""
         hook = self._state_change_hook
         if hook is None:
             return
@@ -130,7 +122,6 @@ class Orchestrator:
 
     @staticmethod
     def _default_failure_classifier(error: BaseException) -> FailureKind:
-        """Classify execution failures without involving Agent/Workflow code."""
         if isinstance(error, (TypeError, ValueError, KeyError)):
             return FailureKind.NON_RETRYABLE
         return FailureKind.EXECUTION
@@ -155,7 +146,6 @@ class Orchestrator:
         print("=" * 60)
 
     def _get_executable_tasks(self):
-        """Use DependencyScheduler as the dependency decision source."""
         scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
 
         while True:
@@ -183,6 +173,36 @@ class Orchestrator:
                 seen.add(task.id)
         return executable
 
+    def _select_developer(self, task) -> object:
+        """Select the configured Developer instance for one task.
+
+        A pool member is selected deterministically from the task id, so the
+        same task keeps the same Developer after a retry/resume. Legacy
+        routers without a pool continue using the singleton Developer.
+        """
+        selector = getattr(self.agent_router, "get_developer_for_task", None)
+        if callable(selector):
+            return selector(task.id)
+        agent = self.agent_router.get_agent("developer")
+        if agent is None:
+            raise ValueError("No developer agent is registered")
+        return agent
+
+    @staticmethod
+    def _developer_identity(agent) -> dict[str, Any]:
+        config = getattr(agent, "config", None)
+        developer_id = None
+        model = None
+        if config is not None:
+            extra = getattr(config, "extra", {})
+            if isinstance(extra, dict):
+                developer_id = extra.get("developer_id")
+            model = getattr(config, "model", None)
+        return {
+            "developer_id": developer_id,
+            "model": model,
+        }
+
     def _execute_task(self, task) -> None:
         print("\n" + "-" * 60)
         print(f"{task.id} | {task.role} | {task.title}")
@@ -190,10 +210,6 @@ class Orchestrator:
 
         try:
             context = build_task_context(task, self.task_manager.tasks)
-            # The compatibility API may return [] for tasks without declared
-            # dependencies. That value is not a valid Task.context mapping.
-            # Keep Task.context canonical and let TaskWorkflow populate the
-            # legacy dependency field itself.
             if isinstance(context, dict):
                 task.context["dependencies"] = context
 
@@ -203,12 +219,17 @@ class Orchestrator:
                 self._persist_state_checkpoint()
 
             if task.role == "developer":
+                developer = self._select_developer(task)
+                identity = self._developer_identity(developer)
+                task.context["developer_assignment"] = identity
+                self._emit_event("developer_assigned", task, payload=identity)
                 workflow = create_task_workflow(
                     task_manager=self.task_manager,
                     agent_router=self.agent_router,
                     state_change_hook=self._persist_state_checkpoint,
                     workflow_event_log=self._workflow_event_sink,
                     project_id=self._project_id,
+                    developer=developer,
                 )
                 workflow.execute(task.id)
             else:
@@ -222,9 +243,6 @@ class Orchestrator:
             print(f"[Completed] {task.id} ({task.status})")
 
         except _CheckpointFailure:
-            # A checkpoint failure means durable state could not be confirmed.
-            # Do not mutate the in-memory task into a business-level failure;
-            # the caller may explicitly resume from this boundary.
             raise
         except Exception as exc:
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
@@ -237,7 +255,6 @@ class Orchestrator:
             print(f"[Failed] {task.id}: {exc}")
 
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
-        """Apply retry policy after failure, at the Orchestrator boundary."""
         if task.status != "failed":
             return False
 
