@@ -1,22 +1,23 @@
-"""Multi-provider LLM configuration with per-role model bindings.
+"""Environment-driven configuration for OpenAI-compatible LLM providers.
 
-Layered design:
+All provider endpoints, credentials, and model identifiers are supplied by
+environment variables (normally loaded from ``.env``). Nothing in this
+module contains a provider URL or model identifier as a runtime default.
 
-1. ``ProviderProfile`` - connection facts for one OpenAI-compatible
-   endpoint (credential env var, base URL, default model).
-2. Role bindings - each team role resolves to ``(provider, model)`` via
-   ``{ROLE}_PROVIDER`` / ``{ROLE}_MODEL`` environment variables, falling
-   back to ``DEFAULT_PROVIDER`` and the profile's default model.
-3. Lazy clients - one cached client per profile, constructed on first
-   actual use. Importing this module stays side-effect free.
+Configuration layers:
 
-Backward compatibility: ``get_client()`` keeps its original meaning
-(the Agnes client) for legacy callers such as ``ask_ai``.
+* provider profile: ``<PROVIDER>_API_KEY``, ``<PROVIDER>_BASE_URL``,
+  ``<PROVIDER>_MODEL``
+* role binding: ``<ROLE>_PROVIDER`` and ``<ROLE>_MODEL``
+* global binding: ``DEFAULT_PROVIDER`` and ``DEFAULT_MODEL``
+* developer pool: ``DEVELOPER_COUNT`` plus ``DEVELOPER_<N>_PROVIDER`` /
+  ``DEVELOPER_<N>_MODEL`` with role/global fallbacks
 """
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,13 +26,6 @@ from openai import OpenAI
 
 
 load_dotenv()
-
-
-# Legacy Agnes constants kept for backward-compatible imports elsewhere.
-# Values are pure environment reads — no endpoint/model literals in code.
-AGNES_BASE_URL = os.getenv("AGNES_BASE_URL")
-AGNES_MODEL = os.getenv("AGNES_MODEL")
-
 
 SUPPORTED_ROLES: tuple[str, ...] = (
     "planner",
@@ -48,25 +42,15 @@ class ProviderProfile:
 
     name: str
     api_key_env: str
-    default_base_url: str
+    base_url: str
     default_model: str
 
     def api_key(self) -> str | None:
-        """Read the credential from the *current* environment."""
         return os.getenv(self.api_key_env)
 
 
 def declared_provider_names() -> list[str]:
-    """Return all usable provider profile names, order-stable.
-
-    Two sources, merged:
-
-    1. ``LLM_PROVIDERS`` — explicit comma-separated declaration;
-    2. auto-discovery — any environment variable named ``<X>_API_KEY``
-       implicitly declares provider ``x``.
-    """
-    import re
-
+    """Return configured provider names in deterministic order."""
     names: list[str] = []
     seen: set[str] = set()
 
@@ -77,11 +61,11 @@ def declared_provider_names() -> list[str]:
             seen.add(name)
             names.append(name)
 
-    pattern = re.compile(r"^([A-Z0-9]+)_API_KEY$")
+    pattern = re.compile(r"^([A-Z0-9_]+)_API_KEY$")
     for var in os.environ:
-        m = pattern.match(var)
-        if m:
-            name = m.group(1).lower()
+        match = pattern.match(var)
+        if match:
+            name = match.group(1).lower()
             if name not in seen:
                 seen.add(name)
                 names.append(name)
@@ -89,164 +73,171 @@ def declared_provider_names() -> list[str]:
     return names
 
 
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"{name} is not configured")
+    return value
+
+
 def get_provider_profile(name: str | None = None) -> ProviderProfile:
-    """Resolve a provider profile by name (default: first declared).
+    """Resolve a provider profile entirely from environment configuration."""
+    provider_name = str(name if name is not None else _first_declared_provider()).strip().lower()
+    if not provider_name:
+        raise ValueError("provider name cannot be empty")
 
-    Profiles are built dynamically from the current environment:
-
-    - credential: ``{NAME}_API_KEY``   (required at call time)
-    - base URL:   ``{NAME}_BASE_URL``  (required)
-    - model:      ``{NAME}_MODEL``     (optional)
-
-    There are NO built-in providers in code — everything lives in `.env`.
-    """
-    key = str(name if name is not None else _first_declared_provider())
-    key = key.strip().lower()
-
-    prefix = key.upper()
-    api_key_env = f"{prefix}_API_KEY"
-    base_url = os.getenv(f"{prefix}_BASE_URL")
-    if base_url is None:
-        available = ", ".join(declared_provider_names()) or "(none)"
-        raise ValueError(
-            f"Unknown provider profile: {key!r}. "
-            f"Set {prefix}_API_KEY + {prefix}_BASE_URL + optional "
-            f"{prefix}_MODEL in the environment, or use one of: {available}"
-        )
+    prefix = provider_name.upper()
+    base_url = _required_env(f"{prefix}_BASE_URL")
+    default_model = os.getenv(f"{prefix}_MODEL", "").strip()
 
     return ProviderProfile(
-        name=key,
-        api_key_env=api_key_env,
-        default_base_url=base_url,
-        default_model=os.getenv(f"{prefix}_MODEL", ""),
+        name=provider_name,
+        api_key_env=f"{prefix}_API_KEY",
+        base_url=base_url,
+        default_model=default_model,
     )
 
 
 def _first_declared_provider() -> str:
     names = declared_provider_names()
     if not names:
+        configured = os.getenv("DEFAULT_PROVIDER", "").strip()
+        if configured:
+            return configured.lower()
         raise ValueError(
-            "No LLM providers configured. Declare at least one in the "
-            "environment, e.g.: OPENROUTER_API_KEY=... + "
-            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1"
+            "No LLM provider is configured. Set DEFAULT_PROVIDER and "
+            "<PROVIDER>_API_KEY/<PROVIDER>_BASE_URL in .env."
         )
     return names[0]
-
-
-def get_client_for(profile_name: str | None = None):
-    """Return the cached client for one profile, constructing it lazily.
-
-    Importing this module remains side-effect free: credential validation
-    and client construction happen on first actual use.
-    """
-    profile = get_provider_profile(profile_name)
-
-    cached = _CLIENTS.get(profile.name)
-    if cached is None:
-        api_key = profile.api_key()
-        if not api_key:
-            raise RuntimeError(
-                f"{profile.api_key_env} is not configured."
-            )
-        base_url_override = os.getenv(f"{profile.name.upper()}_BASE_URL")
-        cached = OpenAI(
-            api_key=api_key,
-            base_url=(
-                base_url_override
-                if base_url_override
-                else profile.default_base_url
-            ),
-        )
-        _CLIENTS[profile.name] = cached
-    return cached
 
 
 _CLIENTS: dict[str, Any] = {}
 
 
-def resolve_role_llm_spec(role: str) -> tuple[str, str]:
-    """Resolve ``(provider_profile_name, model_id)`` for one team role.
+def get_client_for(profile_name: str | None = None):
+    """Return one lazily-created client per configured provider profile."""
+    profile = get_provider_profile(profile_name)
+    cached = _CLIENTS.get(profile.name)
+    if cached is None:
+        api_key = profile.api_key()
+        if not api_key:
+            raise RuntimeError(f"{profile.api_key_env} is not configured")
+        cached = OpenAI(api_key=api_key, base_url=profile.base_url)
+        _CLIENTS[profile.name] = cached
+    return cached
 
-    Resolution order for the model: ``{ROLE}_MODEL`` environment variable,
-    then the bound provider profile's default model. The provider itself
-    comes from ``{ROLE}_PROVIDER``, falling back to ``DEFAULT_PROVIDER``.
-    """
-    if role not in SUPPORTED_ROLES:
-        raise ValueError(
-            f"Unknown role: {role!r}. Supported: {SUPPORTED_ROLES}"
-        )
 
+def _resolve_provider_for_role(role: str) -> str:
     prefix = role.upper()
-    provider_name = os.getenv(
-        f"{prefix}_PROVIDER",
-        os.getenv("DEFAULT_PROVIDER", "agnes"),
-    ).strip().lower()
+    provider = os.getenv(f"{prefix}_PROVIDER", "").strip()
+    if provider:
+        return provider.lower()
+    provider = os.getenv("DEFAULT_PROVIDER", "").strip()
+    if provider:
+        return provider.lower()
+    return _first_declared_provider()
 
+
+def resolve_role_llm_spec(role: str) -> tuple[str, str]:
+    """Resolve ``(provider, model)`` for a team role."""
+    role = role.strip().lower()
+    if role not in SUPPORTED_ROLES:
+        raise ValueError(f"Unknown role: {role!r}. Supported: {SUPPORTED_ROLES}")
+
+    provider_name = _resolve_provider_for_role(role)
     profile = get_provider_profile(provider_name)
 
-    model = os.getenv(f"{prefix}_MODEL", "").strip()
+    model = os.getenv(f"{role.upper()}_MODEL", "").strip()
     if not model:
         model = profile.default_model
-
+    if not model:
+        model = os.getenv("DEFAULT_MODEL", "").strip()
+    if not model:
+        raise ValueError(
+            f"No model configured for role '{role}'. Set {role.upper()}_MODEL, "
+            f"{provider_name.upper()}_MODEL, or DEFAULT_MODEL in .env."
+        )
     return profile.name, model
 
 
-def _resolve_default_client_profile() -> str:
-    """Legacy hook: the plain ``get_client`` is pinned to the Agnes profile."""
-    return "agnes"
+def _parse_positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1")
+    return value
+
+
+def get_developer_count() -> int:
+    """Return the configured Developer pool size."""
+    return _parse_positive_int("DEVELOPER_COUNT", 1)
+
+
+def resolve_developer_llm_spec(index: int) -> tuple[str, str]:
+    """Resolve one Developer's ``(provider, model)``.
+
+    Indexes are 1-based and can override the generic developer role:
+    ``DEVELOPER_1_PROVIDER`` / ``DEVELOPER_1_MODEL``.
+    Missing per-instance values inherit ``DEVELOPER_PROVIDER`` /
+    ``DEVELOPER_MODEL`` and then the global/provider defaults.
+    """
+    if not isinstance(index, int) or isinstance(index, bool) or index < 1:
+        raise ValueError("developer index must be a positive integer")
+
+    specific_prefix = f"DEVELOPER_{index}"
+    provider = os.getenv(f"{specific_prefix}_PROVIDER", "").strip()
+    if not provider:
+        provider = os.getenv("DEVELOPER_PROVIDER", "").strip()
+    if not provider:
+        provider = _resolve_provider_for_role("developer")
+    provider = provider.lower()
+
+    profile = get_provider_profile(provider)
+    model = os.getenv(f"{specific_prefix}_MODEL", "").strip()
+    if not model:
+        model = os.getenv("DEVELOPER_MODEL", "").strip()
+    if not model:
+        model = profile.default_model
+    if not model:
+        model = os.getenv("DEFAULT_MODEL", "").strip()
+    if not model:
+        raise ValueError(
+            f"No model configured for Developer {index}. Set "
+            f"{specific_prefix}_MODEL, DEVELOPER_MODEL, "
+            f"{provider.upper()}_MODEL, or DEFAULT_MODEL in .env."
+        )
+    return profile.name, model
 
 
 # ---------------------------------------------------------------------------
-# Legacy Agnes-only surface (unchanged behavior for existing callers).
+# Backward-compatible legacy surface.
 # ---------------------------------------------------------------------------
-
-_client: Any = None
-
 
 def get_client():
-    """Return the shared Agnes client, constructing it lazily.
+    """Return the default configured provider client.
 
-    Kept for backward compatibility: new code should prefer
-    :func:`get_client_for` with an explicit provider profile.
+    Legacy callers previously received a fixed provider client. The provider
+    is now resolved from DEFAULT_PROVIDER, so there is no provider-specific
+    endpoint or credential embedded in code.
     """
-    global _client
-    if _client is None:
-        api_key = os.getenv("AGNES_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "AGNES_API_KEY is not configured."
-            )
-        _client = OpenAI(
-            api_key=api_key,
-            base_url=os.getenv("AGNES_BASE_URL", AGNES_BASE_URL),
-        )
-    return _client
+    return get_client_for(os.getenv("DEFAULT_PROVIDER", "").strip() or None)
 
 
-def ask_ai(
-    prompt: str,
-    system_prompt: str | None = None,
-) -> str:
-    messages = []
-
+def ask_ai(prompt: str, system_prompt: str | None = None) -> str:
+    """Legacy generic completion using the globally configured model."""
+    provider_name, model = resolve_role_llm_spec("developer")
+    messages: list[dict[str, str]] = []
     if system_prompt:
-        messages.append(
-            {
-                "role": "system",
-                "content": system_prompt,
-            }
-        )
-
-    messages.append(
-        {
-            "role": "user",
-            "content": prompt,
-        }
-    )
-
-    response = get_client().chat.completions.create(
-        model=AGNES_MODEL,
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    response = get_client_for(provider_name).chat.completions.create(
+        model=model,
         messages=messages,
     )
-
-    return response.choices[0].message.content or ""
+    content = response.choices[0].message.content
+    return "" if content is None or not str(content).strip() else str(content)
