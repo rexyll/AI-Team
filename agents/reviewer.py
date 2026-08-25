@@ -92,11 +92,19 @@ def _compact_developer_result(result: Any, limit: int) -> str:
     Developer results can contain complete test files or long command output.
     The reviewer still receives the canonical metadata and high-value evidence
     fields first; verbose report/code text is bounded with a head/tail marker.
+
+    Unknown top-level fields are retained as bounded supplemental evidence.
+    This is important because ``task_result`` is a role-authorized context
+    field: the compaction layer must not silently change its semantic content
+    merely because a producer uses a result shape that is not part of the
+    canonical AgentResult schema.
     """
     if not isinstance(result, dict):
         return _truncate_text(result, limit)
 
     compact: dict[str, Any] = {}
+    canonical_keys = {"status", "agent", "task_id", "message", "data"}
+
     for key in ("status", "agent", "task_id"):
         if key in result:
             compact[key] = result[key]
@@ -131,6 +139,18 @@ def _compact_developer_result(result: Any, limit: int) -> str:
         compact["data"] = compact_data
     elif "data" in result:
         compact["data"] = _truncate_text(result["data"], min(4000, limit))
+
+    # Preserve producer-specific top-level result fields as bounded evidence.
+    # The previous implementation dropped them entirely, which meant a valid
+    # reviewer-visible Context field could lose semantic content during
+    # prompt compaction (for example {"marker": "CTX_TASK_RESULT"}).
+    for key, value in result.items():
+        if key in canonical_keys:
+            continue
+        compact[key] = _truncate_text(
+            value,
+            min(2000, max(500, limit // 8)),
+        )
 
     return _truncate_text(
         json.dumps(compact, ensure_ascii=False, indent=2, default=str),
