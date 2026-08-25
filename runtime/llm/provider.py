@@ -8,14 +8,10 @@ from config.model import get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
-# Transient upstream failures worth retrying with backoff: shared-pool
-# rate limits (e.g. OpenRouter free tiers) and gateway blips. Anything
-# else (auth, bad request, unknown model) must fail immediately.
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 def _status_code_of(exc: BaseException) -> int | None:
-    """Best-effort HTTP status extraction from an SDK exception."""
     status = getattr(exc, "status_code", None)
     if isinstance(status, int):
         return status
@@ -29,11 +25,9 @@ def _status_code_of(exc: BaseException) -> int | None:
 class ProviderLLM(BaseLLM):
     """BaseLLM adapter for OpenAI-compatible provider clients.
 
-    Supports multiple provider profiles (see ``config.model``): pass an
-    explicit ``model`` and/or ``provider_profile`` name; when omitted,
-    both resolve to the Agnes defaults for backward compatibility. The
-    underlying client is resolved lazily on first completion request, so
-    construction never touches provider credentials.
+    Provider and model selection is environment-driven. Tests and callers
+    may inject a client directly; in that case no provider configuration is
+    required because the client is already supplied by the caller.
     """
 
     def __init__(
@@ -43,24 +37,26 @@ class ProviderLLM(BaseLLM):
         provider_profile: str | None = None,
         client_instance: Any = None,
     ) -> None:
-        # 全环境驱动：model 未显式给出时，从所属 profile 的 MODEL 变量
-        # 动态读取（如 OPENROUTER_MODEL / AGNES_MODEL），允许为空——
-        # 真正的缺失校验推迟到首次请求时，保持构造零副作用。
-        if model is not None and provider_profile is None:
-            resolved_model = model
-            resolved_profile = "agnes"
+        if client_instance is not None and provider_profile is None:
+            resolved_profile = "injected"
+            resolved_model = model or os.getenv("DEFAULT_MODEL", "").strip()
+            if not resolved_model:
+                raise ValueError(
+                    "model is required when using an injected ProviderLLM client"
+                )
         else:
             profile = get_provider_profile(provider_profile)
             resolved_profile = profile.name
-            env_model = os.getenv(f"{profile.name.upper()}_MODEL", "")
-            resolved_model = (
-                model
-                if model is not None
-                else (env_model or profile.default_model)
-            )
+            resolved_model = (model or profile.default_model).strip()
+            if not resolved_model:
+                resolved_model = os.getenv("DEFAULT_MODEL", "").strip()
+            if not resolved_model:
+                raise ValueError(
+                    f"No model configured for provider '{resolved_profile}'"
+                )
 
-        if not isinstance(resolved_model, str):
-            raise TypeError("ProviderLLM model must be a string")
+        if not isinstance(resolved_model, str) or not resolved_model.strip():
+            raise TypeError("ProviderLLM model must be a non-empty string")
 
         self.provider_profile = resolved_profile
         self.model = resolved_model
@@ -68,7 +64,6 @@ class ProviderLLM(BaseLLM):
 
     @property
     def client(self) -> Any:
-        """Resolve the provider client lazily via ``config.get_client_for``."""
         if self._client is None:
             from config.model import get_client_for
 
@@ -88,7 +83,6 @@ class ProviderLLM(BaseLLM):
         except ValueError:
             pass
 
-        # Honor a numeric Retry-After header when the SDK surfaces one.
         response = getattr(exc, "response", None) if exc is not None else None
         headers = getattr(response, "headers", None)
         raw = None
@@ -98,7 +92,7 @@ class ProviderLLM(BaseLLM):
             except Exception:
                 raw = None
         try:
-            hint = float(raw)  # type: ignore[arg-type]
+            hint = float(raw)
         except (TypeError, ValueError):
             hint = 0.0
 
@@ -106,45 +100,22 @@ class ProviderLLM(BaseLLM):
 
     @staticmethod
     def _has_content_or_tool_calls(response: Any) -> bool:
-        """Return whether a completion contains usable assistant output."""
         try:
             message = response.choices[0].message
         except (AttributeError, IndexError, TypeError):
             return False
-
         content = getattr(message, "content", None)
         raw_calls = getattr(message, "tool_calls", None)
         return bool(content and str(content).strip()) or bool(raw_calls)
 
     @staticmethod
     def _normalized_content(content: Any) -> str:
-        """Normalize provider text at the public string boundary.
-
-        Whitespace-only content is semantically empty. This matters when
-        the content-level retry budget is exhausted: the final provider
-        response may contain ``" "`` or newlines rather than ``""``.
-        Keep meaningful leading/trailing whitespace untouched.
-        """
         if content is None:
             return ""
         text = str(content)
         return "" if not text.strip() else text
 
     def _post_chat(self, **kwargs: Any):
-        """POST /chat/completions with transient-failure backoff.
-
-        Two retry dimensions:
-        1. HTTP-level: 429/5xx with exponential backoff.
-        2. Content-level: a successful response with neither usable text nor
-           tool calls. Reasoning-style models can consume the output budget
-           before emitting visible content; retrying here keeps that provider
-           quirk from poisoning downstream parsing and review gates.
-
-        Non-retryable failures raise immediately. After the content retry
-        budget is exhausted, the final provider response is returned so the
-        existing upper layer remains responsible for reporting malformed
-        output.
-        """
         max_attempts = self._max_attempts()
         http_attempt = 0
         empty_attempt = 0
@@ -157,7 +128,6 @@ class ProviderLLM(BaseLLM):
                     empty_attempt += 1
                     if empty_attempt >= max_attempts:
                         return response
-
                     wait = self._backoff_seconds(empty_attempt, None)
                     print(
                         f"[LLM] {self.provider_profile}/{self.model} "
@@ -204,7 +174,6 @@ class ProviderLLM(BaseLLM):
             temperature=temperature,
             max_tokens=max_tokens,
         )
-
         return self._normalized_content(response.choices[0].message.content)
 
     def generate_with_tools(
@@ -214,7 +183,6 @@ class ProviderLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
     ) -> LLMResponse:
-        """Native tool-calling completion mapped to the neutral LLMResponse."""
         if not isinstance(messages, list) or not messages:
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
@@ -227,7 +195,6 @@ class ProviderLLM(BaseLLM):
             kwargs["tool_choice"] = tool_choice
 
         response = self._post_chat(**kwargs)
-
         message = response.choices[0].message
         raw_tool_calls = getattr(message, "tool_calls", None) or []
         tool_calls = tuple(
@@ -238,7 +205,6 @@ class ProviderLLM(BaseLLM):
             )
             for tool_call in raw_tool_calls
         )
-
         return LLMResponse(
             content=self._normalized_content(message.content),
             tool_calls=tool_calls,
