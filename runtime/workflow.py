@@ -141,6 +141,19 @@ class TaskWorkflow:
     def _validate_explicit_agent(self, role: str, agent) -> None:
         if agent is None:
             return
+        if role == "developer":
+            get_developers = getattr(self.agent_router, "get_developers", None)
+            if callable(get_developers):
+                pool = get_developers()
+                if agent in pool:
+                    return
+            get_agent = getattr(self.agent_router, "get_agent", None)
+            if callable(get_agent) and agent is get_agent(role):
+                return
+            raise ValueError(
+                "TaskWorkflow developer agent must belong to the router's Developer pool"
+            )
+
         get_agent = getattr(self.agent_router, "get_agent", None)
         if not callable(get_agent):
             return
@@ -162,7 +175,7 @@ class TaskWorkflow:
 
     @property
     def developer(self):
-        return self._agent("developer", self._developer)
+        return self._developer
 
     @property
     def tester(self):
@@ -207,18 +220,9 @@ class TaskWorkflow:
         task.context["tool_execution_history"] = history.to_dict()
 
     def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
-        """Run one gate stage, tolerating transient invalid verdict shapes.
-
-        Reasoning-style upstream models occasionally return empty or
-        unparseable completions. Such responses are retried with a fresh
-        completion (bounded, no task-state changes) so they degrade to
-        slower rounds instead of terminal failures; only a *parseable*
-        verdict or a hard exception is returned to the caller.
-        """
+        """Run one gate stage, tolerating transient invalid verdict shapes."""
         try:
-            extra_attempts = max(
-                0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2"))
-            )
+            extra_attempts = max(0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2")))
         except ValueError:
             extra_attempts = 2
 
@@ -228,25 +232,14 @@ class TaskWorkflow:
                 break
             if stage == "tester" and outcome.status in ("passed", "failed"):
                 break
-            if stage == "reviewer" and outcome.status in (
-                "approved",
-                "revision",
-                "failed",
-            ):
+            if stage == "reviewer" and outcome.status in ("approved", "revision", "failed"):
                 break
-            print(
-                f"[Gate] {stage}=invalid({outcome.status}); "
-                "retrying with fresh completion"
-            )
+            print(f"[Gate] {stage}=invalid({outcome.status}); retrying with fresh completion")
             outcome = run_gate()
         return outcome
 
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
-
-        # Reason captured from the last non-passing gate, used when the
-        # round budget is exhausted below (previously this path silently
-        # left the task in a non-terminal state, stalling the project).
         last_gate_note = "unknown"
 
         for round_index in range(1, self.max_review_rounds + 1):
@@ -256,20 +249,11 @@ class TaskWorkflow:
                 self._checkpoint()
 
             self._build_context(task)
-
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
             self._apply_developer_outcome(task, developer_outcome)
-            result_data = (
-                developer_outcome.result.data
-                if developer_outcome.result is not None
-                else None
-            )
-            validation = (
-                result_data.get("validation", {})
-                if isinstance(result_data, dict)
-                else {}
-            )
+            result_data = developer_outcome.result.data if developer_outcome.result is not None else None
+            validation = result_data.get("validation", {}) if isinstance(result_data, dict) else {}
             dev_metrics = ""
             if validation:
                 dev_metrics = (
@@ -284,8 +268,7 @@ class TaskWorkflow:
                     message_head += "…"
             print(
                 f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                f"developer={developer_outcome.status}{dev_metrics} | "
-                f"{message_head}"
+                f"developer={developer_outcome.status}{dev_metrics} | {message_head}"
             )
 
             if task.status == "failed":
@@ -304,11 +287,7 @@ class TaskWorkflow:
                     if task.status == "failed":
                         return task
                     last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
-                    verdict = (
-                        tester_outcome.result.message
-                        if tester_outcome.result is not None
-                        else ""
-                    )
+                    verdict = tester_outcome.result.message if tester_outcome.result is not None else ""
                     print(
                         f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
                         f"tester note: {verdict[:160]}"
@@ -319,14 +298,10 @@ class TaskWorkflow:
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
                 print(
-                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                    "tester=skipped"
+                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester=skipped"
                 )
 
             self._emit_event("review_started", task, payload={"status": task.status})
-            # The tester success / tester-skip checkpoint already records the
-            # REVIEWING boundary. Do not emit a second checkpoint for the
-            # review-start observability event.
             review_outcome = self._run_gate_with_invalid_tolerance(
                 lambda: self._run_reviewer(task), stage="reviewer"
             )
@@ -344,10 +319,6 @@ class TaskWorkflow:
                 last_gate_note = f"reviewer 要求返工（第 {round_index} 轮）"
                 continue
 
-        # Round budget exhausted through the tester-continue path without a
-        # terminal verdict (the reviewer path fails explicitly inside its
-        # own handler). Terminate loudly instead of leaving the task in a
-        # non-terminal limbo that stalls the whole project scheduler.
         reason = (
             f"质量门禁在 {self.max_review_rounds} 轮内未通过"
             f"（最后状态: {last_gate_note}）"
@@ -355,11 +326,7 @@ class TaskWorkflow:
         print(f"[Gate] {task.id}: {reason}")
         self.task_manager.record_error(task.id, reason)
         self.task_manager.mark_failed(task.id, reason)
-        self._emit_event(
-            "task_failed",
-            task,
-            payload={"status": task.status, "error": reason},
-        )
+        self._emit_event("task_failed", task, payload={"status": task.status, "error": reason})
         self._checkpoint()
         return task
 
@@ -390,12 +357,7 @@ class TaskWorkflow:
         if outcome.exception is not None:
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.EXECUTION_FAILURE)
-            # Surface the real exception so operators can diagnose gate
-            # failures without re-running; mirrors the reviewer path.
-            self.task_manager.record_error(
-                task.id,
-                f"Tester execution failed: {outcome.exception}",
-            )
+            self.task_manager.record_error(task.id, f"Tester execution failed: {outcome.exception}")
             self._emit_event("tester_failed", task, payload=outcome.to_dict())
             self._checkpoint()
             return
@@ -414,7 +376,7 @@ class TaskWorkflow:
 
     def _handle_tester_result(self, task: Task, outcome: StageOutcome) -> bool:
         self._apply_tester_outcome(task, outcome)
-        return outcome.status == "passed"
+        return outcome.status == "passed" and outcome.exception is None
 
     def _run_developer(self, task: Task) -> StageOutcome:
         try:
@@ -425,23 +387,20 @@ class TaskWorkflow:
             return StageOutcome.failure(WorkflowStage.DEVELOPER, exc)
 
     def _apply_developer_outcome(self, task: Task, outcome: StageOutcome) -> None:
-        if outcome.exception is not None:
-            error = f"Developer execution failed: {outcome.exception}"
-            self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.EXECUTION_FAILURE)
-            self.task_manager.record_error(task.id, error)
-            self._emit_event("developer_failed", task, payload=outcome.to_dict())
-            self._checkpoint()
-            raise outcome.exception
         if outcome.status == "completed":
             self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.SUCCESS)
-            self.task_manager.record_error(task.id, None)
             self.task_manager.record_result(task.id, outcome.result_dict)
             self._emit_event("developer_completed", task, payload=outcome.to_dict())
             self._checkpoint()
             return
-        message = outcome.result.message if outcome.result is not None else "Developer execution failed"
+        if outcome.exception is not None:
+            self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.EXECUTION_FAILURE)
+            self.task_manager.record_error(task.id, f"Developer execution failed: {outcome.exception}")
+            self._emit_event("developer_failed", task, payload=outcome.to_dict())
+            self._checkpoint()
+            return
         self._transition_for_outcome(task, WorkflowStage.DEVELOPER, WorkflowOutcomeKind.INVALID_RESULT)
-        self.task_manager.record_error(task.id, message)
+        self.task_manager.record_error(task.id, f"Invalid developer result status: {outcome.status}")
         self._emit_event("developer_invalid_result", task, payload=outcome.to_dict())
         self._checkpoint()
 
@@ -454,67 +413,34 @@ class TaskWorkflow:
             return StageOutcome.failure(WorkflowStage.REVIEWER, exc)
 
     def _apply_reviewer_outcome(self, task: Task, outcome: StageOutcome) -> str:
-        if outcome.exception is not None:
-            error = f"Reviewer execution failed: {outcome.exception}"
-            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
-            self.task_manager.record_error(task.id, error)
-            self._emit_event("reviewer_failed", task, payload=outcome.to_dict())
-            self._checkpoint()
-            raise outcome.exception
         if outcome.status == "approved":
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
-            event_payload = outcome.to_dict()
-            event_payload["status"] = task.status
-            self._emit_event("reviewer_approved", task, payload=event_payload)
+            self._emit_event("review_approved", task, payload=outcome.to_dict())
             self._checkpoint()
             return "completed"
-        if outcome.status == "revision":
-            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.QUALITY_GATE_FAILURE)
-            self.task_manager.record_review_result(task.id, outcome.result_dict)
-            self.task_manager.set_feedback(task.id, "reviewer", outcome.result_dict)
-            self.task_manager.record_error(task.id, None)
-            if task.review_round >= self.max_review_rounds:
-                self.task_manager.mark_failed(task.id, f"Task failed review after {self.max_review_rounds} rounds")
-                self._emit_event("reviewer_failed", task, payload=outcome.to_dict())
-                self._checkpoint()
-                return "failed"
-            self._emit_event("reviewer_revision_requested", task, payload=outcome.to_dict())
-            self._checkpoint()
-            return "revision"
-        if outcome.status == "failed":
-            message = outcome.result.message if outcome.result is not None else "Reviewer execution failed"
+        if outcome.exception is not None:
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
-            self.task_manager.record_error(task.id, message)
-            self._emit_event("reviewer_rejected", task, payload=outcome.to_dict())
+            self.task_manager.record_review_result(task.id, outcome.result_dict)
+            self.task_manager.record_error(task.id, f"Reviewer execution failed: {outcome.exception}")
+            self._emit_event("review_failed", task, payload=outcome.to_dict())
             self._checkpoint()
             return "failed"
+        if outcome.status == "revision":
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.REVISION_REQUIRED)
+            self.task_manager.record_review_result(task.id, outcome.result_dict)
+            self.task_manager.record_error(task.id, None)
+            self._emit_event("review_revision", task, payload=outcome.to_dict())
+            self._checkpoint()
+            return "revision"
         self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.INVALID_RESULT)
-        self.task_manager.record_error(task.id, f"Unknown reviewer status: {outcome.status}")
-        self._emit_event("reviewer_invalid_result", task, payload=outcome.to_dict())
+        self.task_manager.record_error(task.id, f"Invalid reviewer result status: {outcome.status}")
+        self._emit_event("review_invalid_result", task, payload=outcome.to_dict())
         self._checkpoint()
         return "failed"
 
-    def _handle_review_result(self, task: Task, outcome: StageOutcome) -> str:
-        if outcome.status == "approved":
-            return "completed"
-        if outcome.status == "failed":
-            return "failed"
-        if outcome.status == "revision":
-            if task.review_round >= self.max_review_rounds:
-                self.task_manager.mark_failed(task.id, f"Task failed review after {self.max_review_rounds} rounds")
-                return "failed"
-            return "revision"
-        self.task_manager.mark_failed(task.id, f"Unknown review status: {outcome.status}")
-        return "failed"
-
     def _build_context(self, task: Task) -> None:
-        """Build and persist the legacy dependency mapping for the task."""
-        all_tasks = {item.id: item for item in self.task_manager.get_all_tasks()}
-        dependency_context = build_task_context(task, all_tasks)
-        # Task.context is still the legacy compatibility surface used by
-        # existing agents/tests. Keep the full dependency mapping here; the
-        # newer AgentContext independently exposes dependency IDs plus the
-        # structured dependency_context snapshot.
-        task.context["dependencies"] = dependency_context
+        context = build_task_context(task, self.task_manager.tasks)
+        if isinstance(context, dict):
+            task.context["dependencies"] = context
