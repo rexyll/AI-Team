@@ -1,18 +1,24 @@
+from runtime.agent_config import AgentConfig
 from runtime.agent_result import AgentResult
 from runtime.reviewer_reliability import ResilientReviewerAgent
 
 
 class _FakeReviewer:
-    def __init__(self, result=None, error=None):
+    def __init__(self, result=None, error=None, config=None, llm=None):
         self.result = result
         self.error = error
         self.calls = 0
+        self.config = config
+        self.llm = llm
 
     def run(self, task):
         self.calls += 1
         if self.error is not None:
             raise self.error
         return self.result
+
+    def build_context(self, task, *, all_tasks=None):
+        return {"task_id": task.id, "all_tasks": all_tasks}
 
 
 def _task():
@@ -24,6 +30,18 @@ def _task():
 
 def _approved():
     return AgentResult(status="approved", agent="reviewer", task_id="TASK-REVIEWER-001", message="APPROVED")
+
+
+def test_wrapper_preserves_primary_reviewer_compatibility_surface():
+    config = AgentConfig(role="reviewer", model="reviewer-model")
+    llm = object()
+    primary = _FakeReviewer(result=_approved(), config=config, llm=llm)
+    wrapper = ResilientReviewerAgent(primary)
+
+    assert wrapper.role == "reviewer"
+    assert wrapper.config == config
+    assert wrapper.llm is llm
+    assert wrapper.build_context(_task())["task_id"] == "TASK-REVIEWER-001"
 
 
 def test_primary_reviewer_success_does_not_use_fallback():
