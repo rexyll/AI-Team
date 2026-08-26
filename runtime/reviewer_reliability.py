@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
 
 from agents.reviewer import ReviewerAgent
 from runtime.agent_result import AgentResult
@@ -52,22 +51,11 @@ class ReviewerReliabilityStats:
 
 
 class ResilientReviewerAgent:
-    """Run the normal reviewer first and recover with an optional fallback model.
-
-    The wrapper deliberately keeps ReviewerAgent unchanged for compatibility.
-    A fallback is only activated after the primary reviewer raises (including
-    invalid/empty reviewer output). If both paths fail, a conservative
-    ``revision`` result is returned instead of turning reviewer infrastructure
-    failure into a task execution failure.
-    """
+    """Run the normal reviewer first and recover with an optional fallback model."""
 
     role = "reviewer"
 
-    def __init__(
-        self,
-        primary: ReviewerAgent,
-        fallback: ReviewerAgent | None = None,
-    ) -> None:
+    def __init__(self, primary: ReviewerAgent, fallback: ReviewerAgent | None = None) -> None:
         self.primary = primary
         self.fallback = fallback
         self.stats = ReviewerReliabilityStats()
@@ -78,25 +66,24 @@ class ResilientReviewerAgent:
             self.stats.record_primary(success=True, empty=not bool(result.message.strip()))
             return self._annotate(result, source="primary")
         except Exception as primary_exc:
-            self.stats.record_primary(
-                success=False,
-                empty=self._looks_empty(primary_exc),
-            )
+            self.stats.record_primary(success=False, empty=self._looks_empty(primary_exc))
 
             if self.fallback is not None:
-                self.stats.record_fallback(success=False)
                 try:
                     result = self.fallback.run(task)
-                    self.stats.fallback_successes += 1
-                    self.stats.fallback_failures -= 1
-                    return self._annotate(
-                        result,
-                        source="fallback",
-                        primary_error=primary_exc,
-                    )
                 except Exception as fallback_exc:
-                    self.stats.fallback_failures += 1
+                    self.stats.record_fallback(
+                        success=False,
+                        empty=self._looks_empty(fallback_exc),
+                    )
                     return self._recovery_result(task, primary_exc, fallback_exc)
+
+                self.stats.record_fallback(success=True, empty=not bool(result.message.strip()))
+                return self._annotate(
+                    result,
+                    source="fallback",
+                    primary_error=primary_exc,
+                )
 
             return self._recovery_result(task, primary_exc, None)
 
@@ -127,7 +114,11 @@ class ResilientReviewerAgent:
         )
 
     @staticmethod
-    def _recovery_result(task, primary_error: Exception, fallback_error: Exception | None) -> AgentResult:
+    def _recovery_result(
+        task,
+        primary_error: Exception,
+        fallback_error: Exception | None,
+    ) -> AgentResult:
         return AgentResult(
             status="revision",
             agent="reviewer",
