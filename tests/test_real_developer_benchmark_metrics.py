@@ -4,7 +4,7 @@ from benchmarks.real_developer.metrics import (
 )
 
 
-def test_task_metrics_aggregate_tokens_and_calls():
+def test_task_metrics_aggregate_tokens_calls_and_execution_details():
     metrics = RealDeveloperTaskMetrics(
         task_id="TASK-1",
         developer_id="developer-1",
@@ -12,6 +12,9 @@ def test_task_metrics_aggregate_tokens_and_calls():
         llm_calls=2,
         input_tokens=100,
         output_tokens=40,
+        llm_latency_seconds=1.2,
+        tool_calls=4,
+        test_commands=2,
     )
     result = RealDeveloperBenchmarkResult.from_task_metrics(
         scenario="independent",
@@ -26,6 +29,10 @@ def test_task_metrics_aggregate_tokens_and_calls():
 
     assert result.llm_calls == 2
     assert result.total_tokens == 140
+    assert result.llm_latency_seconds == 1.2
+    assert result.avg_llm_latency_seconds == 0.6
+    assert result.tool_calls == 4
+    assert result.test_commands == 2
     assert result.developer_utilization == 1.0
     assert result.cost_per_completed_task_tokens == 140
 
