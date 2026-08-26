@@ -118,11 +118,13 @@ class WorkflowEventLog:
             event.event_id,
         )
 
-    def _project_sort_key(self, event: WorkflowEvent) -> tuple[int, str, int, str]:
+    def _project_sort_key(self, event: WorkflowEvent) -> tuple[int, str, str]:
+        # Project queries have a deterministic persisted ordering: timestamp,
+        # then event id. ``project.resumed`` remains a lifecycle exception and
+        # is kept after the ordinary project events at the same timestamp.
         return (
             1 if event.event_type == "project.resumed" else 0,
             event.occurred_at,
-            self._append_sequence.get(event.event_id, 0),
             event.event_id,
         )
 
