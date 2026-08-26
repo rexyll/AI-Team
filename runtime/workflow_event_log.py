@@ -29,8 +29,8 @@ class WorkflowEventLog:
 
     The index is protected by an instance re-entrant lock so readers can safely
     snapshot the stream while another thread appends or merges events. Query and
-    projection callers therefore observe a stable snapshot and never mutate
-    the log.
+    projection callers therefore observe a stable snapshot and never mutate the
+    log.
     """
 
     def __init__(self, persistence_sink: WorkflowEventPersistenceSink | None = None) -> None:
@@ -139,11 +139,18 @@ class WorkflowEventLog:
             )
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
+        """Return task events in append order, not wall-clock order.
+
+        Workflow events are emitted by one task's execution path in a strict
+        lifecycle order, while multiple tasks may append concurrently. Wall
+        clock timestamps are not a reliable sequence number on every platform:
+        consecutive events can share the platform timestamp resolution, and the
+        previous timestamp+UUID tie-breaker could therefore reorder a task's
+        lifecycle. Dict insertion order already records append order while the
+        same lock protects writers and readers.
+        """
         with self._lock:
-            return sorted(
-                (event for event in self._events.values() if event.task_id == task_id),
-                key=lambda event: (event.occurred_at, event.event_id),
-            )
+            return [event for event in self._events.values() if event.task_id == task_id]
 
     def get(self, event_id: str) -> WorkflowEvent:
         with self._lock:
