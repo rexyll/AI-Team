@@ -3,13 +3,13 @@ from collections.abc import Mapping
 from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
 from agents.planner import PlannerAgent
-from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
 
 from config.model import get_developer_count, resolve_developer_llm_spec, resolve_role_llm_spec
 from runtime.agent_config import AgentConfig
 from runtime.agent_router import AgentRouter
 from runtime.llm.provider import ProviderLLM
+from runtime.reviewer_reliability import create_reviewer_with_fallback
 
 AgentConfigMap = Mapping[str, AgentConfig]
 
@@ -47,9 +47,6 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
 
     router.register("architect", ArchitectAgent(effective_configs["architect"], llm=role_llms["architect"]))
 
-    # Explicit AgentConfig callers are legacy/programmatic construction and
-    # must retain their exact config object. Environment-driven construction
-    # is the opt-in path for the multi-Developer pool.
     developer_count = 1 if configs is not None else get_developer_count()
     base_config = effective_configs["developer"]
     developer_agents: list[DeveloperAgent] = []
@@ -77,6 +74,9 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
 
     router.register_developer_pool(developer_agents)
     router.register("tester", TesterAgent(effective_configs["tester"], llm=role_llms["tester"]))
-    router.register("reviewer", ReviewerAgent(effective_configs["reviewer"], llm=role_llms["reviewer"]))
+    router.register(
+        "reviewer",
+        create_reviewer_with_fallback(effective_configs["reviewer"], role_llms["reviewer"]),
+    )
     router.register("planner", PlannerAgent(effective_configs["planner"], llm=role_llms["planner"]))
     return router
