@@ -81,3 +81,25 @@ def test_cached_result_is_defensively_copied() -> None:
     second = cache.lookup("list_files", {"path": "."})
     assert second is not None
     assert second.result == {"items": ["a.py"]}
+
+
+def test_cache_evicts_oldest_entry_when_window_is_full() -> None:
+    cache = ToolResultCache(max_entries=2)
+    cache.store(tool_name="read_file", arguments={"path": "a.py"}, result="a", execution_id="CALL-1")
+    cache.store(tool_name="read_file", arguments={"path": "b.py"}, result="b", execution_id="CALL-2")
+    cache.store(tool_name="read_file", arguments={"path": "c.py"}, result="c", execution_id="CALL-3")
+
+    assert cache.lookup("read_file", {"path": "a.py"}) is None
+    assert cache.lookup("read_file", {"path": "b.py"}) is not None
+    assert cache.lookup("read_file", {"path": "c.py"}) is not None
+
+
+def test_cache_hit_refreshes_window_recency() -> None:
+    cache = ToolResultCache(max_entries=2)
+    cache.store(tool_name="read_file", arguments={"path": "a.py"}, result="a", execution_id="CALL-1")
+    cache.store(tool_name="read_file", arguments={"path": "b.py"}, result="b", execution_id="CALL-2")
+    assert cache.lookup("read_file", {"path": "a.py"}) is not None
+    cache.store(tool_name="read_file", arguments={"path": "c.py"}, result="c", execution_id="CALL-3")
+
+    assert cache.lookup("read_file", {"path": "a.py"}) is not None
+    assert cache.lookup("read_file", {"path": "b.py"}) is None
