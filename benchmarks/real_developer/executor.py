@@ -22,11 +22,7 @@ class _DeveloperBinding:
 
 
 class DeveloperAgentExecutor:
-    """Execute real DeveloperAgent instances with per-developer telemetry.
-
-    The executor owns only benchmark instrumentation and lifecycle accounting.
-    DeveloperAgent remains responsible for its actual tool-calling behavior.
-    """
+    """Execute real DeveloperAgent instances with per-developer telemetry."""
 
     def __init__(
         self,
@@ -63,11 +59,17 @@ class DeveloperAgentExecutor:
         before_calls = binding.llm.stats.calls
         before_input = binding.llm.stats.input_tokens
         before_output = binding.llm.stats.output_tokens
+        before_latency = binding.llm.stats.latency_seconds
         started = perf_counter()
+        tool_calls = 0
+        test_commands = 0
 
         self.manager.mark_running(task.id)
         try:
             result = binding.agent.run(task)
+            validation = result.data.get("validation", {}) if isinstance(result.data, dict) else {}
+            tool_calls = int(validation.get("tool_call_count", 0) or 0)
+            test_commands = int(validation.get("test_command_count", 0) or 0)
             if result.status == "completed":
                 self.manager.mark_developer_completed(task.id, result.data)
                 failed = False
@@ -85,5 +87,8 @@ class DeveloperAgentExecutor:
             llm_calls=binding.llm.stats.calls - before_calls,
             input_tokens=binding.llm.stats.input_tokens - before_input,
             output_tokens=binding.llm.stats.output_tokens - before_output,
+            llm_latency_seconds=binding.llm.stats.latency_seconds - before_latency,
+            tool_calls=tool_calls,
+            test_commands=test_commands,
             failed=failed,
         )
