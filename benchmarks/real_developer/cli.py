@@ -46,14 +46,29 @@ def main(argv: list[str] | None = None) -> int:
                 f"input_tokens={result.input_tokens} output_tokens={result.output_tokens} "
                 f"tool_calls={result.tool_calls} test_commands={result.test_commands} "
                 f"avg_llm_latency_s={result.avg_llm_latency_seconds:.3f} llm_time_ratio={result.llm_time_ratio:.3f} "
-                f"utilization={result.developer_utilization:.3f}"
+                f"utilization={result.developer_utilization:.3f} "
+                f"max_prompt_chars={result.max_prompt_chars_per_task} "
+                f"max_input_tokens_per_call={result.max_input_tokens_per_call} "
+                f"max_context_growth_ratio={result.max_context_growth_ratio:.3f}"
             )
             for metric in result.task_metrics:
                 print(
                     f"  task={metric.task_id} developer={metric.developer_id} duration_s={metric.duration_seconds:.3f} "
                     f"llm_calls={metric.llm_calls} input_tokens={metric.input_tokens} output_tokens={metric.output_tokens} "
-                    f"tool_calls={metric.tool_calls} test_commands={metric.test_commands} failed={metric.failed}"
+                    f"tool_calls={metric.tool_calls} test_commands={metric.test_commands} failed={metric.failed} "
+                    f"max_prompt_chars={metric.max_prompt_chars} max_input_tokens={metric.max_input_tokens} "
+                    f"context_growth_ratio={metric.context_growth_ratio:.3f}"
                 )
+                if metric.llm_profiles:
+                    print("    llm_profile:")
+                    for profile in metric.llm_profiles:
+                        print(
+                            f"      call={profile.call_index} method={profile.method} "
+                            f"latency_s={profile.latency_seconds:.3f} input_tokens={profile.input_tokens} "
+                            f"output_tokens={profile.output_tokens} prompt_chars={profile.prompt_chars} "
+                            f"system_prompt_chars={profile.system_prompt_chars} messages={profile.message_count} "
+                            f"tools={profile.tool_count}"
+                        )
         if len(results) > 1:
             mean_duration = sum(item.duration_seconds for item in results) / len(results)
             mean_calls = sum(item.llm_calls for item in results) / len(results)
