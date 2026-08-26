@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .llm_instrumentation import LLMCallProfile
 
@@ -28,6 +29,7 @@ class RealDeveloperTaskMetrics:
     cache_invalidations: int = 0
     failed: bool = False
     llm_profiles: tuple[LLMCallProfile, ...] = ()
+    tool_loop_telemetry: tuple[dict[str, Any], ...] = ()
     compaction_count: int = 0
     max_prompt_chars_before_compaction: int = 0
     max_prompt_chars_after_compaction: int = 0
@@ -78,6 +80,14 @@ class RealDeveloperTaskMetrics:
         return self.tool_result_chars / self.tool_calls if self.tool_calls else 0.0
 
     @property
+    def tool_call_category_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.tool_loop_telemetry:
+            category = str(item.get("category") or "other")
+            counts[category] = counts.get(category, 0) + 1
+        return dict(sorted(counts.items()))
+
+    @property
     def cache_hit_ratio(self) -> float:
         lookups = self.cache_hits + self.cache_misses
         return self.cache_hits / lookups if lookups else 0.0
@@ -106,6 +116,8 @@ class RealDeveloperTaskMetrics:
             raise ValueError("tool-loop counts cannot exceed tool_calls")
         if self.retry_tool_calls > self.duplicate_tool_calls:
             raise ValueError("retry_tool_calls cannot exceed duplicate_tool_calls")
+        if self.tool_loop_telemetry and len(self.tool_loop_telemetry) != self.tool_calls:
+            raise ValueError("tool_loop_telemetry length must match tool_calls")
 
 
 @dataclass(frozen=True)
@@ -164,6 +176,13 @@ class RealDeveloperBenchmarkResult:
     @property
     def avg_tool_result_chars(self) -> float: return self.tool_result_chars / self.tool_calls if self.tool_calls else 0.0
     @property
+    def tool_call_category_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.task_metrics:
+            for category, count in item.tool_call_category_counts.items():
+                counts[category] = counts.get(category, 0) + count
+        return dict(sorted(counts.items()))
+    @property
     def avg_llm_latency_seconds(self) -> float: return self.llm_latency_seconds / self.llm_calls if self.llm_calls else 0.0
     @property
     def developer_utilization(self) -> float:
@@ -218,6 +237,7 @@ class RealDeveloperBenchmarkResult:
             "cache_invalidations": self.cache_invalidations, "cache_hit_ratio": self.cache_hit_ratio,
             "duplicate_tool_call_ratio": self.duplicate_tool_call_ratio, "retry_tool_call_ratio": self.retry_tool_call_ratio,
             "unique_tool_call_ratio": self.unique_tool_call_ratio, "avg_tool_result_chars": self.avg_tool_result_chars,
+            "tool_call_category_counts": self.tool_call_category_counts,
             "developer_utilization": self.developer_utilization, "avg_llm_calls_per_task": self.avg_llm_calls_per_task,
             "avg_input_tokens_per_task": self.avg_input_tokens_per_task, "avg_tool_calls_per_task": self.avg_tool_calls_per_task,
             "max_llm_calls_per_task": self.max_llm_calls_per_task, "max_prompt_chars_per_task": self.max_prompt_chars_per_task,
