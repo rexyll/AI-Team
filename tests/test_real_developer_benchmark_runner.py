@@ -33,5 +33,7 @@ def test_real_developer_benchmark_collects_instrumentation():
     assert result.completed == 5
     assert result.failed == 0
     assert result.blocked == 0
-    assert result.llm_calls == 5
-    assert result.total_tokens == 75
+    # ROOT is a pre-completed benchmark fixture and therefore does not consume
+    # a Developer execution or an LLM call. Only A/B/C/FINAL are instrumented.
+    assert result.llm_calls == 4
+    assert result.total_tokens == 60
