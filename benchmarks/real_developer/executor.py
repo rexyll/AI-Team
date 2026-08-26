@@ -60,6 +60,7 @@ class DeveloperAgentExecutor:
         before_input = binding.llm.stats.input_tokens
         before_output = binding.llm.stats.output_tokens
         before_latency = binding.llm.stats.latency_seconds
+        before_profiles = len(binding.llm.stats.profiles)
         started = perf_counter()
         tool_calls = 0
         test_commands = 0
@@ -91,4 +92,5 @@ class DeveloperAgentExecutor:
             tool_calls=tool_calls,
             test_commands=test_commands,
             failed=failed,
+            llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
         )
