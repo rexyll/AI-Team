@@ -9,7 +9,10 @@ from runtime.llm.base import BaseLLM, LLMResponse
 class ContextCompactingLLM(BaseLLM):
     """Developer LLM decorator with one authoritative hard context budget."""
 
-    def __init__(self, inner: BaseLLM, *, recent_messages: int = 12, max_tool_chars: int = 12_000) -> None:
+    DEFAULT_RECENT_MESSAGES = 8
+    DEFAULT_MAX_TOOL_CHARS = 12_000
+
+    def __init__(self, inner: BaseLLM, *, recent_messages: int = DEFAULT_RECENT_MESSAGES, max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS) -> None:
         if not isinstance(inner, BaseLLM):
             raise TypeError(
                 "ContextCompactingLLM inner must implement BaseLLM, "
@@ -61,11 +64,9 @@ class ContextCompactingLLM(BaseLLM):
     def generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         before = [dict(message) for message in messages]
         windowed = self._apply_recent_window(before)
+        self._trim_tool_messages(windowed)
         active, stats = self.context_compactor.compact_messages(windowed)
 
-        # "before" describes the complete input presented to this decorator;
-        # the post-window value is deliberately used for compaction decisions,
-        # while telemetry must make both dimensions observable.
         full_input_chars = self._total_chars(before)
         full_input_tokens = self._total_tokens(before)
 
@@ -93,6 +94,14 @@ class ContextCompactingLLM(BaseLLM):
         })
         return self.inner.generate_with_tools(active, tools=tools, tool_choice=tool_choice)
 
+    def _trim_tool_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Keep recent tool evidence bounded before the global budget pass."""
+        tool_indexes = [index for index, message in enumerate(messages) if message.get("role") == "tool"]
+        for index in tool_indexes[:-1]:
+            content = str(messages[index].get("content") or "")
+            if len(content) > self.max_tool_chars:
+                messages[index]["content"] = content[: self.max_tool_chars] + "\n...[older tool output trimmed]..."
+
     @staticmethod
     def _total_chars(messages: list[dict[str, Any]]) -> int:
         return sum(len(str(message.get("content") or "")) for message in messages)
@@ -102,12 +111,7 @@ class ContextCompactingLLM(BaseLLM):
         return sum(estimate_tokens(str(message.get("content") or "")) for message in messages)
 
     def _apply_recent_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Preserve the stable prefix and recent tail used by the legacy decorator.
-
-        The hard character/token budget remains the authoritative final guard.
-        This lightweight window only removes stale turns before that guard and
-        therefore does not create a second independent budget policy.
-        """
+        """Preserve stable task instructions plus the most recent turns."""
         if len(messages) <= self.recent_messages + 3:
             return messages
         prefix_count = min(2, len(messages))
