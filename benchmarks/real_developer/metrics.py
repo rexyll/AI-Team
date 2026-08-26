@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .llm_instrumentation import LLMCallProfile
+
 
 @dataclass(frozen=True)
 class RealDeveloperTaskMetrics:
@@ -17,6 +19,7 @@ class RealDeveloperTaskMetrics:
     tool_calls: int = 0
     test_commands: int = 0
     failed: bool = False
+    llm_profiles: tuple[LLMCallProfile, ...] = ()
 
     @property
     def total_tokens(self) -> int:
@@ -33,6 +36,21 @@ class RealDeveloperTaskMetrics:
         if self.duration_seconds <= 0:
             return 0.0
         return min(1.0, self.llm_latency_seconds / self.duration_seconds)
+
+    @property
+    def max_prompt_chars(self) -> int:
+        return max((item.prompt_chars for item in self.llm_profiles), default=0)
+
+    @property
+    def max_input_tokens(self) -> int:
+        return max((item.input_tokens for item in self.llm_profiles), default=0)
+
+    @property
+    def context_growth_ratio(self) -> float:
+        prompts = [item.prompt_chars for item in self.llm_profiles if item.prompt_chars > 0]
+        if len(prompts) < 2 or prompts[0] <= 0:
+            return 1.0 if prompts else 0.0
+        return prompts[-1] / prompts[0]
 
     def __post_init__(self) -> None:
         if not self.task_id:
@@ -123,6 +141,18 @@ class RealDeveloperBenchmarkResult:
         return max((item.llm_calls for item in self.task_metrics), default=0)
 
     @property
+    def max_prompt_chars_per_task(self) -> int:
+        return max((item.max_prompt_chars for item in self.task_metrics), default=0)
+
+    @property
+    def max_input_tokens_per_call(self) -> int:
+        return max((item.max_input_tokens for item in self.task_metrics), default=0)
+
+    @property
+    def max_context_growth_ratio(self) -> float:
+        return max((item.context_growth_ratio for item in self.task_metrics), default=0.0)
+
+    @property
     def cost_per_completed_task_tokens(self) -> float:
         if self.completed <= 0:
             return float("inf")
@@ -163,5 +193,8 @@ class RealDeveloperBenchmarkResult:
             "avg_input_tokens_per_task": self.avg_input_tokens_per_task,
             "avg_tool_calls_per_task": self.avg_tool_calls_per_task,
             "max_llm_calls_per_task": self.max_llm_calls_per_task,
+            "max_prompt_chars_per_task": self.max_prompt_chars_per_task,
+            "max_input_tokens_per_call": self.max_input_tokens_per_call,
+            "max_context_growth_ratio": self.max_context_growth_ratio,
             "cost_per_completed_task_tokens": self.cost_per_completed_task_tokens,
         }
