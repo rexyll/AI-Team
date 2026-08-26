@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -20,15 +21,21 @@ class CachedToolResult:
 
 
 class ToolResultCache:
-    """Conservative cache for exact repeated read-only tool calls.
+    """Conservative, bounded cache for exact repeated read-only tool calls.
 
     Only read_file/list_files are cacheable. Any tool that may mutate or execute
     workspace state invalidates the cache, so a cached read can never survive a
-    known state-changing operation.
+    known state-changing operation. Entries are bounded to keep long tool loops
+    from turning deduplication into an unbounded memory cache.
     """
 
-    def __init__(self) -> None:
-        self._entries: dict[tuple[str, str], CachedToolResult] = {}
+    DEFAULT_MAX_ENTRIES = 64
+
+    def __init__(self, *, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
+        if max_entries <= 0:
+            raise ValueError("max_entries must be > 0")
+        self.max_entries = max_entries
+        self._entries: OrderedDict[tuple[str, str], CachedToolResult] = OrderedDict()
         self._hits = 0
         self._misses = 0
         self._invalidations = 0
@@ -53,6 +60,7 @@ class ToolResultCache:
         if entry is None:
             self._misses += 1
             return None
+        self._entries.move_to_end(key)
         self._hits += 1
         return CachedToolResult(
             tool_name=entry.tool_name,
@@ -65,12 +73,16 @@ class ToolResultCache:
         if tool_name not in CACHEABLE_TOOLS:
             return
         arguments_hash = stable_hash(arguments)
-        self._entries[(tool_name, arguments_hash)] = CachedToolResult(
+        key = (tool_name, arguments_hash)
+        self._entries[key] = CachedToolResult(
             tool_name=tool_name,
             arguments_hash=arguments_hash,
             result=deepcopy(result),
             source_execution_id=execution_id,
         )
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
 
     def invalidate_for(self, tool_name: str) -> None:
         if tool_name not in MUTATING_TOOLS:
