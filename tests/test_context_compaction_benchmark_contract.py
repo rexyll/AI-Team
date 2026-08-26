@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from agents.base import BaseAgent
-from runtime.llm.base import LLMResponse, LLMToolCall
+from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
-class _ScriptedLLM:
+class _ScriptedLLM(BaseLLM):
     """Minimal BaseLLM-compatible multi-turn tool caller for this contract."""
 
     def __init__(self) -> None:
