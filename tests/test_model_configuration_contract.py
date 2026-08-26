@@ -4,6 +4,18 @@ from config import model as model_config
 
 
 def _configure(monkeypatch):
+    # These contracts validate precedence from a controlled environment. A
+    # developer's local .env may legitimately contain role-specific settings;
+    # those must not leak into a test that explicitly configures defaults.
+    for role in ("PLANNER", "ARCHITECT", "DEVELOPER", "TESTER", "REVIEWER"):
+        monkeypatch.delenv(f"{role}_PROVIDER", raising=False)
+        monkeypatch.delenv(f"{role}_MODEL", raising=False)
+    monkeypatch.delenv("DEVELOPER_PROVIDER", raising=False)
+    monkeypatch.delenv("DEVELOPER_MODEL", raising=False)
+    for index in range(1, 10):
+        monkeypatch.delenv(f"DEVELOPER_{index}_PROVIDER", raising=False)
+        monkeypatch.delenv(f"DEVELOPER_{index}_MODEL", raising=False)
+
     monkeypatch.setenv("LLM_PROVIDERS", "alpha,beta")
     monkeypatch.setenv("DEFAULT_PROVIDER", "alpha")
     monkeypatch.setenv("DEFAULT_MODEL", "alpha-default")
@@ -27,14 +39,8 @@ def test_roles_can_override_provider_and_model(monkeypatch):
     monkeypatch.setenv("REVIEWER_PROVIDER", "beta")
     monkeypatch.setenv("REVIEWER_MODEL", "beta-reviewer")
 
-    assert model_config.resolve_role_llm_spec("reviewer") == (
-        "beta",
-        "beta-reviewer",
-    )
-    assert model_config.resolve_role_llm_spec("developer") == (
-        "alpha",
-        "alpha-model",
-    )
+    assert model_config.resolve_role_llm_spec("reviewer") == ("beta", "beta-reviewer")
+    assert model_config.resolve_role_llm_spec("developer") == ("alpha", "alpha-model")
 
 
 def test_developers_can_each_override_model(monkeypatch):
