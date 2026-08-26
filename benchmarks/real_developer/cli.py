@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"avg_llm_latency_s={result.avg_llm_latency_seconds:.3f} llm_time_ratio={result.llm_time_ratio:.3f} utilization={result.developer_utilization:.3f} max_prompt_chars={result.max_prompt_chars_per_task} "
                 f"max_input_tokens_per_call={result.max_input_tokens_per_call} max_context_growth_ratio={result.max_context_growth_ratio:.3f}"
             )
+            print(f"  tool_loop_categories={result.tool_call_category_counts}")
             for metric in result.task_metrics:
                 print(
                     f"  task={metric.task_id} developer={metric.developer_id} duration_s={metric.duration_seconds:.3f} llm_calls={metric.llm_calls} input_tokens={metric.input_tokens} output_tokens={metric.output_tokens} "
@@ -49,6 +50,14 @@ def main(argv: list[str] | None = None) -> int:
                     f"tool_result_chars={metric.tool_result_chars} largest_tool_result_chars={metric.largest_tool_result_chars} test_commands={metric.test_commands} failed={metric.failed} "
                     f"max_prompt_chars={metric.max_prompt_chars} max_input_tokens={metric.max_input_tokens} context_growth_ratio={metric.context_growth_ratio:.3f}"
                 )
+                print(f"    tool_loop_categories={metric.tool_call_category_counts}")
+                for index, item in enumerate(metric.tool_loop_telemetry, start=1):
+                    duplicate_of = item.get("duplicate_of") or "-"
+                    retry_of = item.get("retry_of") or "-"
+                    print(
+                        f"    tool_call={index} execution_id={item.get('execution_id', '-') } tool={item.get('tool_name', '-') } "
+                        f"category={item.get('category', 'other')} duplicate_of={duplicate_of} retry_of={retry_of} result_chars={item.get('result_chars', 0)}"
+                    )
                 if metric.llm_profiles:
                     print("    llm_profile:")
                     for profile in metric.llm_profiles:
