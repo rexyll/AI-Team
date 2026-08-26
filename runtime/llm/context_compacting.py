@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.context_compaction import ContextCompactor
+from runtime.context_compaction import ContextCompactor, estimate_tokens
 from runtime.llm.base import BaseLLM, LLMResponse
 
 
@@ -63,12 +63,18 @@ class ContextCompactingLLM(BaseLLM):
         windowed = self._apply_recent_window(before)
         active, stats = self.context_compactor.compact_messages(windowed)
 
+        # "before" describes the complete input presented to this decorator;
+        # the post-window value is deliberately used for compaction decisions,
+        # while telemetry must make both dimensions observable.
+        full_input_chars = self._total_chars(before)
+        full_input_tokens = self._total_tokens(before)
+
         self.calls += 1
-        self._last_prompt_chars_before = stats.original_chars
+        self._last_prompt_chars_before = full_input_chars
         self._last_prompt_chars_after = stats.compacted_chars
-        self._last_input_tokens_before = stats.original_tokens
+        self._last_input_tokens_before = full_input_tokens
         self._last_input_tokens_after = stats.compacted_tokens
-        self.max_prompt_chars_before = max(self.max_prompt_chars_before, stats.original_chars)
+        self.max_prompt_chars_before = max(self.max_prompt_chars_before, full_input_chars)
         self.max_prompt_chars_after = max(self.max_prompt_chars_after, stats.compacted_chars)
         self.max_input_messages_before = max(self.max_input_messages_before, len(before))
         self.max_input_messages_after = max(self.max_input_messages_after, len(active))
@@ -78,14 +84,22 @@ class ContextCompactingLLM(BaseLLM):
         self.compaction_events.append({
             "call_index": self.calls,
             "compacted": compacted,
-            "prompt_chars_before": stats.original_chars,
+            "prompt_chars_before": full_input_chars,
             "prompt_chars_after": stats.compacted_chars,
             "messages_before": len(before),
             "messages_after": len(active),
-            "input_tokens_before": stats.original_tokens,
+            "input_tokens_before": full_input_tokens,
             "input_tokens_after": stats.compacted_tokens,
         })
         return self.inner.generate_with_tools(active, tools=tools, tool_choice=tool_choice)
+
+    @staticmethod
+    def _total_chars(messages: list[dict[str, Any]]) -> int:
+        return sum(len(str(message.get("content") or "")) for message in messages)
+
+    @staticmethod
+    def _total_tokens(messages: list[dict[str, Any]]) -> int:
+        return sum(estimate_tokens(str(message.get("content") or "")) for message in messages)
 
     def _apply_recent_window(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Preserve the stable prefix and recent tail used by the legacy decorator.
