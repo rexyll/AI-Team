@@ -10,6 +10,8 @@ def test_first_tool_call_has_no_duplicate_or_retry() -> None:
     assert telemetry.duplicate_of is None
     assert telemetry.retry_of is None
     assert telemetry.result_chars == 5
+    assert telemetry.retained_result_chars == 5
+    assert telemetry.result_truncated is False
 
 
 def test_same_tool_and_arguments_are_classified_as_duplicate() -> None:
@@ -24,3 +26,17 @@ def test_same_tool_and_arguments_after_failure_are_classified_as_retry() -> None
     second = classify_tool_call(tool_name="run_command", arguments={"command": "pytest -q"}, result="passed", prior=[("EXEC-1", "run_command", first.arguments_hash, "failed")])
     assert second.duplicate_of == "EXEC-1"
     assert second.retry_of == "EXEC-1"
+
+
+def test_large_result_reports_raw_and_prompt_facing_evidence_sizes() -> None:
+    source = "x" * 10_000
+    telemetry = classify_tool_call(
+        tool_name="run_command",
+        arguments={"command": "pytest -q"},
+        result=source,
+        prior=[],
+    )
+
+    assert telemetry.result_chars == 10_000
+    assert telemetry.retained_result_chars < telemetry.result_chars
+    assert telemetry.result_truncated is True
