@@ -12,6 +12,7 @@ from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
+from runtime.tool_result_evidence import reduce_tool_result
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -165,7 +166,7 @@ EXECUTION REQUIREMENT
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
                     telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
                     loop_telemetry.append(telemetry_dict)
-                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
+                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
@@ -179,7 +180,7 @@ EXECUTION REQUIREMENT
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
                     telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
                     loop_telemetry.append(telemetry_dict)
-                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
+                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
@@ -216,7 +217,7 @@ EXECUTION REQUIREMENT
                 telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
                 loop_telemetry.append(telemetry_dict)
                 print(f"[Result]\n{result}")
-                messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": str(result)})
+                messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                 self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
@@ -236,6 +237,17 @@ EXECUTION REQUIREMENT
     @staticmethod
     def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any) -> dict[str, Any]:
         return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category}
+
+    @staticmethod
+    def _build_tool_message(tool_name: str, result: Any) -> str:
+        """Return bounded tool evidence for the next LLM turn.
+
+        Full tool output is deliberately kept in ToolExecutionHistory and in
+        task-level result data. Only this bounded representation is fed back
+        into the model context, preventing large file/command outputs from
+        dominating subsequent prompts.
+        """
+        return reduce_tool_result(tool_name, result).content
 
     @staticmethod
     def _record_tool_evidence(*, tool_name: str, arguments: dict[str, Any], result: Any, changed_files: list[str], command_results: list[dict[str, Any]]) -> None:
