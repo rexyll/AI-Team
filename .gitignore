@@ -54,3 +54,6 @@ runtime/cache/
 
 # backup files
 *.bak
+
+# workbuddy dir
+.workbuddy/

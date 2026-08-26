@@ -54,7 +54,7 @@ class Orchestrator:
         self.failure_classifier = failure_classifier or self._default_failure_classifier
         self._state_change_hook: Callable[[TaskManager], None] | None = None
         self._workflow_event_log = workflow_event_log
-        self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log else None
+        self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None
         self._project_id = project_id
 
     def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
@@ -68,7 +68,7 @@ class Orchestrator:
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
         self._workflow_event_log = log
-        self._workflow_event_sink = _OrchestratorWorkflowEventLog(log) if log else None
+        self._workflow_event_sink = _OrchestratorWorkflowEventLog(log) if log is not None else None
         if project_id is not None:
             self._project_id = project_id
 
@@ -84,12 +84,12 @@ class Orchestrator:
             raise _CheckpointFailure(str(exc)) from exc
 
     def _emit_event(self, event_type: str, task, *, payload: dict[str, Any] | None = None) -> None:
-        if self._workflow_event_log is None:
+        if self._workflow_event_sink is None:
             return
         project_id = self._project_id or task.context.get("project_id")
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id is required when workflow_event_log is enabled")
-        self._workflow_event_log.append(WorkflowEvent(
+        self._workflow_event_sink.append(WorkflowEvent(
             event_id=str(uuid4()), event_type=event_type, project_id=project_id,
             task_id=task.id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             payload=payload or {},

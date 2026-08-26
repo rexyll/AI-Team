@@ -121,7 +121,7 @@ def test_many_parallel_workflow_tasks_preserve_lifecycle_and_persisted_query_sem
             "developer_completed",
             "tester_skipped",
             "review_started",
-            "reviewer_revision_requested",
+            "reviewer_revision",
             "developer_completed",
             "tester_skipped",
             "review_started",

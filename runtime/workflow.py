@@ -97,8 +97,7 @@ class WorkflowStage(str, Enum):
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations."""
 
-    def __init__(
-        self,
+    def __init__(self,
         task_manager: TaskManager,
         developer,
         reviewer,
@@ -222,6 +221,10 @@ class TaskWorkflow:
             return
         task.context["tool_execution_history"] = history.to_dict()
 
+    def _capture_reviewer_feedback(self, task: Task, feedback: dict[str, Any]) -> None:
+        """Capture reviewer feedback into task context for downstream developer access."""
+        task.context["reviewer_feedback"] = feedback
+
     def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
         try:
             extra_attempts = max(0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2")))
@@ -288,8 +291,10 @@ class TaskWorkflow:
                 )
                 if not tester_passed:
                     if task.status == "failed":
-                        if tester_outcome.exception is not None:
-                            raise tester_outcome.exception
+                        # Tester exceptions are recorded in task.error (via
+                        # _apply_tester_outcome) instead of propagating out of
+                        # execute(): the workflow contract keeps the gate loop
+                        # observable while developer/reviewer failures raise.
                         return task
                     last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
                     verdict = tester_outcome.result.message if tester_outcome.result is not None else ""
@@ -376,6 +381,12 @@ class TaskWorkflow:
             self._emit_event("tester_rejected", task, payload=outcome.to_dict())
             self._checkpoint()
             return
+        if outcome.status == "invalid_result":
+            self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.INVALID_RESULT)
+            self.task_manager.record_error(task.id, f"Invalid tester result status: {outcome.status}")
+            self._emit_event("tester_invalid_result", task, payload=outcome.to_dict())
+            self._checkpoint()
+            return
         self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.INVALID_RESULT)
         self.task_manager.record_error(task.id, f"Invalid tester result status: {outcome.status}")
         self._emit_event("tester_invalid_result", task, payload=outcome.to_dict())
@@ -424,26 +435,28 @@ class TaskWorkflow:
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
-            self._emit_event("review_approved", task, payload=outcome.to_dict())
+            self._emit_event("reviewer_approved", task, payload={**outcome.to_dict(), "status": task.status})
             self._checkpoint()
             return "completed"
         if outcome.exception is not None:
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, f"Reviewer execution failed: {outcome.exception}")
-            self._emit_event("review_failed", task, payload=outcome.to_dict())
+            self._emit_event("reviewer_failed", task, payload=outcome.to_dict())
             self._checkpoint()
             return "failed"
         if outcome.status == "revision":
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.REVISION_REQUIRED)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
+            self.task_manager.set_feedback(task.id, "reviewer", outcome.result_dict)
             self.task_manager.record_error(task.id, None)
-            self._emit_event("review_revision", task, payload=outcome.to_dict())
+            self._emit_event("reviewer_revision", task, payload=outcome.to_dict())
             self._checkpoint()
             return "revision"
         self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.INVALID_RESULT)
+        self.task_manager.record_review_result(task.id, outcome.result_dict)
         self.task_manager.record_error(task.id, f"Invalid reviewer result status: {outcome.status}")
-        self._emit_event("review_invalid_result", task, payload=outcome.to_dict())
+        self._emit_event("reviewer_invalid_result", task, payload=outcome.to_dict())
         self._checkpoint()
         return "failed"
 

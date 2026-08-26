@@ -71,7 +71,7 @@ class ToolRegistry:
         """Return registered tool names in registration order."""
         return list(self._tools)
 
-    def schemas(self) -> list[dict[str, Any]]:
+    def schemas(self):
         """Return independent function-call schemas in registration order."""
         return [self.schema(name) for name in self._tools]
 

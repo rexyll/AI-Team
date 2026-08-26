@@ -190,7 +190,7 @@ def test_partial_failure_retry_and_reviewer_revision_can_progress_concurrently(t
     assert manager.get_task(revision_id).review_round == 2
     assert any(event.event_type == "task_retrying" and event.task_id == retry_id for event in log.list_all())
     assert any(
-        event.event_type == "reviewer_revision_requested" and event.task_id == revision_id
+        event.event_type == "reviewer_revision" and event.task_id == revision_id
         for event in log.list_all()
     )
     assert set(adapter.list_ids()) == {event.event_id for event in log.list_all()}
