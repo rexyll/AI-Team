@@ -15,6 +15,7 @@ class WorkflowOutcomeKind(str, Enum):
     EXECUTION_FAILURE = "execution_failure"
     INVALID_RESULT = "invalid_result"
     REVIEWER_RECOVERY = "reviewer_recovery"
+    REVIEWER_RETRY = "reviewer_retry"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ WORKFLOW_STAGE_TRANSITIONS: tuple[WorkflowTransition, ...] = (
     WorkflowTransition("reviewer", WorkflowOutcomeKind.EXECUTION_FAILURE, TaskStatus.REVIEWING, TaskStatus.FAILED),
     WorkflowTransition("reviewer", WorkflowOutcomeKind.INVALID_RESULT, TaskStatus.REVIEWING, TaskStatus.FAILED),
     WorkflowTransition("reviewer", WorkflowOutcomeKind.REVIEWER_RECOVERY, TaskStatus.REVIEWING, TaskStatus.REVIEW_PENDING),
+    WorkflowTransition("reviewer", WorkflowOutcomeKind.REVIEWER_RETRY, TaskStatus.REVIEW_PENDING, TaskStatus.REVIEWING),
 )
 
 _TRANSITION_INDEX = {(item.stage, item.outcome): item for item in WORKFLOW_STAGE_TRANSITIONS}
