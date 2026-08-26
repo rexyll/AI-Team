@@ -28,12 +28,8 @@ class ArchitectAgent(BaseAgent):
     def role(self) -> str:
         return "architect"
 
-    def _build_messages(
-        self,
-        context: AgentContext,
-    ) -> list[dict[str, str]]:
+    def _build_messages(self, context: AgentContext) -> list[dict[str, str]]:
         view = context_view(context, self.role)
-
         prompt = f"""
 请分析下面的软件开发任务，并给出架构设计。
 
@@ -92,40 +88,21 @@ ARCHITECTURE REQUIREMENTS
 不要编写具体业务代码。
 不要修改任何文件。
 """
-
         return [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ]
 
     def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
-            raise TypeError(
-                "ArchitectAgent.run() expects Task, "
-                f"got {type(task).__name__}"
-            )
-
+            raise TypeError("ArchitectAgent.run() expects Task, " f"got {type(task).__name__}")
         context = self.build_context(task)
         messages = self._build_messages(context)
-        prompt = messages[1]["content"]
-
-        result = self.llm.generate(
-            prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
-
+        result = self._generate(messages[1]["content"], system_prompt=SYSTEM_PROMPT)
         return AgentResult(
             status="completed",
             agent=self.role,
             task_id=context.task_id,
             message=result,
-            data={
-                "architecture": result,
-            },
+            data={"architecture": result},
         )
