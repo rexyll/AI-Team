@@ -105,6 +105,10 @@ class MultiDeveloperBenchmark:
 
         tasks = self.scenario_factory()
         manager = TaskManager(tasks)
+        # Normalize the scenario's initial lifecycle state before handing the
+        # manager to an executor. Production executors may call this themselves,
+        # while deterministic benchmark doubles can assume runnable roots are READY.
+        manager.get_ready_tasks()
         executor = self.executor_factory(manager, developer_count)
 
         started = perf_counter()
