@@ -10,7 +10,7 @@ class ContextCompactingLLM(BaseLLM):
     """Developer LLM decorator with one authoritative hard context budget."""
 
     DEFAULT_RECENT_MESSAGES = 8
-    DEFAULT_MAX_TOOL_CHARS = 12_000
+    DEFAULT_MAX_TOOL_CHARS = 8_000
 
     def __init__(self, inner: BaseLLM, *, recent_messages: int = DEFAULT_RECENT_MESSAGES, max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS) -> None:
         if not isinstance(inner, BaseLLM):
@@ -95,12 +95,26 @@ class ContextCompactingLLM(BaseLLM):
         return self.inner.generate_with_tools(active, tools=tools, tool_choice=tool_choice)
 
     def _trim_tool_messages(self, messages: list[dict[str, Any]]) -> None:
-        """Keep recent tool evidence bounded before the global budget pass."""
-        tool_indexes = [index for index, message in enumerate(messages) if message.get("role") == "tool"]
-        for index in tool_indexes[:-1]:
-            content = str(messages[index].get("content") or "")
+        """Bound every propagated tool result, including the current result.
+
+        Tool output is evidence, not conversation state. Capping both old and
+        current results prevents one large command response from dominating the
+        next decision turn; the truncation helper preserves both the beginning
+        and end so headers, summaries, and trailing test status remain visible.
+        """
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+            content = str(message.get("content") or "")
             if len(content) > self.max_tool_chars:
-                messages[index]["content"] = content[: self.max_tool_chars] + "\n...[older tool output trimmed]..."
+                marker = "\n...[tool output capped: {} chars]...\n".format(len(content) - self.max_tool_chars)
+                available = self.max_tool_chars - len(marker)
+                if available <= 0:
+                    message["content"] = content[: self.max_tool_chars]
+                    continue
+                head = available // 2
+                tail = available - head
+                message["content"] = content[:head] + marker + content[-tail:]
 
     @staticmethod
     def _total_chars(messages: list[dict[str, Any]]) -> int:
