@@ -28,6 +28,12 @@ class RealDeveloperTaskMetrics:
             return 0.0
         return self.llm_latency_seconds / self.llm_calls
 
+    @property
+    def llm_time_ratio(self) -> float:
+        if self.duration_seconds <= 0:
+            return 0.0
+        return min(1.0, self.llm_latency_seconds / self.duration_seconds)
+
     def __post_init__(self) -> None:
         if not self.task_id:
             raise ValueError("task_id must be non-empty")
@@ -35,13 +41,7 @@ class RealDeveloperTaskMetrics:
             raise ValueError("developer_id must be non-empty")
         if self.duration_seconds < 0 or self.llm_latency_seconds < 0:
             raise ValueError("durations must be non-negative")
-        for name, value in (
-            ("llm_calls", self.llm_calls),
-            ("input_tokens", self.input_tokens),
-            ("output_tokens", self.output_tokens),
-            ("tool_calls", self.tool_calls),
-            ("test_commands", self.test_commands),
-        ):
+        for name, value in (("llm_calls", self.llm_calls), ("input_tokens", self.input_tokens), ("output_tokens", self.output_tokens), ("tool_calls", self.tool_calls), ("test_commands", self.test_commands)):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
 
@@ -101,24 +101,35 @@ class RealDeveloperBenchmarkResult:
         return min(1.0, busy_time / (self.developer_count * self.duration_seconds))
 
     @property
+    def llm_time_ratio(self) -> float:
+        if self.duration_seconds <= 0:
+            return 0.0
+        return min(1.0, self.llm_latency_seconds / self.duration_seconds)
+
+    @property
+    def avg_llm_calls_per_task(self) -> float:
+        return self.llm_calls / self.task_count if self.task_count else 0.0
+
+    @property
+    def avg_input_tokens_per_task(self) -> float:
+        return self.input_tokens / self.task_count if self.task_count else 0.0
+
+    @property
+    def avg_tool_calls_per_task(self) -> float:
+        return self.tool_calls / self.task_count if self.task_count else 0.0
+
+    @property
+    def max_llm_calls_per_task(self) -> int:
+        return max((item.llm_calls for item in self.task_metrics), default=0)
+
+    @property
     def cost_per_completed_task_tokens(self) -> float:
         if self.completed <= 0:
             return float("inf")
         return self.total_tokens / self.completed
 
     @classmethod
-    def from_task_metrics(
-        cls,
-        *,
-        scenario: str,
-        developer_count: int,
-        task_count: int,
-        completed: int,
-        failed: int,
-        blocked: int,
-        duration_seconds: float,
-        task_metrics: tuple[RealDeveloperTaskMetrics, ...],
-    ) -> "RealDeveloperBenchmarkResult":
+    def from_task_metrics(cls, *, scenario: str, developer_count: int, task_count: int, completed: int, failed: int, blocked: int, duration_seconds: float, task_metrics: tuple[RealDeveloperTaskMetrics, ...]) -> "RealDeveloperBenchmarkResult":
         if not scenario.strip():
             raise ValueError("scenario must be non-empty")
         if developer_count <= 0:
@@ -127,16 +138,7 @@ class RealDeveloperBenchmarkResult:
             raise ValueError("task counts must be non-negative")
         if duration_seconds < 0:
             raise ValueError("duration_seconds must be non-negative")
-        return cls(
-            scenario=scenario,
-            developer_count=developer_count,
-            task_count=task_count,
-            completed=completed,
-            failed=failed,
-            blocked=blocked,
-            duration_seconds=duration_seconds,
-            task_metrics=task_metrics,
-        )
+        return cls(scenario=scenario, developer_count=developer_count, task_count=task_count, completed=completed, failed=failed, blocked=blocked, duration_seconds=duration_seconds, task_metrics=task_metrics)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -153,8 +155,13 @@ class RealDeveloperBenchmarkResult:
             "total_tokens": self.total_tokens,
             "llm_latency_seconds": self.llm_latency_seconds,
             "avg_llm_latency_seconds": self.avg_llm_latency_seconds,
+            "llm_time_ratio": self.llm_time_ratio,
             "tool_calls": self.tool_calls,
             "test_commands": self.test_commands,
             "developer_utilization": self.developer_utilization,
+            "avg_llm_calls_per_task": self.avg_llm_calls_per_task,
+            "avg_input_tokens_per_task": self.avg_input_tokens_per_task,
+            "avg_tool_calls_per_task": self.avg_tool_calls_per_task,
+            "max_llm_calls_per_task": self.max_llm_calls_per_task,
             "cost_per_completed_task_tokens": self.cost_per_completed_task_tokens,
         }
