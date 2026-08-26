@@ -65,11 +65,7 @@ class DeveloperAgentExecutor:
         compacting_llm = binding.agent.llm
         if not isinstance(compacting_llm, ContextCompactingLLM):
             raise TypeError("DeveloperAgent must use ContextCompactingLLM")
-        before_compactions = compacting_llm.compaction_count
-        before_prompt_before = compacting_llm.max_prompt_chars_before
-        before_prompt_after = compacting_llm.max_prompt_chars_after
-        before_messages_before = compacting_llm.max_input_messages_before
-        before_messages_after = compacting_llm.max_input_messages_after
+        before_events = len(compacting_llm.compaction_events)
 
         started = perf_counter()
         tool_calls = 0
@@ -91,6 +87,7 @@ class DeveloperAgentExecutor:
             self.manager.mark_failed(task.id, str(exc))
             failed = True
 
+        events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
             task_id=task.id,
             developer_id=developer_id,
@@ -103,21 +100,21 @@ class DeveloperAgentExecutor:
             test_commands=test_commands,
             failed=failed,
             llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
-            compaction_count=compacting_llm.compaction_count - before_compactions,
+            compaction_count=sum(1 for event in events if event["compacted"]),
             max_prompt_chars_before_compaction=max(
-                0,
-                compacting_llm.max_prompt_chars_before - before_prompt_before,
+                (int(event["prompt_chars_before"]) for event in events),
+                default=0,
             ),
             max_prompt_chars_after_compaction=max(
-                0,
-                compacting_llm.max_prompt_chars_after - before_prompt_after,
+                (int(event["prompt_chars_after"]) for event in events),
+                default=0,
             ),
             max_context_messages_before_compaction=max(
-                0,
-                compacting_llm.max_input_messages_before - before_messages_before,
+                (int(event["messages_before"]) for event in events),
+                default=0,
             ),
             max_context_messages_after_compaction=max(
-                0,
-                compacting_llm.max_input_messages_after - before_messages_after,
+                (int(event["messages_after"]) for event in events),
+                default=0,
             ),
         )
