@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from time import perf_counter
+from typing import Callable
+
+from agents.developer import DeveloperAgent
+from runtime.agent_config import AgentConfig
+from runtime.llm.base import BaseLLM
+from runtime.task import Task
+from runtime.task_manager import TaskManager
+
+from .llm_instrumentation import InstrumentedLLM
+from .metrics import RealDeveloperTaskMetrics
+
+
+@dataclass
+class _DeveloperBinding:
+    developer_id: str
+    agent: DeveloperAgent
+    llm: InstrumentedLLM
+
+
+class DeveloperAgentExecutor:
+    """Execute real DeveloperAgent instances with per-developer telemetry.
+
+    The executor owns only benchmark instrumentation and lifecycle accounting.
+    DeveloperAgent remains responsible for its actual tool-calling behavior.
+    """
+
+    def __init__(
+        self,
+        manager: TaskManager,
+        developer_count: int,
+        *,
+        llm_factory: Callable[[], BaseLLM],
+        config_factory: Callable[[int], AgentConfig | None] | None = None,
+    ) -> None:
+        if developer_count <= 0:
+            raise ValueError("developer_count must be greater than 0")
+        self.manager = manager
+        self.developer_count = developer_count
+        self._bindings: list[_DeveloperBinding] = []
+        for index in range(developer_count):
+            llm = InstrumentedLLM(llm_factory())
+            config = config_factory(index + 1) if config_factory else None
+            self._bindings.append(
+                _DeveloperBinding(
+                    developer_id=f"developer-{index + 1}",
+                    agent=DeveloperAgent(config=config, llm=llm),
+                    llm=llm,
+                )
+            )
+
+    def run_task(self, task: Task, developer_id: str) -> RealDeveloperTaskMetrics:
+        binding = next(
+            (item for item in self._bindings if item.developer_id == developer_id),
+            None,
+        )
+        if binding is None:
+            raise ValueError(f"unknown developer_id: {developer_id}")
+
+        before_calls = binding.llm.stats.calls
+        before_input = binding.llm.stats.input_tokens
+        before_output = binding.llm.stats.output_tokens
+        started = perf_counter()
+
+        self.manager.mark_running(task.id)
+        try:
+            result = binding.agent.run(task)
+            if result.status == "completed":
+                self.manager.mark_developer_completed(task.id, result.data)
+                failed = False
+            else:
+                self.manager.mark_failed(task.id, result.message)
+                failed = True
+        except Exception as exc:
+            self.manager.mark_failed(task.id, str(exc))
+            failed = True
+
+        return RealDeveloperTaskMetrics(
+            task_id=task.id,
+            developer_id=developer_id,
+            duration_seconds=perf_counter() - started,
+            llm_calls=binding.llm.stats.calls - before_calls,
+            input_tokens=binding.llm.stats.input_tokens - before_input,
+            output_tokens=binding.llm.stats.output_tokens - before_output,
+            failed=failed,
+        )
