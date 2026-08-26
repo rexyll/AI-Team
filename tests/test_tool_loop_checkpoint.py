@@ -29,7 +29,10 @@ def test_checkpoint_is_compact_and_contains_decision_relevant_state():
     assert "categories=exact_duplicate:1, execution:1, exploration:1, verification:1" in checkpoint
     assert "changed_files=runtime/task.py, tests/test_task.py" in checkpoint
     assert "test_or_command_results=1" in checkpoint
+    assert "last_command=pytest -q" in checkpoint
+    assert "verification_calls=1 execution_calls=1" in checkpoint
     assert "Do not repeat exploration" in checkpoint
+    assert "recorded result" in checkpoint
 
 
 def test_empty_telemetry_does_not_create_noise():
