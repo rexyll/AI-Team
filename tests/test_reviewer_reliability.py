@@ -1,4 +1,3 @@
-from agents.reviewer import ReviewerAgent
 from runtime.agent_result import AgentResult
 from runtime.reviewer_reliability import ResilientReviewerAgent
 
@@ -23,23 +22,18 @@ def _task():
     return TaskLike()
 
 
+def _approved():
+    return AgentResult(
+        status="approved",
+        agent="reviewer",
+        task_id="TASK-REVIEWER-001",
+        message="APPROVED",
+    )
+
+
 def test_primary_reviewer_success_does_not_use_fallback():
-    primary = _FakeReviewer(
-        result=AgentResult(
-            status="approved",
-            agent="reviewer",
-            task_id="TASK-REVIEWER-001",
-            message="APPROVED",
-        )
-    )
-    fallback = _FakeReviewer(
-        result=AgentResult(
-            status="approved",
-            agent="reviewer",
-            task_id="TASK-REVIEWER-001",
-            message="APPROVED",
-        )
-    )
+    primary = _FakeReviewer(result=_approved())
+    fallback = _FakeReviewer(result=_approved())
 
     wrapper = ResilientReviewerAgent(primary, fallback)
     result = wrapper.run(_task())
@@ -52,34 +46,31 @@ def test_primary_reviewer_success_does_not_use_fallback():
     assert wrapper.stats.fallback_attempts == 0
 
 
-def test_primary_failure_recovers_with_fallback():
+def test_primary_failure_recovers_with_lightweight_fallback():
     primary = _FakeReviewer(error=ValueError("invalid reviewer decision"))
-    fallback = _FakeReviewer(
-        result=AgentResult(
-            status="approved",
-            agent="reviewer",
-            task_id="TASK-REVIEWER-001",
-            message="APPROVED",
-        )
-    )
-
+    fallback = _FakeReviewer()
     wrapper = ResilientReviewerAgent(primary, fallback)
+    wrapper._run_lightweight_fallback = lambda task: _approved()
+
     result = wrapper.run(_task())
 
     assert result.status == "approved"
     assert result.data["reviewer_execution"]["source"] == "fallback"
     assert result.data["reviewer_execution"]["recovered"] is True
     assert primary.calls == 1
-    assert fallback.calls == 1
     assert wrapper.stats.primary_failures == 1
     assert wrapper.stats.fallback_successes == 1
 
 
 def test_primary_and_fallback_failure_becomes_recovery_revision_not_exception():
     primary = _FakeReviewer(error=RuntimeError("primary unavailable"))
-    fallback = _FakeReviewer(error=RuntimeError("fallback unavailable"))
-
+    fallback = _FakeReviewer()
     wrapper = ResilientReviewerAgent(primary, fallback)
+
+    def fail_fallback(task):
+        raise RuntimeError("fallback unavailable")
+
+    wrapper._run_lightweight_fallback = fail_fallback
     result = wrapper.run(_task())
 
     assert result.status == "revision"
@@ -89,7 +80,6 @@ def test_primary_and_fallback_failure_becomes_recovery_revision_not_exception():
     assert "primary unavailable" in execution["primary_error"]
     assert "fallback unavailable" in execution["fallback_error"]
     assert primary.calls == 1
-    assert fallback.calls == 1
     assert wrapper.stats.primary_failures == 1
     assert wrapper.stats.fallback_attempts == 1
     assert wrapper.stats.fallback_failures == 1
@@ -97,16 +87,15 @@ def test_primary_and_fallback_failure_becomes_recovery_revision_not_exception():
 
 def test_reliability_stats_are_serializable():
     primary = _FakeReviewer(error=ValueError("invalid reviewer decision"))
-    fallback = _FakeReviewer(
-        result=AgentResult(
-            status="revision",
-            agent="reviewer",
-            task_id="TASK-REVIEWER-001",
-            message="REVISION_REQUIRED",
-        )
+    fallback = _FakeReviewer()
+    wrapper = ResilientReviewerAgent(primary, fallback)
+    wrapper._run_lightweight_fallback = lambda task: AgentResult(
+        status="revision",
+        agent="reviewer",
+        task_id="TASK-REVIEWER-001",
+        message="REVISION_REQUIRED",
     )
 
-    wrapper = ResilientReviewerAgent(primary, fallback)
     wrapper.run(_task())
 
     assert wrapper.stats.to_dict() == {
