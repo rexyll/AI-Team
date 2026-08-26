@@ -20,6 +20,11 @@ class RealDeveloperTaskMetrics:
     test_commands: int = 0
     failed: bool = False
     llm_profiles: tuple[LLMCallProfile, ...] = ()
+    compaction_count: int = 0
+    max_prompt_chars_before_compaction: int = 0
+    max_prompt_chars_after_compaction: int = 0
+    max_context_messages_before_compaction: int = 0
+    max_context_messages_after_compaction: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -59,7 +64,18 @@ class RealDeveloperTaskMetrics:
             raise ValueError("developer_id must be non-empty")
         if self.duration_seconds < 0 or self.llm_latency_seconds < 0:
             raise ValueError("durations must be non-negative")
-        for name, value in (("llm_calls", self.llm_calls), ("input_tokens", self.input_tokens), ("output_tokens", self.output_tokens), ("tool_calls", self.tool_calls), ("test_commands", self.test_commands)):
+        for name, value in (
+            ("llm_calls", self.llm_calls),
+            ("input_tokens", self.input_tokens),
+            ("output_tokens", self.output_tokens),
+            ("tool_calls", self.tool_calls),
+            ("test_commands", self.test_commands),
+            ("compaction_count", self.compaction_count),
+            ("max_prompt_chars_before_compaction", self.max_prompt_chars_before_compaction),
+            ("max_prompt_chars_after_compaction", self.max_prompt_chars_after_compaction),
+            ("max_context_messages_before_compaction", self.max_context_messages_before_compaction),
+            ("max_context_messages_after_compaction", self.max_context_messages_after_compaction),
+        ):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
 
@@ -153,6 +169,26 @@ class RealDeveloperBenchmarkResult:
         return max((item.context_growth_ratio for item in self.task_metrics), default=0.0)
 
     @property
+    def compaction_count(self) -> int:
+        return sum(item.compaction_count for item in self.task_metrics)
+
+    @property
+    def max_prompt_chars_before_compaction(self) -> int:
+        return max((item.max_prompt_chars_before_compaction for item in self.task_metrics), default=0)
+
+    @property
+    def max_prompt_chars_after_compaction(self) -> int:
+        return max((item.max_prompt_chars_after_compaction for item in self.task_metrics), default=0)
+
+    @property
+    def max_context_messages_before_compaction(self) -> int:
+        return max((item.max_context_messages_before_compaction for item in self.task_metrics), default=0)
+
+    @property
+    def max_context_messages_after_compaction(self) -> int:
+        return max((item.max_context_messages_after_compaction for item in self.task_metrics), default=0)
+
+    @property
     def cost_per_completed_task_tokens(self) -> float:
         if self.completed <= 0:
             return float("inf")
@@ -196,5 +232,10 @@ class RealDeveloperBenchmarkResult:
             "max_prompt_chars_per_task": self.max_prompt_chars_per_task,
             "max_input_tokens_per_call": self.max_input_tokens_per_call,
             "max_context_growth_ratio": self.max_context_growth_ratio,
+            "compaction_count": self.compaction_count,
+            "max_prompt_chars_before_compaction": self.max_prompt_chars_before_compaction,
+            "max_prompt_chars_after_compaction": self.max_prompt_chars_after_compaction,
+            "max_context_messages_before_compaction": self.max_context_messages_before_compaction,
+            "max_context_messages_after_compaction": self.max_context_messages_after_compaction,
             "cost_per_completed_task_tokens": self.cost_per_completed_task_tokens,
         }
