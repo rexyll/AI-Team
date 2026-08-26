@@ -14,7 +14,7 @@ def test_read_file_keeps_head_and_tail_with_marker() -> None:
 
     assert evidence.truncated is True
     assert evidence.original_chars == len(source)
-    assert evidence.retained_chars <= 120 + 40
+    assert evidence.retained_chars <= 120
     assert evidence.content.startswith("HEAD")
     assert evidence.content.endswith("TAIL")
     assert "tool evidence truncated" in evidence.content
@@ -26,6 +26,7 @@ def test_command_output_prioritizes_tail() -> None:
 
     assert evidence.truncated is True
     assert evidence.content.endswith("FAILED test_example - assertion details")
+    assert evidence.retained_chars <= 200
     assert "tool evidence truncated" in evidence.content
 
 
@@ -36,6 +37,22 @@ def test_generic_tool_result_is_bounded() -> None:
     assert evidence.truncated is True
     assert evidence.retained_chars <= 500
     assert evidence.original_chars == 10_000
+
+
+def test_structured_results_are_rendered_deterministically() -> None:
+    first = reduce_tool_result("list_files", {"b": 2, "a": 1}, max_chars=100)
+    second = reduce_tool_result("list_files", {"a": 1, "b": 2}, max_chars=100)
+
+    assert first.content == second.content == '{"a": 1, "b": 2}'
+    assert first.truncated is False
+
+
+def test_read_file_budget_is_exact_even_when_marker_is_large() -> None:
+    evidence = reduce_tool_result("read_file", "x" * 10_000, max_chars=20)
+
+    assert evidence.truncated is True
+    assert evidence.retained_chars == 20
+    assert len(evidence.content) == 20
 
 
 def test_invalid_budget_is_rejected() -> None:
