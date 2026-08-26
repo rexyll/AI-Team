@@ -25,8 +25,8 @@ class RealDeveloperBenchmark:
 
     This layer deliberately does not call a model provider itself. The injected
     executor can wrap the existing DeveloperAgent and report LLM/token metrics.
-    Keeping provider access outside the benchmark makes the benchmark reusable
-    and prevents credentials/network behavior from becoming benchmark logic.
+    Provider access stays outside the benchmark so credentials and network
+    behavior do not become benchmark logic.
     """
 
     def __init__(
@@ -62,12 +62,27 @@ class RealDeveloperBenchmark:
         task_metrics: list[RealDeveloperTaskMetrics] = []
         started = perf_counter()
 
-        # The benchmark intentionally delegates scheduling/execution policy to
-        # the injected executor. This runner only records task-level telemetry.
-        for task in manager.get_ready_tasks():
-            developer_id = f"developer-{len(task_metrics) % developer_count + 1}"
-            metrics = executor.run_task(task, developer_id)
-            task_metrics.append(metrics)
+        # Advance one dependency-ready round at a time. The injected executor
+        # owns the actual task execution policy; this runner only supplies work
+        # and collects instrumentation. Re-evaluating readiness after each task
+        # ensures convergence tasks are included after their prerequisites finish.
+        while True:
+            ready = [
+                task
+                for task in manager.get_all_tasks()
+                if task.status == "ready"
+                and all(
+                    manager.get_task(dep).status == "completed"
+                    for dep in task.dependencies
+                )
+            ]
+            if not ready:
+                break
+
+            for task in ready:
+                developer_id = f"developer-{len(task_metrics) % developer_count + 1}"
+                metrics = executor.run_task(task, developer_id)
+                task_metrics.append(metrics)
 
         duration = perf_counter() - started
         final_tasks = manager.get_all_tasks()
