@@ -78,8 +78,14 @@ def project_reviewer_reliability(
     events: WorkflowEventLog | Iterable[WorkflowEvent],
     *,
     project_id: str,
+    ordered: bool = False,
 ) -> ReviewerReliabilityMetrics:
-    """Aggregate reviewer counters from immutable workflow facts."""
+    """Aggregate reviewer counters from immutable workflow facts.
+
+    When ``ordered=True`` the iterable is an already materialized, project-scoped
+    snapshot supplied by a query service. Reusing it avoids a second scan and
+    sort of the same event log while preserving the legacy default behavior.
+    """
     if not isinstance(project_id, str) or not project_id.strip():
         raise ValueError("project_id must be a non-empty string")
     if isinstance(events, WorkflowEventLog):
@@ -88,8 +94,9 @@ def project_reviewer_reliability(
         materialized = list(events)
         if any(not isinstance(event, WorkflowEvent) for event in materialized):
             raise TypeError("events must contain WorkflowEvent values")
-        selected = [event for event in materialized if event.project_id == project_id]
-        selected.sort(key=lambda event: (event.occurred_at, event.event_id))
+        selected = materialized if ordered else [event for event in materialized if event.project_id == project_id]
+        if not ordered:
+            selected.sort(key=lambda event: (event.occurred_at, event.event_id))
 
     latest_by_task: dict[str, dict] = {}
     recovery_events: list[WorkflowEvent] = []
@@ -98,6 +105,8 @@ def project_reviewer_reliability(
     recovery_success_tasks: set[str] = set()
 
     for event in selected:
+        if event.project_id != project_id:
+            continue
         if event.event_type == "reviewer_fallback":
             recovery_events.append(event)
             if event.task_id is not None:
