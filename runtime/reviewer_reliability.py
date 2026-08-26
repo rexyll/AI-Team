@@ -73,10 +73,7 @@ class ResilientReviewerAgent:
             result = self.primary.run(task)
             if not result.message or not result.message.strip():
                 self.stats.record_primary(success=False, empty=True)
-                return self._run_fallback_or_recover(
-                    task,
-                    ValueError("Reviewer empty response"),
-                )
+                return self._run_fallback_or_recover(task, ValueError("Reviewer empty response"))
             self.stats.record_primary(success=True)
             return self._annotate(result, source="primary")
         except Exception as primary_exc:
@@ -142,14 +139,14 @@ class ResilientReviewerAgent:
         text = str(exc).lower()
         return "empty response" in text or "invalid decision" in text
 
-    @staticmethod
-    def _annotate(result: AgentResult, *, source: str, primary_error: Exception | None = None) -> AgentResult:
+    def _annotate(self, result: AgentResult, *, source: str, primary_error: Exception | None = None) -> AgentResult:
         data = dict(result.data)
         data["reviewer_execution"] = {
             "source": source,
             "recovered": source == "fallback",
             "primary_error": str(primary_error) if primary_error else None,
         }
+        data["reviewer_reliability"] = self.stats.to_dict()
         return AgentResult(
             status=result.status,
             agent=result.agent,
@@ -158,8 +155,7 @@ class ResilientReviewerAgent:
             data=data,
         )
 
-    @staticmethod
-    def _recovery_result(task, primary_error: Exception, fallback_error: Exception | None) -> AgentResult:
+    def _recovery_result(self, task, primary_error: Exception, fallback_error: Exception | None) -> AgentResult:
         return AgentResult(
             status="revision",
             agent="reviewer",
@@ -176,6 +172,7 @@ class ResilientReviewerAgent:
                     "primary_error": str(primary_error),
                     "fallback_error": str(fallback_error) if fallback_error else None,
                 },
+                "reviewer_reliability": self.stats.to_dict(),
             },
         )
 
