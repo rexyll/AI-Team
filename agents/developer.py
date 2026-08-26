@@ -9,6 +9,7 @@ from runtime.agent_context import AgentContext
 from runtime.context_view import context_view
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
+from runtime.tool_loop_telemetry import classify_tool_call
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -67,6 +68,7 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 - 用户运行交付物的确切命令
 - 是否存在遗留问题
 """
+
 
 class DeveloperAgent(BaseAgent):
     @property
@@ -171,13 +173,15 @@ class DeveloperAgent(BaseAgent):
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
         tool_calls: list[dict[str, Any]] = []
+        loop_telemetry: list[dict[str, Any]] = []
+        prior_signatures: list[tuple[str, str, str, str]] = []
         for _ in range(MAX_TOOL_ITERATIONS):
             response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
                 content = response.content or ""
                 if not changed_files and not command_results and not tool_calls:
                     return AgentResult(status="failed", agent=self.role, task_id=context.task_id, message=("Developer produced no artifacts: zero tool calls, zero file changes, zero commands. " f"Final text head: {content[:200]}"), data={"validation": {"tool_call_count": 0, "test_command_count": 0, "files_changed_count": 0, "no_artifact_completion": True}, "report": content})
-                data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls)
+                data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": tool_call.call_id, "type": "function", "function": {"name": tool_call.name, "arguments": tool_call.arguments}} for tool_call in response.tool_calls]})
             for tool_call in response.tool_calls:
@@ -194,15 +198,21 @@ class DeveloperAgent(BaseAgent):
                     status = "invalid_arguments"
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: invalid JSON arguments: " f"{type(exc).__name__}: {exc}"
+                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
+                    loop_telemetry.append(self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
-                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     continue
                 if not isinstance(arguments, dict):
                     status = "invalid_arguments"
                     error = {"type": "TypeError", "message": "tool arguments must be a JSON object"}
                     result = "Tool error: arguments must be a JSON object"
+                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
+                    loop_telemetry.append(self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
-                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     continue
                 print(f"[Args] {arguments}")
                 try:
@@ -223,13 +233,21 @@ class DeveloperAgent(BaseAgent):
                     status = "failed"
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: " f"{type(exc).__name__}: {exc}"
+                telemetry = classify_tool_call(tool_name=tool_name, arguments=record_arguments, result=result, prior=prior_signatures)
+                telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                loop_telemetry.append(telemetry_dict)
                 print(f"[Result]\n{result}")
                 messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": str(result)})
-                self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error)
+                self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
+                prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
-    def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any) -> None:
-        self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error))
+    def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
+        self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error, metadata=metadata or {}))
+
+    @staticmethod
+    def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any) -> dict[str, Any]:
+        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of}
 
     @staticmethod
     def _record_tool_evidence(*, tool_name: str, arguments: dict[str, Any], result: Any, changed_files: list[str], command_results: list[dict[str, Any]]) -> None:
@@ -243,5 +261,8 @@ class DeveloperAgent(BaseAgent):
                 command_results.append({"command": command, "result": str(result)})
 
     @staticmethod
-    def _build_result_data(*, content: str, changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
-        return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files)}, "report": content}
+    def _build_result_data(*, content: str, changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], loop_telemetry: list[dict[str, Any]]) -> dict[str, Any]:
+        duplicate_count = sum(1 for item in loop_telemetry if item.get("duplicate_of"))
+        retry_count = sum(1 for item in loop_telemetry if item.get("retry_of"))
+        result_chars = sum(int(item.get("result_chars", 0) or 0) for item in loop_telemetry)
+        return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files), "unique_tool_calls": len(loop_telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in loop_telemetry), default=0)}, "tool_loop_telemetry": list(loop_telemetry), "report": content}
