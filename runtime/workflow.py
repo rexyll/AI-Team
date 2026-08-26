@@ -16,6 +16,7 @@ from uuid import uuid4
 from runtime.agent_result import AgentResult
 
 MAX_REVIEW_ROUNDS = 3
+MAX_REVIEWER_RECOVERY_ATTEMPTS = 1
 
 
 @dataclass
@@ -107,9 +108,12 @@ class TaskWorkflow:
         state_change_hook: Callable[[TaskManager], None] | None = None,
         workflow_event_log: WorkflowEventLog | None = None,
         project_id: str | None = None,
+        max_reviewer_recovery_attempts: int = MAX_REVIEWER_RECOVERY_ATTEMPTS,
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
+        if max_reviewer_recovery_attempts < 0:
+            raise ValueError("max_reviewer_recovery_attempts must be >= 0")
         if state_change_hook is not None and not callable(state_change_hook):
             raise TypeError("state_change_hook must be callable or None")
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
@@ -120,6 +124,7 @@ class TaskWorkflow:
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.max_review_rounds = max_review_rounds
+        self.max_reviewer_recovery_attempts = max_reviewer_recovery_attempts
         self._state_change_hook = state_change_hook
         self._workflow_event_log = workflow_event_log
         self._project_id = project_id
@@ -139,26 +144,20 @@ class TaskWorkflow:
         get_developers = getattr(self.agent_router, "get_developers", None)
         get_agent = getattr(self.agent_router, "get_agent", None)
         if role == "developer":
-            # A minimal legacy router/test double may not expose either registry API.
             if not callable(get_developers) and not callable(get_agent):
                 return
             if callable(get_developers) and agent in get_developers():
                 return
             if callable(get_agent) and agent is get_agent(role):
                 return
-            raise ValueError(
-                "TaskWorkflow developer agent must be the instance registered by the router"
-            )
-
+            raise ValueError("TaskWorkflow developer agent must be the instance registered by the router")
         if not callable(get_agent):
             return
         registered = get_agent(role)
         if registered is None:
             raise ValueError(f"No agent registered for role: {role}")
         if agent is not registered:
-            raise ValueError(
-                f"TaskWorkflow {role} agent must be the instance registered by the router"
-            )
+            raise ValueError(f"TaskWorkflow {role} agent must be the instance registered by the router")
 
     def _agent(self, role: str, fallback=None):
         get_agent = getattr(self.agent_router, "get_agent", None)
@@ -170,8 +169,6 @@ class TaskWorkflow:
 
     @property
     def developer(self):
-        # Preserve an explicitly selected pool member; for legacy singleton
-        # workflows follow the router dynamically so replacement is observable.
         get_developers = getattr(self.agent_router, "get_developers", None)
         if callable(get_developers):
             pool = get_developers()
@@ -222,7 +219,6 @@ class TaskWorkflow:
         task.context["tool_execution_history"] = history.to_dict()
 
     def _capture_reviewer_feedback(self, task: Task, feedback: dict[str, Any]) -> None:
-        """Capture reviewer feedback into task context for downstream developer access."""
         task.context["reviewer_feedback"] = feedback
 
     def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
@@ -260,20 +256,14 @@ class TaskWorkflow:
             validation = result_data.get("validation", {}) if isinstance(result_data, dict) else {}
             dev_metrics = ""
             if validation:
-                dev_metrics = (
-                    f", tool_calls={validation.get('tool_call_count', '?')}, "
-                    f"files_changed={validation.get('files_changed_count', '?')}"
-                )
+                dev_metrics = f", tool_calls={validation.get('tool_call_count', '?')}, files_changed={validation.get('files_changed_count', '?')}"
             message_head = ""
             if developer_outcome.result is not None:
                 raw_message = (developer_outcome.result.message or "").strip()
                 message_head = raw_message.replace("\n", " ")[:120]
                 if len(raw_message) > 120:
                     message_head += "…"
-            print(
-                f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                f"developer={developer_outcome.status}{dev_metrics} | {message_head}"
-            )
+            print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: developer={developer_outcome.status}{dev_metrics} | {message_head}")
 
             if task.status == "failed":
                 if developer_outcome.exception is not None:
@@ -281,45 +271,41 @@ class TaskWorkflow:
                 return task
 
             if self.tester is not None:
-                tester_outcome = self._run_gate_with_invalid_tolerance(
-                    lambda: self._run_tester(task), stage="tester"
-                )
+                tester_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_tester(task), stage="tester")
                 tester_passed = self._handle_tester_result(task, tester_outcome)
-                print(
-                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                    f"tester={tester_outcome.status}"
-                )
+                print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester={tester_outcome.status}")
                 if not tester_passed:
                     if task.status == "failed":
-                        # Tester exceptions are recorded in task.error (via
-                        # _apply_tester_outcome) instead of propagating out of
-                        # execute(): the workflow contract keeps the gate loop
-                        # observable while developer/reviewer failures raise.
                         return task
                     last_gate_note = f"tester 判定未通过（status={tester_outcome.status}）"
                     verdict = tester_outcome.result.message if tester_outcome.result is not None else ""
-                    print(
-                        f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                        f"tester note: {verdict[:160]}"
-                    )
+                    print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester note: {verdict[:160]}")
                     continue
             else:
                 self._transition_to_declared_target(task, "tester", WorkflowOutcomeKind.SUCCESS)
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
-                print(
-                    f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester=skipped"
-                )
+                print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester=skipped")
 
             self._emit_event("review_started", task, payload={"status": task.status})
-            review_outcome = self._run_gate_with_invalid_tolerance(
-                lambda: self._run_reviewer(task), stage="reviewer"
-            )
+            review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
             review_action = self._apply_reviewer_outcome(task, review_outcome)
-            print(
-                f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: "
-                f"reviewer={review_outcome.status}"
-            )
+            print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: reviewer={review_outcome.status}")
+
+            recovery_attempt = 0
+            while review_action == "retry" and recovery_attempt < self.max_reviewer_recovery_attempts:
+                recovery_attempt += 1
+                self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
+                self._emit_event(
+                    "reviewer_retry",
+                    task,
+                    payload={"attempt": recovery_attempt, "max_attempts": self.max_reviewer_recovery_attempts},
+                )
+                self._checkpoint()
+                self._emit_event("review_started", task, payload={"status": task.status, "recovery_attempt": recovery_attempt})
+                review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
+                review_action = self._apply_reviewer_outcome(task, review_outcome)
+                print(f"[Gate] {task.id} recovery {recovery_attempt}/{self.max_reviewer_recovery_attempts}: reviewer={review_outcome.status}")
 
             if review_action == "completed":
                 return task
@@ -327,14 +313,14 @@ class TaskWorkflow:
                 if review_outcome.exception is not None:
                     raise review_outcome.exception
                 return task
+            if review_action == "retry":
+                last_gate_note = "reviewer execution recovery exhausted"
+                continue
             if review_action == "revision":
                 last_gate_note = f"reviewer 要求返工（第 {round_index} 轮）"
                 continue
 
-        reason = (
-            f"质量门禁在 {self.max_review_rounds} 轮内未通过"
-            f"（最后状态: {last_gate_note}）"
-        )
+        reason = f"质量门禁在 {self.max_review_rounds} 轮内未通过（最后状态: {last_gate_note}）"
         print(f"[Gate] {task.id}: {reason}")
         self.task_manager.record_error(task.id, reason)
         self.task_manager.mark_failed(task.id, reason)
@@ -431,6 +417,11 @@ class TaskWorkflow:
             return StageOutcome.failure(WorkflowStage.REVIEWER, exc)
 
     def _apply_reviewer_outcome(self, task: Task, outcome: StageOutcome) -> str:
+        execution = {}
+        if outcome.result is not None and isinstance(outcome.result.data, dict):
+            execution = outcome.result.data.get("reviewer_execution", {})
+        recovery_source = execution.get("source") == "recovery"
+
         if outcome.status == "approved":
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
@@ -438,6 +429,14 @@ class TaskWorkflow:
             self._emit_event("reviewer_approved", task, payload={**outcome.to_dict(), "status": task.status})
             self._checkpoint()
             return "completed"
+        if recovery_source:
+            self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.REVIEWER_RECOVERY)
+            self.task_manager.record_review_result(task.id, outcome.result_dict)
+            self.task_manager.set_feedback(task.id, "reviewer", outcome.result_dict)
+            self.task_manager.record_error(task.id, None)
+            self._emit_event("reviewer_fallback", task, payload=outcome.to_dict())
+            self._checkpoint()
+            return "retry"
         if outcome.exception is not None:
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.EXECUTION_FAILURE)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
@@ -462,5 +461,4 @@ class TaskWorkflow:
 
     def _build_context(self, task: Task) -> None:
         context = build_task_context(task, self.task_manager.tasks)
-        # Keep the compatibility context field even when there are no dependencies.
         task.context["dependencies"] = context
