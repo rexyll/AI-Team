@@ -64,19 +64,22 @@ class WorkflowEventProjector:
         events: WorkflowEventLog | Iterable[WorkflowEvent],
         *,
         project_id: str | None = None,
+        ordered: bool = False,
     ) -> WorkflowProjectProjection:
-        # QueryService.from_log is normally project-scoped. Avoid sorting the
-        # entire multi-project stream when the log can provide the already
-        # project-scoped snapshot directly. This keeps projection linear in the
-        # requested project's event count instead of doing unnecessary global
-        # sorting work.
+        # QueryService can share one stable project-scoped snapshot with other
+        # read-only projections. When ordered=True the caller guarantees the
+        # input already uses WorkflowEventLog._project_sort_key ordering.
         if isinstance(events, WorkflowEventLog) and project_id is not None:
-            ordered = events.list_for_project(project_id)
+            ordered_events = events.list_for_project(project_id)
+        elif ordered:
+            ordered_events = list(events)
+            if any(not isinstance(event, WorkflowEvent) for event in ordered_events):
+                raise TypeError("events must contain WorkflowEvent values")
         else:
-            ordered = cls._ordered_events(events)
+            ordered_events = cls._ordered_events(events)
 
         if project_id is None:
-            project_ids = {event.project_id for event in ordered}
+            project_ids = {event.project_id for event in ordered_events}
             if len(project_ids) != 1:
                 raise ValueError("project_id is required for an empty or multi-project event stream")
             project_id = next(iter(project_ids))
@@ -84,10 +87,10 @@ class WorkflowEventProjector:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
 
-        selected = ordered if isinstance(events, WorkflowEventLog) and project_id is not None else [
-            event for event in ordered if event.project_id == project_id
+        selected = ordered_events if isinstance(events, WorkflowEventLog) and project_id is not None or ordered else [
+            event for event in ordered_events if event.project_id == project_id
         ]
-        if not selected and ordered:
+        if not selected and ordered_events:
             raise ValueError(f"event stream contains no events for project: {project_id}")
 
         task_states: dict[str, dict[str, object]] = {}
