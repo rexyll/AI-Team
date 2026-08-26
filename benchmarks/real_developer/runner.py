@@ -23,10 +23,9 @@ class RealDeveloperScenario:
 class RealDeveloperBenchmark:
     """Run a controlled Developer benchmark with instrumentation hooks.
 
-    This layer deliberately does not call a model provider itself. The injected
-    executor can wrap the existing DeveloperAgent and report LLM/token metrics.
-    Provider access stays outside the benchmark so credentials and network
-    behavior do not become benchmark logic.
+    The benchmark delegates actual execution to an injected executor. The
+    runner owns DAG readiness advancement and telemetry aggregation, but never
+    calls a model provider directly.
     """
 
     def __init__(
@@ -54,28 +53,16 @@ class RealDeveloperBenchmark:
 
         tasks = self.scenario_factory()
         manager = TaskManager(tasks)
-        for task in manager.get_all_tasks():
-            if task.status == "pending" and not task.dependencies:
-                manager.mark_ready(task.id)
-
         executor = self.executor_factory(manager, developer_count)
         task_metrics: list[RealDeveloperTaskMetrics] = []
         started = perf_counter()
 
-        # Advance one dependency-ready round at a time. The injected executor
-        # owns the actual task execution policy; this runner only supplies work
-        # and collects instrumentation. Re-evaluating readiness after each task
-        # ensures convergence tasks are included after their prerequisites finish.
+        # TaskManager is the single source of truth for DAG readiness. Calling
+        # get_ready_tasks() each round both promotes newly executable tasks and
+        # detects dependency failures/blocks without duplicating lifecycle rules
+        # in the benchmark layer.
         while True:
-            ready = [
-                task
-                for task in manager.get_all_tasks()
-                if task.status == "ready"
-                and all(
-                    manager.get_task(dep).status == "completed"
-                    for dep in task.dependencies
-                )
-            ]
+            ready = manager.get_ready_tasks()
             if not ready:
                 break
 
