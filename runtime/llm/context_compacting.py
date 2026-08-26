@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from runtime.context_compactor import compact_tool_context
@@ -104,10 +105,11 @@ class ContextCompactingLLM(BaseLLM):
 
 
 def _prompt_chars(messages: list[dict[str, Any]]) -> int:
-    return sum(
-        len(content)
-        for message in messages
-        if isinstance(message, dict)
-        for content in [message.get("content")]
-        if isinstance(content, str)
-    )
+    """Estimate the serialized request footprint, not content characters alone.
+
+    LLM prompt size includes message structure (roles, keys, separators, and
+    JSON quoting) as well as message content. Measuring the serialized message
+    envelope avoids reporting a compaction as an increase merely because a
+    short summary marker replaces several messages.
+    """
+    return len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")))
