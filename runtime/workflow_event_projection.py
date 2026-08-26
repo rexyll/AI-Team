@@ -8,38 +8,23 @@ from .workflow_event_log import WorkflowEventLog
 
 
 _KNOWN_TASK_EVENTS = {
-    "task_started",
-    "developer_completed",
-    "developer_failed",
-    "tester_skipped",
-    "tester_completed",
-    "tester_failed",
-    "review_started",
-    "reviewer_approved",
-    "reviewer_revision",
-    "reviewer_fallback",
-    "reviewer_retry",
-    "task_failed",
-    "task_retrying",
-    "task_completed",
+    "task_started", "developer_completed", "developer_failed", "tester_skipped",
+    "tester_completed", "tester_failed", "review_started", "reviewer_approved",
+    "reviewer_revision", "reviewer_fallback", "reviewer_retry", "task_failed",
+    "task_retrying", "task_completed",
 }
 
 _STATUS_EVENTS = {
-    "developer_completed": "completed",
-    "developer_failed": "failed",
-    "tester_completed": "completed",
-    "tester_failed": "failed",
-    "reviewer_approved": "completed",
-    "reviewer_revision": "revision",
-    "task_failed": "failed",
-    "task_completed": "completed",
+    "developer_completed": "completed", "developer_failed": "failed",
+    "tester_completed": "completed", "tester_failed": "failed",
+    "reviewer_approved": "completed", "reviewer_revision": "revision",
+    "task_failed": "failed", "task_completed": "completed",
 }
 
 
 @dataclass(frozen=True)
 class WorkflowTaskProjection:
     """Read-only state reconstructed from one task's workflow event stream."""
-
     project_id: str
     task_id: str
     lifecycle_status: str = "unknown"
@@ -55,7 +40,6 @@ class WorkflowTaskProjection:
 @dataclass(frozen=True)
 class WorkflowProjectProjection:
     """Read-only project-level projection containing task projections."""
-
     project_id: str
     lifecycle_status: str = "unknown"
     last_event_id: str | None = None
@@ -81,7 +65,16 @@ class WorkflowEventProjector:
         *,
         project_id: str | None = None,
     ) -> WorkflowProjectProjection:
-        ordered = cls._ordered_events(events)
+        # QueryService.from_log is normally project-scoped. Avoid sorting the
+        # entire multi-project stream when the log can provide the already
+        # project-scoped snapshot directly. This keeps projection linear in the
+        # requested project's event count instead of doing unnecessary global
+        # sorting work.
+        if isinstance(events, WorkflowEventLog) and project_id is not None:
+            ordered = events.list_for_project(project_id)
+        else:
+            ordered = cls._ordered_events(events)
+
         if project_id is None:
             project_ids = {event.project_id for event in ordered}
             if len(project_ids) != 1:
@@ -91,7 +84,9 @@ class WorkflowEventProjector:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
 
-        selected = [event for event in ordered if event.project_id == project_id]
+        selected = ordered if isinstance(events, WorkflowEventLog) and project_id is not None else [
+            event for event in ordered if event.project_id == project_id
+        ]
         if not selected and ordered:
             raise ValueError(f"event stream contains no events for project: {project_id}")
 
@@ -136,17 +131,10 @@ class WorkflowEventProjector:
         )
 
     @classmethod
-    def project_task(
-        cls,
-        events: WorkflowEventLog | Iterable[WorkflowEvent],
-        task_id: str,
-        *,
-        project_id: str | None = None,
-    ) -> WorkflowTaskProjection:
+    def project_task(cls, events: WorkflowEventLog | Iterable[WorkflowEvent], task_id: str, *, project_id: str | None = None) -> WorkflowTaskProjection:
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
-        projection = cls.project(events, project_id=project_id)
-        return projection.task(task_id)
+        return cls.project(events, project_id=project_id).task(task_id)
 
     @staticmethod
     def _ordered_events(events: WorkflowEventLog | Iterable[WorkflowEvent]) -> list[WorkflowEvent]:
@@ -175,9 +163,7 @@ class WorkflowEventProjector:
             if not isinstance(status, str):
                 raise ValueError(f"workflow event payload requires status: {event.event_id}")
             if status != required_status:
-                raise ValueError(
-                    f"workflow event status mismatch for {event.event_id}: expected {required_status}, got {status}"
-                )
+                raise ValueError(f"workflow event status mismatch for {event.event_id}: expected {required_status}, got {status}")
         if event.event_type == "task_retrying":
             for field in ("status", "retry_attempt", "max_retries", "reason"):
                 if field not in event.payload:
@@ -204,65 +190,31 @@ class WorkflowEventProjector:
         state["last_event_id"] = event.event_id
         state["last_event_type"] = event_type
         state["last_occurred_at"] = event.occurred_at
-
-        if event_type == "task_started":
-            state["lifecycle_status"] = "running"
-        elif event_type == "developer_completed":
-            state["lifecycle_status"] = "review_pending"
-        elif event_type == "developer_failed":
-            state["lifecycle_status"] = "failed"
-            state["error"] = event.payload.get("error") or event.payload.get("message")
-        elif event_type == "tester_skipped":
-            state["lifecycle_status"] = "review_pending"
-        elif event_type == "tester_completed":
-            state["lifecycle_status"] = "review_pending"
-        elif event_type == "tester_failed":
-            state["lifecycle_status"] = "failed"
-            state["error"] = event.payload.get("error") or event.payload.get("message")
-        elif event_type == "review_started":
-            state["lifecycle_status"] = "reviewing"
-            state["review_status"] = "started"
-        elif event_type == "reviewer_fallback":
-            state["lifecycle_status"] = "review_pending"
-            state["review_status"] = "recovery"
-        elif event_type == "reviewer_retry":
-            state["lifecycle_status"] = "reviewing"
-            state["review_status"] = "retrying"
-        elif event_type == "reviewer_revision":
-            state["lifecycle_status"] = "running"
-            state["review_status"] = "revision"
-        elif event_type == "reviewer_approved":
-            state["lifecycle_status"] = "completed"
-            state["review_status"] = "approved"
-        elif event_type == "task_failed":
-            state["lifecycle_status"] = "failed"
-            state["error"] = event.payload.get("error") or event.payload.get("message")
-        elif event_type == "task_retrying":
-            state["lifecycle_status"] = "ready"
-            state["retry_attempt"] = event.payload["retry_attempt"]
-            state["max_retries"] = event.payload["max_retries"]
-            state["error"] = event.payload["reason"]
-        elif event_type == "task_completed":
-            state["lifecycle_status"] = "completed"
+        if event_type == "task_started": state["lifecycle_status"] = "running"
+        elif event_type == "developer_completed": state["lifecycle_status"] = "review_pending"
+        elif event_type == "developer_failed": state.update(lifecycle_status="failed", error=event.payload.get("error") or event.payload.get("message"))
+        elif event_type == "tester_skipped": state["lifecycle_status"] = "review_pending"
+        elif event_type == "tester_completed": state["lifecycle_status"] = "review_pending"
+        elif event_type == "tester_failed": state.update(lifecycle_status="failed", error=event.payload.get("error") or event.payload.get("message"))
+        elif event_type == "review_started": state.update(lifecycle_status="reviewing", review_status="started")
+        elif event_type == "reviewer_fallback": state.update(lifecycle_status="review_pending", review_status="recovery")
+        elif event_type == "reviewer_retry": state.update(lifecycle_status="reviewing", review_status="retrying")
+        elif event_type == "reviewer_revision": state.update(lifecycle_status="running", review_status="revision")
+        elif event_type == "reviewer_approved": state.update(lifecycle_status="completed", review_status="approved")
+        elif event_type == "task_failed": state.update(lifecycle_status="failed", error=event.payload.get("error") or event.payload.get("message"))
+        elif event_type == "task_retrying": state.update(lifecycle_status="ready", retry_attempt=event.payload["retry_attempt"], max_retries=event.payload["max_retries"], error=event.payload["reason"])
+        elif event_type == "task_completed": state["lifecycle_status"] = "completed"
 
     @staticmethod
     def _project_lifecycle(tasks: tuple[WorkflowTaskProjection, ...], *, resumed: bool) -> str:
-        if not tasks:
-            return "resumed" if resumed else "unknown"
+        if not tasks: return "resumed" if resumed else "unknown"
         statuses = {task.lifecycle_status for task in tasks}
-        if statuses == {"completed"}:
-            return "completed"
-        if "failed" in statuses:
-            return "failed"
-        if "running" in statuses or "reviewing" in statuses or "review_pending" in statuses:
-            return "running"
+        if statuses == {"completed"}: return "completed"
+        if "failed" in statuses: return "failed"
+        if "running" in statuses or "reviewing" in statuses or "review_pending" in statuses: return "running"
         return "ready"
 
 
-def replay_workflow_events(
-    events: WorkflowEventLog | Iterable[WorkflowEvent],
-    *,
-    project_id: str | None = None,
-) -> WorkflowProjectProjection:
+def replay_workflow_events(events: WorkflowEventLog | Iterable[WorkflowEvent], *, project_id: str | None = None) -> WorkflowProjectProjection:
     """Convenience wrapper for deterministic, side-effect-free event replay."""
     return WorkflowEventProjector.project(events, project_id=project_id)
