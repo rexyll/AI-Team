@@ -115,6 +115,30 @@ class ProviderLLM(BaseLLM):
         text = str(content)
         return "" if not text.strip() else text
 
+    @staticmethod
+    def _usage_of(response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {}
+
+        def value(name: str) -> int:
+            raw = usage.get(name, 0) if isinstance(usage, dict) else getattr(usage, name, 0)
+            try:
+                return max(0, int(raw or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        prompt_tokens = value("prompt_tokens")
+        completion_tokens = value("completion_tokens")
+        total_tokens = value("total_tokens")
+        if not total_tokens:
+            total_tokens = prompt_tokens + completion_tokens
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
     def _post_chat(self, **kwargs: Any):
         max_attempts = self._max_attempts()
         http_attempt = 0
@@ -194,7 +218,9 @@ class ProviderLLM(BaseLLM):
             kwargs["tools"] = list(tools)
             kwargs["tool_choice"] = tool_choice
 
+        started = time.perf_counter()
         response = self._post_chat(**kwargs)
+        latency_seconds = time.perf_counter() - started
         message = response.choices[0].message
         raw_tool_calls = getattr(message, "tool_calls", None) or []
         tool_calls = tuple(
@@ -208,4 +234,6 @@ class ProviderLLM(BaseLLM):
         return LLMResponse(
             content=self._normalized_content(message.content),
             tool_calls=tool_calls,
+            usage=self._usage_of(response),
+            latency_seconds=latency_seconds,
         )
