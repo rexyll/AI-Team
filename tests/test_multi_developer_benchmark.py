@@ -14,12 +14,15 @@ class _DeterministicExecutor:
 
     def run_until_idle(self):
         # The benchmark contract is tested independently of real model calls.
-        # Mark currently runnable work completed in deterministic rounds.
+        # Each deterministic round asks TaskManager to promote only runnable
+        # pending tasks to READY, then executes READY tasks. This preserves the
+        # production lifecycle contract: pending -> ready -> running.
         while True:
+            self.manager.get_ready_tasks()
             ready = [
                 task
                 for task in self.manager.get_all_tasks()
-                if task.status in {"pending", "ready"}
+                if task.status == "ready"
                 and all(
                     self.manager.get_task(dep).status == "completed"
                     for dep in task.dependencies
