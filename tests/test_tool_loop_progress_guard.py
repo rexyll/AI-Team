@@ -45,8 +45,37 @@ def test_completed_call_resets_failure_streak():
     assert guard.record(tool_name="run_command", status="failed", duplicate_of=None, retry_of=None) is None
 
 
+def test_guard_trips_on_stagnant_evidence_from_distinct_calls():
+    guard = ToolLoopProgressGuard(ToolLoopProgressGuardConfig(max_consecutive_stagnant_results=3))
+
+    assert guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same") is None
+    assert guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same") is None
+    reason = guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same")
+
+    assert reason is not None
+    assert "unchanged evidence" in reason
+
+
+def test_explicit_progress_resets_stagnant_evidence_streak():
+    guard = ToolLoopProgressGuard(ToolLoopProgressGuardConfig(max_consecutive_stagnant_results=2))
+
+    guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same")
+    assert guard.record(tool_name="write_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same", progress=True) is None
+    assert guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same") is None
+
+
+def test_failure_breaks_stagnant_evidence_streak():
+    guard = ToolLoopProgressGuard(ToolLoopProgressGuardConfig(max_consecutive_stagnant_results=2))
+
+    guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same")
+    assert guard.record(tool_name="run_command", status="failed", duplicate_of=None, retry_of=None, result_hash="same") is None
+    assert guard.record(tool_name="read_file", status="completed", duplicate_of=None, retry_of=None, result_hash="same") is None
+
+
 def test_config_rejects_non_positive_thresholds():
     with pytest.raises(ValueError):
         ToolLoopProgressGuardConfig(max_consecutive_duplicates=0)
     with pytest.raises(ValueError):
         ToolLoopProgressGuardConfig(max_consecutive_failures=0)
+    with pytest.raises(ValueError):
+        ToolLoopProgressGuardConfig(max_consecutive_stagnant_results=0)
