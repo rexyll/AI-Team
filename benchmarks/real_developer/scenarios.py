@@ -4,7 +4,7 @@ from runtime.task import Task
 
 
 def independent_implementation_tasks() -> list[Task]:
-    """Independent implementation tasks followed by an integration task."""
+    """Three independent implementations followed by integration."""
     return [
         Task("ROOT", "Root", "benchmark root", "developer", status="completed"),
         Task("TASK-A", "Utility A", "implement utility A", "developer", dependencies=["ROOT"]),
@@ -15,13 +15,13 @@ def independent_implementation_tasks() -> list[Task]:
 
 
 def partial_implementation_tasks() -> list[Task]:
-    """Two implementation branches plus one independent task converge at integration."""
+    """Two-way parallel work with a dependent branch before integration."""
     return [
         Task("ROOT", "Root", "benchmark root", "developer", status="completed"),
         Task("TASK-A", "Utility A", "implement utility A", "developer", dependencies=["ROOT"]),
         Task("TASK-B", "Utility B", "implement utility B", "developer", dependencies=["ROOT"]),
-        Task("TASK-C", "Utility C", "implement utility C", "developer", dependencies=["ROOT"]),
-        Task("FINAL", "Integration", "integrate utilities", "developer", dependencies=["TASK-A", "TASK-B", "TASK-C"]),
+        Task("TASK-C", "Utility C", "extend utility A", "developer", dependencies=["TASK-A"]),
+        Task("FINAL", "Integration", "integrate utilities", "developer", dependencies=["TASK-B", "TASK-C"]),
     ]
 
 
