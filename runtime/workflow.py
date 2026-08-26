@@ -22,7 +22,6 @@ MAX_REVIEWER_RECOVERY_ATTEMPTS = 1
 @dataclass
 class StageOutcome:
     """Unified result contract for one workflow stage."""
-
     stage: "WorkflowStage"
     status: str
     result: AgentResult | dict[str, Any] | None = None
@@ -68,9 +67,7 @@ class StageOutcome:
 
     @property
     def result_dict(self) -> dict[str, Any]:
-        if self.result is None:
-            return {}
-        return self.result.to_dict()
+        return {} if self.result is None else self.result.to_dict()
 
     @property
     def succeeded(self) -> bool:
@@ -98,7 +95,8 @@ class WorkflowStage(str, Enum):
 class TaskWorkflow:
     """Execute one task through Developer/Tester/Reviewer iterations."""
 
-    def __init__(self,
+    def __init__(
+        self,
         task_manager: TaskManager,
         developer,
         reviewer,
@@ -201,16 +199,11 @@ class TaskWorkflow:
         project_id = self._project_id or task.context.get("project_id")
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id is required when workflow_event_log is enabled")
-        self._workflow_event_log.append(
-            WorkflowEvent(
-                event_id=str(uuid4()),
-                event_type=event_type,
-                project_id=project_id,
-                task_id=task.id,
-                occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                payload=payload or {},
-            )
-        )
+        self._workflow_event_log.append(WorkflowEvent(
+            event_id=str(uuid4()), event_type=event_type, project_id=project_id,
+            task_id=task.id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            payload=payload or {},
+        ))
 
     def _capture_developer_tool_history(self, task: Task) -> None:
         history = getattr(self.developer, "tool_execution_history", None)
@@ -295,12 +288,8 @@ class TaskWorkflow:
             recovery_attempt = 0
             while review_action == "retry" and recovery_attempt < self.max_reviewer_recovery_attempts:
                 recovery_attempt += 1
-                self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
-                self._emit_event(
-                    "reviewer_retry",
-                    task,
-                    payload={"attempt": recovery_attempt, "max_attempts": self.max_reviewer_recovery_attempts},
-                )
+                self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.REVIEWER_RETRY)
+                self._emit_event("reviewer_retry", task, payload={"attempt": recovery_attempt, "max_attempts": self.max_reviewer_recovery_attempts})
                 self._checkpoint()
                 self._emit_event("review_started", task, payload={"status": task.status, "recovery_attempt": recovery_attempt})
                 review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
@@ -461,4 +450,5 @@ class TaskWorkflow:
 
     def _build_context(self, task: Task) -> None:
         context = build_task_context(task, self.task_manager.tasks)
+        # Keep the compatibility context field even when there are no dependencies.
         task.context["dependencies"] = context
