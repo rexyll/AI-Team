@@ -58,11 +58,13 @@ def _query_throughput(size: int) -> float:
     log = WorkflowEventLog()
     log.merge(_events(size))
 
-    # A single tiny projection can be dominated by timer/GC/import noise on
-    # Windows. Run a bounded number of identical read-only projections so the
-    # contract measures steady-state scaling rather than one lucky/unlucky
-    # microsecond sample. Keep total work roughly comparable across sizes.
-    repetitions = max(1, 2048 // size)
+    # Use the same number of steady-state samples for every dataset size.
+    # Scaling the repetition count inversely with ``size`` made the largest
+    # case run only a handful of timed iterations, making it disproportionately
+    # sensitive to Windows scheduler/GC/timer noise. A fixed sample count keeps
+    # the comparison statistically comparable while retaining enough total work
+    # to expose an accidental quadratic projection regression.
+    repetitions = 32
     started = perf_counter()
     for _ in range(repetitions):
         query = WorkflowEventQueryService.from_log(log, project_id=PROJECT_ID)
@@ -78,7 +80,8 @@ def test_projection_query_throughput_does_not_collapse_with_scale() -> None:
     # Projection is intentionally rebuilt from a stable read-only snapshot.
     # Keep the guard wide enough for normal CI variance while detecting an
     # accidental quadratic regression in event/task projection. The benchmark
-    # uses repeated steady-state samples to avoid a one-shot timer artifact.
+    # uses equal repeated steady-state samples to avoid a one-shot timer artifact
+    # and to keep the largest dataset from being represented by only a few calls.
     assert throughputs[128] > throughputs[32] * 0.30
     assert throughputs[512] > throughputs[32] * 0.20
 
