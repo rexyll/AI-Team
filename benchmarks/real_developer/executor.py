@@ -7,6 +7,7 @@ from typing import Callable
 from agents.developer import DeveloperAgent
 from runtime.agent_config import AgentConfig
 from runtime.llm.base import BaseLLM
+from runtime.llm.context_compacting import ContextCompactingLLM
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 
@@ -61,6 +62,15 @@ class DeveloperAgentExecutor:
         before_output = binding.llm.stats.output_tokens
         before_latency = binding.llm.stats.latency_seconds
         before_profiles = len(binding.llm.stats.profiles)
+        compacting_llm = binding.agent.llm
+        if not isinstance(compacting_llm, ContextCompactingLLM):
+            raise TypeError("DeveloperAgent must use ContextCompactingLLM")
+        before_compactions = compacting_llm.compaction_count
+        before_prompt_before = compacting_llm.max_prompt_chars_before
+        before_prompt_after = compacting_llm.max_prompt_chars_after
+        before_messages_before = compacting_llm.max_input_messages_before
+        before_messages_after = compacting_llm.max_input_messages_after
+
         started = perf_counter()
         tool_calls = 0
         test_commands = 0
@@ -93,4 +103,21 @@ class DeveloperAgentExecutor:
             test_commands=test_commands,
             failed=failed,
             llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
+            compaction_count=compacting_llm.compaction_count - before_compactions,
+            max_prompt_chars_before_compaction=max(
+                0,
+                compacting_llm.max_prompt_chars_before - before_prompt_before,
+            ),
+            max_prompt_chars_after_compaction=max(
+                0,
+                compacting_llm.max_prompt_chars_after - before_prompt_after,
+            ),
+            max_context_messages_before_compaction=max(
+                0,
+                compacting_llm.max_input_messages_before - before_messages_before,
+            ),
+            max_context_messages_after_compaction=max(
+                0,
+                compacting_llm.max_input_messages_after - before_messages_after,
+            ),
         )
