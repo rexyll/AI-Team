@@ -53,8 +53,18 @@ class WorkflowEventQueryService:
         if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
             raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter")
         project_id = cls._require_non_empty_string(project_id, "project_id")
+
+        # Validate the project snapshot before touching the event projection.
         project_persistence.load(project_id)
-        return cls.from_persistence(event_persistence, project_id=project_id)
+        event_log = event_persistence.load_log()
+
+        # An empty stream remains legacy-compatible. Once the persisted event
+        # stream contains records, silently projecting an unrelated project
+        # would hide a persistence/configuration identity mismatch.
+        if len(event_log) > 0 and not event_log.list_for_project(project_id):
+            raise ValueError(f"no events for project: {project_id}")
+
+        return cls.from_log(event_log, project_id=project_id)
 
     @property
     def project_id(self) -> str:
