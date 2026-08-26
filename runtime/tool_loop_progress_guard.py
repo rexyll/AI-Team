@@ -62,17 +62,18 @@ class ToolLoopProgressGuard:
         else:
             self.consecutive_failures = 0
 
-        if (
-            status == "completed"
-            and duplicate_of is None
-            and result_hash is not None
-            and progress is not True
-            and result_hash == self._last_result_hash
-        ):
-            self.consecutive_stagnant_results += 1
+        if status == "completed" and result_hash is not None and progress is not True:
+            if result_hash == self._last_result_hash:
+                self.consecutive_stagnant_results += 1
+            else:
+                # The current successful result starts a new evidence streak.
+                # Counting the baseline call makes a threshold of N mean
+                # "N consecutive calls with unchanged evidence".
+                self.consecutive_stagnant_results = 1
+            self._last_result_hash = result_hash
         else:
             self.consecutive_stagnant_results = 0
-        self._last_result_hash = result_hash if status == "completed" else None
+            self._last_result_hash = None
 
         if self.consecutive_duplicates >= self.config.max_consecutive_duplicates:
             self.trip_reason = (
