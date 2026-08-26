@@ -43,7 +43,10 @@ def compact_tool_context(
         compacted.append(
             {
                 "role": "system",
-                "content": f"[compacted: {omitted_messages} msgs, {omitted_tools} tools]",
+                "content": (
+                    "[Earlier execution context compacted: "
+                    f"{omitted_messages} msgs, {omitted_tools} tools]"
+                ),
             }
         )
 
