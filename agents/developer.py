@@ -11,6 +11,7 @@ from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
+from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -136,6 +137,7 @@ EXECUTION REQUIREMENT
         loop_telemetry: list[dict[str, Any]] = []
         prior_signatures: list[tuple[str, str, str, str]] = []
         cache = ToolResultCache()
+        progress_guard = ToolLoopProgressGuard()
         for _ in range(MAX_TOOL_ITERATIONS):
             response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
@@ -161,20 +163,28 @@ EXECUTION REQUIREMENT
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: invalid JSON arguments: " f"{type(exc).__name__}: {exc}"
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
-                    loop_telemetry.append(self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                    loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
-                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                    reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
+                    if reason:
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
                     continue
                 if not isinstance(arguments, dict):
                     status = "invalid_arguments"
                     error = {"type": "TypeError", "message": "tool arguments must be a JSON object"}
                     result = "Tool error: arguments must be a JSON object"
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
-                    loop_telemetry.append(self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                    loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
-                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=self._telemetry_dict(tool_call.call_id, tool_name, telemetry))
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                    reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
+                    if reason:
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
                     continue
                 print(f"[Args] {arguments}")
                 try:
@@ -209,7 +219,16 @@ EXECUTION REQUIREMENT
                 messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": str(result)})
                 self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
+                if reason:
+                    return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
+
+    def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache) -> AgentResult:
+        data = self._build_result_data(content=reason, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
+        data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
+        data["tool_loop_guard"] = {"tripped": True, "reason": reason}
+        return AgentResult(status="failed", agent=self.role, task_id=task_id, message=reason, data=data)
 
     def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
         self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error, metadata=metadata or {}))
