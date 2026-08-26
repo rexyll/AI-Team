@@ -14,12 +14,13 @@ def compact_tool_context(
     recent_messages: int = DEFAULT_RECENT_MESSAGES,
     max_tool_chars: int = DEFAULT_MAX_TOOL_CHARS,
 ) -> list[dict[str, Any]]:
-    """Return a bounded LLM context while preserving the task request.
+    """Return a bounded LLM context without mutating the source messages.
 
-    The persisted ToolExecutionHistory remains untouched. This helper only
-    controls what is sent to the next LLM call. System and initial user
-    messages are preserved; recent interaction messages are retained, while
-    older tool outputs are summarized by a deterministic placeholder.
+    The first system/user messages form the stable task contract. Older
+    interaction messages are removed from the active context and represented
+    by a single deterministic summary marker. Recent messages are retained,
+    and oversized retained tool outputs are truncated. Persisted execution
+    history is deliberately not modified by this helper.
     """
     if recent_messages < 1:
         raise ValueError("recent_messages must be >= 1")
@@ -28,34 +29,38 @@ def compact_tool_context(
 
     source = [dict(message) for message in messages]
     if len(source) <= recent_messages + 2:
-        return source
+        return _bounded_tool_outputs(source, max_tool_chars)
 
-    prefix: list[dict[str, Any]] = []
-    for message in source[:2]:
-        prefix.append(dict(message))
+    prefix = [dict(message) for message in source[:2]]
+    tail = [dict(message) for message in source[-recent_messages:]]
 
-    tail = source[-recent_messages:]
-    retained = {id(message) for message in tail}
+    older = source[2:-recent_messages]
+    omitted_tools = sum(1 for message in older if message.get("role") == "tool")
+    omitted_messages = len(older)
+
     compacted: list[dict[str, Any]] = []
-
-    for message in source[2:-recent_messages]:
-        if message.get("role") != "tool":
-            continue
-        content = str(message.get("content", ""))
+    if omitted_messages:
         compacted.append(
             {
                 "role": "system",
                 "content": (
-                    "[Earlier tool result omitted from active context; "
-                    f"original_chars={len(content)}]"
+                    "[Earlier execution context compacted: "
+                    f"messages={omitted_messages}, "
+                    f"tool_results={omitted_tools}. "
+                    "Use the current task request and recent tool evidence. "
+                    "Persisted execution history is available outside this prompt.]"
                 ),
             }
         )
-        if len(compacted) >= 1:
-            break
 
-    result = prefix + compacted + [dict(message) for message in tail]
+    return _bounded_tool_outputs(prefix + compacted + tail, max_tool_chars)
 
+
+def _bounded_tool_outputs(
+    messages: list[dict[str, Any]],
+    max_tool_chars: int,
+) -> list[dict[str, Any]]:
+    result = [dict(message) for message in messages]
     for message in result:
         if message.get("role") != "tool":
             continue
@@ -65,5 +70,4 @@ def compact_tool_context(
                 content[:max_tool_chars]
                 + f"\n[tool output truncated; original_chars={len(content)}]"
             )
-
     return result
