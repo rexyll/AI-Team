@@ -30,3 +30,20 @@ def test_instrumented_llm_collects_tool_call_usage():
     assert llm.stats.input_tokens == 10
     assert llm.stats.output_tokens == 4
     assert llm.stats.total_tokens == 14
+
+
+def test_instrumented_llm_records_metadata_without_prompt_content():
+    llm = InstrumentedLLM(_FakeLLM())
+    secret = "DO_NOT_PERSIST_THIS_PROMPT"
+    llm.generate_with_tools(
+        [{"role": "system", "content": "system text"}, {"role": "user", "content": secret}],
+        tools=[{"name": "read_file"}],
+    )
+
+    profile = llm.stats.profiles[0]
+    assert profile.call_index == 1
+    assert profile.method == "generate_with_tools"
+    assert profile.prompt_chars == len("system text") + len(secret)
+    assert profile.message_count == 2
+    assert profile.tool_count == 1
+    assert secret not in repr(profile)
