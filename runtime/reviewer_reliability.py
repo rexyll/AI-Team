@@ -20,8 +20,6 @@ FALLBACK_SYSTEM_PROMPT = """
 
 @dataclass
 class ReviewerReliabilityStats:
-    """Counters for primary/fallback reviewer execution outcomes."""
-
     primary_attempts: int = 0
     primary_successes: int = 0
     primary_failures: int = 0
@@ -61,7 +59,7 @@ class ReviewerReliabilityStats:
 
 
 class ResilientReviewerAgent:
-    """Run the normal reviewer first and recover with an optional fallback model."""
+    """Run primary review, then a lightweight fallback, without leaking infra failure."""
 
     role = "reviewer"
 
@@ -73,36 +71,37 @@ class ResilientReviewerAgent:
     def run(self, task) -> AgentResult:
         try:
             result = self.primary.run(task)
-            self.stats.record_primary(success=True, empty=not bool(result.message.strip()))
+            if not result.message or not result.message.strip():
+                self.stats.record_primary(success=False, empty=True)
+                return self._run_fallback_or_recover(
+                    task,
+                    ValueError("Reviewer empty response"),
+                )
+            self.stats.record_primary(success=True)
             return self._annotate(result, source="primary")
         except Exception as primary_exc:
             self.stats.record_primary(success=False, empty=self._looks_empty(primary_exc))
+            return self._run_fallback_or_recover(task, primary_exc)
 
-            if self.fallback is not None:
-                try:
-                    result = self._run_lightweight_fallback(task)
-                except Exception as fallback_exc:
-                    self.stats.record_fallback(
-                        success=False,
-                        empty=self._looks_empty(fallback_exc),
-                    )
-                    return self._recovery_result(task, primary_exc, fallback_exc)
-
-                self.stats.record_fallback(success=True, empty=not bool(result.message.strip()))
-                return self._annotate(
-                    result,
-                    source="fallback",
-                    primary_error=primary_exc,
-                )
-
-            return self._recovery_result(task, primary_exc, None)
+    def _run_fallback_or_recover(self, task, primary_error: Exception) -> AgentResult:
+        if self.fallback is None:
+            return self._recovery_result(task, primary_error, None)
+        try:
+            result = self._run_lightweight_fallback(task)
+            if not result.message or not result.message.strip():
+                self.stats.record_fallback(success=False, empty=True)
+                return self._recovery_result(task, primary_error, ValueError("Reviewer fallback empty response"))
+            self.stats.record_fallback(success=True)
+            return self._annotate(result, source="fallback", primary_error=primary_error)
+        except Exception as fallback_exc:
+            self.stats.record_fallback(success=False, empty=self._looks_empty(fallback_exc))
+            return self._recovery_result(task, primary_error, fallback_exc)
 
     def _run_lightweight_fallback(self, task) -> AgentResult:
         context = self.fallback.build_context(task)
         view = context_view(context, "reviewer")
         developer_result = view["task_result"]
         tester_feedback = view["tester_feedback"]
-
         prompt = (
             "请对下面任务做最小质量门禁判断。\n\n"
             f"Task: {view['task_id']}\n"
@@ -121,18 +120,8 @@ class ResilientReviewerAgent:
             max_tokens=512,
         )
         decision = ReviewerAgent._parse_review_result(content)
-        data = ReviewerAgent._build_result_data(
-            content=content,
-            decision=decision,
-            context=context,
-        )
-        return AgentResult(
-            status=decision,
-            agent="reviewer",
-            task_id=view["task_id"],
-            message=content,
-            data=data,
-        )
+        data = ReviewerAgent._build_result_data(content=content, decision=decision, context=context)
+        return AgentResult(status=decision, agent="reviewer", task_id=view["task_id"], message=content, data=data)
 
     @staticmethod
     def _compact(result, key: str) -> str:
@@ -146,9 +135,7 @@ class ResilientReviewerAgent:
     @staticmethod
     def _bounded(value, limit: int) -> str:
         text = value if isinstance(value, str) else str(value)
-        if len(text) <= limit:
-            return text
-        return text[:limit] + "...[truncated]"
+        return text if len(text) <= limit else text[:limit] + "...[truncated]"
 
     @staticmethod
     def _looks_empty(exc: Exception) -> bool:
@@ -156,12 +143,7 @@ class ResilientReviewerAgent:
         return "empty response" in text or "invalid decision" in text
 
     @staticmethod
-    def _annotate(
-        result: AgentResult,
-        *,
-        source: str,
-        primary_error: Exception | None = None,
-    ) -> AgentResult:
+    def _annotate(result: AgentResult, *, source: str, primary_error: Exception | None = None) -> AgentResult:
         data = dict(result.data)
         data["reviewer_execution"] = {
             "source": source,
@@ -177,11 +159,7 @@ class ResilientReviewerAgent:
         )
 
     @staticmethod
-    def _recovery_result(
-        task,
-        primary_error: Exception,
-        fallback_error: Exception | None,
-    ) -> AgentResult:
+    def _recovery_result(task, primary_error: Exception, fallback_error: Exception | None) -> AgentResult:
         return AgentResult(
             status="revision",
             agent="reviewer",
@@ -208,8 +186,5 @@ def create_reviewer_with_fallback(config, primary_llm: ProviderLLM) -> Resilient
     model_id = os.getenv("REVIEWER_FALLBACK_MODEL", "").strip()
     fallback = None
     if provider_name and model_id:
-        fallback = ReviewerAgent(
-            config,
-            llm=ProviderLLM(model=model_id, provider_profile=provider_name),
-        )
+        fallback = ReviewerAgent(config, llm=ProviderLLM(model=model_id, provider_profile=provider_name))
     return ResilientReviewerAgent(primary, fallback=fallback)
