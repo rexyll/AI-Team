@@ -11,15 +11,15 @@ class WorkflowOutcomeKind(str, Enum):
 
     SUCCESS = "success"
     QUALITY_GATE_FAILURE = "quality_gate_failure"
-    # Compatibility alias: reviewer revision is a quality-gate failure.
     REVISION_REQUIRED = "quality_gate_failure"
     EXECUTION_FAILURE = "execution_failure"
     INVALID_RESULT = "invalid_result"
+    REVIEWER_RECOVERY = "reviewer_recovery"
 
 
 @dataclass(frozen=True)
 class WorkflowTransition:
-    """Declarative state transition owned by a workflow stage."""
+    """Declarative lifecycle transition owned by a workflow stage."""
 
     stage: str
     outcome: WorkflowOutcomeKind
@@ -39,6 +39,7 @@ WORKFLOW_STAGE_TRANSITIONS: tuple[WorkflowTransition, ...] = (
     WorkflowTransition("reviewer", WorkflowOutcomeKind.QUALITY_GATE_FAILURE, TaskStatus.REVIEWING, TaskStatus.RUNNING),
     WorkflowTransition("reviewer", WorkflowOutcomeKind.EXECUTION_FAILURE, TaskStatus.REVIEWING, TaskStatus.FAILED),
     WorkflowTransition("reviewer", WorkflowOutcomeKind.INVALID_RESULT, TaskStatus.REVIEWING, TaskStatus.FAILED),
+    WorkflowTransition("reviewer", WorkflowOutcomeKind.REVIEWER_RECOVERY, TaskStatus.REVIEWING, TaskStatus.REVIEW_PENDING),
 )
 
 _TRANSITION_INDEX = {(item.stage, item.outcome): item for item in WORKFLOW_STAGE_TRANSITIONS}
