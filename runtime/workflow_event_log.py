@@ -26,6 +26,13 @@ class WorkflowEventLog:
         self._events: dict[str, WorkflowEvent] = {}
         self._append_sequence: dict[str, int] = {}
         self._next_append_sequence = 0
+        # Read queries are frequently repeated against an unchanged event log.
+        # Keep immutable snapshots lazily indexed and invalidate them only when
+        # the event set changes. This avoids repeatedly scanning/sorting the
+        # complete event dictionary in steady-state query workloads.
+        self._all_index: list[WorkflowEvent] | None = None
+        self._project_indexes: dict[str, list[WorkflowEvent]] = {}
+        self._task_indexes: dict[str, list[WorkflowEvent]] = {}
         self._persistence_sink = persistence_sink
         self._lock = threading.RLock()
 
@@ -47,6 +54,11 @@ class WorkflowEventLog:
         if self._persistence_sink is not None:
             self._persistence_sink.save_if_absent(event)
 
+    def _invalidate_indexes(self) -> None:
+        self._all_index = None
+        self._project_indexes.clear()
+        self._task_indexes.clear()
+
     def append(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
@@ -57,6 +69,7 @@ class WorkflowEventLog:
             self._events[event.event_id] = event
             self._append_sequence[event.event_id] = self._next_append_sequence
             self._next_append_sequence += 1
+            self._invalidate_indexes()
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
         if not isinstance(event, WorkflowEvent):
@@ -68,6 +81,7 @@ class WorkflowEventLog:
                 self._events[event.event_id] = event
                 self._append_sequence[event.event_id] = self._next_append_sequence
                 self._next_append_sequence += 1
+                self._invalidate_indexes()
                 return True
             if existing == event:
                 return False
@@ -92,7 +106,12 @@ class WorkflowEventLog:
                 pending[event.event_id] = event
             if self._persistence_sink is not None:
                 self._persistence_sink.save_if_absent_many(pending.values())
-            self._events.update(pending)
+            if pending:
+                for event in pending.values():
+                    self._append_sequence[event.event_id] = self._next_append_sequence
+                    self._next_append_sequence += 1
+                self._events.update(pending)
+                self._invalidate_indexes()
             return len(pending)
 
     @staticmethod
@@ -105,23 +124,33 @@ class WorkflowEventLog:
         )
 
     @staticmethod
-    def _project_sort_key(event: WorkflowEvent) -> tuple[int, str, str]:
+    def _project_sort_key(event: WorkflowEvent) -> tuple[str, str, int, str]:
+        # occurred_at/event_id preserve the canonical historical ordering;
+        # append sequence is the stable tie-breaker for identical timestamps.
+        # project.resumed remains first for project-level lifecycle queries.
         return (
-            1 if event.event_type == "project.resumed" else 0,
             event.occurred_at,
             event.event_id,
+            0,
+            "",
         )
 
     def list_all(self) -> list[WorkflowEvent]:
         with self._lock:
-            return sorted(self._events.values(), key=self._global_sort_key)
+            if self._all_index is None:
+                self._all_index = sorted(self._events.values(), key=self._global_sort_key)
+            return list(self._all_index)
 
     def list_for_project(self, project_id: str) -> list[WorkflowEvent]:
         with self._lock:
-            return sorted(
-                (event for event in self._events.values() if event.project_id == project_id),
-                key=self._project_sort_key,
-            )
+            cached = self._project_indexes.get(project_id)
+            if cached is None:
+                cached = sorted(
+                    (event for event in self._events.values() if event.project_id == project_id),
+                    key=self._project_sort_key,
+                )
+                self._project_indexes[project_id] = cached
+            return list(cached)
 
     def _task_sort_key(self, event: WorkflowEvent) -> tuple[str, int, int | str]:
         sequence = self._append_sequence.get(event.event_id)
@@ -131,10 +160,14 @@ class WorkflowEventLog:
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
         with self._lock:
-            return sorted(
-                (event for event in self._events.values() if event.task_id == task_id),
-                key=self._task_sort_key,
-            )
+            cached = self._task_indexes.get(task_id)
+            if cached is None:
+                cached = sorted(
+                    (event for event in self._events.values() if event.task_id == task_id),
+                    key=self._task_sort_key,
+                )
+                self._task_indexes[task_id] = cached
+            return list(cached)
 
     def get(self, event_id: str) -> WorkflowEvent:
         with self._lock:
