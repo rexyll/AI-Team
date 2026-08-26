@@ -9,10 +9,10 @@ class MockAgent(BaseAgent):
     """Deterministic test double that follows the production Agent contract."""
 
     def __init__(self, agent_role: str):
-        super().__init__()
         if not isinstance(agent_role, str) or not agent_role.strip():
             raise ValueError("agent_role must be a non-empty string")
         self._role = agent_role.strip()
+        super().__init__()
 
     @property
     def role(self) -> str:
@@ -24,7 +24,6 @@ class MockAgent(BaseAgent):
                 "MockAgent.run() expects Task, "
                 f"got {type(task).__name__}"
             )
-
         return AgentResult(
             status="completed",
             agent=self.role,
