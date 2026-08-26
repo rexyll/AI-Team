@@ -4,6 +4,14 @@ from typing import Any
 
 
 READ_ONLY_VERIFICATION_TOOLS = frozenset({"run_command"})
+VERIFICATION_COMMAND_PREFIXES = (
+    "pytest",
+    "python -m pytest",
+    "python -m unittest",
+    "unittest",
+    "ruff check",
+    "mypy",
+)
 
 
 def should_suppress_verification(
@@ -14,17 +22,19 @@ def should_suppress_verification(
     changed_files: list[str],
     workspace_revision: int | None = None,
 ) -> bool:
-    """Return whether a verification call is already covered by valid evidence.
+    """Return whether a safe verification call is already covered by valid evidence.
 
-    Evidence is reusable only when the exact command previously succeeded and
-    the workspace is unchanged since that evidence was produced. A monotonic
-    workspace revision is preferred because a cumulative ``changed_files`` list
-    cannot distinguish "changed before the test" from "changed after the test".
+    A verification result can be reused only for explicitly recognized
+    read-only verification commands, after an exact command match and with no
+    workspace mutation since that evidence was produced. A monotonic revision
+    is preferred because a cumulative changed-file list cannot distinguish a
+    mutation that happened before the verification from one that happened
+    afterwards.
     """
     if tool_name not in READ_ONLY_VERIFICATION_TOOLS:
         return False
     command = arguments.get("command")
-    if not isinstance(command, str) or not command.strip():
+    if not isinstance(command, str) or not command.strip() or not _is_verification_command(command):
         return False
 
     current_files = tuple(dict.fromkeys(str(path) for path in changed_files if path))
@@ -64,6 +74,11 @@ def record_verification_evidence(
     if workspace_revision is not None:
         evidence["workspace_revision"] = workspace_revision
     return evidence
+
+
+def _is_verification_command(command: str) -> bool:
+    normalized = command.strip().lower()
+    return any(normalized == prefix or normalized.startswith(prefix + " ") for prefix in VERIFICATION_COMMAND_PREFIXES)
 
 
 def _verification_succeeded(result: str) -> bool:
