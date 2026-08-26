@@ -261,8 +261,12 @@ class DeveloperAgent(BaseAgent):
                 command_results.append({"command": command, "result": str(result)})
 
     @staticmethod
-    def _build_result_data(*, content: str, changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], loop_telemetry: list[dict[str, Any]]) -> dict[str, Any]:
-        duplicate_count = sum(1 for item in loop_telemetry if item.get("duplicate_of"))
-        retry_count = sum(1 for item in loop_telemetry if item.get("retry_of"))
-        result_chars = sum(int(item.get("result_chars", 0) or 0) for item in loop_telemetry)
-        return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files), "unique_tool_calls": len(loop_telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in loop_telemetry), default=0)}, "tool_loop_telemetry": list(loop_telemetry), "report": content}
+    def _build_result_data(*, content: str, changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], loop_telemetry: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        telemetry = list(loop_telemetry or [])
+        duplicate_count = sum(1 for item in telemetry if item.get("duplicate_of"))
+        retry_count = sum(1 for item in telemetry if item.get("retry_of"))
+        result_chars = sum(int(item.get("result_chars", 0) or 0) for item in telemetry)
+        validation = {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files)}
+        if telemetry:
+            validation.update({"unique_tool_calls": len(telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0)})
+        return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": validation, "tool_loop_telemetry": telemetry, "report": content}
