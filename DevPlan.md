@@ -170,9 +170,12 @@ blocked                 0 → 0
 
 新增 contract：`tests/test_tool_loop_telemetry_contract.py`。
 
-验收状态：代码已写入 GitHub，等待用户专项 + 全量测试验收。
+验收证据：
+- 专项测试：`3 passed`
+- 全量测试：`1104 passed`
+- 向后兼容修复：`DeveloperAgent._build_result_data(loop_telemetry=None)`，避免 telemetry 接入破坏旧调用契约。
 
-## □ 10.2 Real benchmark classification
+## ▶ 10.2 Real benchmark classification
 
 使用真实 `serial` benchmark 建立 Tool Loop 分类报告：
 
@@ -186,6 +189,8 @@ blocked                 0 → 0
 - progress-producing call
 
 验收要求：至少能解释一个真实 task 的全部 Tool Calls，不依赖人工猜测。
+
+当前状态：分类指标代码和 contract 已通过，等待新的真实 benchmark 数据作为最终分类证据。
 
 ## □ 10.3 Duplicate Tool Call suppression
 
@@ -677,36 +682,60 @@ max_context_growth_ratio=12.112
 
 # 十六、当前工作节点
 
-## ▶ 10.1 Tool Loop Telemetry Acceptance
+## √ 10.1 Tool Loop Telemetry Acceptance
 
-已写入 GitHub，等待本地验证：
+用户已确认专项测试和全量测试通过：
 
 ```text
-pytest tests/test_tool_loop_telemetry_contract.py -q
+pytest tests/test_real_developer_tool_loop_classification.py -q
+3 passed
+
 pytest -q
+1104 passed
 ```
 
-通过后重新运行：
+对应实现提交：
+
+```text
+fa7ed1621813e25353dab37a8fbbdfb60c829f96
+685a8318e21665bf40e754d4f55548bd17ae69bf
+2f5408d48f5c9602ca7bb4fff16156de89da1321
+```
+
+## ▶ 10.2 Real benchmark classification
+
+下一步运行与 Context Compaction baseline 相同的真实 benchmark：
 
 ```text
 python -m benchmarks.real_developer --live --developers 1 --scenario serial --repeat 1
 ```
 
-重点观察：
+记录：
 
 ```text
 unique_tool_calls
 duplicate_tool_calls
 retry_tool_calls
+unique_tool_call_ratio
+duplicate_tool_call_ratio
+retry_tool_call_ratio
 tool_result_chars
 largest_tool_result_chars
+avg_tool_result_chars
 ```
 
-## 下一节点
+分类时必须进一步区分：
 
-10.2 Real benchmark classification。
+```text
+exact duplicate
+semantic duplicate
+retry / failure recovery
+exploration
+verification
+progress-producing
+```
 
-**规则：10.1 未完成验收前，不进入 10.2；每完成一个节点立即在本文件将 `□/▶` 更新为 `√` 并记录专项测试、全量测试、benchmark 和 commit SHA。**
+**验收条件：至少解释一个真实 task 的全部 Tool Calls，并据此决定 10.3 与 10.4 哪一个优先。**
 
 ---
 
@@ -721,7 +750,10 @@ Context Compaction v1    √
 Context Compaction v2    √
         │
         ▼
-Tool Loop Telemetry      ▶  当前
+Tool Loop Telemetry      √
+        │
+        ▼
+Real Benchmark Classify  ▶  当前
         │
         ▼
 Tool Loop Optimization   □
