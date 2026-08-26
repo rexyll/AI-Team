@@ -59,7 +59,12 @@ class ReviewerReliabilityStats:
 
 
 class ResilientReviewerAgent:
-    """Run primary review, then a lightweight fallback, without leaking infra failure."""
+    """Run primary review, then a lightweight fallback, without leaking infra failure.
+
+    The wrapper deliberately exposes the same core ``config`` and ``llm``
+    attributes as the wrapped ReviewerAgent so existing AgentRouter,
+    configuration, and introspection contracts continue to work.
+    """
 
     role = "reviewer"
 
@@ -67,6 +72,20 @@ class ResilientReviewerAgent:
         self.primary = primary
         self.fallback = fallback
         self.stats = ReviewerReliabilityStats()
+
+    @property
+    def config(self):
+        """Preserve the ReviewerAgent configuration surface for compatibility."""
+        return self.primary.config
+
+    @property
+    def llm(self):
+        """Preserve access to the primary Reviewer LLM for compatibility."""
+        return self.primary.llm
+
+    def build_context(self, task, *, all_tasks=None):
+        """Delegate context construction to the primary ReviewerAgent."""
+        return self.primary.build_context(task, all_tasks=all_tasks)
 
     def run(self, task) -> AgentResult:
         try:
