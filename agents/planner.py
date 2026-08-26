@@ -29,15 +29,16 @@ SYSTEM_PROMPT = """
 
 允许使用的角色：architect、developer、tester、reviewer。
 
-用户需求中的显式约束必须逐条落实，尤其是输出目录、文件路径、命名、技术栈和阶段顺序。
+用户需求中的显式约束必须逐条落实，不得省略或改写，尤其是输出目录、文件路径、命名、技术栈和阶段顺序。
 与目录/路径相关的约束必须写入第一个实现类任务的 description 中。
 拆解完成后必须逐条核对需求原文，确认没有遗漏显式约束。
 
 角色职责：
 - architect：设计结构与接口规范，不产出业务代码。
 - developer：编写代码、编写测试、运行验证命令、修复问题。
+- "编写单元测试"类任务属于 developer；不要给 tester 安排编写测试、执行命令或修改代码的任务。
 - tester：审查 Developer 的测试证据并给出 TEST_PASSED / TEST_FAILED，不编写测试、不执行命令。
-- reviewer：最终审核并判定 APPROVED / REVISION_REQUIRED，不执行修复。
+- reviewer：最终审核并判定 APPROVED / REVISION_REQUIRED；reviewer 不执行修复，发现问题应返回 developer 修复。
 
 必须输出一个 JSON 对象：
 {
@@ -65,7 +66,6 @@ SYSTEM_PROMPT = """
 8. 只输出 JSON，不要 Markdown、代码围栏或解释文字。
 """
 
-# Maximum number of repair generations after the initial generation.
 MAX_PLAN_RETRIES = 2
 
 
@@ -85,12 +85,10 @@ def _extract_json_object(response: str) -> str:
     response = response.strip()
     if not response:
         raise ValueError("Planner 返回了空响应。")
-
     if response.startswith("{") and response.endswith("}"):
         return response
     if response.startswith("[") and response.endswith("]"):
         return response
-
     if "```" in response:
         blocks = response.split("```")
         for block in blocks:
@@ -99,11 +97,9 @@ def _extract_json_object(response: str) -> str:
                 candidate = candidate[4:].strip()
             if candidate.startswith("{") and candidate.endswith("}"):
                 return candidate
-
     start = response.find("{")
     if start == -1:
         raise ValueError("Planner 返回内容中没有找到 JSON 对象。")
-
     depth = 0
     in_string = False
     escape = False
@@ -125,25 +121,19 @@ def _extract_json_object(response: str) -> str:
             depth -= 1
             if depth == 0:
                 return response[start:index + 1]
-
     raise ValueError("Planner 返回内容包含不完整的 JSON 对象。")
 
 
 def _parse_plan_response(response: str) -> dict[str, Any]:
     if not isinstance(response, str) or not response.strip():
         raise ValueError("Planner 返回为空响应")
-
     extracted = _extract_json_object(response)
     try:
         plan = json.loads(extracted)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Planner 返回的内容不是合法 JSON。"
-        ) from exc
-
+        raise ValueError("Planner 返回的内容不是合法 JSON。") from exc
     if not isinstance(plan, dict):
         raise ValueError("根节点必须是对象")
-
     validate_plan(plan)
     return plan
 
@@ -159,19 +149,11 @@ def _classify_validation_error(error: Exception) -> str:
     return "validation"
 
 
-def _build_repair_prompt(
-    requirement: str,
-    invalid_response: str,
-    error: Exception,
-    attempt: int,
-) -> str:
+def _build_repair_prompt(requirement: str, invalid_response: str, error: Exception, attempt: int) -> str:
     error_kind = _classify_validation_error(error)
-    # Keep the repair prompt bounded: a giant invalid response can itself
-    # cause the next completion to exhaust its output budget.
-    max_invalid_chars = 12000
-    bounded_response = invalid_response[:max_invalid_chars]
+    bounded_response = invalid_response[:12000]
     return f"""
-这是第 {attempt} 次修复生成。上一轮 Planner 输出未通过验证。
+这是第 {attempt} 次修复生成。上一轮 Planner 输出无法通过验证。
 
 失败类型：{error_kind}
 验证错误：{error}
@@ -184,7 +166,7 @@ def _build_repair_prompt(
 
 请针对上述具体错误重新生成完整合法计划，而不是只输出修复片段。
 必须重新检查：project、summary、tasks、每个 task 的五个字段、唯一 ID、合法 role、依赖存在性、自依赖、重复依赖和循环依赖。
-必须保留原始需求中的所有显式路径/目录/技术栈/顺序约束。
+必须保留原始需求中的所有显式路径/目录/技术栈/顺序约束，不得省略或改写。
 只输出最终 JSON Object，不要 Markdown 或解释文字。
 """
 
@@ -193,7 +175,6 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
     required_dirs = extract_required_paths(requirement)
     if not required_dirs:
         return plan
-
     injected = apply_path_constraints(plan, required_dirs)
     if injected:
         print(f"[Planner] 已将缺失的路径约束注入任务描述: {injected}")
@@ -202,18 +183,12 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
     return plan
 
 
-def create_plan(
-    requirement: str,
-    *,
-    llm: BaseLLM | None = None,
-    max_retries: int | None = None,
-) -> dict:
+def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: int | None = None) -> dict:
     """Generate a validated plan with bounded, diagnostic self-correction."""
     if llm is not None and not isinstance(llm, BaseLLM):
         raise TypeError("create_plan llm must implement BaseLLM")
     if not isinstance(requirement, str) or not requirement.strip():
         raise ValueError("Planner requirement cannot be empty")
-
     retry_budget = MAX_PLAN_RETRIES if max_retries is None else max_retries
     if not isinstance(retry_budget, int) or retry_budget < 0:
         raise ValueError("max_retries must be a non-negative integer")
@@ -224,26 +199,14 @@ def create_plan(
     last_response = ""
 
     for attempt in range(retry_budget + 1):
-        current_prompt = (
-            prompt
-            if attempt == 0
-            else _build_repair_prompt(
-                requirement=requirement,
-                invalid_response=last_response,
-                error=last_error or ValueError("unknown validation error"),
-                attempt=attempt,
-            )
-        )
-
+        current_prompt = prompt if attempt == 0 else _build_repair_prompt(requirement, last_response, last_error or ValueError("unknown validation error"), attempt)
         try:
             if llm is not None:
                 response = llm.generate(current_prompt, system_prompt=SYSTEM_PROMPT)
             else:
                 response = ask_ai(prompt=current_prompt, system_prompt=SYSTEM_PROMPT)
         except Exception as exc:
-            attempts.append(
-                PlannerAttempt(attempt + 1, 0, type(exc).__name__, str(exc), "generation", False)
-            )
+            attempts.append(PlannerAttempt(attempt + 1, 0, type(exc).__name__, str(exc), "generation", False))
             last_error = exc
             last_response = ""
             logger.warning("Planner attempt %d generation failed: %s", attempt + 1, exc)
@@ -252,47 +215,22 @@ def create_plan(
         if not isinstance(response, str):
             response = str(response or "")
         last_response = response
-
         try:
             plan = _parse_plan_response(response)
             plan = _enforce_requirement_paths(requirement, plan)
             attempts.append(PlannerAttempt(attempt + 1, len(response), None, None, "validation", True))
-            logger.info(
-                "Planner succeeded: attempt=%d tasks=%d response_chars=%d",
-                attempt + 1,
-                len(plan["tasks"]),
-                len(response),
-            )
+            logger.info("Planner succeeded: attempt=%d tasks=%d response_chars=%d", attempt + 1, len(plan["tasks"]), len(response))
             return plan
         except ValueError as exc:
             last_error = exc
-            attempts.append(
-                PlannerAttempt(
-                    attempt + 1,
-                    len(response),
-                    type(exc).__name__,
-                    str(exc),
-                    _classify_validation_error(exc),
-                    False,
-                )
-            )
-            logger.warning(
-                "Planner attempt %d validation failed: type=%s error=%s response_chars=%d",
-                attempt + 1,
-                _classify_validation_error(exc),
-                exc,
-                len(response),
-            )
+            attempts.append(PlannerAttempt(attempt + 1, len(response), type(exc).__name__, str(exc), _classify_validation_error(exc), False))
+            logger.warning("Planner attempt %d validation failed: type=%s error=%s response_chars=%d", attempt + 1, _classify_validation_error(exc), exc, len(response))
 
     diagnostics = "; ".join(
-        f"attempt={item.attempt}, stage={item.stage}, error_type={item.error_type}, "
-        f"error={item.error!r}, response_chars={item.response_length}"
+        f"attempt={item.attempt}, stage={item.stage}, error_type={item.error_type}, error={item.error!r}, response_chars={item.response_length}"
         for item in attempts
     )
-    raise ValueError(
-        "Planner 在多次尝试后仍无法生成合法计划。\n"
-        f"attempts={len(attempts)}; diagnostics: {diagnostics}"
-    ) from last_error
+    raise ValueError("Planner 在多次尝试后仍无法生成合法计划。\n" f"attempts={len(attempts)}; diagnostics: {diagnostics}") from last_error
 
 
 class PlannerAgent(BaseAgent):
@@ -302,15 +240,6 @@ class PlannerAgent(BaseAgent):
 
     def run(self, task: Task):
         if not isinstance(task, Task):
-            raise TypeError(
-                "PlannerAgent.run() expects Task, "
-                f"got {type(task).__name__}"
-            )
-
+            raise TypeError("PlannerAgent.run() expects Task, " f"got {type(task).__name__}")
         plan = create_plan(task.description, llm=self.llm)
-        return {
-            "status": "planner_completed",
-            "agent": self.role,
-            "task_id": task.id,
-            "plan": plan,
-        }
+        return {"status": "planner_completed", "agent": self.role, "task_id": task.id, "plan": plan}
