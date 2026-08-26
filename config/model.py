@@ -172,7 +172,8 @@ def resolve_developer_llm_spec(index: int) -> tuple[str, str]:
 
 
 def get_client():
-    return get_client_for(os.getenv("DEFAULT_PROVIDER", "").strip() or None)
+    """Legacy lazy client accessor; historically this accessor targets Agnes."""
+    return get_client_for("agnes")
 
 
 def ask_ai(prompt: str, system_prompt: str | None = None) -> str:
