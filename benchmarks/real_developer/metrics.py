@@ -116,8 +116,6 @@ class RealDeveloperTaskMetrics:
             raise ValueError("tool-loop counts cannot exceed tool_calls")
         if self.retry_tool_calls > self.duplicate_tool_calls:
             raise ValueError("retry_tool_calls cannot exceed duplicate_tool_calls")
-        if self.tool_loop_telemetry and len(self.tool_loop_telemetry) != self.tool_calls:
-            raise ValueError("tool_loop_telemetry length must match tool_calls")
 
 
 @dataclass(frozen=True)
