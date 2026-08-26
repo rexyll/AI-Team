@@ -13,7 +13,7 @@ from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
 from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL
-from runtime.tool_loop_verification import should_suppress_verification
+from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
 from runtime.tool_result_evidence import reduce_tool_result
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
@@ -137,12 +137,14 @@ EXECUTION REQUIREMENT
                 raise ValueError(f"task {task.id} contains invalid persisted tool execution history") from exc
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
+        verification_evidence: list[dict[str, Any]] = []
         tool_calls: list[dict[str, Any]] = []
         loop_telemetry: list[dict[str, Any]] = []
         prior_signatures: list[tuple[str, str, str, str]] = []
         cache = ToolResultCache()
         progress_guard = ToolLoopProgressGuard()
         verification_reused_count = 0
+        workspace_revision = 0
         for _ in range(MAX_TOOL_ITERATIONS):
             response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
@@ -204,11 +206,11 @@ EXECUTION REQUIREMENT
                     if ignored_arguments:
                         print("[Ignored Args] " f"{ignored_arguments}")
                     tool_calls.append({"name": tool_name, "arguments": dict(validated_arguments)})
-                    verification_reused = should_suppress_verification(tool_name=tool_name, arguments=validated_arguments, command_results=command_results, changed_files=changed_files)
+                    verification_reused = should_suppress_verification(tool_name=tool_name, arguments=validated_arguments, command_results=verification_evidence, changed_files=changed_files, workspace_revision=workspace_revision)
                     if verification_reused:
                         verification_reused_count += 1
                         command = str(validated_arguments.get("command", ""))
-                        result = f"Verification evidence reused: {command} previously succeeded and no known workspace files changed."
+                        result = f"Verification evidence reused: {command} previously succeeded at workspace revision {workspace_revision}; no workspace mutation occurred since that verification."
                         print("[Verification] prior successful evidence reused; command execution suppressed")
                     else:
                         cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
@@ -219,6 +221,10 @@ EXECUTION REQUIREMENT
                             result = tool_function(**validated_arguments)
                             cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
                         self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
+                        if tool_name == "write_file" and status == "completed":
+                            workspace_revision += 1
+                        if tool_name == "run_command" and isinstance(validated_arguments.get("command"), str):
+                            verification_evidence.append(record_verification_evidence(command=validated_arguments["command"], result=result, changed_files=changed_files, workspace_revision=workspace_revision))
                     if tool_name != "run_command" or not verification_reused:
                         cache.invalidate_for(tool_name)
                 except KeyError:
