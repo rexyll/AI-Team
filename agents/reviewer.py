@@ -87,18 +87,7 @@ def _truncate_text(value: Any, limit: int) -> str:
 
 
 def _compact_developer_result(result: Any, limit: int) -> str:
-    """Keep review evidence while bounding large code/report payloads.
-
-    Developer results can contain complete test files or long command output.
-    The reviewer still receives the canonical metadata and high-value evidence
-    fields first; verbose report/code text is bounded with a head/tail marker.
-
-    Unknown top-level fields are retained as bounded supplemental evidence.
-    This is important because ``task_result`` is a role-authorized context
-    field: the compaction layer must not silently change its semantic content
-    merely because a producer uses a result shape that is not part of the
-    canonical AgentResult schema.
-    """
+    """Keep review evidence while bounding large code/report payloads."""
     if not isinstance(result, dict):
         return _truncate_text(result, limit)
 
@@ -117,7 +106,6 @@ def _compact_developer_result(result: Any, limit: int) -> str:
     if isinstance(data, dict):
         compact_data: dict[str, Any] = {}
 
-        # Preserve objective evidence ahead of verbose free-form reports.
         for key in ("files_changed", "tests", "validation", "summary"):
             if key in data:
                 compact_data[key] = data[key]
@@ -140,10 +128,6 @@ def _compact_developer_result(result: Any, limit: int) -> str:
     elif "data" in result:
         compact["data"] = _truncate_text(result["data"], min(4000, limit))
 
-    # Preserve producer-specific top-level result fields as bounded evidence.
-    # The previous implementation dropped them entirely, which meant a valid
-    # reviewer-visible Context field could lose semantic content during
-    # prompt compaction (for example {"marker": "CTX_TASK_RESULT"}).
     for key, value in result.items():
         if key in canonical_keys:
             continue
@@ -174,7 +158,7 @@ class ReviewerAgent(BaseAgent):
         context = self.build_context(task)
         prompt = self._build_prompt(context)
 
-        result = self.llm.generate(
+        result = self._generate(
             prompt,
             system_prompt=SYSTEM_PROMPT,
         )
@@ -353,17 +337,12 @@ REVISION_REQUIRED
 
         text = result.strip().upper()
 
-        # Fast path: verdict-first responses (the documented contract).
         if text.startswith("REVISION_REQUIRED"):
             return "revision"
 
         if text.startswith("APPROVED"):
             return "approved"
 
-        # Real models frequently reason first and state the verdict later,
-        # or wrap it in markdown. Scan the whole response for the verdict
-        # tokens. A revision signal anywhere wins: an approval gate must
-        # stay conservative on ambiguous evidence (deny-by-default).
         if "REVISION_REQUIRED" in text:
             return "revision"
 
