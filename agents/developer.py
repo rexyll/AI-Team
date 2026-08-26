@@ -12,11 +12,13 @@ from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
+from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL
 from runtime.tool_result_evidence import reduce_tool_result
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
 MAX_TOOL_ITERATIONS = 50
+TOOL_LOOP_CHECKPOINT_INTERVAL = DEFAULT_CHECKPOINT_INTERVAL
 
 SYSTEM_PROMPT = """
 你是一名专业的 AI 软件开发工程师。
@@ -172,6 +174,7 @@ EXECUTION REQUIREMENT
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
                     continue
                 if not isinstance(arguments, dict):
                     status = "invalid_arguments"
@@ -186,6 +189,7 @@ EXECUTION REQUIREMENT
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
                     continue
                 print(f"[Args] {arguments}")
                 try:
@@ -223,7 +227,25 @@ EXECUTION REQUIREMENT
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                 if reason:
                     return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
+
+    @staticmethod
+    def _append_checkpoint(
+        messages: list[dict[str, Any]],
+        loop_telemetry: list[dict[str, Any]],
+        changed_files: list[str],
+        command_results: list[dict[str, Any]],
+    ) -> None:
+        if not loop_telemetry or len(loop_telemetry) % TOOL_LOOP_CHECKPOINT_INTERVAL != 0:
+            return
+        checkpoint = build_tool_loop_checkpoint(
+            loop_telemetry,
+            changed_files=changed_files,
+            command_results=command_results,
+        )
+        if checkpoint:
+            messages.append({"role": "user", "content": checkpoint})
 
     def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache) -> AgentResult:
         data = self._build_result_data(content=reason, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
