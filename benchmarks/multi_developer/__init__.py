@@ -1,5 +1,6 @@
 """Benchmark scenarios and reporting for multi-Developer execution."""
 
+from benchmarks.multi_developer.report import BenchmarkReport
 from benchmarks.multi_developer.runner import BenchmarkResult, MultiDeveloperBenchmark
 from benchmarks.multi_developer.scenarios import (
     fully_parallel_tasks,
@@ -8,6 +9,7 @@ from benchmarks.multi_developer.scenarios import (
 )
 
 __all__ = [
+    "BenchmarkReport",
     "BenchmarkResult",
     "MultiDeveloperBenchmark",
     "fully_parallel_tasks",
