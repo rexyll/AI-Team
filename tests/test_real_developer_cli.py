@@ -22,6 +22,16 @@ def test_real_developer_cli_rejects_live_execution_without_explicit_flag():
         main(["--developers", "1"])
 
 
-def test_real_developer_cli_does_not_execute_live_provider_yet():
-    with pytest.raises(SystemExit, match="not wired to a provider executor yet"):
-        main(["--developers", "1", "--live"])
+def test_real_developer_cli_rejects_unknown_scenario():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--scenario", "unknown"])
+
+
+def test_real_developer_cli_validates_developer_count():
+    with pytest.raises(SystemExit, match="greater than 0"):
+        main(["--developers", "0", "--live"])
+
+
+def test_real_developer_cli_validates_repeat():
+    with pytest.raises(SystemExit, match="greater than 0"):
+        main(["--repeat", "0", "--live"])
