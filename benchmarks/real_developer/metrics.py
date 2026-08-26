@@ -62,6 +62,22 @@ class RealDeveloperTaskMetrics:
             return 1.0 if prompts else 0.0
         return prompts[-1] / prompts[0]
 
+    @property
+    def duplicate_tool_call_ratio(self) -> float:
+        return self.duplicate_tool_calls / self.tool_calls if self.tool_calls else 0.0
+
+    @property
+    def retry_tool_call_ratio(self) -> float:
+        return self.retry_tool_calls / self.tool_calls if self.tool_calls else 0.0
+
+    @property
+    def unique_tool_call_ratio(self) -> float:
+        return self.unique_tool_calls / self.tool_calls if self.tool_calls else 0.0
+
+    @property
+    def avg_tool_result_chars(self) -> float:
+        return self.tool_result_chars / self.tool_calls if self.tool_calls else 0.0
+
     def __post_init__(self) -> None:
         if not self.task_id:
             raise ValueError("task_id must be non-empty")
@@ -81,6 +97,8 @@ class RealDeveloperTaskMetrics:
                 raise ValueError(f"{name} must be a non-negative integer")
         if self.duplicate_tool_calls > self.tool_calls or self.unique_tool_calls > self.tool_calls:
             raise ValueError("tool-loop counts cannot exceed tool_calls")
+        if self.retry_tool_calls > self.duplicate_tool_calls:
+            raise ValueError("retry_tool_calls cannot exceed duplicate_tool_calls")
 
 
 @dataclass(frozen=True)
@@ -132,6 +150,18 @@ class RealDeveloperBenchmarkResult:
     @property
     def largest_tool_result_chars(self) -> int:
         return max((item.largest_tool_result_chars for item in self.task_metrics), default=0)
+    @property
+    def duplicate_tool_call_ratio(self) -> float:
+        return self.duplicate_tool_calls / self.tool_calls if self.tool_calls else 0.0
+    @property
+    def retry_tool_call_ratio(self) -> float:
+        return self.retry_tool_calls / self.tool_calls if self.tool_calls else 0.0
+    @property
+    def unique_tool_call_ratio(self) -> float:
+        return self.unique_tool_calls / self.tool_calls if self.tool_calls else 0.0
+    @property
+    def avg_tool_result_chars(self) -> float:
+        return self.tool_result_chars / self.tool_calls if self.tool_calls else 0.0
     @property
     def avg_llm_latency_seconds(self) -> float:
         return self.llm_latency_seconds / self.llm_calls if self.llm_calls else 0.0
@@ -204,7 +234,9 @@ class RealDeveloperBenchmarkResult:
             "llm_latency_seconds": self.llm_latency_seconds, "avg_llm_latency_seconds": self.avg_llm_latency_seconds, "llm_time_ratio": self.llm_time_ratio,
             "tool_calls": self.tool_calls, "test_commands": self.test_commands, "unique_tool_calls": self.unique_tool_calls,
             "duplicate_tool_calls": self.duplicate_tool_calls, "retry_tool_calls": self.retry_tool_calls, "tool_result_chars": self.tool_result_chars,
-            "largest_tool_result_chars": self.largest_tool_result_chars, "developer_utilization": self.developer_utilization,
+            "largest_tool_result_chars": self.largest_tool_result_chars, "duplicate_tool_call_ratio": self.duplicate_tool_call_ratio,
+            "retry_tool_call_ratio": self.retry_tool_call_ratio, "unique_tool_call_ratio": self.unique_tool_call_ratio,
+            "avg_tool_result_chars": self.avg_tool_result_chars, "developer_utilization": self.developer_utilization,
             "avg_llm_calls_per_task": self.avg_llm_calls_per_task, "avg_input_tokens_per_task": self.avg_input_tokens_per_task,
             "avg_tool_calls_per_task": self.avg_tool_calls_per_task, "max_llm_calls_per_task": self.max_llm_calls_per_task,
             "max_prompt_chars_per_task": self.max_prompt_chars_per_task, "max_input_tokens_per_call": self.max_input_tokens_per_call,
