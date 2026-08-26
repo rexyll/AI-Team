@@ -30,6 +30,7 @@ class ContextCompactingLLM(BaseLLM):
         self.max_prompt_chars_after = 0
         self.max_input_messages_before = 0
         self.max_input_messages_after = 0
+        self.compaction_events: list[dict[str, int | bool]] = []
 
     def __getattr__(self, name: str) -> Any:
         """Preserve access to telemetry/config attributes on wrapped LLMs."""
@@ -73,26 +74,27 @@ class ContextCompactingLLM(BaseLLM):
         )
 
         self.calls += 1
-        self._last_prompt_chars_before = _prompt_chars(before)
-        self._last_prompt_chars_after = _prompt_chars(active)
-        self.max_prompt_chars_before = max(
-            self.max_prompt_chars_before,
-            self.last_prompt_chars_before,
-        )
-        self.max_prompt_chars_after = max(
-            self.max_prompt_chars_after,
-            self.last_prompt_chars_after,
-        )
-        self.max_input_messages_before = max(
-            self.max_input_messages_before,
-            len(before),
-        )
-        self.max_input_messages_after = max(
-            self.max_input_messages_after,
-            len(active),
-        )
-        if active != before:
+        before_chars = _prompt_chars(before)
+        after_chars = _prompt_chars(active)
+        self._last_prompt_chars_before = before_chars
+        self._last_prompt_chars_after = after_chars
+        self.max_prompt_chars_before = max(self.max_prompt_chars_before, before_chars)
+        self.max_prompt_chars_after = max(self.max_prompt_chars_after, after_chars)
+        self.max_input_messages_before = max(self.max_input_messages_before, len(before))
+        self.max_input_messages_after = max(self.max_input_messages_after, len(active))
+        compacted = active != before
+        if compacted:
             self.compaction_count += 1
+        self.compaction_events.append(
+            {
+                "call_index": self.calls,
+                "compacted": compacted,
+                "prompt_chars_before": before_chars,
+                "prompt_chars_after": after_chars,
+                "messages_before": len(before),
+                "messages_after": len(active),
+            }
+        )
 
         return self.inner.generate_with_tools(
             active,
