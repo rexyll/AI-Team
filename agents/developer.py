@@ -12,9 +12,7 @@ from runtime.tool_execution_record import ToolExecutionRecord
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
-
 MAX_TOOL_ITERATIONS = 50
-
 
 SYSTEM_PROMPT = """
 你是一名专业的 AI 软件开发工程师。
@@ -70,9 +68,7 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 - 是否存在遗留问题
 """
 
-
 class DeveloperAgent(BaseAgent):
-
     @property
     def role(self) -> str:
         return "developer"
@@ -80,45 +76,22 @@ class DeveloperAgent(BaseAgent):
     def _build_messages(self, context: AgentContext):
         view = context_view(context, self.role)
         context_text = ""
-
         if view["dependency_context"]:
-            context_text += (
-                "\n====================\n"
-                "UPSTREAM AGENT CONTEXT\n"
-                "====================\n"
-            )
-
+            context_text += "\n====================\nUPSTREAM AGENT CONTEXT\n====================\n"
             for context_key, data in view["dependency_context"].items():
                 if not isinstance(data, dict):
                     continue
-
-                context_text += (
-                    f"\nDependency: {context_key}\n"
-                    f"Role: {data.get('role', '')}\n"
-                    f"Title: {data.get('title', '')}\n"
-                )
-
+                context_text += f"\nDependency: {context_key}\nRole: {data.get('role', '')}\nTitle: {data.get('title', '')}\n"
                 result = data.get("result", {})
-
                 if isinstance(result, dict):
                     architecture = result.get("architecture")
-
                     if architecture:
-                        context_text += (
-                            "\nArchitect Architecture Design:\n"
-                            + str(architecture)
-                        )
+                        context_text += "\nArchitect Architecture Design:\n" + str(architecture)
                     else:
-                        context_text += json.dumps(
-                            result,
-                            ensure_ascii=False,
-                            indent=2,
-                        )
+                        context_text += json.dumps(result, ensure_ascii=False, indent=2)
                 else:
                     context_text += str(result)
-
                 context_text += "\n"
-
         if view["reviewer_feedback"]:
             context_text += """
             ====================
@@ -129,13 +102,7 @@ class DeveloperAgent(BaseAgent):
             本轮必须认真处理这些意见，并在最终结果中说明如何解决。
 
             """
-
-            context_text += json.dumps(
-                view["reviewer_feedback"],
-                ensure_ascii=False,
-                indent=2,
-            )
-
+            context_text += json.dumps(view["reviewer_feedback"], ensure_ascii=False, indent=2)
         prompt = f"""
         ====================
         CURRENT TASK
@@ -186,25 +153,11 @@ class DeveloperAgent(BaseAgent):
         4. 测试结果
         5. 遗留问题
         """
-
-        return [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ]
+        return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
 
     def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
-            raise TypeError(
-                "DeveloperAgent.run() expects Task, "
-                f"got {type(task).__name__}"
-            )
-
+            raise TypeError("DeveloperAgent.run() expects Task, " f"got {type(task).__name__}")
         context = self.build_context(task)
         messages = self._build_messages(context)
         persisted_history = task.context.get("tool_execution_history")
@@ -214,82 +167,19 @@ class DeveloperAgent(BaseAgent):
             try:
                 self.tool_execution_history = ToolExecutionHistory.from_dict(persisted_history)
             except (TypeError, ValueError, KeyError) as exc:
-                raise ValueError(
-                    f"task {task.id} contains invalid persisted tool execution history"
-                ) from exc
-
+                raise ValueError(f"task {task.id} contains invalid persisted tool execution history") from exc
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
         tool_calls: list[dict[str, Any]] = []
-
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = self.llm.generate_with_tools(
-                messages,
-                tools=TOOL_REGISTRY.schemas(),
-                tool_choice="auto",
-            )
-
+            response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
                 content = response.content or ""
-
-                # Deny-by-default artifact guard: a developer turn that
-                # ends without ANY tool invocations has produced nothing
-                # verifiable. Text-only "success" reports previously
-                # masked no-op rounds (real-provider incident).
                 if not changed_files and not command_results and not tool_calls:
-                    return AgentResult(
-                        status="failed",
-                        agent=self.role,
-                        task_id=context.task_id,
-                        message=(
-                            "Developer produced no artifacts: zero tool "
-                            "calls, zero file changes, zero commands. "
-                            f"Final text head: {content[:200]}"
-                        ),
-                        data={
-                            "validation": {
-                                "tool_call_count": 0,
-                                "test_command_count": 0,
-                                "files_changed_count": 0,
-                                "no_artifact_completion": True,
-                            },
-                            "report": content,
-                        },
-                    )
-
-                data = self._build_result_data(
-                    content=content,
-                    changed_files=changed_files,
-                    command_results=command_results,
-                    tool_calls=tool_calls,
-                )
-
-                return AgentResult(
-                    status="completed",
-                    agent=self.role,
-                    task_id=context.task_id,
-                    message=content,
-                    data=data,
-                )
-
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": response.content,
-                    "tool_calls": [
-                        {
-                            "id": tool_call.call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.name,
-                                "arguments": tool_call.arguments,
-                            },
-                        }
-                        for tool_call in response.tool_calls
-                    ],
-                }
-            )
-
+                    return AgentResult(status="failed", agent=self.role, task_id=context.task_id, message=("Developer produced no artifacts: zero tool calls, zero file changes, zero commands. " f"Final text head: {content[:200]}"), data={"validation": {"tool_call_count": 0, "test_command_count": 0, "files_changed_count": 0, "no_artifact_completion": True}, "report": content})
+                data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls)
+                return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
+            messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": tool_call.call_id, "type": "function", "function": {"name": tool_call.name, "arguments": tool_call.arguments}} for tool_call in response.tool_calls]})
             for tool_call in response.tool_calls:
                 tool_name = tool_call.name
                 started_at = datetime.now(timezone.utc).isoformat()
@@ -297,218 +187,61 @@ class DeveloperAgent(BaseAgent):
                 result: Any = None
                 error: Any = None
                 record_arguments: dict[str, Any] = {}
-
                 print(f"\n[Tool] {tool_name}")
-
                 try:
                     arguments = json.loads(tool_call.arguments)
                 except (TypeError, json.JSONDecodeError) as exc:
                     status = "invalid_arguments"
-                    error = {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    }
-                    result = (
-                        "Tool error: invalid JSON arguments: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.call_id,
-                            "content": result,
-                        }
-                    )
-                    self._record_tool_execution(
-                        execution_id=tool_call.call_id,
-                        task_id=context.task_id,
-                        tool_name=tool_name,
-                        started_at=started_at,
-                        status=status,
-                        arguments=record_arguments,
-                        output=None,
-                        error=error,
-                    )
+                    error = {"type": type(exc).__name__, "message": str(exc)}
+                    result = "Tool error: invalid JSON arguments: " f"{type(exc).__name__}: {exc}"
+                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
                     continue
-
                 if not isinstance(arguments, dict):
                     status = "invalid_arguments"
-                    error = {
-                        "type": "TypeError",
-                        "message": "tool arguments must be a JSON object",
-                    }
+                    error = {"type": "TypeError", "message": "tool arguments must be a JSON object"}
                     result = "Tool error: arguments must be a JSON object"
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.call_id,
-                            "content": result,
-                        }
-                    )
-                    self._record_tool_execution(
-                        execution_id=tool_call.call_id,
-                        task_id=context.task_id,
-                        tool_name=tool_name,
-                        started_at=started_at,
-                        status=status,
-                        arguments=record_arguments,
-                        output=None,
-                        error=error,
-                    )
+                    messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": result})
+                    self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
                     continue
-
                 print(f"[Args] {arguments}")
-
                 try:
                     tool_function = TOOL_REGISTRY.get(tool_name)
                     tool_schema = TOOL_REGISTRY.schema(tool_name)
-
-                    (
-                        validated_arguments,
-                        ignored_arguments,
-                    ) = validate_tool_arguments(
-                        tool_function,
-                        arguments,
-                        schema=tool_schema,
-                    )
+                    validated_arguments, ignored_arguments = validate_tool_arguments(tool_function, arguments, schema=tool_schema)
                     record_arguments = dict(validated_arguments)
-
                     if ignored_arguments:
-                        print(
-                            "[Ignored Args] "
-                            f"{ignored_arguments}"
-                        )
-
-                    tool_calls.append(
-                        {
-                            "name": tool_name,
-                            "arguments": dict(validated_arguments),
-                        }
-                    )
-
+                        print("[Ignored Args] " f"{ignored_arguments}")
+                    tool_calls.append({"name": tool_name, "arguments": dict(validated_arguments)})
                     result = tool_function(**validated_arguments)
-
-                    self._record_tool_evidence(
-                        tool_name=tool_name,
-                        arguments=validated_arguments,
-                        result=result,
-                        changed_files=changed_files,
-                        command_results=command_results,
-                    )
+                    self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
                 except KeyError:
                     status = "unknown_tool"
-                    error = {
-                        "type": "KeyError",
-                        "message": f"Unknown tool: {tool_name}",
-                    }
+                    error = {"type": "KeyError", "message": f"Unknown tool: {tool_name}"}
                     result = f"Unknown tool: {tool_name}"
                 except Exception as exc:
                     status = "failed"
-                    error = {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    }
-                    result = (
-                        "Tool error: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-
+                    error = {"type": type(exc).__name__, "message": str(exc)}
+                    result = "Tool error: " f"{type(exc).__name__}: {exc}"
                 print(f"[Result]\n{result}")
+                messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": str(result)})
+                self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error)
+        raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.call_id,
-                        "content": str(result),
-                    }
-                )
-
-                self._record_tool_execution(
-                    execution_id=tool_call.call_id,
-                    task_id=context.task_id,
-                    tool_name=tool_name,
-                    started_at=started_at,
-                    status=status,
-                    arguments=record_arguments,
-                    output=result if status == "completed" else None,
-                    error=error,
-                )
-
-        raise RuntimeError(
-            "Developer tool loop exceeded maximum iterations: "
-            f"{MAX_TOOL_ITERATIONS}"
-        )
-
-    def _record_tool_execution(
-        self,
-        *,
-        execution_id: str,
-        task_id: str,
-        tool_name: str,
-        started_at: str,
-        status: str,
-        arguments: dict[str, Any],
-        output: Any,
-        error: Any,
-    ) -> None:
-        self.tool_execution_history.append(
-            ToolExecutionRecord(
-                execution_id=execution_id,
-                task_id=task_id,
-                agent_role=self.role,
-                tool_name=tool_name,
-                started_at=started_at,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                status=status,
-                arguments=arguments,
-                output=output,
-                error=error,
-            )
-        )
+    def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any) -> None:
+        self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error))
 
     @staticmethod
-    def _record_tool_evidence(
-        *,
-        tool_name: str,
-        arguments: dict[str, Any],
-        result: Any,
-        changed_files: list[str],
-        command_results: list[dict[str, Any]],
-    ) -> None:
-        """Record factual execution evidence from Developer tool calls."""
+    def _record_tool_evidence(*, tool_name: str, arguments: dict[str, Any], result: Any, changed_files: list[str], command_results: list[dict[str, Any]]) -> None:
         if tool_name == "write_file":
             path = arguments.get("path")
             if isinstance(path, str) and path and path not in changed_files:
                 changed_files.append(path)
-
         if tool_name == "run_command":
             command = arguments.get("command")
             if isinstance(command, str) and command:
-                command_results.append(
-                    {
-                        "command": command,
-                        "result": str(result),
-                    }
-                )
+                command_results.append({"command": command, "result": str(result)})
 
     @staticmethod
-    def _build_result_data(
-        *,
-        content: str,
-        changed_files: list[str],
-        command_results: list[dict[str, Any]],
-        tool_calls: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Build the structured Developer Result payload."""
-        return {
-            "summary": content.strip(),
-            "files_changed": list(changed_files),
-            "tests": list(command_results),
-            "validation": {
-                "tool_call_count": len(tool_calls),
-                "test_command_count": len(command_results),
-                "files_changed_count": len(changed_files),
-            },
-            "report": content,
-        }
+    def _build_result_data(*, content: str, changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files)}, "report": content}
