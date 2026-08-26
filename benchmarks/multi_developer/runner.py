@@ -105,10 +105,14 @@ class MultiDeveloperBenchmark:
 
         tasks = self.scenario_factory()
         manager = TaskManager(tasks)
-        # Normalize the scenario's initial lifecycle state before handing the
-        # manager to an executor. Production executors may call this themselves,
-        # while deterministic benchmark doubles can assume runnable roots are READY.
-        manager.get_ready_tasks()
+
+        # Only normalize dependency roots here.  The benchmark executor owns
+        # subsequent scheduling rounds; promoting children prematurely would
+        # violate the task lifecycle contract while dependencies are pending.
+        for task in manager.get_all_tasks():
+            if task.status == "pending" and not task.dependencies:
+                manager.mark_ready(task.id)
+
         executor = self.executor_factory(manager, developer_count)
 
         started = perf_counter()
