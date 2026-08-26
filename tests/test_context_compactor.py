@@ -17,7 +17,7 @@ def test_compactor_preserves_system_and_initial_task_messages():
     assert result[1] == messages[1]
     assert any(
         item.get("role") == "system"
-        and "Earlier tool result omitted" in item.get("content", "")
+        and "Earlier execution context compacted" in item.get("content", "")
         for item in result
     )
     assert result[-2:] == messages[-2:]
@@ -54,3 +54,27 @@ def test_compactor_does_not_mutate_input_messages():
     compact_tool_context(messages, recent_messages=2, max_tool_chars=20)
 
     assert messages == original
+
+
+def test_compactor_reports_all_older_messages_in_single_marker():
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "old-1"},
+        {"role": "tool", "content": "old-tool-1"},
+        {"role": "assistant", "content": "old-2"},
+        {"role": "tool", "content": "old-tool-2"},
+        {"role": "assistant", "content": "recent"},
+        {"role": "tool", "content": "recent-tool"},
+    ]
+
+    result = compact_tool_context(messages, recent_messages=2)
+    markers = [
+        item for item in result
+        if item.get("role") == "system"
+        and "Earlier execution context compacted" in item.get("content", "")
+    ]
+
+    assert len(markers) == 1
+    assert "messages=4" in markers[0]["content"]
+    assert "tool_results=2" in markers[0]["content"]
