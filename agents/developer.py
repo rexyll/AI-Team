@@ -247,7 +247,7 @@ class DeveloperAgent(BaseAgent):
 
     @staticmethod
     def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any) -> dict[str, Any]:
-        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of}
+        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category}
 
     @staticmethod
     def _record_tool_evidence(*, tool_name: str, arguments: dict[str, Any], result: Any, changed_files: list[str], command_results: list[dict[str, Any]]) -> None:
@@ -268,5 +268,5 @@ class DeveloperAgent(BaseAgent):
         result_chars = sum(int(item.get("result_chars", 0) or 0) for item in telemetry)
         validation = {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files)}
         if telemetry:
-            validation.update({"unique_tool_calls": len(telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0)})
+            validation.update({"unique_tool_calls": len(telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0), "tool_call_categories": {category: sum(1 for item in telemetry if item.get("category") == category) for category in sorted({str(item.get("category")) for item in telemetry})}})
         return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": validation, "tool_loop_telemetry": telemetry, "report": content}
