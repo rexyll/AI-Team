@@ -28,9 +28,13 @@ class WorkflowEventQueryService:
         if not isinstance(event_log, WorkflowEventLog):
             raise TypeError("event_log must be a WorkflowEventLog")
         project_id = cls._require_non_empty_string(project_id, "project_id")
+        # Take one stable project-scoped snapshot and share it with all read-only
+        # projections. Previously projection and reviewer metrics each scanned
+        # and sorted the same event log independently.
+        selected = event_log.list_for_project(project_id)
         return cls(
-            WorkflowEventProjector.project(event_log, project_id=project_id),
-            project_reviewer_reliability(event_log, project_id=project_id),
+            WorkflowEventProjector.project(selected, project_id=project_id, ordered=True),
+            project_reviewer_reliability(selected, project_id=project_id, ordered=True),
         )
 
     @classmethod
@@ -54,17 +58,16 @@ class WorkflowEventQueryService:
             raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter")
         project_id = cls._require_non_empty_string(project_id, "project_id")
 
-        # Validate the project snapshot before touching the event projection.
         project_persistence.load(project_id)
         event_log = event_persistence.load_log()
-
-        # An empty stream remains legacy-compatible. Once the persisted event
-        # stream contains records, silently projecting an unrelated project
-        # would hide a persistence/configuration identity mismatch.
-        if len(event_log) > 0 and not event_log.list_for_project(project_id):
+        selected = event_log.list_for_project(project_id)
+        if len(event_log) > 0 and not selected:
             raise ValueError(f"no events for project: {project_id}")
 
-        return cls.from_log(event_log, project_id=project_id)
+        return cls(
+            WorkflowEventProjector.project(selected, project_id=project_id, ordered=True),
+            project_reviewer_reliability(selected, project_id=project_id, ordered=True),
+        )
 
     @property
     def project_id(self) -> str:
