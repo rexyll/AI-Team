@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from runtime.context_compactor import compact_tool_context
+from runtime.context_compaction import ContextCompactor
 from runtime.llm.base import BaseLLM, LLMResponse
 
 
 class ContextCompactingLLM(BaseLLM):
-    """LLM decorator that bounds the active tool-loop context per request."""
+    """Developer LLM decorator with the single authoritative context boundary."""
 
     def __init__(
         self,
@@ -32,9 +32,11 @@ class ContextCompactingLLM(BaseLLM):
         self.max_input_messages_before = 0
         self.max_input_messages_after = 0
         self.compaction_events: list[dict[str, int | bool]] = []
+        self.context_compactor = ContextCompactor()
+        self._last_input_tokens_before = 0
+        self._last_input_tokens_after = 0
 
     def __getattr__(self, name: str) -> Any:
-        """Preserve access to telemetry/config attributes on wrapped LLMs."""
         return getattr(self.inner, name)
 
     @property
@@ -45,6 +47,14 @@ class ContextCompactingLLM(BaseLLM):
     def last_prompt_chars_after(self) -> int:
         return getattr(self, "_last_prompt_chars_after", 0)
 
+    @property
+    def last_input_tokens_before(self) -> int:
+        return self._last_input_tokens_before
+
+    @property
+    def last_input_tokens_after(self) -> int:
+        return self._last_input_tokens_after
+
     def generate(
         self,
         prompt: str,
@@ -53,9 +63,13 @@ class ContextCompactingLLM(BaseLLM):
         temperature: float = 0.2,
         max_tokens: int = 4096,
     ) -> str:
-        return self.inner.generate(
+        compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(
             prompt,
             system_prompt=system_prompt,
+        )
+        return self.inner.generate(
+            compact_prompt,
+            system_prompt=compact_system,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -68,17 +82,15 @@ class ContextCompactingLLM(BaseLLM):
         tool_choice: str = "auto",
     ) -> LLMResponse:
         before = [dict(message) for message in messages]
-        active = compact_tool_context(
-            before,
-            recent_messages=self.recent_messages,
-            max_tool_chars=self.max_tool_chars,
-        )
+        active, stats = self.context_compactor.compact_messages(before)
 
         self.calls += 1
         before_chars = _prompt_chars(before)
         after_chars = _prompt_chars(active)
         self._last_prompt_chars_before = before_chars
         self._last_prompt_chars_after = after_chars
+        self._last_input_tokens_before = stats.original_tokens
+        self._last_input_tokens_after = stats.compacted_tokens
         self.max_prompt_chars_before = max(self.max_prompt_chars_before, before_chars)
         self.max_prompt_chars_after = max(self.max_prompt_chars_after, after_chars)
         self.max_input_messages_before = max(self.max_input_messages_before, len(before))
@@ -94,6 +106,8 @@ class ContextCompactingLLM(BaseLLM):
                 "prompt_chars_after": after_chars,
                 "messages_before": len(before),
                 "messages_after": len(active),
+                "input_tokens_before": stats.original_tokens,
+                "input_tokens_after": stats.compacted_tokens,
             }
         )
 
@@ -105,11 +119,5 @@ class ContextCompactingLLM(BaseLLM):
 
 
 def _prompt_chars(messages: list[dict[str, Any]]) -> int:
-    """Estimate the serialized request footprint, not content characters alone.
-
-    LLM prompt size includes message structure (roles, keys, separators, and
-    JSON quoting) as well as message content. Measuring the serialized message
-    envelope avoids reporting a compaction as an increase merely because a
-    short summary marker replaces several messages.
-    """
+    """Measure serialized request size, including message/tool-call metadata."""
     return len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")))
