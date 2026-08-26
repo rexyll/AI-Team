@@ -21,11 +21,11 @@ def _positive_env_int(name: str, default: int) -> int:
 
 
 def estimate_tokens(text: str) -> int:
-    """Conservatively estimate input tokens without adding a tokenizer dependency.
+    """Estimate input tokens without adding a tokenizer dependency.
 
-    ASCII-heavy code/JSON is estimated at roughly four characters per token;
-    non-ASCII text is counted more conservatively because CJK text generally
-    has a higher token-to-character ratio. This is an operational guard, not
+    ASCII-heavy code/JSON is estimated at roughly four characters per token.
+    Non-ASCII characters are counted one-for-one to avoid materially
+    underestimating CJK-heavy prompts. This remains an operational guard, not
     a provider billing/tokenization oracle.
     """
     if not isinstance(text, str) or not text:
@@ -33,7 +33,7 @@ def estimate_tokens(text: str) -> int:
 
     ascii_chars = sum(ord(char) < 128 for char in text)
     non_ascii_chars = len(text) - ascii_chars
-    return max(1, (ascii_chars + 3) // 4 + (non_ascii_chars + 1) // 2)
+    return max(1, (ascii_chars + 3) // 4 + non_ascii_chars)
 
 
 def _render_message_content(content: Any) -> str:
