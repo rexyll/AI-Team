@@ -21,22 +21,21 @@ class WorkflowEventConflictError(ValueError):
 class WorkflowEventLog:
     """Ordered in-memory index of immutable workflow events.
 
-    A persistence sink is optional. When configured, a new event is durably
-    persisted before it becomes visible in the in-memory index. A persistence
-    failure therefore fails the append operation and does not leave an event in
-    memory that the durable sink rejected. Existing in-memory-only callers are
-    unchanged when no sink is supplied.
-
-    The index is protected by an instance re-entrant lock so readers can safely
-    snapshot the stream while another thread appends or merges events. Query and
-    projection callers therefore observe a stable snapshot and never mutate the
-    log.
+    Query ordering is timestamp-first. Events appended directly to this log are
+    also assigned an internal monotonic sequence so equal-timestamp lifecycle
+    events retain their append order instead of being reordered by event_id.
+    Events introduced through merge/recovery have no append sequence and retain
+    the historical event_id tie-breaker, which keeps merge/recovery deterministic.
+    The sequence is intentionally internal and is not part of the persisted
+    WorkflowEvent schema.
     """
 
     def __init__(self, persistence_sink: WorkflowEventPersistenceSink | None = None) -> None:
         if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
             raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
         self._events: dict[str, WorkflowEvent] = {}
+        self._append_sequence: dict[str, int] = {}
+        self._next_append_sequence = 0
         self._persistence_sink = persistence_sink
         self._lock = threading.RLock()
 
@@ -69,6 +68,8 @@ class WorkflowEventLog:
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
             self._events[event.event_id] = event
+            self._append_sequence[event.event_id] = self._next_append_sequence
+            self._next_append_sequence += 1
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
         if not isinstance(event, WorkflowEvent):
@@ -78,6 +79,8 @@ class WorkflowEventLog:
             if existing is None:
                 self._persist_if_configured(event)
                 self._events[event.event_id] = event
+                self._append_sequence[event.event_id] = self._next_append_sequence
+                self._next_append_sequence += 1
                 return True
             if existing == event:
                 return False
@@ -138,20 +141,28 @@ class WorkflowEventLog:
                 key=self._project_sort_key,
             )
 
+    def _task_sort_key(self, event: WorkflowEvent) -> tuple[str, int, str]:
+        sequence = self._append_sequence.get(event.event_id)
+        # Appended events sharing a timestamp are ordered by their local append
+        # sequence. Merged/recovered events keep the established event-id
+        # deterministic tie-breaker. The branch also handles a mixed stream
+        # without changing the historical ordering of merge-only events.
+        if sequence is not None:
+            return (event.occurred_at, 0, f"{sequence:020d}")
+        return (event.occurred_at, 1, event.event_id)
+
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
         """Return task events in deterministic lifecycle order.
 
-        Task event queries intentionally use the same timestamp + event-id
-        ordering contract as persisted queries. The timestamp captures the
-        workflow lifecycle sequence and the event id supplies a deterministic
-        tie-breaker when multiple events share the same timestamp. This keeps
-        in-memory and durable projections equivalent and avoids depending on
-        dictionary insertion order, which can differ after recovery/merge.
+        Timestamp remains the primary ordering key. Directly appended events
+        with identical timestamps retain append order; merge/recovery events use
+        event_id as the deterministic fallback because their original append
+        sequence is not available from the immutable event schema.
         """
         with self._lock:
             return sorted(
                 (event for event in self._events.values() if event.task_id == task_id),
-                key=lambda event: (event.occurred_at, event.event_id),
+                key=self._task_sort_key,
             )
 
     def get(self, event_id: str) -> WorkflowEvent:
