@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from runtime.context_compaction import ContextCompactor
@@ -63,7 +62,7 @@ class ContextCompactingLLM(BaseLLM):
         temperature: float = 0.2,
         max_tokens: int = 4096,
     ) -> str:
-        compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(
+        compact_prompt, compact_system, _ = self.context_compactor.compact_prompt(
             prompt,
             system_prompt=system_prompt,
         )
@@ -85,8 +84,12 @@ class ContextCompactingLLM(BaseLLM):
         active, stats = self.context_compactor.compact_messages(before)
 
         self.calls += 1
-        before_chars = _prompt_chars(before)
-        after_chars = _prompt_chars(active)
+        # These metrics deliberately use the same content-size definition as
+        # ContextCompactor's hard budget. This makes telemetry directly
+        # comparable with max_prompt_chars instead of mixing content size and
+        # serialized JSON envelope overhead.
+        before_chars = stats.original_chars
+        after_chars = stats.compacted_chars
         self._last_prompt_chars_before = before_chars
         self._last_prompt_chars_after = after_chars
         self._last_input_tokens_before = stats.original_tokens
@@ -116,8 +119,3 @@ class ContextCompactingLLM(BaseLLM):
             tools=tools,
             tool_choice=tool_choice,
         )
-
-
-def _prompt_chars(messages: list[dict[str, Any]]) -> int:
-    """Measure serialized request size, including message/tool-call metadata."""
-    return len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")))
