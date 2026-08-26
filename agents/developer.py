@@ -223,7 +223,7 @@ class DeveloperAgent(BaseAgent):
         tool_calls: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = self.llm.generate_with_tools(
+            response = self._generate_with_tools(
                 messages,
                 tools=TOOL_REGISTRY.schemas(),
                 tool_choice="auto",
@@ -232,10 +232,6 @@ class DeveloperAgent(BaseAgent):
             if not response.tool_calls:
                 content = response.content or ""
 
-                # Deny-by-default artifact guard: a developer turn that
-                # ends without ANY tool invocations has produced nothing
-                # verifiable. Text-only "success" reports previously
-                # masked no-op rounds (real-provider incident).
                 if not changed_files and not command_results and not tool_calls:
                     return AgentResult(
                         status="failed",
