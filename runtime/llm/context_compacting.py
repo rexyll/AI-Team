@@ -31,6 +31,10 @@ class ContextCompactingLLM(BaseLLM):
         self.max_input_messages_before = 0
         self.max_input_messages_after = 0
 
+    def __getattr__(self, name: str) -> Any:
+        """Preserve access to telemetry/config attributes on wrapped LLMs."""
+        return getattr(self.inner, name)
+
     @property
     def last_prompt_chars_before(self) -> int:
         return getattr(self, "_last_prompt_chars_before", 0)
