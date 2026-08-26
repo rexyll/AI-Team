@@ -67,7 +67,7 @@ class TesterAgent(BaseAgent):
         context = self.build_context(task)
         prompt = self._build_prompt(context)
 
-        result = self.llm.generate(
+        result = self._generate(
             prompt,
             system_prompt=SYSTEM_PROMPT,
         )
@@ -195,17 +195,12 @@ TEST_FAILED
 
         text = result.strip().upper()
 
-        # Fast path: verdict-first responses (the documented contract).
         if text.startswith("TEST_PASSED"):
             return "passed"
 
         if text.startswith("TEST_FAILED"):
             return "failed"
 
-        # Real models frequently reason first and state the verdict later,
-        # or wrap it in markdown. Scan the whole response for the verdict
-        # tokens. Any failure signal wins: a conservative quality gate must
-        # never pass a task on ambiguous evidence (deny-by-default).
         if "TEST_FAILED" in text:
             return "failed"
 
