@@ -17,6 +17,8 @@ _KNOWN_TASK_EVENTS = {
     "review_started",
     "reviewer_approved",
     "reviewer_revision",
+    "reviewer_fallback",
+    "reviewer_retry",
     "task_failed",
     "task_retrying",
     "task_completed",
@@ -188,6 +190,13 @@ class WorkflowEventProjector:
                 raise ValueError(f"workflow retry event has invalid max_retries: {event.event_id}")
             if not isinstance(event.payload["reason"], str) or not event.payload["reason"]:
                 raise ValueError(f"workflow retry event has invalid reason: {event.event_id}")
+        if event.event_type == "reviewer_retry":
+            attempt = event.payload.get("attempt")
+            max_attempts = event.payload.get("max_attempts")
+            if not isinstance(attempt, int) or attempt < 1:
+                raise ValueError(f"reviewer retry event has invalid attempt: {event.event_id}")
+            if not isinstance(max_attempts, int) or max_attempts < 0:
+                raise ValueError(f"reviewer retry event has invalid max_attempts: {event.event_id}")
 
     @staticmethod
     def _apply_task_event(state: dict[str, object], event: WorkflowEvent) -> None:
@@ -213,6 +222,12 @@ class WorkflowEventProjector:
         elif event_type == "review_started":
             state["lifecycle_status"] = "reviewing"
             state["review_status"] = "started"
+        elif event_type == "reviewer_fallback":
+            state["lifecycle_status"] = "review_pending"
+            state["review_status"] = "recovery"
+        elif event_type == "reviewer_retry":
+            state["lifecycle_status"] = "reviewing"
+            state["review_status"] = "retrying"
         elif event_type == "reviewer_revision":
             state["lifecycle_status"] = "running"
             state["review_status"] = "revision"
