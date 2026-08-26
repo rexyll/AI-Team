@@ -17,7 +17,8 @@ class _DeterministicExecutor:
         # Mark currently runnable work completed in deterministic rounds.
         while True:
             ready = [
-                task for task in self.manager.get_all_tasks()
+                task
+                for task in self.manager.get_all_tasks()
                 if task.status in {"pending", "ready"}
                 and all(
                     self.manager.get_task(dep).status == "completed"
@@ -28,7 +29,10 @@ class _DeterministicExecutor:
                 return
             for task in ready:
                 self.manager.mark_running(task.id)
-                self.manager.mark_completed(task.id, result={"developer_count": self.developer_count})
+                self.manager.mark_completed(
+                    task.id,
+                    result={"developer_count": self.developer_count},
+                )
 
 
 def _executor_factory(manager, developer_count):
@@ -60,6 +64,34 @@ def test_benchmark_runner_reports_task_outcomes():
     assert result.failed == 0
     assert result.blocked == 0
     assert result.duration_seconds >= 0
+
+
+def test_benchmark_runner_normalizes_pending_root_to_ready():
+    observed = {}
+
+    def executor_factory(manager, developer_count):
+        observed["root_status"] = manager.get_task("ROOT").status
+        return _DeterministicExecutor(manager, developer_count)
+
+    benchmark = MultiDeveloperBenchmark(
+        scenario_factory=lambda: [
+            # Deliberately start ROOT as pending; the benchmark runner owns
+            # scenario lifecycle normalization before executor construction.
+            __import__("runtime.task", fromlist=["Task"]).Task(
+                "ROOT", "Root", "root", "developer"
+            ),
+            __import__("runtime.task", fromlist=["Task"]).Task(
+                "CHILD", "Child", "child", "developer", dependencies=["ROOT"]
+            ),
+        ],
+        executor_factory=executor_factory,
+        scenario_name="pending-root",
+    )
+
+    result = benchmark.run(1)
+
+    assert observed["root_status"] == "ready"
+    assert result.completed == 2
 
 
 def test_benchmark_baseline_calculates_speedup_and_efficiency():
