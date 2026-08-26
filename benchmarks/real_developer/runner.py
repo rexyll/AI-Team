@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Callable, Protocol
@@ -25,7 +26,9 @@ class RealDeveloperBenchmark:
 
     The benchmark delegates actual execution to an injected executor. The
     runner owns DAG readiness advancement and telemetry aggregation, but never
-    calls a model provider directly.
+    calls a model provider directly. Tasks in the same ready batch are executed
+    concurrently, up to ``developer_count`` workers, so the benchmark measures
+    actual Developer parallelism rather than serial iteration overhead.
     """
 
     def __init__(
@@ -57,19 +60,25 @@ class RealDeveloperBenchmark:
         task_metrics: list[RealDeveloperTaskMetrics] = []
         started = perf_counter()
 
-        # TaskManager is the single source of truth for DAG readiness. Calling
-        # get_ready_tasks() each round both promotes newly executable tasks and
-        # detects dependency failures/blocks without duplicating lifecycle rules
-        # in the benchmark layer.
-        while True:
-            ready = manager.get_ready_tasks()
-            if not ready:
-                break
+        # TaskManager is the single source of truth for DAG readiness. Each
+        # ready batch is independent at this point, so execute up to
+        # developer_count tasks concurrently and only then advance the DAG.
+        with ThreadPoolExecutor(max_workers=developer_count) as pool:
+            while True:
+                ready = manager.get_ready_tasks()
+                if not ready:
+                    break
 
-            for task in ready:
-                developer_id = f"developer-{len(task_metrics) % developer_count + 1}"
-                metrics = executor.run_task(task, developer_id)
-                task_metrics.append(metrics)
+                futures = [
+                    pool.submit(
+                        executor.run_task,
+                        task,
+                        f"developer-{index % developer_count + 1}",
+                    )
+                    for index, task in enumerate(ready)
+                ]
+                for future in futures:
+                    task_metrics.append(future.result())
 
         duration = perf_counter() - started
         final_tasks = manager.get_all_tasks()
