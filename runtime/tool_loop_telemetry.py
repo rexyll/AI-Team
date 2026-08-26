@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .tool_loop_classification import classify_tool_call_category
+
 
 @dataclass(frozen=True)
 class ToolCallTelemetry:
@@ -15,6 +17,7 @@ class ToolCallTelemetry:
     result_chars: int
     duplicate_of: str | None = None
     retry_of: str | None = None
+    category: str = "other"
 
 
 def stable_hash(value: Any) -> str:
@@ -39,10 +42,17 @@ def classify_tool_call(*, tool_name: str, arguments: dict[str, Any], result: Any
             if previous_status != "completed":
                 retry_of = execution_id
             break
+    category = classify_tool_call_category(
+        tool_name=tool_name,
+        arguments=arguments,
+        duplicate_of=duplicate_of,
+        retry_of=retry_of,
+    )
     return ToolCallTelemetry(
         arguments_hash=arguments_hash,
         result_hash=result_hash,
         result_chars=len(str(result)),
         duplicate_of=duplicate_of,
         retry_of=retry_of,
+        category=category,
     )
