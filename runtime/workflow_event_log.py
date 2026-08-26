@@ -55,10 +55,13 @@ class WorkflowEventLog:
         self._project_indexes.clear()
         self._task_indexes.clear()
 
-    def _record_event(self, event: WorkflowEvent) -> None:
+    def _record_event(self, event: WorkflowEvent, *, preserve_append_order: bool) -> None:
         self._events[event.event_id] = event
-        self._append_sequence[event.event_id] = self._next_append_sequence
-        self._next_append_sequence += 1
+        if preserve_append_order:
+            self._append_sequence[event.event_id] = self._next_append_sequence
+            self._next_append_sequence += 1
+        else:
+            self._append_sequence.pop(event.event_id, None)
 
     def append(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
@@ -67,7 +70,7 @@ class WorkflowEventLog:
             if event.event_id in self._events:
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
-            self._record_event(event)
+            self._record_event(event, preserve_append_order=True)
             self._invalidate_indexes()
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
@@ -77,7 +80,7 @@ class WorkflowEventLog:
             existing = self._events.get(event.event_id)
             if existing is None:
                 self._persist_if_configured(event)
-                self._record_event(event)
+                self._record_event(event, preserve_append_order=True)
                 self._invalidate_indexes()
                 return True
             if existing == event:
@@ -104,7 +107,7 @@ class WorkflowEventLog:
             if self._persistence_sink is not None:
                 self._persistence_sink.save_if_absent_many(pending.values())
             for event in pending.values():
-                self._record_event(event)
+                self._record_event(event, preserve_append_order=False)
             if pending:
                 self._invalidate_indexes()
             return len(pending)
@@ -119,9 +122,6 @@ class WorkflowEventLog:
         )
 
     def _project_sort_key(self, event: WorkflowEvent) -> tuple[int, str, str]:
-        # Project queries have a deterministic persisted ordering: timestamp,
-        # then event id. ``project.resumed`` remains a lifecycle exception and
-        # is kept after the ordinary project events at the same timestamp.
         return (
             1 if event.event_type == "project.resumed" else 0,
             event.occurred_at,
