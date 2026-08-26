@@ -26,10 +26,6 @@ class WorkflowEventLog:
         self._events: dict[str, WorkflowEvent] = {}
         self._append_sequence: dict[str, int] = {}
         self._next_append_sequence = 0
-        # Read queries are frequently repeated against an unchanged event log.
-        # Keep immutable snapshots lazily indexed and invalidate them only when
-        # the event set changes. This avoids repeatedly scanning/sorting the
-        # complete event dictionary in steady-state query workloads.
         self._all_index: list[WorkflowEvent] | None = None
         self._project_indexes: dict[str, list[WorkflowEvent]] = {}
         self._task_indexes: dict[str, list[WorkflowEvent]] = {}
@@ -59,6 +55,11 @@ class WorkflowEventLog:
         self._project_indexes.clear()
         self._task_indexes.clear()
 
+    def _record_event(self, event: WorkflowEvent) -> None:
+        self._events[event.event_id] = event
+        self._append_sequence[event.event_id] = self._next_append_sequence
+        self._next_append_sequence += 1
+
     def append(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
@@ -66,9 +67,7 @@ class WorkflowEventLog:
             if event.event_id in self._events:
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
-            self._events[event.event_id] = event
-            self._append_sequence[event.event_id] = self._next_append_sequence
-            self._next_append_sequence += 1
+            self._record_event(event)
             self._invalidate_indexes()
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
@@ -78,9 +77,7 @@ class WorkflowEventLog:
             existing = self._events.get(event.event_id)
             if existing is None:
                 self._persist_if_configured(event)
-                self._events[event.event_id] = event
-                self._append_sequence[event.event_id] = self._next_append_sequence
-                self._next_append_sequence += 1
+                self._record_event(event)
                 self._invalidate_indexes()
                 return True
             if existing == event:
@@ -106,11 +103,9 @@ class WorkflowEventLog:
                 pending[event.event_id] = event
             if self._persistence_sink is not None:
                 self._persistence_sink.save_if_absent_many(pending.values())
+            for event in pending.values():
+                self._record_event(event)
             if pending:
-                for event in pending.values():
-                    self._append_sequence[event.event_id] = self._next_append_sequence
-                    self._next_append_sequence += 1
-                self._events.update(pending)
                 self._invalidate_indexes()
             return len(pending)
 
@@ -123,16 +118,12 @@ class WorkflowEventLog:
             event.event_id,
         )
 
-    @staticmethod
-    def _project_sort_key(event: WorkflowEvent) -> tuple[str, str, int, str]:
-        # occurred_at/event_id preserve the canonical historical ordering;
-        # append sequence is the stable tie-breaker for identical timestamps.
-        # project.resumed remains first for project-level lifecycle queries.
+    def _project_sort_key(self, event: WorkflowEvent) -> tuple[int, str, int, str]:
         return (
+            1 if event.event_type == "project.resumed" else 0,
             event.occurred_at,
+            self._append_sequence.get(event.event_id, 0),
             event.event_id,
-            0,
-            "",
         )
 
     def list_all(self) -> list[WorkflowEvent]:
