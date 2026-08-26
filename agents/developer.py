@@ -13,6 +13,7 @@ from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
 from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL
+from runtime.tool_loop_verification import should_suppress_verification
 from runtime.tool_result_evidence import reduce_tool_result
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
@@ -141,6 +142,7 @@ EXECUTION REQUIREMENT
         prior_signatures: list[tuple[str, str, str, str]] = []
         cache = ToolResultCache()
         progress_guard = ToolLoopProgressGuard()
+        verification_reused_count = 0
         for _ in range(MAX_TOOL_ITERATIONS):
             response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
@@ -149,6 +151,7 @@ EXECUTION REQUIREMENT
                     return AgentResult(status="failed", agent=self.role, task_id=context.task_id, message=("Developer produced no artifacts: zero tool calls, zero file changes, zero commands. " f"Final text head: {content[:200]}"), data={"validation": {"tool_call_count": 0, "test_command_count": 0, "files_changed_count": 0, "no_artifact_completion": True}, "report": content})
                 data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
                 data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
+                data["tool_loop_verification"] = {"reused": verification_reused_count}
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": call.call_id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in response.tool_calls]})
             for tool_call in response.tool_calls:
@@ -158,6 +161,7 @@ EXECUTION REQUIREMENT
                 result: Any = None
                 error: Any = None
                 record_arguments: dict[str, Any] = {}
+                verification_reused = False
                 print(f"\n[Tool] {tool_name}")
                 try:
                     arguments = json.loads(tool_call.arguments)
@@ -173,7 +177,7 @@ EXECUTION REQUIREMENT
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
-                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
                     self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
                     continue
                 if not isinstance(arguments, dict):
@@ -188,7 +192,7 @@ EXECUTION REQUIREMENT
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
-                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
                     self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
                     continue
                 print(f"[Args] {arguments}")
@@ -200,15 +204,23 @@ EXECUTION REQUIREMENT
                     if ignored_arguments:
                         print("[Ignored Args] " f"{ignored_arguments}")
                     tool_calls.append({"name": tool_name, "arguments": dict(validated_arguments)})
-                    cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
-                    if cached is not None:
-                        result = cached.result
-                        print("[Cache] exact read-only tool result reused")
+                    verification_reused = should_suppress_verification(tool_name=tool_name, arguments=validated_arguments, command_results=command_results, changed_files=changed_files)
+                    if verification_reused:
+                        verification_reused_count += 1
+                        command = str(validated_arguments.get("command", ""))
+                        result = f"Verification evidence reused: {command} previously succeeded and no known workspace files changed."
+                        print("[Verification] prior successful evidence reused; command execution suppressed")
                     else:
-                        result = tool_function(**validated_arguments)
-                        cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
-                    self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
-                    cache.invalidate_for(tool_name)
+                        cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
+                        if cached is not None:
+                            result = cached.result
+                            print("[Cache] exact read-only tool result reused")
+                        else:
+                            result = tool_function(**validated_arguments)
+                            cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
+                        self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
+                    if tool_name != "run_command" or not verification_reused:
+                        cache.invalidate_for(tool_name)
                 except KeyError:
                     status = "unknown_tool"
                     error = {"type": "KeyError", "message": f"Unknown tool: {tool_name}"}
@@ -224,9 +236,9 @@ EXECUTION REQUIREMENT
                 messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                 self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
-                reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
+                reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
-                    return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache)
+                    return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
                 self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
@@ -247,10 +259,11 @@ EXECUTION REQUIREMENT
         if checkpoint:
             messages.append({"role": "user", "content": checkpoint})
 
-    def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache) -> AgentResult:
+    def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache, verification_reused_count: int = 0) -> AgentResult:
         data = self._build_result_data(content=reason, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
         data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
         data["tool_loop_guard"] = {"tripped": True, "reason": reason}
+        data["tool_loop_verification"] = {"reused": verification_reused_count}
         return AgentResult(status="failed", agent=self.role, task_id=task_id, message=reason, data=data)
 
     def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
