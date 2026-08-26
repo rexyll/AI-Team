@@ -57,12 +57,19 @@ def test_event_persistence_throughput_does_not_collapse_with_scale(tmp_path) -> 
 def _query_throughput(size: int) -> float:
     log = WorkflowEventLog()
     log.merge(_events(size))
+
+    # A single tiny projection can be dominated by timer/GC/import noise on
+    # Windows. Run a bounded number of identical read-only projections so the
+    # contract measures steady-state scaling rather than one lucky/unlucky
+    # microsecond sample. Keep total work roughly comparable across sizes.
+    repetitions = max(1, 2048 // size)
     started = perf_counter()
-    query = WorkflowEventQueryService.from_log(log, project_id=PROJECT_ID)
-    assert query.lifecycle() == "running"
-    assert len(query.as_dict()["tasks"]) == size
+    for _ in range(repetitions):
+        query = WorkflowEventQueryService.from_log(log, project_id=PROJECT_ID)
+        assert query.lifecycle() == "running"
+        assert len(query.as_dict()["tasks"]) == size
     elapsed = perf_counter() - started
-    return size / elapsed if elapsed else float("inf")
+    return (size * repetitions) / elapsed if elapsed else float("inf")
 
 
 def test_projection_query_throughput_does_not_collapse_with_scale() -> None:
@@ -70,7 +77,8 @@ def test_projection_query_throughput_does_not_collapse_with_scale() -> None:
 
     # Projection is intentionally rebuilt from a stable read-only snapshot.
     # Keep the guard wide enough for normal CI variance while detecting an
-    # accidental quadratic regression in event/task projection.
+    # accidental quadratic regression in event/task projection. The benchmark
+    # uses repeated steady-state samples to avoid a one-shot timer artifact.
     assert throughputs[128] > throughputs[32] * 0.30
     assert throughputs[512] > throughputs[32] * 0.20
 
