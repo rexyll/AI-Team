@@ -41,19 +41,17 @@ class DeveloperAgentExecutor:
         for index in range(developer_count):
             llm = InstrumentedLLM(llm_factory())
             config = config_factory(index + 1) if config_factory else None
+            compacting_llm = ContextCompactingLLM(llm)
             self._bindings.append(
                 _DeveloperBinding(
                     developer_id=f"developer-{index + 1}",
-                    agent=DeveloperAgent(config=config, llm=llm),
+                    agent=DeveloperAgent(config=config, llm=compacting_llm),
                     llm=llm,
                 )
             )
 
     def run_task(self, task: Task, developer_id: str) -> RealDeveloperTaskMetrics:
-        binding = next(
-            (item for item in self._bindings if item.developer_id == developer_id),
-            None,
-        )
+        binding = next((item for item in self._bindings if item.developer_id == developer_id), None)
         if binding is None:
             raise ValueError(f"unknown developer_id: {developer_id}")
 
@@ -70,7 +68,6 @@ class DeveloperAgentExecutor:
         started = perf_counter()
         tool_calls = 0
         test_commands = 0
-
         self.manager.mark_running(task.id)
         try:
             result = binding.agent.run(task)
@@ -101,20 +98,8 @@ class DeveloperAgentExecutor:
             failed=failed,
             llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
             compaction_count=sum(1 for event in events if event["compacted"]),
-            max_prompt_chars_before_compaction=max(
-                (int(event["prompt_chars_before"]) for event in events),
-                default=0,
-            ),
-            max_prompt_chars_after_compaction=max(
-                (int(event["prompt_chars_after"]) for event in events),
-                default=0,
-            ),
-            max_context_messages_before_compaction=max(
-                (int(event["messages_before"]) for event in events),
-                default=0,
-            ),
-            max_context_messages_after_compaction=max(
-                (int(event["messages_after"]) for event in events),
-                default=0,
-            ),
+            max_prompt_chars_before_compaction=max((int(event["prompt_chars_before"]) for event in events), default=0),
+            max_prompt_chars_after_compaction=max((int(event["prompt_chars_after"]) for event in events), default=0),
+            max_context_messages_before_compaction=max((int(event["messages_before"]) for event in events), default=0),
+            max_context_messages_after_compaction=max((int(event["messages_after"]) for event in events), default=0),
         )
