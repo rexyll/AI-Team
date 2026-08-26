@@ -30,8 +30,8 @@ def test_real_developer_benchmark_collects_instrumentation():
 
     result = benchmark.run(2)
 
-    assert result.completed == 4
+    assert result.completed == 5
     assert result.failed == 0
     assert result.blocked == 0
-    assert result.llm_calls == 4
-    assert result.total_tokens == 60
+    assert result.llm_calls == 5
+    assert result.total_tokens == 75
