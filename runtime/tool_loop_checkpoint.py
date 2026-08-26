@@ -37,7 +37,8 @@ def build_tool_loop_checkpoint(
         "recent_tools=" + ", ".join(recent_tools),
     ]
     if changed_files:
-        lines.append("changed_files=" + ", ".join(dict.fromkeys(changed_files)[-8:]))
+        unique_changed_files = list(dict.fromkeys(changed_files))
+        lines.append("changed_files=" + ", ".join(unique_changed_files[-8:]))
     if command_results:
         lines.append(f"test_or_command_results={len(command_results)}")
 
