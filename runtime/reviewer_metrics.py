@@ -79,20 +79,16 @@ def project_reviewer_reliability(
     *,
     project_id: str,
 ) -> ReviewerReliabilityMetrics:
-    """Aggregate reviewer counters from immutable workflow facts.
-
-    The aggregation prefers the cumulative snapshot emitted by the resilient
-    reviewer. This makes the result stable even when one workflow run produces
-    multiple reviewer events for the same task.
-    """
+    """Aggregate reviewer counters from immutable workflow facts."""
     if not isinstance(project_id, str) or not project_id.strip():
         raise ValueError("project_id must be a non-empty string")
     if isinstance(events, WorkflowEventLog):
         selected = events.list_for_project(project_id)
     else:
-        selected = [event for event in events if event.project_id == project_id]
-        if any(not isinstance(event, WorkflowEvent) for event in selected):
+        materialized = list(events)
+        if any(not isinstance(event, WorkflowEvent) for event in materialized):
             raise TypeError("events must contain WorkflowEvent values")
+        selected = [event for event in materialized if event.project_id == project_id]
         selected.sort(key=lambda event: (event.occurred_at, event.event_id))
 
     latest_by_task: dict[str, dict] = {}
@@ -119,28 +115,15 @@ def project_reviewer_reliability(
             if retry_events.get(event.task_id, 0) == 0 and event.task_id in latest_by_task:
                 exhausted_tasks.add(event.task_id)
 
-    # Also consume ordinary reviewer events, which may be approved without fallback.
-    for event in selected:
-        if event.event_type in {"reviewer_approved", "reviewer_revision", "reviewer_fallback"} and event.task_id:
-            metrics = _reviewer_reliability(event.payload)
-            if metrics:
-                latest_by_task[event.task_id] = metrics
-
-    if latest_by_task:
-        counters = {key: 0 for key in (
-            "primary_attempts", "primary_successes", "primary_failures",
-            "fallback_attempts", "fallback_successes", "fallback_failures", "empty_responses"
-        )}
-        for snapshot in latest_by_task.values():
-            for key in counters:
-                value = snapshot.get(key, 0)
-                if isinstance(value, int) and value >= 0:
-                    counters[key] += value
-    else:
-        counters = {key: 0 for key in (
-            "primary_attempts", "primary_successes", "primary_failures",
-            "fallback_attempts", "fallback_successes", "fallback_failures", "empty_responses"
-        )}
+    counters = {key: 0 for key in (
+        "primary_attempts", "primary_successes", "primary_failures",
+        "fallback_attempts", "fallback_successes", "fallback_failures", "empty_responses"
+    )}
+    for snapshot in latest_by_task.values():
+        for key in counters:
+            value = snapshot.get(key, 0)
+            if isinstance(value, int) and value >= 0:
+                counters[key] += value
 
     return ReviewerReliabilityMetrics(
         **counters,
