@@ -139,18 +139,20 @@ class WorkflowEventLog:
             )
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
-        """Return task events in append order, not wall-clock order.
+        """Return task events in deterministic lifecycle order.
 
-        Workflow events are emitted by one task's execution path in a strict
-        lifecycle order, while multiple tasks may append concurrently. Wall
-        clock timestamps are not a reliable sequence number on every platform:
-        consecutive events can share the platform timestamp resolution, and the
-        previous timestamp+UUID tie-breaker could therefore reorder a task's
-        lifecycle. Dict insertion order already records append order while the
-        same lock protects writers and readers.
+        Task event queries intentionally use the same timestamp + event-id
+        ordering contract as persisted queries. The timestamp captures the
+        workflow lifecycle sequence and the event id supplies a deterministic
+        tie-breaker when multiple events share the same timestamp. This keeps
+        in-memory and durable projections equivalent and avoids depending on
+        dictionary insertion order, which can differ after recovery/merge.
         """
         with self._lock:
-            return [event for event in self._events.values() if event.task_id == task_id]
+            return sorted(
+                (event for event in self._events.values() if event.task_id == task_id),
+                key=lambda event: (event.occurred_at, event.event_id),
+            )
 
     def get(self, event_id: str) -> WorkflowEvent:
         with self._lock:
