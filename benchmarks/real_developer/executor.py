@@ -51,13 +51,12 @@ class DeveloperAgentExecutor:
             raise TypeError("DeveloperAgent must use ContextCompactingLLM")
         before_events = len(compacting_llm.compaction_events)
         started = perf_counter()
-        tool_calls = 0
-        test_commands = 0
-        unique_tool_calls = duplicate_tool_calls = retry_tool_calls = tool_result_chars = largest_tool_result_chars = 0
         self.manager.mark_running(task.id)
+        cache_hits = cache_misses = cache_invalidations = 0
         try:
             result = binding.agent.run(task)
             validation = result.data.get("validation", {}) if isinstance(result.data, dict) else {}
+            cache_data = result.data.get("tool_loop_cache", {}) if isinstance(result.data, dict) else {}
             tool_calls = int(validation.get("tool_call_count", 0) or 0)
             test_commands = int(validation.get("test_command_count", 0) or 0)
             unique_tool_calls = int(validation.get("unique_tool_calls", 0) or 0)
@@ -65,6 +64,9 @@ class DeveloperAgentExecutor:
             retry_tool_calls = int(validation.get("retry_tool_calls", 0) or 0)
             tool_result_chars = int(validation.get("tool_result_chars", 0) or 0)
             largest_tool_result_chars = int(validation.get("largest_tool_result_chars", 0) or 0)
+            cache_hits = int(cache_data.get("hits", 0) or 0)
+            cache_misses = int(cache_data.get("misses", 0) or 0)
+            cache_invalidations = int(cache_data.get("invalidations", 0) or 0)
             if result.status == "completed":
                 self.manager.mark_developer_completed(task.id, result.data)
                 failed = False
@@ -74,6 +76,8 @@ class DeveloperAgentExecutor:
         except Exception as exc:
             self.manager.mark_failed(task.id, str(exc))
             failed = True
+            tool_calls = test_commands = unique_tool_calls = duplicate_tool_calls = retry_tool_calls = 0
+            tool_result_chars = largest_tool_result_chars = 0
         events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
             task_id=task.id, developer_id=developer_id, duration_seconds=perf_counter() - started,
@@ -81,7 +85,8 @@ class DeveloperAgentExecutor:
             output_tokens=binding.llm.stats.output_tokens - before_output, llm_latency_seconds=binding.llm.stats.latency_seconds - before_latency,
             tool_calls=tool_calls, test_commands=test_commands, unique_tool_calls=unique_tool_calls,
             duplicate_tool_calls=duplicate_tool_calls, retry_tool_calls=retry_tool_calls, tool_result_chars=tool_result_chars,
-            largest_tool_result_chars=largest_tool_result_chars, failed=failed, llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
+            largest_tool_result_chars=largest_tool_result_chars, cache_hits=cache_hits, cache_misses=cache_misses,
+            cache_invalidations=cache_invalidations, failed=failed, llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
             compaction_count=sum(1 for event in events if event["compacted"]),
             max_prompt_chars_before_compaction=max((int(event["prompt_chars_before"]) for event in events), default=0),
             max_prompt_chars_after_compaction=max((int(event["prompt_chars_after"]) for event in events), default=0),
