@@ -50,7 +50,7 @@ def test_repeated_tool_history_stays_within_context_budget(monkeypatch) -> None:
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": "stable developer system instructions"},
-        {"role": "user", "content": "Implement the requested change and verify it."},
+        {"role": "user", "content": "Implement the requested change. " * 75},
     ]
 
     for _ in range(8):
