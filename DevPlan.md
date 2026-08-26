@@ -2,7 +2,7 @@
 
 > 项目仓库：`rexyll/AI-Team`
 > 当前开发分支：`feature/reviewer-reliability-fallback`
-> 当前基线：Context Compaction v2 + Tool Loop Telemetry
+> 当前基线：Context Compaction v2 + Tool Loop Efficiency 10.1–10.5
 >
 > **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。** 系统不是简单的多 Agent Demo，而是让 Planner / Architect / Developer / Tester / Reviewer / Orchestrator 形成稳定的软件工程闭环：用户需求 → 计划 → 依赖调度 → Agent 执行 → Tester 质量门禁 → Reviewer 审核/返工 → 项目结果 → 持久化恢复 → 事件审计与查询。
 >
@@ -157,7 +157,6 @@ blocked                 0 → 0
 ## √ 10.1 Tool Loop Telemetry
 
 已经加入 Tool Loop 观测：
-
 - `unique_tool_calls`
 - `duplicate_tool_calls`
 - `retry_tool_calls`
@@ -170,73 +169,110 @@ blocked                 0 → 0
 
 新增 contract：`tests/test_tool_loop_telemetry_contract.py`。
 
-验收证据：
-- 专项测试：`3 passed`
-- 全量测试：`1104 passed`
-- 向后兼容修复：`DeveloperAgent._build_result_data(loop_telemetry=None)`，避免 telemetry 接入破坏旧调用契约。
+## √ 10.2 Real benchmark classification
 
-## ▶ 10.2 Real benchmark classification
-
-使用真实 `serial` benchmark 建立 Tool Loop 分类报告：
-
-- unique call
-- exact duplicate
-- semantic duplicate
+真实 `serial` benchmark 已能够解释 task 级 Tool Calls，并输出：
+- unique / exact duplicate
 - retry
-- failure recovery
-- exploration
-- verification
-- progress-producing call
+- exploration / execution / verification
+- tool result size
+- per-call LLM latency / input / output tokens
 
-验收要求：至少能解释一个真实 task 的全部 Tool Calls，不依赖人工猜测。
+### 最新真实 benchmark 证据
 
-当前状态：分类指标代码和 contract 已通过，等待新的真实 benchmark 数据作为最终分类证据。
+```text
+scenario=serial developers=1 tasks=4
+completed=4 failed=0 blocked=0
+duration_s=423.791
+llm_calls=57
+input_tokens=246884
+output_tokens=7829
+tool_calls=126
+unique_tool_calls=82
+duplicate_tool_calls=44
+retry_tool_calls=2
+tool_result_chars=212647
+largest_tool_result_chars=7577
+max_prompt_chars=24000
+max_input_tokens_per_call=7919
+max_context_growth_ratio=16.235
+```
 
-## □ 10.3 Duplicate Tool Call suppression
+Task-3 是当前主要优化对象：
 
-只在确认 duplicate semantics 后实现：
-- 相同 tool + canonical arguments 的短期去重
-- 可配置 dedup window
-- 不误去重有副作用的 tool
-- read-only tool 与 mutating tool 分离策略
+```text
+llm_calls=29
+input_tokens=141296
+tool_calls=63
+unique_tool_calls=29
+duplicate_tool_calls=34
+retry_tool_calls=2
+tool_result_chars=118552
+```
 
-必须增加 correctness contract 和 false-positive regression test。
+**结论：10.2 达标；真实 benchmark 已证明 duplicate tool call 是下一阶段主要成本来源。** `✓`
 
-## □ 10.4 Tool Result Evidence Reduction
+## √ 10.3 Duplicate Tool Call suppression
 
-目标：减少大型 tool output 对后续 LLM call 的传播。
+已实现保守的 exact duplicate/read-only cache：
+- canonical arguments hash
+- bounded LRU window
+- `read_file` / `list_files` 才允许缓存
+- mutating / execution tool 会失效缓存
+- cache hit 返回 defensive copy
+- 不改变原始 tool execution history
+- verification command 采用独立 evidence ledger，不把副作用命令纳入普通 cache
 
-方向：
+专项 contract：`tests/test_tool_loop_cache.py`。
+
+同时加入 false-positive 防护：非只读 verification command 不复用，workspace mutation 后 verification 必须重新执行。
+
+用户已确认专项测试和全量测试通过。 `✓`
+
+## √ 10.4 Tool Result Evidence Reduction
+
+已实现 bounded tool evidence：
+- structured result deterministic rendering
 - result size budget
-- old evidence truncation
-- structured summary
-- file/test output prioritization
-- duplicate result reuse
+- `read_file` 保留头尾
+- `run_command` 保留诊断 tail
+- 旧 tool output 不直接完整传播到下一 LLM turn
+- telemetry 同时记录 raw / retained result size
 
-要求：不能破坏 Developer 后续决策所需的关键 evidence。
+用户已确认专项测试和全量测试通过。 `✓`
 
-## □ 10.5 Tool Loop Progress Guard
+## √ 10.5 Tool Loop Progress Guard
 
-检测连续调用但没有产生有效工作进展的 loop：
+已实现：
+- repeated exact calls
+- repeated failures
+- stagnant result evidence
+- explicit progress reset
+- 可配置阈值
+- 触发后安全终止并保留 telemetry / result data
 
-- repeated identical calls
-- repeated identical failures
-- unchanged workspace state
-- unchanged test state
-- repeated read-only inspection
+用户已确认专项测试和全量测试通过。 `✓`
 
-达到阈值时触发：重新规划、压缩上下文、请求更高层 reasoning 或安全终止。
+## ▶ 10.6 LLM Call Reduction
 
-## □ 10.6 LLM Call Reduction
+下一主攻节点。**重点不是继续增加简单去重规则，而是减少 Developer decision turn。**
 
-在 Tool Loop telemetry 足够稳定后优化 Developer decision loop：
+第一阶段只做低风险、可验证优化：
 
-- 合并可并行 tool calls
-- 一次 decision 生成多个安全的独立操作
-- 减少重复 verification turns
-- task-local checkpoint 后减少重新解释
+1. **Decision-turn classification**：区分“需要 LLM 重新推理”的 tool result 与“已有充分 evidence、只需继续执行”的结果。
+2. **Terminal verification fast-path**：成功且 mutation-safe 的验证结果已经确认后，避免再次产生无意义 verification decision turn；必须保留最终 AgentResult 正确性。
+3. **Task-local checkpoint reuse**：checkpoint 不仅压缩 context，还要携带最近有效 action/evidence，使下一轮不重新探索。
+4. **Safe tool batch contract**：对于同一 decision 中彼此独立且明确 read-only 的操作，验证是否可以合并处理；严禁自动并行可能存在依赖或副作用的操作。
+5. **Decision budget**：为单 task 设置软性 decision-turn budget；接近预算时优先 checkpoint / evidence reuse，而不是盲目继续探索。
 
-验收核心：相同任务 correctness 不下降，同时真实 benchmark 的 LLM calls / tool calls 显著下降。
+验收要求：
+- correctness 不下降
+- 不增加 false-positive tool suppression
+- 真实 benchmark `llm_calls` 明显下降
+- `input_tokens` 与 `tool_calls` 同时观察
+- failure/recovery 场景不能被 fast-path 吞掉
+
+**当前状态：设计与验收边界已明确，下一次代码修改从 `Decision-turn classification + terminal verification fast-path` 开始。**
 
 ## □ 10.7 Tool Loop regression benchmark
 
@@ -256,6 +292,8 @@ blocked                 0 → 0
 - duplicate ratio
 - retry ratio
 - tool result chars
+
+10.6 完成后建立正式 baseline / regression gate。
 
 ---
 
@@ -427,366 +465,151 @@ Tester / Reviewer 不再只依赖自然语言结果，而是使用结构化 evid
 
 ## □ 15.2 Network egress policy
 
-Tool / Agent 默认 deny-by-default，按角色和任务授权网络访问。
+Tool / Agent 默认 deny-by-default，按角色和任务授予最小网络权限。
 
-## □ 15.3 Secret protection
+## □ 15.3 Secret isolation
 
-防止：
-- prompt 泄露 secrets
-- tool output 泄露 secrets
-- logs 持久化 secrets
-- benchmark artifacts 泄露 secrets
+禁止 tool result、prompt、event log、audit log 泄漏 API key / token / credential。
 
-## □ 15.4 Resource abuse limits
+## □ 15.4 Prompt injection resistance
 
-限制：
-- shell process
-- CPU time
-- memory
-- disk
-- network
-- subprocess count
+验证 repository content、tool output、test output 中的恶意指令不能改变系统级权限边界。
 
 ## □ 15.5 Security regression suite
 
-所有安全边界纳入持续 regression，不允许后续功能绕过 sandbox / permission policy。
+建立长期 security contract，所有高风险边界进入 CI gate。
 
 ---
 
 # 十一、Phase 16 — Observability / Operations
 
-## □ 16.1 Unified Run Trace
+## □ 16.1 Structured logging
 
-Project → Task → Agent → LLM Call → Tool Call → Test → Review → Event 建立统一 trace identity。
+统一 task/project/tool/LLM/event correlation id。
 
 ## □ 16.2 Metrics
 
-标准指标：
+暴露：
 - task throughput
-- task latency
-- LLM calls
-- input/output tokens
-- tool calls
-- duplicate/retry ratio
-- context growth
-- reviewer revision rate
+- queue latency
+- tool latency
+- LLM latency
+- token usage
 - failure rate
-- recovery rate
+- retry rate
+- cache hit rate
+- duplicate suppression rate
 
-## □ 16.3 Structured logs
+## □ 16.3 Tracing
 
-所有核心 runtime path 输出结构化日志，禁止依赖 stdout 文本解析作为唯一 observability 来源。
+建立 project → task → agent → LLM call → tool call → event 的 trace。
 
-## □ 16.4 Operational query API
+## □ 16.4 Operational dashboard
 
-提供项目运行状态、失败 task、当前 worker、LLM/tool 成本、review 状态的统一查询。
+提供运行中项目状态、失败 task、阻塞 task、资源消耗和恢复状态。
 
-## □ 16.5 Metrics export
+## □ 16.5 Alerting
 
-为未来 Prometheus/OpenTelemetry 等外部监控保留 adapter，不将核心 runtime 与具体监控产品耦合。
-
----
-
-# 十二、Phase 17 — CI / Release Engineering
-
-## □ 17.1 CI test matrix
-
-至少覆盖：
-- unit
-- contract
-- integration
-- security
-- performance regression
-- long-running
-
-## □ 17.2 Benchmark artifacts
-
-每次 release 保存 benchmark summary、环境、commit SHA 和配置。
-
-## □ 17.3 Release gates
-
-Release 必须满足：
-- 全量 pytest 通过
-- 无新增 warning
-- performance regression 不越界
-- security regression 通过
-- recovery matrix 通过
-- documentation examples 通过
-
-## □ 17.4 Versioning / changelog
-
-维护 semantic version、CHANGELOG、migration notes。
-
-## □ 17.5 Reproducible environment
-
-提供锁定依赖、环境变量模板、sandbox 配置和 deterministic mock mode。
+针对：
+- failure spike
+- retry storm
+- tool loop stagnation
+- token budget exhaustion
+- persistence lag
+- event backlog
 
 ---
 
-# 十三、Phase 18 — Documentation / Examples / Release Readiness
+# 十二、Phase 17 — Developer Experience
 
-## □ 18.1 Setup Guide
-
-覆盖 Windows 11 开发环境、Python、venv、Git、环境变量、Provider 配置、测试运行。
-
-## □ 18.2 Architecture Guide
-
-解释：
-- Agent
-- AgentContext
-- Task
-- Workflow
-- Orchestrator
-- LLM
-- Tool Registry
-- Persistence
-- Event Log
-- Projection
-- Query
-
-## □ 18.3 Extension Examples
+## □ 17.1 CLI
 
 提供：
-- 自定义 Agent
-- 自定义 LLM Provider
-- 自定义 Tool
-- 自定义 Reviewer
-- 自定义 persistence adapter
+- project create
+- project run
+- project status
+- task inspect
+- task retry
+- project resume
+- event query
 
-## □ 18.4 Persistence / Recovery Example
+## □ 17.2 Configuration
 
-提供完整的项目保存、恢复、event replay、query 示例。
+统一 YAML/TOML configuration，支持 project / role / environment override。
 
-## □ 18.5 Audit / Observability Example
+## □ 17.3 Plugin API
 
-展示如何查询：
-- task history
-- tool execution history
-- workflow events
-- reviewer history
-- failures
+允许第三方 Agent / Tool / LLM provider 插件化接入。
 
-## □ 18.6 Complex Project Example
+## □ 17.4 Documentation
 
-提供一个中等复杂真实项目示例，至少包含：
-- Architect
-- 多 Developer
-- Tester
-- Reviewer
-- dependency graph
-- retry/revision
-- persistence/recovery
+建立 architecture / API / operations / security / extension 文档。
 
-## □ 18.7 Production Configuration Checklist
+## □ 17.5 Example projects
 
-列出 production 必须配置的：
-- LLM provider
-- token budget
-- tool permissions
-- sandbox
-- persistence
-- concurrency
-- timeout
-- observability
-- security
-
-## □ 18.8 Release Readiness
-
-完成 README、CHANGELOG、examples、migration notes、benchmark report 和 release checklist。
+提供：
+- CRUD application
+- data pipeline
+- API service
+- multi-module application
+- long-running refactor
 
 ---
 
-# 十四、Phase 19 — Complex Project Validation
+# 十三、Phase 18 — Release / Production Readiness
 
-> 最终目标：证明 AI-Team 不只是测试通过，而是真的可以稳定开发复杂软件。
+## □ 18.1 Versioning
 
-## □ 19.1 Medium project
+Semantic versioning + migration policy。
 
-目标规模：约 20–50 tasks。
+## □ 18.2 CI matrix
 
-要求：完整 Planner → Architect → Developer → Tester → Reviewer → persistence → query。
+覆盖 Python / OS / provider / concurrency / persistence combinations。
 
-## □ 19.2 Large project
+## □ 18.3 Reproducible benchmark
 
-目标规模：约 100–300 tasks。
+固定 benchmark environment、seed、dataset 和输出格式。
 
-要求：并发 Developer、dependency scheduling、revision、retry、event persistence、recovery。
+## □ 18.4 Upgrade / rollback
 
-## □ 19.3 Long-duration project
+支持 schema migration、event compatibility 和安全 rollback。
 
-持续运行数小时级 benchmark，验证：
-- memory growth
-- event growth
-- context growth
-- worker stability
-- persistence stability
-- LLM/tool failure recovery
+## □ 18.5 Production readiness checklist
 
-## □ 19.4 Stress project
-
-组合：
-- 复杂 dependency graph
-- 大量 tool calls
-- tool failures
-- test failures
-- reviewer revisions
-- persistence failures
-- cancellation
-- recovery
-
-## □ 19.5 Final acceptance report
-
-输出最终生产能力报告：
+完成：
 - correctness
-- performance
-- concurrency
-- context efficiency
-- tool efficiency
-- reliability
 - security
-- recovery
+- reliability
+- performance
 - observability
 - documentation
+- upgrade
+- recovery
 
 ---
 
-# 十五、当前验收基线
+# 十四、下一步执行顺序
 
-最近一次真实 `serial` benchmark 已确认：
-
-```text
-scenario=serial
-developers=1
-tasks=4
-completed=4
-failed=0
-blocked=0
-
-duration_s=219.950
-llm_calls=30
-input_tokens=131511
-output_tokens=4709
-tool_calls=64
-test_commands=10
-avg_llm_latency_s=7.022
-llm_time_ratio=0.958
-utilization=1.000
-max_prompt_chars=19815
-max_input_tokens_per_call=6891
-max_context_growth_ratio=12.112
-```
-
-该结果作为 **Context Compaction v2 baseline**，后续 Tool Loop 优化必须与该基线比较，不得只看单项指标。
-
----
-
-# 十六、当前工作节点
-
-## √ 10.1 Tool Loop Telemetry Acceptance
-
-用户已确认专项测试和全量测试通过：
+当前严格按照以下顺序推进，不跨节点：
 
 ```text
-pytest tests/test_real_developer_tool_loop_classification.py -q
-3 passed
-
-pytest -q
-1104 passed
+√ 10.1 Tool Loop Telemetry
+√ 10.2 Real benchmark classification
+√ 10.3 Duplicate Tool Call suppression
+√ 10.4 Tool Result Evidence Reduction
+√ 10.5 Tool Loop Progress Guard
+▶ 10.6 LLM Call Reduction
+□ 10.7 Tool Loop regression benchmark
+□ 11.x Context Intelligence
+□ 12.x Developer Reliability
+□ 13.x Large Project Execution
+□ 14.x Concurrency / Cancellation / Recovery
+□ 15.x Security Hardening
+□ 16.x Observability / Operations
+□ 17.x Developer Experience
+□ 18.x Release / Production Readiness
 ```
 
-对应实现提交：
+**当前唯一主线任务：10.6 LLM Call Reduction。**
 
-```text
-fa7ed1621813e25353dab37a8fbbdfb60c829f96
-685a8318e21665bf40e754d4f55548bd17ae69bf
-2f5408d48f5c9602ca7bb4fff16156de89da1321
-```
-
-## ▶ 10.2 Real benchmark classification
-
-下一步运行与 Context Compaction baseline 相同的真实 benchmark：
-
-```text
-python -m benchmarks.real_developer --live --developers 1 --scenario serial --repeat 1
-```
-
-记录：
-
-```text
-unique_tool_calls
-duplicate_tool_calls
-retry_tool_calls
-unique_tool_call_ratio
-duplicate_tool_call_ratio
-retry_tool_call_ratio
-tool_result_chars
-largest_tool_result_chars
-avg_tool_result_chars
-```
-
-分类时必须进一步区分：
-
-```text
-exact duplicate
-semantic duplicate
-retry / failure recovery
-exploration
-verification
-progress-producing
-```
-
-**验收条件：至少解释一个真实 task 的全部 Tool Calls，并据此决定 10.3 与 10.4 哪一个优先。**
-
----
-
-# 十七、最终路线图
-
-```text
-基础架构                 √
-Persistence / Events     √
-Production Contracts     √
-Performance / Concurrency√
-Context Compaction v1    √
-Context Compaction v2    √
-        │
-        ▼
-Tool Loop Telemetry      √
-        │
-        ▼
-Real Benchmark Classify  ▶  当前
-        │
-        ▼
-Tool Loop Optimization   □
-        │
-        ▼
-Context Intelligence     □
-        │
-        ▼
-Developer Reliability    □
-        │
-        ▼
-Large Project Execution  □
-        │
-        ▼
-Concurrency / Recovery   □
-        │
-        ▼
-Security Hardening       □
-        │
-        ▼
-Observability            □
-        │
-        ▼
-CI / Release Engineering □
-        │
-        ▼
-Documentation            □
-        │
-        ▼
-Complex Project Validation□
-        │
-        ▼
-Production Readiness     □
-```
-
-**总原则：先用真实 benchmark 发现瓶颈，再用 contract 固化问题，再修改生产实现，最后用专项 + 全量 + benchmark 验收。**
+每次完成代码修改后，必须先让用户 Pull，在本地专项测试 + 全量 `pytest -q`；用户确认通过后才进入下一子步骤。
