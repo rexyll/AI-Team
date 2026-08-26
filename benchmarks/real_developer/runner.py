@@ -73,18 +73,18 @@ class RealDeveloperBenchmark:
 
         duration = perf_counter() - started
         final_tasks = manager.get_all_tasks()
-        counts = {status: 0 for status in ("completed", "failed", "blocked")}
-        for task in final_tasks:
-            if task.status in counts:
-                counts[task.status] += 1
+        completed_statuses = {"completed", "review_pending"}
+        completed = sum(1 for task in final_tasks if task.status in completed_statuses)
+        failed = sum(1 for task in final_tasks if task.status == "failed")
+        blocked = sum(1 for task in final_tasks if task.status == "blocked")
 
         return RealDeveloperBenchmarkResult.from_task_metrics(
             scenario=self.scenario_name,
             developer_count=developer_count,
             task_count=len(final_tasks),
-            completed=counts["completed"],
-            failed=counts["failed"],
-            blocked=counts["blocked"],
+            completed=completed,
+            failed=failed,
+            blocked=blocked,
             duration_seconds=duration,
             task_metrics=tuple(task_metrics),
         )
