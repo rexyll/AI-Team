@@ -5,6 +5,7 @@ from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_builder import ContextBuilder
 from runtime.llm.base import BaseLLM
+from runtime.llm.context_compacting import ContextCompactingLLM
 from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
 
@@ -18,13 +19,21 @@ class BaseAgent(ABC):
         llm: BaseLLM | None = None,
     ):
         self.config = config
-        self.llm = llm if llm is not None else ProviderLLM()
-
-        if not isinstance(self.llm, BaseLLM):
+        provider = llm if llm is not None else ProviderLLM()
+        if not isinstance(provider, BaseLLM):
             raise TypeError(
                 "BaseAgent llm must implement BaseLLM, "
-                f"got {type(self.llm).__name__}"
+                f"got {type(provider).__name__}"
             )
+
+        # Developer tool loops can accumulate assistant/tool messages without
+        # bound. Keep persisted execution history intact while presenting a
+        # bounded active context to the provider on every request.
+        self.llm = (
+            ContextCompactingLLM(provider)
+            if self.role == "developer" and not isinstance(provider, ContextCompactingLLM)
+            else provider
+        )
 
     @property
     @abstractmethod
