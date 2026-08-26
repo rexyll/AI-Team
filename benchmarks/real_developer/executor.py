@@ -53,10 +53,13 @@ class DeveloperAgentExecutor:
         started = perf_counter()
         self.manager.mark_running(task.id)
         cache_hits = cache_misses = cache_invalidations = 0
+        tool_loop_telemetry: tuple[dict, ...] = ()
         try:
             result = binding.agent.run(task)
             validation = result.data.get("validation", {}) if isinstance(result.data, dict) else {}
             cache_data = result.data.get("tool_loop_cache", {}) if isinstance(result.data, dict) else {}
+            raw_telemetry = result.data.get("tool_loop_telemetry", ()) if isinstance(result.data, dict) else ()
+            tool_loop_telemetry = tuple(item for item in raw_telemetry if isinstance(item, dict))
             tool_calls = int(validation.get("tool_call_count", 0) or 0)
             test_commands = int(validation.get("test_command_count", 0) or 0)
             unique_tool_calls = int(validation.get("unique_tool_calls", 0) or 0)
@@ -78,6 +81,7 @@ class DeveloperAgentExecutor:
             failed = True
             tool_calls = test_commands = unique_tool_calls = duplicate_tool_calls = retry_tool_calls = 0
             tool_result_chars = largest_tool_result_chars = 0
+            tool_loop_telemetry = ()
         events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
             task_id=task.id, developer_id=developer_id, duration_seconds=perf_counter() - started,
@@ -87,6 +91,7 @@ class DeveloperAgentExecutor:
             duplicate_tool_calls=duplicate_tool_calls, retry_tool_calls=retry_tool_calls, tool_result_chars=tool_result_chars,
             largest_tool_result_chars=largest_tool_result_chars, cache_hits=cache_hits, cache_misses=cache_misses,
             cache_invalidations=cache_invalidations, failed=failed, llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
+            tool_loop_telemetry=tool_loop_telemetry,
             compaction_count=sum(1 for event in events if event["compacted"]),
             max_prompt_chars_before_compaction=max((int(event["prompt_chars_before"]) for event in events), default=0),
             max_prompt_chars_after_compaction=max((int(event["prompt_chars_after"]) for event in events), default=0),
