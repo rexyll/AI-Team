@@ -10,6 +10,7 @@ from runtime.context_view import context_view
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_loop_telemetry import classify_tool_call
+from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -28,7 +29,6 @@ SYSTEM_PROMPT = """
 run_command 只用于测试、构建、执行程序或专用开发工具。
 
 执行开发任务时：
-
 1. 理解任务
 2. 阅读 Architect 提供的设计
 3. 检查工作区
@@ -45,28 +45,16 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 遵循正确性优先、简单优先、最小修改、不进行无关重构的原则。
 
 交付前必须做可运行性自检（站在最终用户视角）：
-
 1. 确定用户运行交付物的确切命令（直接脚本，或 python -m 包名.模块名）。
 2. 实际执行该命令，确认产物按预期工作。
-3. 若入口模块使用了包内相对导入，禁止让用户以裸脚本方式直接运行它；
-   必须在汇报中写明正确的启动命令，并确保该命令已实测通过。
+3. 若入口模块使用了包内相对导入，禁止让用户以裸脚本方式直接运行它；必须在汇报中写明正确的启动命令，并确保该命令已实测通过。
 
 收到返工要求或测试未通过时：
-
 - 先核对上一轮是否真的产出了文件、修改与测试证据；
-- 若反馈指出你未实际创建文件、未调用工具或仅有文字说明，
-  必须在本轮立即使用 write_file 等工具完成实际产物，
-  禁止再次仅输出文字说明或重复上轮的空汇报；
+- 若反馈指出你未实际创建文件、未调用工具或仅有文字说明，必须在本轮立即使用 write_file 等工具完成实际产物，禁止再次仅输出文字说明或重复上轮的空汇报；
 - 每一轮都必须有可验证的新增动作（新工具调用或新测试结果）。
 
-最终汇报时必须说明：
-
-- 完成了什么
-- 修改了哪些文件
-- 执行了哪些测试
-- 测试结果
-- 用户运行交付物的确切命令
-- 是否存在遗留问题
+最终汇报时必须说明：完成了什么、修改了哪些文件、执行了哪些测试、测试结果、用户运行交付物的确切命令、是否存在遗留问题。
 """
 
 
@@ -95,66 +83,38 @@ class DeveloperAgent(BaseAgent):
                     context_text += str(result)
                 context_text += "\n"
         if view["reviewer_feedback"]:
-            context_text += """
-            ====================
-            PREVIOUS REVIEW FEEDBACK
-            ====================
-
-            以下是上一轮 Reviewer 给出的修改意见。
-            本轮必须认真处理这些意见，并在最终结果中说明如何解决。
-
-            """
+            context_text += "\n====================\nPREVIOUS REVIEW FEEDBACK\n====================\n\n以下是上一轮 Reviewer 给出的修改意见。\n本轮必须认真处理这些意见，并在最终结果中说明如何解决。\n\n"
             context_text += json.dumps(view["reviewer_feedback"], ensure_ascii=False, indent=2)
         prompt = f"""
-        ====================
-        CURRENT TASK
-        ====================
-
-        Task ID: {view['task_id']}
-        Role: {view['role']}
-        Title: {view['task_title']}
-        Description: {view['task_description']}
-        Status: {view['status']}
-        Dependencies: {view['dependencies']}
-
-        Current Task Result:
-        {view['task_result']}
-
-        Tester Feedback:
-        {view['tester_feedback']}
-
-        Review Round:
-        {view['review_round']}
-
-        Execution History:
-        {view['history']}
-
-        Metadata:
-        {view['metadata']}
-
-        {context_text}
-
-        ====================
-        EXECUTION REQUIREMENT
-        ====================
-
-        请完成当前开发任务。
-
-        开始工作前先检查工作区并阅读相关代码。
-
-        完成修改后运行相关测试。
-        如果测试失败，请继续分析和修复。
-
-        最终给出简洁的开发结果报告。
-
-        报告必须包含：
-
-        1. 完成内容
-        2. 修改文件
-        3. 测试命令
-        4. 测试结果
-        5. 遗留问题
-        """
+====================
+CURRENT TASK
+====================
+Task ID: {view['task_id']}
+Role: {view['role']}
+Title: {view['task_title']}
+Description: {view['task_description']}
+Status: {view['status']}
+Dependencies: {view['dependencies']}
+Current Task Result:
+{view['task_result']}
+Tester Feedback:
+{view['tester_feedback']}
+Review Round:
+{view['review_round']}
+Execution History:
+{view['history']}
+Metadata:
+{view['metadata']}
+{context_text}
+====================
+EXECUTION REQUIREMENT
+====================
+请完成当前开发任务。
+开始工作前先检查工作区并阅读相关代码。
+完成修改后运行相关测试。如果测试失败，请继续分析和修复。
+最终给出简洁的开发结果报告。
+报告必须包含：1. 完成内容 2. 修改文件 3. 测试命令 4. 测试结果 5. 遗留问题
+"""
         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
 
     def run(self, task: Task) -> AgentResult:
@@ -175,6 +135,7 @@ class DeveloperAgent(BaseAgent):
         tool_calls: list[dict[str, Any]] = []
         loop_telemetry: list[dict[str, Any]] = []
         prior_signatures: list[tuple[str, str, str, str]] = []
+        cache = ToolResultCache()
         for _ in range(MAX_TOOL_ITERATIONS):
             response = self._generate_with_tools(messages, tools=TOOL_REGISTRY.schemas(), tool_choice="auto")
             if not response.tool_calls:
@@ -182,8 +143,9 @@ class DeveloperAgent(BaseAgent):
                 if not changed_files and not command_results and not tool_calls:
                     return AgentResult(status="failed", agent=self.role, task_id=context.task_id, message=("Developer produced no artifacts: zero tool calls, zero file changes, zero commands. " f"Final text head: {content[:200]}"), data={"validation": {"tool_call_count": 0, "test_command_count": 0, "files_changed_count": 0, "no_artifact_completion": True}, "report": content})
                 data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
+                data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
-            messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": tool_call.call_id, "type": "function", "function": {"name": tool_call.name, "arguments": tool_call.arguments}} for tool_call in response.tool_calls]})
+            messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": call.call_id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in response.tool_calls]})
             for tool_call in response.tool_calls:
                 tool_name = tool_call.name
                 started_at = datetime.now(timezone.utc).isoformat()
@@ -223,8 +185,15 @@ class DeveloperAgent(BaseAgent):
                     if ignored_arguments:
                         print("[Ignored Args] " f"{ignored_arguments}")
                     tool_calls.append({"name": tool_name, "arguments": dict(validated_arguments)})
-                    result = tool_function(**validated_arguments)
+                    cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
+                    if cached is not None:
+                        result = cached.result
+                        print("[Cache] exact read-only tool result reused")
+                    else:
+                        result = tool_function(**validated_arguments)
+                        cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
                     self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
+                    cache.invalidate_for(tool_name)
                 except KeyError:
                     status = "unknown_tool"
                     error = {"type": "KeyError", "message": f"Unknown tool: {tool_name}"}
