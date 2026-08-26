@@ -236,7 +236,7 @@ EXECUTION REQUIREMENT
 
     @staticmethod
     def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any) -> dict[str, Any]:
-        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category}
+        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "retained_result_chars": telemetry.retained_result_chars, "result_truncated": telemetry.result_truncated, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category}
 
     @staticmethod
     def _build_tool_message(tool_name: str, result: Any) -> str:
@@ -266,7 +266,9 @@ EXECUTION REQUIREMENT
         duplicate_count = sum(1 for item in telemetry if item.get("duplicate_of"))
         retry_count = sum(1 for item in telemetry if item.get("retry_of"))
         result_chars = sum(int(item.get("result_chars", 0) or 0) for item in telemetry)
+        retained_result_chars = sum(int(item.get("retained_result_chars", item.get("result_chars", 0)) or 0) for item in telemetry)
+        truncated_result_count = sum(1 for item in telemetry if item.get("result_truncated"))
         validation = {"tool_call_count": len(tool_calls), "test_command_count": len(command_results), "files_changed_count": len(changed_files)}
         if telemetry:
-            validation.update({"unique_tool_calls": len(telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0), "tool_call_categories": {category: sum(1 for item in telemetry if item.get("category") == category) for category in sorted({str(item.get("category")) for item in telemetry})}})
+            validation.update({"unique_tool_calls": len(telemetry) - duplicate_count, "duplicate_tool_calls": duplicate_count, "retry_tool_calls": retry_count, "tool_result_chars": result_chars, "retained_tool_result_chars": retained_result_chars, "tool_result_reduction_chars": max(0, result_chars - retained_result_chars), "truncated_tool_results": truncated_result_count, "largest_tool_result_chars": max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0), "tool_call_categories": {category: sum(1 for item in telemetry if item.get("category") == category) for category in sorted({str(item.get("category")) for item in telemetry})}})
         return {"summary": content.strip(), "files_changed": list(changed_files), "tests": list(command_results), "validation": validation, "tool_loop_telemetry": telemetry, "report": content}
