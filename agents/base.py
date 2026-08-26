@@ -8,7 +8,6 @@ from runtime.agent_result import AgentResult
 from runtime.context_builder import ContextBuilder
 from runtime.context_compaction import ContextCompactor
 from runtime.llm.base import BaseLLM, LLMResponse
-from runtime.llm.context_compacting import ContextCompactingLLM
 from runtime.llm.provider import ProviderLLM
 from runtime.llm_metrics import LLMMetrics
 from runtime.task import Task
@@ -30,14 +29,11 @@ class BaseAgent(ABC):
                 f"got {type(provider).__name__}"
             )
 
-        # Keep the existing Developer-specific compaction decorator for its
-        # recent-message/tool-output policy, while the shared boundary below
-        # enforces the global prompt/token budget and records metrics.
-        self.llm = (
-            ContextCompactingLLM(provider)
-            if self.role == "developer" and not isinstance(provider, ContextCompactingLLM)
-            else provider
-        )
+        # ContextCompactor is now the single shared context boundary. The
+        # former Developer-only ContextCompactingLLM decorator performed a
+        # second, different compaction pass and could make the actual provider
+        # payload diverge from the budget measured by BaseAgent.
+        self.llm = provider
         self.context_compactor = ContextCompactor()
         self.llm_metrics = LLMMetrics()
 
