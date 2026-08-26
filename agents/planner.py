@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from config.model import ask_ai
+from runtime.context_compaction import ContextCompactor
 from runtime.llm.base import BaseLLM
+from runtime.llm_metrics import LLMMetrics
 from runtime.plan_constraints import apply_path_constraints, extract_required_paths
 from runtime.task_validator import validate_plan
 from agents.base import BaseAgent
@@ -183,7 +186,13 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
     return plan
 
 
-def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: int | None = None) -> dict:
+def create_plan(
+    requirement: str,
+    *,
+    llm: BaseLLM | None = None,
+    max_retries: int | None = None,
+    metrics: LLMMetrics | None = None,
+) -> dict:
     """Generate a validated plan with bounded, diagnostic self-correction."""
     if llm is not None and not isinstance(llm, BaseLLM):
         raise TypeError("create_plan llm must implement BaseLLM")
@@ -194,23 +203,65 @@ def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: in
         raise ValueError("max_retries must be a non-negative integer")
 
     prompt = f"请根据下面的软件需求制定开发计划：\n\n{requirement}"
+    compactor = ContextCompactor()
     attempts: list[PlannerAttempt] = []
     last_error: Exception | None = None
     last_response = ""
 
     for attempt in range(retry_budget + 1):
-        current_prompt = prompt if attempt == 0 else _build_repair_prompt(requirement, last_response, last_error or ValueError("unknown validation error"), attempt)
+        current_prompt = prompt if attempt == 0 else _build_repair_prompt(
+            requirement,
+            last_response,
+            last_error or ValueError("unknown validation error"),
+            attempt,
+        )
+        bounded_prompt, bounded_system, stats = compactor.compact_prompt(
+            current_prompt,
+            system_prompt=SYSTEM_PROMPT,
+        )
+
+        started = perf_counter()
         try:
             if llm is not None:
-                response = llm.generate(current_prompt, system_prompt=SYSTEM_PROMPT)
+                response = llm.generate(
+                    bounded_prompt,
+                    system_prompt=bounded_system,
+                )
             else:
-                response = ask_ai(prompt=current_prompt, system_prompt=SYSTEM_PROMPT)
+                response = ask_ai(
+                    prompt=bounded_prompt,
+                    system_prompt=bounded_system,
+                )
         except Exception as exc:
-            attempts.append(PlannerAttempt(attempt + 1, 0, type(exc).__name__, str(exc), "generation", False))
+            if metrics is not None:
+                metrics.record_llm_call(
+                    prompt_chars=stats.compacted_chars,
+                    input_tokens=stats.compacted_tokens,
+                    elapsed_seconds=perf_counter() - started,
+                )
+                metrics.finish()
+            attempts.append(
+                PlannerAttempt(
+                    attempt + 1,
+                    0,
+                    type(exc).__name__,
+                    str(exc),
+                    "generation",
+                    False,
+                )
+            )
             last_error = exc
             last_response = ""
             logger.warning("Planner attempt %d generation failed: %s", attempt + 1, exc)
             continue
+
+        if metrics is not None:
+            metrics.record_llm_call(
+                prompt_chars=stats.compacted_chars,
+                input_tokens=stats.compacted_tokens,
+                elapsed_seconds=perf_counter() - started,
+            )
+            metrics.finish()
 
         if not isinstance(response, str):
             response = str(response or "")
@@ -241,5 +292,5 @@ class PlannerAgent(BaseAgent):
     def run(self, task: Task):
         if not isinstance(task, Task):
             raise TypeError("PlannerAgent.run() expects Task, " f"got {type(task).__name__}")
-        plan = create_plan(task.description, llm=self.llm)
+        plan = create_plan(task.description, llm=self.llm, metrics=self.llm_metrics)
         return {"status": "planner_completed", "agent": self.role, "task_id": task.id, "plan": plan}
