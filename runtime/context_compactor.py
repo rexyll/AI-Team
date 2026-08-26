@@ -35,7 +35,9 @@ def compact_tool_context(
     tail = [dict(message) for message in source[-recent_messages:]]
 
     older = source[2:-recent_messages]
-    omitted_tools = sum(1 for message in older if message.get("role") == "tool")
+    omitted_tool_results = sum(
+        1 for message in older if message.get("role") == "tool"
+    )
     omitted_messages = len(older)
 
     compacted: list[dict[str, Any]] = []
@@ -45,7 +47,8 @@ def compact_tool_context(
                 "role": "system",
                 "content": (
                     "[Earlier execution context compacted: "
-                    f"messages={omitted_messages}, tools={omitted_tools}]"
+                    f"messages={omitted_messages}, "
+                    f"tool_results={omitted_tool_results}]"
                 ),
             }
         )
