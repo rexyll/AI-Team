@@ -3,12 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from agents.base import BaseAgent
-
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
 from runtime.task import Task
-
 
 SYSTEM_PROMPT = """
 你是一名专业的软件测试工程师（Tester Agent）。
@@ -50,48 +48,24 @@ TEST_FAILED
 3. 原因说明放在后续行，可使用中文。
 """
 
-
 class TesterAgent(BaseAgent):
-
     @property
     def role(self) -> str:
         return "tester"
 
     def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
-            raise TypeError(
-                "TesterAgent.run() expects Task, "
-                f"got {type(task).__name__}"
-            )
-
+            raise TypeError("TesterAgent.run() expects Task, " f"got {type(task).__name__}")
         context = self.build_context(task)
         prompt = self._build_prompt(context)
-
-        result = self.llm.generate(
-            prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
-
+        result = self._generate(prompt, system_prompt=SYSTEM_PROMPT)
         decision = self._parse_result(result)
-
-        data = self._build_result_data(
-            content=result,
-            decision=decision,
-            context=context,
-        )
-
-        return AgentResult(
-            status=decision,
-            agent=self.role,
-            task_id=context.task_id,
-            message=result,
-            data=data,
-        )
+        data = self._build_result_data(content=result, decision=decision, context=context)
+        return AgentResult(status=decision, agent=self.role, task_id=context.task_id, message=result, data=data)
 
     @staticmethod
     def _build_prompt(context: AgentContext) -> str:
         view = context_view(context, "tester")
-
         return f"""
 请测试下面的软件开发任务。
 
@@ -150,71 +124,40 @@ TEST_FAILED
 """
 
     @staticmethod
-    def _build_result_data(
-        *,
-        content: str,
-        decision: str,
-        context: AgentContext,
-    ) -> dict[str, Any]:
+    def _build_result_data(*, content: str, decision: str, context: AgentContext) -> dict[str, Any]:
         developer_result = context.task_result
         tests: list[Any] = []
         files_changed: list[Any] = []
-
         if isinstance(developer_result, dict):
             data = developer_result.get("data", developer_result)
-
             if isinstance(data, dict):
                 tests_value = data.get("tests", [])
                 if isinstance(tests_value, list):
                     tests = list(tests_value)
-
                 files_value = data.get("files_changed", [])
                 if isinstance(files_value, list):
                     files_changed = list(files_value)
-
         return {
             "summary": content.strip(),
             "decision": decision,
             "tests": tests,
             "files_changed": files_changed,
-            "validation": {
-                "test_evidence_count": len(tests),
-                "files_changed_count": len(files_changed),
-                "evidence_available": bool(tests),
-            },
+            "validation": {"test_evidence_count": len(tests), "files_changed_count": len(files_changed), "evidence_available": bool(tests)},
             "report": content,
         }
 
     @staticmethod
     def _parse_result(result: str) -> str:
         if not isinstance(result, str):
-            raise ValueError(
-                "Tester returned invalid decision. "
-                "Expected TEST_PASSED or TEST_FAILED."
-            )
-
+            raise ValueError("Tester returned invalid decision. Expected TEST_PASSED or TEST_FAILED.")
         text = result.strip().upper()
-
-        # Fast path: verdict-first responses (the documented contract).
         if text.startswith("TEST_PASSED"):
             return "passed"
-
         if text.startswith("TEST_FAILED"):
             return "failed"
-
-        # Real models frequently reason first and state the verdict later,
-        # or wrap it in markdown. Scan the whole response for the verdict
-        # tokens. Any failure signal wins: a conservative quality gate must
-        # never pass a task on ambiguous evidence (deny-by-default).
         if "TEST_FAILED" in text:
             return "failed"
-
         if "TEST_PASSED" in text:
             return "passed"
-
         response_head = text.replace("\n", " ")[:200]
-        raise ValueError(
-            "Tester returned invalid decision. "
-            "Expected TEST_PASSED or TEST_FAILED. "
-            f"Response head: {response_head!r}"
-        )
+        raise ValueError("Tester returned invalid decision. Expected TEST_PASSED or TEST_FAILED. " f"Response head: {response_head!r}")
