@@ -12,18 +12,14 @@ def should_suppress_verification(
     arguments: dict[str, Any],
     command_results: list[dict[str, Any]],
     changed_files: list[str],
+    workspace_revision: int | None = None,
 ) -> bool:
     """Return whether a verification call is already covered by valid evidence.
 
-    Verification evidence is reusable only when the exact command was already
-    executed successfully and the workspace has not changed since that result.
-    The helper is intentionally conservative: failed/unknown results never
-    suppress a retry, and non-verification tools are never suppressed.
-
-    ``command_results`` may optionally contain ``changed_files`` snapshots. New
-    callers should record the snapshot when the command completes; legacy
-    entries without a snapshot remain reusable only when there have been no
-    known changed files at all.
+    Evidence is reusable only when the exact command previously succeeded and
+    the workspace is unchanged since that evidence was produced. A monotonic
+    workspace revision is preferred because a cumulative ``changed_files`` list
+    cannot distinguish "changed before the test" from "changed after the test".
     """
     if tool_name not in READ_ONLY_VERIFICATION_TOOLS:
         return False
@@ -38,12 +34,16 @@ def should_suppress_verification(
         result = str(entry.get("result", "")).lower()
         if not _verification_succeeded(result):
             return False
+
+        if workspace_revision is not None and isinstance(entry.get("workspace_revision"), int):
+            return entry["workspace_revision"] == workspace_revision
+
         snapshot = entry.get("changed_files")
         if snapshot is None:
             return not current_files
-        recorded_files = tuple(dict.fromkeys(str(path) for path in snapshot if path)) if isinstance(snapshot, (list, tuple, set, frozenset)) else None
-        if recorded_files is None:
+        if not isinstance(snapshot, (list, tuple, set, frozenset)):
             return False
+        recorded_files = tuple(dict.fromkeys(str(path) for path in snapshot if path))
         return recorded_files == current_files
     return False
 
@@ -53,13 +53,17 @@ def record_verification_evidence(
     command: str,
     result: Any,
     changed_files: list[str],
+    workspace_revision: int | None = None,
 ) -> dict[str, Any]:
     """Create a bounded, mutation-aware verification evidence record."""
-    return {
+    evidence = {
         "command": command,
         "result": str(result),
         "changed_files": list(dict.fromkeys(changed_files)),
     }
+    if workspace_revision is not None:
+        evidence["workspace_revision"] = workspace_revision
+    return evidence
 
 
 def _verification_succeeded(result: str) -> bool:
