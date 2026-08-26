@@ -18,7 +18,7 @@ def compact_tool_context(
 
     The first system/user messages form the stable task contract. Older
     interaction messages are removed from the active context and represented
-    by a single deterministic summary marker. Recent messages are retained,
+    by a compact deterministic summary marker. Recent messages are retained,
     and oversized retained tool outputs are truncated. Persisted execution
     history is deliberately not modified by this helper.
     """
@@ -43,13 +43,7 @@ def compact_tool_context(
         compacted.append(
             {
                 "role": "system",
-                "content": (
-                    "[Earlier execution context compacted: "
-                    f"messages={omitted_messages}, "
-                    f"tool_results={omitted_tools}. "
-                    "Use the current task request and recent tool evidence. "
-                    "Persisted execution history is available outside this prompt.]"
-                ),
+                "content": f"[compacted: {omitted_messages} msgs, {omitted_tools} tools]",
             }
         )
 
