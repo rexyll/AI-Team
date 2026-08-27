@@ -31,6 +31,7 @@ def classify_tool_result_for_decision(
     retry_of: str | None = None,
     changed_files: list[str],
     command_results: list[dict[str, Any]],
+    verification_reused: bool = False,
 ) -> ToolLoopDecision:
     """Classify whether a tool result warrants another LLM reasoning turn.
 
@@ -52,6 +53,7 @@ def classify_tool_result_for_decision(
         status=status,
         changed_files=changed_files,
         command_results=command_results,
+        verification_reused=verification_reused,
     ):
         return ToolLoopDecision(False, "terminal_verification", terminal=True)
     if tool_name == "run_command" and _verification_succeeded(str(result)):
@@ -67,15 +69,17 @@ def should_take_terminal_verification_fast_path(
     status: str,
     changed_files: list[str],
     command_results: list[dict[str, Any]],
+    verification_reused: bool = False,
 ) -> bool:
     """Return whether a verification call is sufficient to finish a tool loop.
 
     This policy is deliberately conservative. It only applies to a successful,
-    explicitly recognized full-suite verification command that ran after at
-    least one workspace change. A narrow test, failed command, non-verification
-    command, or a command followed by another recorded action is not terminal.
+    explicitly recognized full-suite verification command that actually ran
+    after at least one workspace change. Reused evidence is never terminal:
+    reusing an earlier result suppresses execution but does not create new
+    verification evidence for the current decision turn.
     """
-    if tool_name != "run_command" or status != "completed":
+    if tool_name != "run_command" or status != "completed" or verification_reused:
         return False
     command = arguments.get("command")
     if not isinstance(command, str):
