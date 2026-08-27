@@ -10,6 +10,11 @@ from typing import Any, Iterable
 DEFAULT_MAX_PROMPT_CHARS = 24000
 DEFAULT_MAX_INPUT_TOKENS_PER_CALL = 12000
 TRUNCATION_MARKER = "\n...[context compacted: {removed} chars]...\n"
+# Recent execution evidence is much more likely to be needed for the next
+# tool decision than older history. Keep a small recent window intact during
+# the first compaction pass; the final pass may still compact it when the
+# configured budget cannot be satisfied otherwise.
+RECENT_MESSAGES_TO_PROTECT = 4
 
 
 def _positive_env_int(name: str, default: int) -> int:
@@ -119,6 +124,9 @@ class ContextCompactor:
         # Keep system instructions intact and prefer preserving recent turns.
         # Older tool outputs are the first compaction candidates because they
         # are usually the largest and least useful once newer evidence exists.
+        # A recent execution window is deliberately protected from this first
+        # pass so that the next model decision still sees the freshest tool
+        # evidence verbatim whenever older history can absorb the compaction.
         candidates = self._candidate_indexes(compacted)
         for index in candidates:
             if self._within_budget(compacted):
@@ -137,6 +145,8 @@ class ContextCompactor:
 
         # A final global pass guarantees the configured character/token guard
         # whenever compaction is possible without touching system messages.
+        # Protected recent messages become eligible here only if the older
+        # history was insufficient to satisfy the configured budget.
         for index in candidates:
             if self._within_budget(compacted):
                 break
@@ -186,6 +196,13 @@ class ContextCompactor:
 
     @staticmethod
     def _candidate_indexes(messages: list[dict[str, Any]]) -> list[int]:
+        non_system = [
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") != "system"
+        ]
+        protected = set(non_system[-RECENT_MESSAGES_TO_PROTECT:])
+
         ranked: list[tuple[int, int]] = []
         last_user = max(
             (index for index, message in enumerate(messages) if message.get("role") == "user"),
@@ -195,6 +212,7 @@ class ContextCompactor:
             role = message.get("role")
             if role == "system":
                 continue
+
             if role == "tool":
                 priority = 0
             elif role == "assistant":
@@ -203,7 +221,12 @@ class ContextCompactor:
                 priority = 2 if index != last_user else 4
             else:
                 priority = 1
+
+            if index in protected:
+                priority += 10
+
             ranked.append((priority, index))
+
         ranked.sort(key=lambda item: (item[0], item[1]))
         return [index for _, index in ranked]
 
