@@ -77,6 +77,18 @@ def test_latest_command_result_must_match_current_command():
     ) is False
 
 
+def test_reused_verification_is_never_terminal():
+    assert should_take_terminal_verification_fast_path(
+        tool_name="run_command",
+        arguments=_args("pytest -q"),
+        result="Verification evidence reused: pytest -q previously succeeded",
+        status="completed",
+        changed_files=["runtime/task.py"],
+        command_results=[{"command": "pytest -q", "result": "1100 passed"}],
+        verification_reused=True,
+    ) is False
+
+
 def test_failed_tool_always_keeps_recovery_decision():
     decision = classify_tool_result_for_decision(
         tool_name="read_file",
