@@ -14,6 +14,7 @@ from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
 from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL
 from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
+from runtime.tool_loop_decision_turn import classify_decision_turn
 from runtime.tool_result_evidence import reduce_tool_result
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
@@ -246,6 +247,15 @@ EXECUTION REQUIREMENT
                 if reason:
                     return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
                 self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
+                if tool_name == "run_command":
+                    decision = classify_decision_turn(tool_name=tool_name, arguments=record_arguments, result=result, status=status, category=telemetry.category, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, changed_files=changed_files, command_results=command_results, verification_reused=verification_reused)
+                    if decision.terminal:
+                        content = f"Terminal verification succeeded: {record_arguments.get('command', '')}"
+                        data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
+                        data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
+                        data["tool_loop_verification"] = {"reused": verification_reused_count}
+                        data["tool_loop_decision"] = {"reason": decision.decision.reason, "skip_llm_turn": decision.skip_llm_turn, "terminal": decision.terminal}
+                        return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
     @staticmethod
