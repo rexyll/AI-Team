@@ -4,10 +4,15 @@ from runtime.task import Task
 
 
 class _FakeExecutor:
-    def __init__(self, marker: str):
+    def __init__(self, marker: str, manager):
         self.marker = marker
+        self.manager = manager
 
     def run_task(self, task, developer_id):
+        # The real DeveloperExecutor owns task lifecycle completion. Keep the
+        # fake faithful to that contract so the A/B harness can classify this
+        # deterministic sample as valid rather than leaving the task pending.
+        self.manager.mark_developer_completed(task.id)
         return RealDeveloperTaskMetrics(
             task_id=task.id,
             developer_id=developer_id,
@@ -43,7 +48,7 @@ def test_ab_comparison_reports_candidate_token_reduction():
     def executor_factory(manager, count):
         marker = "baseline" if len(calls) == 0 else "candidate"
         calls.append(marker)
-        return _FakeExecutor(marker)
+        return _FakeExecutor(marker, manager)
 
     result = RealDeveloperABBenchmark(
         scenario_factory=_tasks,
