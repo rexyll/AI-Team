@@ -212,6 +212,7 @@ EXECUTION REQUIREMENT
                         verification_reused_count += 1
                         command = str(validated_arguments.get("command", ""))
                         result = f"Verification evidence reused: {command} previously succeeded at workspace revision {workspace_revision}; no workspace mutation occurred since that verification."
+                        context_result = result
                         print("[Verification] prior successful evidence reused; command execution suppressed")
                     else:
                         cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
