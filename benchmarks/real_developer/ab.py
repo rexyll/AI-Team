@@ -122,9 +122,7 @@ class RealDeveloperABBenchmark:
             # modifying production code or the candidate implementation.
             from agents import developer as developer_module
 
-            original = developer_module.ToolResultCache
-
-            class NoReadOnlyCache(original):
+            class NoReadOnlyCache(developer_module.ToolResultCache):
                 def lookup(self, tool_name, arguments):
                     if tool_name in getattr(developer_module, "CACHEABLE_TOOLS", ()):
                         return None
