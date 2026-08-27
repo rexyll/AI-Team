@@ -10,9 +10,14 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
                 "tool_calls": [
                     {
                         "call_id": "CALL-1",
+                        "name": "write_file",
+                        "arguments": '{"path":"runtime/_fast_path_test_artifact.txt","content":"terminal verification fixture\\n"}',
+                    },
+                    {
+                        "call_id": "CALL-2",
                         "name": "run_command",
                         "arguments": '{"command":"pytest -q"}',
-                    }
+                    },
                 ]
             },
             "This response must not be requested after terminal verification.",
@@ -22,7 +27,7 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
     task = Task(
         id="TASK-FAST-PATH-001",
         title="Terminal verification fast path",
-        description="Run the verification command and finish when it succeeds.",
+        description="Make a small workspace change, run the verification command, and finish when it succeeds.",
         role="developer",
     )
 
