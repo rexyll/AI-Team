@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
             candidate = comparison.candidate
             print(
                 f"scenario={args.scenario} developers={developer_count} "
+                f"sample_valid={comparison.sample_valid} "
                 f"baseline_input_tokens={baseline.input_tokens} candidate_input_tokens={candidate.input_tokens} "
                 f"input_token_delta={comparison.input_token_delta} "
                 f"input_token_change_ratio={comparison.input_token_change_ratio:.4f}"
