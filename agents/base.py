@@ -68,7 +68,7 @@ class BaseAgent(ABC):
         when an agent instance is reused by tests or orchestration code.
         """
         message_set_id = id(messages)
-        if self._tool_loop_budget_messages_id != message_set_id or len(messages) <= 2:
+        if self._tool_loop_budget_messages_id != message_set_id:
             self._tool_loop_decision_budget = ToolLoopDecisionBudget()
             self._tool_loop_budget_messages_id = message_set_id
         state = self._tool_loop_decision_budget.record()
