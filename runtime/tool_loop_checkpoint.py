@@ -5,6 +5,7 @@ from typing import Any
 
 
 DEFAULT_CHECKPOINT_INTERVAL = 4
+CHECKPOINT_MARKER = "TOOL LOOP CHECKPOINT"
 
 
 def build_tool_loop_checkpoint(
@@ -37,7 +38,7 @@ def build_tool_loop_checkpoint(
     ]
 
     lines = [
-        "TOOL LOOP CHECKPOINT",
+        CHECKPOINT_MARKER,
         f"calls={len(telemetry)} duplicates={duplicates} retries={retries}",
         f"duplicate_ratio={duplicate_ratio:.3f}",
         "categories=" + ", ".join(f"{key}:{value}" for key, value in sorted(categories.items())),
@@ -72,3 +73,40 @@ def build_tool_loop_checkpoint(
             "Duplicate-call rate is elevated: avoid repeating already answered read-only calls unless workspace state changed."
         )
     return "\n".join(lines)
+
+
+def upsert_tool_loop_checkpoint(
+    messages: list[dict[str, Any]],
+    telemetry: list[dict[str, Any]],
+    *,
+    changed_files: list[str] | None = None,
+    command_results: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Replace the active checkpoint instead of accumulating stale checkpoints.
+
+    Tool/assistant history is intentionally left untouched. Only the most
+    recent checkpoint user message is replaced, so repeated checkpoint
+    refreshes do not create an ever-growing stack of obsolete summaries.
+    Returns ``True`` when a checkpoint was written.
+    """
+    checkpoint = build_tool_loop_checkpoint(
+        telemetry,
+        changed_files=changed_files,
+        command_results=command_results,
+    )
+    if not checkpoint:
+        return False
+
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "user"
+            and isinstance(message.get("content"), str)
+            and message["content"].startswith(CHECKPOINT_MARKER)
+        ):
+            messages[index] = {"role": "user", "content": checkpoint}
+            return True
+
+    messages.append({"role": "user", "content": checkpoint})
+    return True
