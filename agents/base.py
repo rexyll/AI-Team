@@ -12,6 +12,7 @@ from runtime.llm.context_compacting import ContextCompactingLLM
 from runtime.llm.provider import ProviderLLM
 from runtime.llm_metrics import LLMMetrics
 from runtime.task import Task
+from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
 
 
 class BaseAgent(ABC):
@@ -56,6 +57,7 @@ class BaseAgent(ABC):
 
     def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         started = perf_counter()
+        collapse_tool_loop_checkpoints(messages)
         if isinstance(self.llm, ContextCompactingLLM):
             response = self.llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice)
             prompt_chars = self.llm.last_prompt_chars_after
