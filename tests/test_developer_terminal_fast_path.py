@@ -11,7 +11,7 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
                     {
                         "call_id": "CALL-1",
                         "name": "run_command",
-                        "arguments": '{"command":"pytest --version"}',
+                        "arguments": '{"command":"pytest -q"}',
                     }
                 ]
             },
@@ -36,4 +36,4 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
         "terminal": True,
     }
     assert result.data["tests"]
-    assert result.data["tests"][0]["command"] == "pytest --version"
+    assert result.data["tests"][0]["command"] == "pytest -q"
