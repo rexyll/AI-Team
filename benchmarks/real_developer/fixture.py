@@ -9,6 +9,27 @@ import security.workspace as workspace_module
 from security.workspace import set_default_workspace_root
 
 
+def _build_reference_document() -> str:
+    """Build a stable, non-code document large enough to expose context growth."""
+    rows = [
+        "# Benchmark reference document",
+        "",
+        "This document is intentionally read-only and contains no task solution.",
+        "It represents the kind of repository documentation an agent may inspect.",
+        "",
+    ]
+    for index in range(1, 181):
+        rows.append(
+            f"Section {index:03d}: utility architecture notes, compatibility guidance, "
+            "error-handling conventions, testing expectations, and maintenance history. "
+            "These details are stable benchmark evidence and should not be modified."
+        )
+    return "\n".join(rows) + "\n"
+
+
+_REFERENCE_DOCUMENT = _build_reference_document()
+
+
 _FIXTURE_FILES: dict[str, str] = {
     "app/__init__.py": "",
     "app/utils/__init__.py": "",
@@ -99,6 +120,7 @@ def paginate(items: Iterable[T], page: int = 1, page_size: int = 20) -> dict[str
     start = (page - 1) * page_size
     return {"items": values[start : start + page_size], "total": total, "page": page, "pages": pages}
 ''',
+    "docs/benchmark_reference.md": _REFERENCE_DOCUMENT,
     "tests/__init__.py": "",
     "tests/test_helpers.py": '''from app.utils.helpers import is_non_empty, normalize_name, paginate
 
