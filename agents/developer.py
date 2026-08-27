@@ -217,9 +217,11 @@ EXECUTION REQUIREMENT
                         cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
                         if cached is not None:
                             result = cached.result
+                            context_result = cached.context_evidence()
                             print("[Cache] exact read-only tool result reused")
                         else:
                             result = tool_function(**validated_arguments)
+                            context_result = result
                             cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
                         self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
                         if tool_name == "write_file" and status == "completed":
@@ -232,15 +234,17 @@ EXECUTION REQUIREMENT
                     status = "unknown_tool"
                     error = {"type": "KeyError", "message": f"Unknown tool: {tool_name}"}
                     result = f"Unknown tool: {tool_name}"
+                    context_result = result
                 except Exception as exc:
                     status = "failed"
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: " f"{type(exc).__name__}: {exc}"
+                    context_result = result
                 telemetry = classify_tool_call(tool_name=tool_name, arguments=record_arguments, result=result, prior=prior_signatures)
                 telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
                 loop_telemetry.append(telemetry_dict)
                 print(f"[Result]\n{result}")
-                messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
+                messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, context_result)})
                 self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
