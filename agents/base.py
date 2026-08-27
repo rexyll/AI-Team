@@ -13,6 +13,7 @@ from runtime.llm.provider import ProviderLLM
 from runtime.llm_metrics import LLMMetrics
 from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
+from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
 
 
 class BaseAgent(ABC):
@@ -30,6 +31,8 @@ class BaseAgent(ABC):
         self.llm = provider
         self.context_compactor = ContextCompactor()
         self.llm_metrics = LLMMetrics()
+        self._tool_loop_decision_budget = ToolLoopDecisionBudget()
+        self._tool_loop_budget_messages_id: int | None = None
 
     @property
     @abstractmethod
@@ -55,9 +58,37 @@ class BaseAgent(ABC):
         self.llm_metrics.finish()
         return result
 
+    def _prepare_tool_loop_decision_budget(self, messages: list[dict[str, Any]]) -> None:
+        """Record one decision turn and inject a soft reuse checkpoint when needed.
+
+        The budget never terminates execution. It only gives the model an
+        explicit, task-local signal to reuse established evidence/checkpoints
+        before starting another exploratory loop. The counter is reset when a
+        fresh task message list is observed, keeping the budget task-local even
+        when an agent instance is reused by tests or orchestration code.
+        """
+        message_set_id = id(messages)
+        if self._tool_loop_budget_messages_id != message_set_id or len(messages) <= 2:
+            self._tool_loop_decision_budget = ToolLoopDecisionBudget()
+            self._tool_loop_budget_messages_id = message_set_id
+        state = self._tool_loop_decision_budget.record()
+        if self._tool_loop_decision_budget.should_checkpoint():
+            messages.append({
+                "role": "user",
+                "content": (
+                    "DECISION BUDGET CHECKPOINT: "
+                    f"{state.decisions} LLM decision turns have been used; "
+                    f"soft limit={state.soft_limit}. Reuse established evidence "
+                    "and the latest checkpoint before performing new exploration. "
+                    "Do not repeat a read-only action whose evidence is already "
+                    "available. Continue recovery or verification when correctness requires it."
+                ),
+            })
+
     def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
+        self._prepare_tool_loop_decision_budget(messages)
         if isinstance(self.llm, ContextCompactingLLM):
             response = self.llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice)
             prompt_chars = self.llm.last_prompt_chars_after
