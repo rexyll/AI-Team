@@ -110,3 +110,31 @@ def upsert_tool_loop_checkpoint(
 
     messages.append({"role": "user", "content": checkpoint})
     return True
+
+
+def collapse_tool_loop_checkpoints(messages: list[dict[str, Any]]) -> int:
+    """Remove stale checkpoint messages while preserving the newest one.
+
+    DeveloperAgent historically appends checkpoints to the live message list.
+    This boundary cleanup makes the behavior equivalent to an upsert before
+    each LLM call without changing the developer loop or tool history.
+    Returns the number of removed stale checkpoints.
+    """
+    checkpoint_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "user"
+            and isinstance(message.get("content"), str)
+            and message["content"].startswith(CHECKPOINT_MARKER)
+        )
+    ]
+    if len(checkpoint_indexes) <= 1:
+        return 0
+
+    stale_indexes = set(checkpoint_indexes[:-1])
+    messages[:] = [
+        message for index, message in enumerate(messages) if index not in stale_indexes
+    ]
+    return len(stale_indexes)
