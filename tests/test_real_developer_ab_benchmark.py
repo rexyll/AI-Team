@@ -1,5 +1,5 @@
-from benchmarks.real_developer.ab import RealDeveloperABBenchmark
-from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult
+from benchmarks.real_developer.ab import BenchmarkABComparison, RealDeveloperABBenchmark
+from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult, RealDeveloperTaskMetrics
 from runtime.task import Task
 
 
@@ -8,8 +8,6 @@ class _FakeExecutor:
         self.marker = marker
 
     def run_task(self, task, developer_id):
-        from benchmarks.real_developer.metrics import RealDeveloperTaskMetrics
-
         return RealDeveloperTaskMetrics(
             task_id=task.id,
             developer_id=developer_id,
@@ -59,10 +57,11 @@ def test_ab_comparison_reports_candidate_token_reduction():
     assert result.input_token_change_ratio == -0.6
     assert result.tool_result_chars_delta == -900
     assert result.correctness_preserved
+    assert result.sample_valid
     assert calls == ["baseline", "candidate"]
 
 
-def test_ab_comparison_serializes_baseline_candidate_and_deltas():
+def test_ab_comparison_serializes_baseline_candidate_deltas_and_validity():
     metric = RealDeveloperBenchmarkResult.from_task_metrics(
         scenario="s",
         developer_count=1,
@@ -73,10 +72,27 @@ def test_ab_comparison_serializes_baseline_candidate_and_deltas():
         duration_seconds=0,
         task_metrics=(),
     )
-    comparison = __import__("benchmarks.real_developer.ab", fromlist=["BenchmarkABComparison"]).BenchmarkABComparison(metric, metric)
+    comparison = BenchmarkABComparison(metric, metric)
 
     payload = comparison.to_dict()
 
-    assert set(payload) == {"baseline", "candidate", "delta", "correctness_preserved"}
+    assert set(payload) == {"baseline", "candidate", "delta", "correctness_preserved", "sample_valid"}
     assert payload["correctness_preserved"] is True
+    assert payload["sample_valid"] is True
     assert payload["delta"]["input_tokens"] == 0
+
+
+def test_ab_comparison_marks_failed_samples_invalid():
+    failed = RealDeveloperBenchmarkResult.from_task_metrics(
+        scenario="s",
+        developer_count=1,
+        task_count=1,
+        completed=0,
+        failed=1,
+        blocked=0,
+        duration_seconds=0,
+        task_metrics=(),
+    )
+    comparison = BenchmarkABComparison(failed, failed)
+
+    assert comparison.sample_valid is False
