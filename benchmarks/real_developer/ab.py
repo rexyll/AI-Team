@@ -7,6 +7,7 @@ from unittest.mock import patch
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 
+from .fixture import isolated_benchmark_workspace
 from .metrics import RealDeveloperBenchmarkResult
 from .runner import DeveloperExecutor, RealDeveloperBenchmark
 
@@ -47,6 +48,16 @@ class BenchmarkABComparison:
             and self.candidate.failed <= self.baseline.failed
         )
 
+    @property
+    def sample_valid(self) -> bool:
+        """Whether both sides completed the workload without failure/blocking."""
+        return all(
+            result.failed == 0
+            and result.blocked == 0
+            and result.completed == result.task_count
+            for result in (self.baseline, self.candidate)
+        )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "baseline": self.baseline.to_dict(),
@@ -59,15 +70,18 @@ class BenchmarkABComparison:
                 "duplicate_tool_calls": self.duplicate_tool_calls_delta,
             },
             "correctness_preserved": self.correctness_preserved,
+            "sample_valid": self.sample_valid,
         }
 
 
 class RealDeveloperABBenchmark:
-    """Run a fair baseline/candidate comparison on independently reset tasks.
+    """Run a fair baseline/candidate comparison on isolated workspaces.
 
     The baseline disables only the read-only result cache lookup. All other
     DeveloperAgent behavior, including context compaction and instrumentation,
-    remains unchanged. This isolates the value of cached compact evidence.
+    remains unchanged. Each side gets a fresh deterministic fixture workspace,
+    preventing unrelated files in the user's projects directory from changing
+    the LLM trajectory or causing missing-file failures.
     """
 
     def __init__(
@@ -98,21 +112,23 @@ class RealDeveloperABBenchmark:
             executor_factory=self.executor_factory,
             scenario_name=self.scenario_name + ("-baseline" if disable_cache else "-candidate"),
         )
-        if not disable_cache:
-            return benchmark.run(developer_count)
 
-        # DeveloperAgent imports ToolResultCache into its module namespace, so
-        # replacing that binding is sufficient to create a legacy baseline
-        # without modifying production code or the candidate implementation.
-        from agents import developer as developer_module
+        with isolated_benchmark_workspace():
+            if not disable_cache:
+                return benchmark.run(developer_count)
 
-        original = developer_module.ToolResultCache
+            # DeveloperAgent imports ToolResultCache into its module namespace,
+            # so replacing that binding creates a legacy baseline without
+            # modifying production code or the candidate implementation.
+            from agents import developer as developer_module
 
-        class NoReadOnlyCache(original):
-            def lookup(self, tool_name, arguments):
-                if tool_name in getattr(developer_module, "CACHEABLE_TOOLS", ()):
-                    return None
-                return super().lookup(tool_name, arguments)
+            original = developer_module.ToolResultCache
 
-        with patch.object(developer_module, "ToolResultCache", NoReadOnlyCache):
-            return benchmark.run(developer_count)
+            class NoReadOnlyCache(original):
+                def lookup(self, tool_name, arguments):
+                    if tool_name in getattr(developer_module, "CACHEABLE_TOOLS", ()):
+                        return None
+                    return super().lookup(tool_name, arguments)
+
+            with patch.object(developer_module, "ToolResultCache", NoReadOnlyCache):
+                return benchmark.run(developer_count)
