@@ -19,6 +19,20 @@ class CachedToolResult:
     result: Any
     source_execution_id: str
 
+    def context_evidence(self) -> str:
+        """Return a compact marker suitable for a repeated read-only request.
+
+        The full result remains available through ``result`` for audit/result
+        handling. A duplicate tool call does not need to inject that full result
+        into the next LLM prompt again because the original tool evidence is
+        already present in the conversation/checkpoint.
+        """
+        return (
+            "TOOL RESULT REUSED: exact read-only request was already executed; "
+            f"no tool execution was repeated. Source execution={self.source_execution_id}. "
+            "Use the earlier tool evidence for the full result."
+        )
+
 
 class ToolResultCache:
     """Conservative, bounded cache for exact repeated read-only tool calls.
