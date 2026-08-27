@@ -1,5 +1,4 @@
 from runtime.agent_config import AgentConfig
-from runtime.agent_result import AgentResult
 from runtime.llm.base import BaseLLM, LLMResponse
 from agents.base import BaseAgent
 
@@ -25,9 +24,13 @@ class _Agent(BaseAgent):
         raise NotImplementedError
 
 
+def _agent(llm):
+    return _Agent(AgentConfig(role="developer", model="test"), llm=llm)
+
+
 def test_decision_budget_injects_checkpoint_without_terminating_loop():
     llm = _RecordingLLM()
-    agent = _Agent(AgentConfig(), llm=llm)
+    agent = _agent(llm)
     messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task"}]
 
     for _ in range(4):
@@ -40,7 +43,7 @@ def test_decision_budget_injects_checkpoint_without_terminating_loop():
 
 def test_decision_budget_is_task_local_when_message_list_changes():
     llm = _RecordingLLM()
-    agent = _Agent(AgentConfig(), llm=llm)
+    agent = _agent(llm)
     first_messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task-1"}]
     second_messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "task-2"}]
 
