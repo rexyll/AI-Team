@@ -72,6 +72,61 @@ def test_compactor_preserves_tool_call_protocol_metadata() -> None:
     assert compacted[2]["tool_call_id"] == "call-1"
 
 
+def test_compactor_preserves_recent_execution_evidence_before_older_history() -> None:
+    compactor = ContextCompactor(
+        ContextCompactionConfig(
+            max_prompt_chars=900,
+            max_input_tokens_per_call=450,
+        )
+    )
+    recent_tool_output = "RECENT-FILE-CONTENT" * 20
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "old request " * 80},
+        {"role": "assistant", "content": "old reasoning " * 40},
+        {"role": "tool", "tool_call_id": "old-call", "content": "old output " * 40},
+        {"role": "assistant", "content": "recent reasoning"},
+        {"role": "tool", "tool_call_id": "recent-call", "content": recent_tool_output},
+    ]
+
+    compacted, stats = compactor.compact_messages(messages)
+
+    assert stats.truncated_messages >= 1
+    assert compacted[-1]["content"] == recent_tool_output
+    assert compacted[-1]["tool_call_id"] == "recent-call"
+    assert compacted[1]["content"] != messages[1]["content"]
+
+
+def test_compactor_still_compacts_recent_evidence_when_budget_requires_it() -> None:
+    compactor = ContextCompactor(
+        ContextCompactionConfig(
+            max_prompt_chars=300,
+            max_input_tokens_per_call=150,
+        )
+    )
+    messages = [
+        {"role": "system", "content": "system"},
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": "tool output " * 100,
+        },
+    ]
+
+    compacted, stats = compactor.compact_messages(messages)
+
+    total_chars = sum(len(str(message.get("content", ""))) for message in compacted)
+    total_tokens = sum(
+        estimate_tokens(str(message.get("content", "")))
+        for message in compacted
+    )
+
+    assert total_chars <= 300
+    assert total_tokens <= 150
+    assert stats.truncated_messages == 1
+    assert compacted[1]["tool_call_id"] == "call-1"
+
+
 def test_prompt_compaction_reports_original_and_compacted_sizes() -> None:
     compactor = ContextCompactor(
         ContextCompactionConfig(
