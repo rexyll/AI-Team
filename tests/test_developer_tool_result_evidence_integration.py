@@ -54,6 +54,17 @@ def test_developer_cache_hit_injects_compact_cached_evidence() -> None:
         tool_invocations.append(arguments)
         return source
 
+    read_file_schema = {
+        "function": {
+            "name": "read_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        }
+    }
+
     task = Task(
         id="TASK-CACHE-EVIDENCE",
         title="cache evidence",
@@ -65,7 +76,7 @@ def test_developer_cache_hit_injects_compact_cached_evidence() -> None:
     with patch.object(DeveloperAgent, "_generate_with_tools", fake_generate), patch.object(
         DeveloperAgent, "_build_messages", return_value=[]
     ), patch("agents.developer.TOOL_REGISTRY.get", return_value=fake_tool), patch(
-        "agents.developer.TOOL_REGISTRY.schema", return_value={}
+        "agents.developer.TOOL_REGISTRY.schema", return_value=read_file_schema
     ), patch("agents.developer.TOOL_REGISTRY.schemas", return_value=[]):
         result = DeveloperAgent().run(task)
 
