@@ -42,7 +42,7 @@ def _tasks():
 def test_ab_comparison_reports_candidate_token_reduction():
     calls = []
 
-    def executor_factory(count):
+    def executor_factory(manager, count):
         marker = "baseline" if len(calls) == 0 else "candidate"
         calls.append(marker)
         return _FakeExecutor(marker)
