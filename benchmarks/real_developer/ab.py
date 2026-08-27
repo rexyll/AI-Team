@@ -5,6 +5,7 @@ from typing import Callable
 from unittest.mock import patch
 
 from runtime.task import Task
+from runtime.task_manager import TaskManager
 
 from .metrics import RealDeveloperBenchmarkResult
 from .runner import DeveloperExecutor, RealDeveloperBenchmark
@@ -73,7 +74,7 @@ class RealDeveloperABBenchmark:
         self,
         *,
         scenario_factory: Callable[[], list[Task]],
-        executor_factory: Callable[[int], DeveloperExecutor],
+        executor_factory: Callable[[TaskManager, int], DeveloperExecutor],
         scenario_name: str,
     ) -> None:
         if not callable(scenario_factory):
@@ -94,7 +95,7 @@ class RealDeveloperABBenchmark:
     def _run_once(self, developer_count: int, *, disable_cache: bool) -> RealDeveloperBenchmarkResult:
         benchmark = RealDeveloperBenchmark(
             scenario_factory=self.scenario_factory,
-            executor_factory=lambda manager, count: self.executor_factory(count),
+            executor_factory=self.executor_factory,
             scenario_name=self.scenario_name + ("-baseline" if disable_cache else "-candidate"),
         )
         if not disable_cache:
