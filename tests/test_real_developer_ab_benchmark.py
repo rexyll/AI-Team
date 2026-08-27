@@ -9,9 +9,9 @@ class _FakeExecutor:
         self.manager = manager
 
     def run_task(self, task, developer_id):
-        # The real DeveloperExecutor owns task lifecycle completion. Keep the
-        # fake faithful to that contract so the A/B harness can classify this
-        # deterministic sample as valid rather than leaving the task pending.
+        # Mirror DeveloperAgentExecutor: the runner has already promoted the
+        # task to READY, then the executor owns RUNNING -> REVIEW_PENDING.
+        self.manager.mark_running(task.id)
         self.manager.mark_developer_completed(task.id)
         return RealDeveloperTaskMetrics(
             task_id=task.id,
