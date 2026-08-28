@@ -31,8 +31,8 @@
 ✓ 13.1 1k-task dependency graph
 ✓ 13.2 5k-task scalability
 ✓ 13.3 Incremental projection
-▶ 13.4 Persistent indexes
-□ 13.5 Resource governance
+✓ 13.4 Persistent indexes
+▶ 13.5 Resource governance
 □ 13.6 Large-project benchmark
 □ 14.x Concurrency / Cancellation / Recovery
 □ 15.x Security Hardening
@@ -52,19 +52,25 @@
 ## `✓ 13.3` Incremental projection
 已完成 dependency-closed projection：选定 task 会保留全部传递依赖，projection 与 source graph 隔离，并对 projection 执行 unknown dependency / cycle safety 校验；同时完成 5k 大图下小 reachable subgraph 与完整链 projection contract。
 
-## `▶ 13.4` Persistent indexes
-已完成：
-- `DependencyIndex.build()` 构建 forward / reverse indexes；
-- immutable snapshot 与 source graph isolation；
-- `dependencies_of()` / `dependents_of()` 稳定查询；
-- `affected_tasks()` 传递 dependent 查询；
-- `with_task_dependencies()` 增量更新单 task 依赖，同时维护 reverse index；
-- incremental update 与 full rebuild 等价性 contract；
-- 5k graph index build/query scalability contract。
+## `✓ 13.4` Persistent indexes
+已完成 forward / reverse dependency index、transitive affected-set、immutable snapshot、incremental mutation、full rebuild equivalence、repeated mutation equivalence 与 5k scalability contract。
 
-最后验收重点：full rebuild equivalence + repeated mutation equivalence + 5k scalability + 全量回归。
+## `▶ 13.5` Resource governance
+第一阶段已建立 project-level resource governor：
+- `ResourceLimits`：并发 task、tool calls、input tokens、output tokens hard limits；
+- `ResourceUsage`：单调累计 usage snapshot；
+- `ResourceGovernor`：immutable admission/accounting API；
+- concurrency capacity 与 token/tool budget 超限拒绝；
+- task start/finish 不允许突破 active-task 边界；
+- usage snapshot 与 caller 输入均不产生 alias mutation。
 
-## `□ 13.5` Resource governance
+当前验收重点：
+- hard limit correctness；
+- immutable accounting；
+- zero-mutation on rejected consumption；
+- parameter validation；
+- 与实际 orchestrator / tool telemetry 的接入边界将在下一阶段定义。
+
 ## `□ 13.6` Large-project benchmark
 
 # Phase 14 — Concurrency / Cancellation / Recovery
