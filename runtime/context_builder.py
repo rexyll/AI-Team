@@ -118,6 +118,11 @@ class ContextBuilder:
             "dependencies",
             "tester_feedback",
             "reviewer_feedback",
+            # Raw tool-loop history is a persistence/telemetry source, not
+            # prompt context. Developer resumes receive the bounded
+            # ``task_checkpoint`` summary below instead of replaying the full
+            # execution history into every prompt.
+            "tool_execution_history",
         }
 
         metadata = deepcopy({
