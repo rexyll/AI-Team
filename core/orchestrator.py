@@ -239,7 +239,7 @@ class Orchestrator:
         self.failure_recovery_executor.execute(task.id, decision)
         self._emit_event("task_retrying", task, payload={
             "status": task.status, "retry_attempt": task.retry_attempt,
-            "max_retries": task.max_retries, "reason": decision.reason,
+            "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason,
         })
         return True
 
