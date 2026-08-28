@@ -51,7 +51,9 @@ def test_1k_task_layered_graph_preserves_parallel_execution_layers():
     assert sum(len(layer) for layer in layers) == 1000
     assert layers[0] == ["TASK-0000"]
     assert layers[1] == [f"TASK-{index:04d}" for index in range(1, 11)]
-    assert all(len(layer) == 10 for layer in layers[2:])
+    assert all(len(layer) == 10 for layer in layers[2:-1])
+    assert len(layers[-1]) == 9
+    assert layers[-1] == [f"TASK-{index:04d}" for index in range(991, 1000)]
 
 
 def test_1k_task_graph_construction_does_not_mutate_source_definitions():
