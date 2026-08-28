@@ -24,7 +24,7 @@ def _layered_graph(count: int) -> dict[str, list[str]]:
         task_id = f"TASK-{index:04d}"
         if index == 0:
             graph[task_id] = []
-        elif index < 10:
+        elif index <= 10:
             graph[task_id] = ["TASK-0000"]
         else:
             graph[task_id] = [f"TASK-{index - 10:04d}"]
@@ -50,7 +50,7 @@ def test_1k_task_layered_graph_preserves_parallel_execution_layers():
 
     assert sum(len(layer) for layer in layers) == 1000
     assert layers[0] == ["TASK-0000"]
-    assert layers[1] == [f"TASK-{index:04d}" for index in range(1, 10)]
+    assert layers[1] == [f"TASK-{index:04d}" for index in range(1, 11)]
     assert all(len(layer) == 1 for layer in layers[2:])
 
 
