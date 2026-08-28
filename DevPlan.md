@@ -27,8 +27,13 @@
 ✓ 12.2 Retry / Checkpoint Consistency
 ✓ 12.3 Tool-loop Failure Recovery
 ✓ 12.4 Reviewer Reliability Boundary
-▶ 12.5 Developer Reliability Acceptance Matrix
-□ 13.x Large Project Execution
+✓ 12.5 Developer Reliability Acceptance Matrix
+▶ 13.1 1k-task dependency graph
+□ 13.2 5k-task scalability
+□ 13.3 Incremental projection
+□ 13.4 Persistent indexes
+□ 13.5 Resource governance
+□ 13.6 Large-project benchmark
 □ 14.x Concurrency / Cancellation / Recovery
 □ 15.x Security Hardening
 □ 16.x Observability / Operations
@@ -50,44 +55,30 @@ Task checkpoint 保留 retry attempt、budget、history、status 和 error；res
 ## `✓ 12.4` Reviewer Reliability Boundary
 已完成 Reviewer primary failure、fallback approval、fallback exhaustion、retry lifecycle、TaskManager 状态边界以及 workflow event/audit 集成验收。
 
-关键保证：fallback 不吞掉真实 failure、不绕过 TaskManager 状态机、不产生错误 approval。
-
-## `▶ 12.5` Developer Reliability Acceptance Matrix
-
-当前节点。统一建立 Developer 全生命周期 acceptance matrix，覆盖：
-
-1. 正常成功
-2. tool failure
-3. test failure
-4. review rejection
-5. retry
-6. retry exhausted / block
-7. specification failure / replan
-8. resume / checkpoint
-9. provider / LLM failure
-10. reviewer fallback
-11. concurrency / isolation
-12. terminal failure 不得产生 false success
-
-验收原则：
-
-- 每一种 failure class 都必须映射到唯一、可解释的 recovery action。
-- Recovery action 不得越过 TaskManager canonical state transition。
-- retry budget 必须单调消耗，不得因 resume/replan/fallback 意外恢复。
-- failure provenance 必须保留。
-- terminal failure 必须保持 failed / blocked 等真实终态，不能伪装成 completed。
-- workflow event 与 audit evidence 必须能够解释 recovery 路径。
+## `✓ 12.5` Developer Reliability Acceptance Matrix
+已完成 Developer 全生命周期 acceptance matrix，覆盖 success、tool/test/review failure、retry、replan、resume、provider failure、reviewer fallback、isolation 和 terminal failure invariants。
 
 完成条件：专项 acceptance matrix + 全量 `pytest -q` 均通过。
 
 # Phase 13 — Large Project Execution
 
-`□ 13.1` 1k-task dependency graph
-`□ 13.2` 5k-task scalability
-`□ 13.3` Incremental projection
-`□ 13.4` Persistent indexes
-`□ 13.5` Resource governance
-`□ 13.6` Large-project benchmark
+## `▶ 13.1` 1k-task dependency graph
+
+目标：验证当前 dependency graph / scheduler 在 1,000 task 规模下仍保持正确、确定性和可接受的构建、拓扑排序、execution-layer 计算成本。
+
+验收重点：
+- 1,000 task DAG 正确完成 topological sort；
+- execution layers 保持 dependency ordering；
+- parallel branches 正确聚合；
+- unknown dependency / cycle 仍然拒绝；
+- 不修改 Task lifecycle state；
+- 为后续 5k scalability benchmark 建立固定 contract corpus。
+
+## `□ 13.2` 5k-task scalability
+## `□ 13.3` Incremental projection
+## `□ 13.4` Persistent indexes
+## `□ 13.5` Resource governance
+## `□ 13.6` Large-project benchmark
 
 # Phase 14 — Concurrency / Cancellation / Recovery
 
