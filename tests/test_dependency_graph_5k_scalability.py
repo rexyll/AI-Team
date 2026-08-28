@@ -30,7 +30,7 @@ def _chain_tasks(count: int) -> list[dict]:
 
 
 def _layered_tasks(count: int) -> list[dict]:
-    """Create deterministic 50-wide layers with one root."""
+    """Create a deterministic two-level DAG with 101 roots and 4899 dependents."""
     width = 50
     tasks: list[dict] = []
     for index in range(count):
@@ -89,10 +89,11 @@ def test_5k_task_layered_graph_preserves_layers_at_scale():
     layers = get_execution_layers(graph)
     elapsed = perf_counter() - started
 
+    assert len(layers) == 2
     assert sum(len(layer) for layer in layers) == TASK_COUNT
     assert layers[0] == ["TASK-00000", *[f"TASK-{index:05d}" for index in range(1, 5000, 50)]]
-    assert all(len(layer) == 50 for layer in layers[1:-1])
-    assert len(layers[-1]) == 49
+    assert len(layers[0]) == 101
+    assert len(layers[1]) == 4899
     assert elapsed < MAX_GRAPH_SECONDS
 
 
