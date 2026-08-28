@@ -44,21 +44,48 @@ def test_retry_delegates_to_existing_task_manager_primitive():
     assert task.error is None
 
 
-def test_non_retry_actions_return_intent_without_mutating_task():
+def test_non_retry_actions_return_provenance_rich_intent_without_mutating_task():
     manager = _manager()
     executor = FailureRecoveryExecutor(manager)
 
     for action in (RecoveryAction.REPAIR, RecoveryAction.REPLAN, RecoveryAction.BLOCK):
         before = manager.get_task("TASK-001").to_dict()
-        decision = RecoveryDecision(action=action, reason="higher layer required")
+        classification = classify_failure(
+            failure_class=(
+                FailureClass.TEST
+                if action is RecoveryAction.REPAIR
+                else FailureClass.SPECIFICATION
+                if action is RecoveryAction.REPLAN
+                else FailureClass.UNKNOWN
+            ),
+            reason="observed failure",
+        )
+        decision = decide_recovery(
+            classification,
+            retry_attempt=1,
+            max_retries=2,
+        )
+        # The contract test intentionally verifies the executor's hand-off shape;
+        # force the requested action while retaining real provenance.
+        decision = RecoveryDecision(
+            action=action,
+            reason="higher layer required",
+            failure_reason=classification.reason,
+            failure_class=classification.failure_class,
+            retry_attempt=decision.retry_attempt,
+        )
         intent = executor.execute("TASK-001", decision)
 
         assert isinstance(intent, RecoveryIntent)
         assert intent.to_dict() == {
             "action": action.value,
             "task_id": "TASK-001",
-            "reason": "higher layer required",
+            "failure_class": classification.failure_class.value,
+            "failure_reason": "observed failure",
+            "decision_reason": "higher layer required",
+            "attempt": 1,
         }
+        assert intent.reason == "higher layer required"
         assert manager.get_task("TASK-001").to_dict() == before
 
 
