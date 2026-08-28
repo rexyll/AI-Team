@@ -90,7 +90,7 @@ def test_5k_task_layered_graph_preserves_layers_at_scale():
     elapsed = perf_counter() - started
 
     assert sum(len(layer) for layer in layers) == TASK_COUNT
-    assert layers[0] == ["TASK-00000"]
+    assert layers[0] == ["TASK-00000", *[f"TASK-{index:05d}" for index in range(1, 5000, 50)]]
     assert all(len(layer) == 50 for layer in layers[1:-1])
     assert len(layers[-1]) == 49
     assert elapsed < MAX_GRAPH_SECONDS
