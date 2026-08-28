@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 
 
 @dataclass(frozen=True)
@@ -62,3 +63,50 @@ class DependencyIndex:
             affected.add(task_id)
             stack.extend(self.dependents[task_id])
         return affected
+
+    def with_task_dependencies(
+        self,
+        task_id: str,
+        dependencies: Iterable[str],
+    ) -> "DependencyIndex":
+        """Return a new index after replacing one task's dependencies.
+
+        The current index is never mutated. Existing forward/reverse entries
+        are reused conceptually, while only the changed task and affected
+        reverse buckets are rebuilt in the returned snapshot.
+        """
+        if not isinstance(task_id, str):
+            raise TypeError("task_id must be a string")
+        if not isinstance(dependencies, Iterable):
+            raise TypeError("dependencies must be iterable")
+
+        new_dependencies = tuple(dependencies)
+        existing_task = task_id in self.dependencies
+        for dependency in new_dependencies:
+            if dependency not in self.dependencies:
+                raise ValueError(
+                    f"Task {task_id} depends on unknown task {dependency}"
+                )
+
+        dependencies_map = dict(self.dependencies)
+        dependencies_map[task_id] = new_dependencies
+
+        dependents_map = dict(self.dependents)
+        for dependency, dependents in self.dependents.items():
+            if task_id in dependents:
+                dependents_map[dependency] = tuple(
+                    candidate for candidate in dependents if candidate != task_id
+                )
+
+        for dependency in new_dependencies:
+            dependents = dependents_map.get(dependency, ())
+            if task_id not in dependents:
+                dependents_map[dependency] = (*dependents, task_id)
+
+        if not existing_task:
+            dependents_map.setdefault(task_id, ())
+
+        return DependencyIndex(
+            dependencies=dependencies_map,
+            dependents=dependents_map,
+        )
