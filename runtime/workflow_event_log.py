@@ -145,11 +145,18 @@ class WorkflowEventLog:
                 self._project_indexes[project_id] = cached
             return list(cached)
 
-    def _task_sort_key(self, event: WorkflowEvent) -> tuple[str, int, int | str]:
+    def _task_sort_key(self, event: WorkflowEvent) -> tuple[int, int | str, str]:
         sequence = self._append_sequence.get(event.event_id)
         if sequence is not None:
-            return (event.occurred_at, 0, sequence)
-        return (event.occurred_at, 1, event.event_id)
+            # A task-local lifecycle is causally ordered by the moment the
+            # event was appended. This is stronger than occurred_at, whose
+            # wall-clock resolution/ordering is not guaranteed under fast
+            # serial execution or concurrent producers.
+            return (0, sequence, "")
+        # Events reconstructed through merge/from_dict do not have an
+        # in-memory append sequence. Preserve their persisted chronological
+        # ordering as the best available fallback.
+        return (1, 0, f"{event.occurred_at}\x00{event.event_id}")
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
         with self._lock:
