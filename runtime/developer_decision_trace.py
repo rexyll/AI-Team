@@ -56,8 +56,12 @@ def build_developer_decision_trace(
         raise ValueError("decision trace counters must be non-negative")
     if cache_hits > tool_calls:
         raise ValueError("cache_hits cannot exceed tool_calls")
+    if verification_reuses > tool_calls:
+        raise ValueError("verification_reuses cannot exceed tool_calls")
     if batched_calls > tool_calls:
         raise ValueError("batched_calls cannot exceed tool_calls")
+    if logical_cost > tool_calls:
+        raise ValueError("logical_cost cannot exceed tool_calls")
     return DeveloperDecisionTrace(
         decision_index=decision_index,
         tool_calls=tool_calls,
