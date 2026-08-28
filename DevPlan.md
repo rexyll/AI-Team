@@ -30,8 +30,8 @@
 ✓ 12.5 Developer Reliability Acceptance Matrix
 ✓ 13.1 1k-task dependency graph
 ✓ 13.2 5k-task scalability
-▶ 13.3 Incremental projection
-□ 13.4 Persistent indexes
+✓ 13.3 Incremental projection
+▶ 13.4 Persistent indexes
 □ 13.5 Resource governance
 □ 13.6 Large-project benchmark
 □ 14.x Concurrency / Cancellation / Recovery
@@ -68,18 +68,26 @@ Task checkpoint 保留 retry attempt、budget、history、status 和 error；res
 ## `✓ 13.2` 5k-task scalability
 已完成 5,000 task graph / scheduler scalability contract：验证 5k chain、layered dependency graph、ready-set correctness、确定性和 read-only 边界。专项与全量测试已通过。
 
-## `▶ 13.3` Incremental projection
-目标：允许大图只投影目标 task 及其传递依赖，避免每次查询扫描整个 dependency graph，并保持 projection 独立、dependency-closed、cycle-safe。
+## `✓ 13.3` Incremental projection
+已完成 dependency-closed projection：选定 task 会保留全部传递依赖，projection 与 source graph 隔离，并对 projection 执行 unknown dependency / cycle safety 校验；同时完成 5k 大图下小 reachable subgraph 与完整链 projection contract。
+
+## `▶ 13.4` Persistent indexes
+目标：为大图提供可复用的 forward dependency / reverse dependent indexes，避免重复构建反向关系，并为后续 mutation、incremental scheduling 与 resource governance 提供稳定索引边界。
+
+当前实现：
+- `DependencyIndex.build()` 构建 forward / reverse indexes；
+- index 内部使用 immutable tuple，避免 alias source graph；
+- `dependencies_of()` / `dependents_of()` 提供稳定查询接口；
+- `affected_tasks()` 返回 selected tasks 及全部传递 dependents；
+- build 阶段拒绝 unknown dependency。
 
 验收重点：
-- selected task 的传递依赖完整保留；
-- unknown selected task 明确拒绝；
-- projection 不修改 source graph；
-- empty selection 返回空 graph；
-- projection traversal 成本与 reachable subgraph 规模相关，而非完整 graph 规模；
-- cycle / malformed dependency 不被静默吞掉。
+- forward / reverse relationship 一致；
+- transitive affected-set 正确；
+- source graph mutation 不污染 index；
+- unknown dependency / task 明确拒绝；
+- 后续 mutation 后 index invalidation / rebuild 语义必须明确。
 
-## `□ 13.4` Persistent indexes
 ## `□ 13.5` Resource governance
 ## `□ 13.6` Large-project benchmark
 
