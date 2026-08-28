@@ -20,19 +20,18 @@ class ResourceLifecycle:
             raise TypeError("task must be a Task")
         if not isinstance(governor, ResourceGovernor):
             raise TypeError("governor must be a ResourceGovernor")
-        snapshot = governor.start_task()
-        return cls(task.id, snapshot, True)
+        if not governor.can_start_task():
+            return None
+        return cls(task.id, governor.start_task(), True)
 
     def consume(self, *, tool_calls: int = 0, input_tokens: int = 0, output_tokens: int = 0) -> "ResourceLifecycle":
         if not self.active:
             raise RuntimeError("resource lifecycle is not active")
+        if not self.governor.can_consume(tool_calls=tool_calls, input_tokens=input_tokens, output_tokens=output_tokens):
+            raise RuntimeError("resource budget exceeded")
         return ResourceLifecycle(
             self.task_id,
-            self.governor.consume(
-                tool_calls=tool_calls,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            ),
+            self.governor.consume(tool_calls=tool_calls, input_tokens=input_tokens, output_tokens=output_tokens),
             True,
         )
 
