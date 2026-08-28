@@ -16,6 +16,7 @@ from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHE
 from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
 from runtime.tool_loop_decision_turn import classify_decision_turn
 from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
+from runtime.developer_decision_trace_collector import DeveloperDecisionTraceCollector
 from runtime.tool_result_evidence import reduce_tool_result
 from runtime.safe_tool_batch import classify_safe_tool_batch
 from runtime.safe_tool_batch_executor import execute_safe_tool_batch
@@ -156,6 +157,7 @@ EXECUTION REQUIREMENT
         cache = ToolResultCache()
         progress_guard = ToolLoopProgressGuard()
         decision_budget = ToolLoopDecisionBudget()
+        decision_traces = DeveloperDecisionTraceCollector()
         verification_reused_count = 0
         workspace_revision = 0
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -168,11 +170,12 @@ EXECUTION REQUIREMENT
                 data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
                 data["tool_loop_verification"] = {"reused": verification_reused_count}
                 data["tool_loop_decision_budget"] = {"decisions": decision_budget.decisions, "logical_cost": decision_budget.state.logical_cost, "soft_limit": decision_budget.state.soft_limit, "approaching_limit": decision_budget.state.approaching_limit}
+                data["developer_decision_trace"] = decision_traces.to_dict()
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": call.call_id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in response.tool_calls]})
-            budget_state = decision_budget.record(logical_cost=len(response.tool_calls))
-            if budget_state.approaching_limit:
-                messages.append({"role": "user", "content": "Decision budget is approaching its soft limit. 优先复用仍然有效的已有证据、checkpoint 和 cache，并尽快完成必要的验证与收敛。不要为了预算而跳过 correctness-required 的重新读取、测试或验证；如果证据不足或工作区发生变化，必须继续获取有效证据。"})
+            decision_cache_hits_before = cache.hits
+            decision_verification_reuses_before = verification_reused_count
+            decision_tool_call_count = len(response.tool_calls)
 
             batched_results: dict[str, Any] = {}
             batch_candidates: list[dict[str, Any]] = []
@@ -231,7 +234,8 @@ EXECUTION REQUIREMENT
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
-                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
+                        self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", False)
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count, decision_traces)
                     self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                     continue
                 if not isinstance(arguments, dict):
@@ -246,7 +250,8 @@ EXECUTION REQUIREMENT
                     prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
-                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
+                        self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", False)
+                        return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count, decision_traces)
                     self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                     continue
                 print(f"[Args] {arguments}")
@@ -306,19 +311,40 @@ EXECUTION REQUIREMENT
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
-                    return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
+                    self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
+                    return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count, decision_traces)
                 self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                 if tool_name == "run_command":
                     decision = classify_decision_turn(tool_name=tool_name, arguments=record_arguments, result=result, status=status, category=telemetry.category, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, changed_files=changed_files, command_results=command_results, verification_reused=verification_reused)
                     if decision.terminal:
+                        self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, decision.decision.reason, verification_reused)
                         content = f"Terminal verification succeeded: {record_arguments.get('command', '')}"
                         data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
                         data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
                         data["tool_loop_verification"] = {"reused": verification_reused_count}
                         data["tool_loop_decision"] = {"reason": decision.decision.reason, "skip_llm_turn": decision.skip_llm_turn, "terminal": decision.terminal}
                         data["tool_loop_decision_budget"] = {"decisions": decision_budget.decisions, "logical_cost": decision_budget.state.logical_cost, "soft_limit": decision_budget.state.soft_limit, "approaching_limit": decision_budget.state.approaching_limit}
+                        data["developer_decision_trace"] = decision_traces.to_dict()
                         return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
+            self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, None, False)
+            budget_state = decision_budget.state
+            if budget_state.approaching_limit:
+                messages.append({"role": "user", "content": "Decision budget is approaching its soft limit. 优先复用仍然有效的已有证据、checkpoint 和 cache，并尽快完成必要的验证与收敛。不要为了预算而跳过 correctness-required 的重新读取、测试或验证；如果证据不足或工作区发生变化，必须继续获取有效证据。"})
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
+
+    @staticmethod
+    def _record_decision_trace(collector: DeveloperDecisionTraceCollector, tool_call_count: int, cache: ToolResultCache, cache_hits_before: int, verification_reused_count: int, verification_reuses_before: int, batched_results: dict[str, Any], decision_budget: ToolLoopDecisionBudget, loop_telemetry: list[dict[str, Any]], convergence_reason: str | None, correctness_override: bool) -> None:
+        cache_hits = max(0, cache.hits - cache_hits_before)
+        verification_reuses = max(0, verification_reused_count - verification_reuses_before)
+        logical_cost = max(0, tool_call_count - cache_hits - verification_reuses)
+        budget_state = decision_budget.state
+        decision_budget.record(logical_cost=logical_cost)
+        evidence_sources = []
+        for item in loop_telemetry[-tool_call_count:]:
+            tool_name = item.get("tool_name")
+            if tool_name:
+                evidence_sources.append(str(tool_name))
+        collector.record(tool_calls=tool_call_count, cache_hits=cache_hits, verification_reuses=verification_reuses, batched_calls=len(batched_results), logical_cost=logical_cost, budget_state="converge" if budget_state.should_converge else ("approaching" if budget_state.approaching_limit else "healthy"), evidence_sources=evidence_sources, convergence_reason=convergence_reason, correctness_override=correctness_override)
 
     @staticmethod
     def _append_checkpoint(messages: list[dict[str, Any]], loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], workspace_revision: int = 0) -> None:
@@ -326,11 +352,13 @@ EXECUTION REQUIREMENT
             return
         upsert_tool_loop_checkpoint(messages, loop_telemetry, changed_files=changed_files, command_results=command_results, workspace_revision=workspace_revision)
 
-    def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache, verification_reused_count: int = 0) -> AgentResult:
+    def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache, verification_reused_count: int = 0, decision_traces: DeveloperDecisionTraceCollector | None = None) -> AgentResult:
         data = self._build_result_data(content=reason, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
         data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
         data["tool_loop_guard"] = {"tripped": True, "reason": reason}
         data["tool_loop_verification"] = {"reused": verification_reused_count}
+        if decision_traces is not None:
+            data["developer_decision_trace"] = decision_traces.to_dict()
         return AgentResult(status="failed", agent="developer", task_id=task_id, message=reason, data=data)
 
     def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
