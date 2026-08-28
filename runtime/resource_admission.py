@@ -21,8 +21,7 @@ def admit_task(task: Task, governor: ResourceGovernor) -> ResourceAdmissionDecis
     if not isinstance(governor, ResourceGovernor):
         raise TypeError("governor must be a ResourceGovernor")
 
-    snapshot = governor.start_task()
-    if snapshot is None:
+    if not governor.can_start_task():
         return ResourceAdmissionDecision(
             task_id=task.id,
             admitted=False,
