@@ -26,8 +26,8 @@ def project_dependency_graph(
     """Return an independent dependency-closed projection of ``graph``.
 
     Every selected task and every transitive dependency required by it is
-    retained. Unknown task IDs and malformed dependency closures are rejected
-    instead of silently dropping dependency edges.
+    retained. The traversal cost is proportional to the reachable subgraph,
+    rather than the size of the complete graph.
     """
     if not isinstance(task_ids, set):
         raise TypeError("task_ids must be a set")
@@ -41,22 +41,33 @@ def project_dependency_graph(
         )
 
     projected_ids: set[str] = set()
-    stack = list(task_ids)
+    stack = sorted(task_ids, reverse=True)
 
     while stack:
         task_id = stack.pop()
         if task_id in projected_ids:
             continue
-        if task_id not in graph:
+        dependencies = graph.get(task_id)
+        if dependencies is None:
             raise ValueError(f"Task {task_id} is not present in graph")
         projected_ids.add(task_id)
-        stack.extend(graph[task_id])
+        stack.extend(sorted(dependencies, reverse=True))
 
-    projected = {
-        task_id: list(graph[task_id])
-        for task_id in graph
-        if task_id in projected_ids
-    }
+    projected: dict[str, list[str]] = {}
+    pending = sorted(projected_ids, reverse=True)
+    ordered_ids: list[str] = []
+    seen: set[str] = set()
+
+    while pending:
+        task_id = pending.pop()
+        if task_id in seen:
+            continue
+        seen.add(task_id)
+        ordered_ids.append(task_id)
+        pending.extend(sorted(graph[task_id], reverse=True))
+
+    for task_id in ordered_ids:
+        projected[task_id] = list(graph[task_id])
 
     # Validate the projection while preserving the source graph unchanged.
     topological_sort(projected)
