@@ -31,7 +31,14 @@ def test_replace_task_graph_swaps_atomically_and_preserves_completed_history():
     completed = manager.get_task("TASK-001")
     replacement = ReplanGraphReplacement(
         tasks=(
-            Task(id="TASK-001", title="updated", description="updated", role="developer", status=TaskStatus.COMPLETED.value, result={"data": {"answer": "kept"}}),
+            Task(
+                id="TASK-001",
+                title="updated",
+                description="updated",
+                role="developer",
+                status=TaskStatus.COMPLETED.value,
+                result={"data": {"answer": "kept"}},
+            ),
             Task(id="TASK-003", title="new", description="new", role="developer"),
         )
     )
@@ -46,8 +53,24 @@ def test_replace_task_graph_swaps_atomically_and_preserves_completed_history():
 
 
 def test_replace_task_graph_rechecks_active_state_inside_owner_boundary():
-    manager = _manager()
-    manager.transition("TASK-002", TaskStatus.READY)
+    manager = TaskManager(
+        [
+            Task(
+                id="TASK-001",
+                title="done",
+                description="done",
+                role="developer",
+                status=TaskStatus.COMPLETED.value,
+            ),
+            Task(
+                id="TASK-002",
+                title="active",
+                description="active",
+                role="developer",
+                status=TaskStatus.READY.value,
+            ),
+        ]
+    )
     replacement = [
         Task(id="TASK-001", title="done", description="done", role="developer", status=TaskStatus.COMPLETED.value),
         Task(id="TASK-003", title="new", description="new", role="developer"),
