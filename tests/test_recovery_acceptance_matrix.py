@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
-from core.orchestrator import Orchestrator
-from runtime.agent_router import AgentRouter
 from runtime.failure_classification import FailureClass, classify_failure
-from runtime.failure_recovery_executor import FailureRecoveryExecutor
+from runtime.failure_recovery_executor import FailureRecoveryExecutor, RecoveryIntent
 from runtime.failure_recovery_policy import RecoveryAction, decide_recovery
 from runtime.recovery_repair_adapter import RecoveryRepairAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
-from runtime.task_status import TaskStatus
 
 
 def _failed_task(*, max_retries: int = 1) -> Task:
@@ -37,7 +32,8 @@ def test_recovery_policy_matrix_is_mutually_exclusive():
         (FailureClass.TRANSIENT, 1, 1, RecoveryAction.BLOCK),
         (FailureClass.SPECIFICATION, 0, 1, RecoveryAction.REPLAN),
         (FailureClass.TOOL, 0, 1, RecoveryAction.RETRY),
-        (FailureClass.DEPENDENCY, 0, 1, RecoveryAction.RETRY),
+        # DEPENDENCY is explicitly repairable in the current policy contract.
+        (FailureClass.DEPENDENCY, 0, 1, RecoveryAction.REPAIR),
     ]
     for failure_class, retry_attempt, max_retries, expected in cases:
         decision = decide_recovery(
@@ -81,8 +77,16 @@ def test_repair_adapter_rejects_non_review_lifecycle_without_mutation():
     task = _failed_task(max_retries=0)
     manager = _manager(task)
     adapter = RecoveryRepairAdapter(manager)
-    with pytest.raises(ValueError):
-        adapter.apply(task.id, "repair")
+    intent = RecoveryIntent(
+        action=RecoveryAction.REPAIR,
+        task_id=task.id,
+        failure_class=FailureClass.DEPENDENCY,
+        failure_reason="dependency conflict",
+        decision_reason="failure is repairable",
+        attempt=0,
+    )
+    with pytest.raises(ValueError, match="requires task status"):
+        adapter.apply(intent)
     assert manager.get_task(task.id).status == "failed"
 
 
