@@ -6,7 +6,10 @@ from uuid import uuid4
 from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
 from runtime.dependency_scheduler import DependencyScheduler
-from runtime.retry_policy import FailureKind, decide_retry
+from runtime.failure_classification import FailureClass, classify_failure
+from runtime.failure_recovery_executor import FailureRecoveryExecutor
+from runtime.failure_recovery_policy import RecoveryAction, decide_recovery
+from runtime.retry_policy import FailureKind
 from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
@@ -52,6 +55,7 @@ class Orchestrator:
         self.agent_router = agent_router
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
         self.failure_classifier = failure_classifier or self._default_failure_classifier
+        self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
         self._state_change_hook: Callable[[TaskManager], None] | None = None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None
@@ -100,6 +104,17 @@ class Orchestrator:
         if isinstance(error, (TypeError, ValueError, KeyError)):
             return FailureKind.NON_RETRYABLE
         return FailureKind.EXECUTION
+
+    @staticmethod
+    def _failure_class_for_kind(failure_kind: FailureKind) -> FailureClass:
+        """Bridge the legacy retry classifier into the new recovery taxonomy."""
+        if failure_kind in {
+            FailureKind.EXECUTION,
+            FailureKind.QUALITY_GATE,
+            FailureKind.INVALID_RESULT,
+        }:
+            return FailureClass.TRANSIENT
+        return FailureClass.UNKNOWN
 
     def run(self) -> None:
         print("\n" + "=" * 60)
@@ -208,15 +223,20 @@ class Orchestrator:
         failure_kind = self.failure_classifier(error)
         if not isinstance(failure_kind, FailureKind):
             raise TypeError("failure_classifier must return FailureKind")
-        decision = decide_retry(
-            attempt=task.retry_attempt,
-            max_retries=task.max_retries,
-            failure_kind=failure_kind,
-            reason=f"{type(error).__name__}: {error}",
+
+        reason = f"{type(error).__name__}: {error}"
+        classification = classify_failure(
+            failure_class=self._failure_class_for_kind(failure_kind),
+            reason=reason,
         )
-        if not decision.retry:
+        decision = decide_recovery(
+            classification,
+            retry_attempt=task.retry_attempt,
+            max_retries=task.max_retries,
+        )
+        if decision.action is not RecoveryAction.RETRY:
             return False
-        self.task_manager.retry_task(task.id, reason=decision.reason, retryable=True)
+        self.failure_recovery_executor.execute(task.id, decision)
         self._emit_event("task_retrying", task, payload={
             "status": task.status, "retry_attempt": task.retry_attempt,
             "max_retries": task.max_retries, "reason": decision.reason,
