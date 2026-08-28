@@ -41,25 +41,6 @@
 □ 18.x Release / Production Readiness
 ```
 
-# Phase 12 — Developer Reliability
-
-## `✓ 12.1` Developer Failure Isolation
-验证单 Task Developer failure 不污染其他 Task、scheduler 和 project lifecycle。
-
-## `✓ 12.2` Retry / Checkpoint Consistency
-Task checkpoint 保留 retry attempt、budget、history、status 和 error；resume 不重新获得 retry budget。
-
-## `✓ 12.3` Tool-loop Failure Recovery
-验证 tool failure evidence、cache、mutation invalidation、verification reuse 和 progress guard 边界。
-
-## `✓ 12.4` Reviewer Reliability Boundary
-已完成 Reviewer primary failure、fallback approval、fallback exhaustion、retry lifecycle、TaskManager 状态边界以及 workflow event/audit 集成验收。
-
-## `✓ 12.5` Developer Reliability Acceptance Matrix
-已完成 Developer 全生命周期 acceptance matrix，覆盖 success、tool/test/review failure、retry、replan、resume、provider failure、reviewer fallback、isolation 和 terminal failure invariants。
-
-完成条件：专项 acceptance matrix + 全量 `pytest -q` 均通过。
-
 # Phase 13 — Large Project Execution
 
 ## `✓ 13.1` 1k-task dependency graph
@@ -72,21 +53,16 @@ Task checkpoint 保留 retry attempt、budget、history、status 和 error；res
 已完成 dependency-closed projection：选定 task 会保留全部传递依赖，projection 与 source graph 隔离，并对 projection 执行 unknown dependency / cycle safety 校验；同时完成 5k 大图下小 reachable subgraph 与完整链 projection contract。
 
 ## `▶ 13.4` Persistent indexes
-目标：为大图提供可复用的 forward dependency / reverse dependent indexes，避免重复构建反向关系，并为后续 mutation、incremental scheduling 与 resource governance 提供稳定索引边界。
-
-当前实现：
+已完成：
 - `DependencyIndex.build()` 构建 forward / reverse indexes；
-- index 内部使用 immutable tuple，避免 alias source graph；
-- `dependencies_of()` / `dependents_of()` 提供稳定查询接口；
-- `affected_tasks()` 返回 selected tasks 及全部传递 dependents；
-- build 阶段拒绝 unknown dependency。
+- immutable snapshot 与 source graph isolation；
+- `dependencies_of()` / `dependents_of()` 稳定查询；
+- `affected_tasks()` 传递 dependent 查询；
+- `with_task_dependencies()` 增量更新单 task 依赖，同时维护 reverse index；
+- incremental update 与 full rebuild 等价性 contract；
+- 5k graph index build/query scalability contract。
 
-验收重点：
-- forward / reverse relationship 一致；
-- transitive affected-set 正确；
-- source graph mutation 不污染 index；
-- unknown dependency / task 明确拒绝；
-- 后续 mutation 后 index invalidation / rebuild 语义必须明确。
+最后验收重点：full rebuild equivalence + repeated mutation equivalence + 5k scalability + 全量回归。
 
 ## `□ 13.5` Resource governance
 ## `□ 13.6` Large-project benchmark
