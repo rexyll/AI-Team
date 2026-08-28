@@ -40,8 +40,9 @@ def build_tool_loop_checkpoint(telemetry: list[dict[str, Any]], *, changed_files
         duplicate_of = item.get("duplicate_of")
         retry_of = item.get("retry_of")
         state = "duplicate" if duplicate_of else "retry" if retry_of else "fresh"
-        recent_actions.append(f"{execution_id}:{tool_name}:{arguments_hash}:{state}")
-        recent_evidence.append(f"{execution_id}:{result_hash}:chars={result_chars}:retained={retained_chars}:truncated={str(truncated).lower()}:revision={workspace_revision}")
+        category = str(item.get("category") or "unknown")
+        recent_actions.append(f"{execution_id}:{tool_name}:{arguments_hash}:{category}")
+        recent_evidence.append(f"{execution_id}:hash={result_hash}:chars={result_chars}:retained={retained_chars}:truncated={str(truncated).lower()}:status={state}")
     lines.append("recent_actions=" + " | ".join(recent_actions))
     lines.append("recent_evidence=" + " | ".join(recent_evidence))
     if changed_files:
@@ -57,6 +58,7 @@ def build_tool_loop_checkpoint(telemetry: list[dict[str, Any]], *, changed_files
         "Recent action/evidence identities reference existing execution history; they do not replace full tool results.",
         "Do not repeat exploration that is already established unless new evidence requires it.",
         "If a verification command already has a recorded result and no relevant file changed afterward, prefer that evidence instead of rerunning the same verification.",
+        "If a tool call is an exact duplicate and its read-only evidence is still valid, do not issue the same call again; choose a new action or conclude the task.",
         "If workspace state changed after the recorded evidence, treat the old evidence as stale and re-read or re-verify before relying on it.",
         "Prefer the smallest next action that produces new evidence or completes verification.",
     ])
