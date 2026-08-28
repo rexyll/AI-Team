@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from runtime.failure_classification import FailureClassification
+from runtime.failure_classification import FailureClass, FailureClassification
 
 
 class RecoveryAction(str, Enum):
@@ -18,6 +18,8 @@ class RecoveryDecision:
     action: RecoveryAction
     reason: str
     failure_reason: str = ""
+    failure_class: FailureClass = FailureClass.UNKNOWN
+    retry_attempt: int = 0
 
     def to_dict(self) -> dict[str, str]:
         return {"action": self.action.value, "reason": self.reason}
@@ -61,4 +63,6 @@ def decide_recovery(
         action=action,
         reason=reason,
         failure_reason=classification.reason,
+        failure_class=classification.failure_class,
+        retry_attempt=retry_attempt,
     )
