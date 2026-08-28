@@ -39,7 +39,10 @@ def _layered_tasks(count: int) -> list[dict]:
             dependencies: list[str] = []
         else:
             parent = ((index - 1) // width) * width + 1
-            dependencies = [f"TASK-{parent:05d}"]
+            if parent == index:
+                dependencies = []
+            else:
+                dependencies = [f"TASK-{parent:05d}"]
         tasks.append(
             {
                 "id": task_id,
