@@ -12,7 +12,7 @@ from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_loop_telemetry import classify_tool_call
 from runtime.tool_loop_cache import ToolResultCache, CACHEABLE_TOOLS
 from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
-from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL
+from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL, upsert_tool_loop_checkpoint
 from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
 from runtime.tool_loop_decision_turn import classify_decision_turn
 from runtime.tool_result_evidence import reduce_tool_result
@@ -189,7 +189,7 @@ EXECUTION REQUIREMENT
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
-                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
+                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                     continue
                 if not isinstance(arguments, dict):
                     status = "invalid_arguments"
@@ -204,7 +204,7 @@ EXECUTION REQUIREMENT
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
-                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
+                    self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                     continue
                 print(f"[Args] {arguments}")
                 try:
@@ -259,7 +259,7 @@ EXECUTION REQUIREMENT
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
                     return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count)
-                self._append_checkpoint(messages, loop_telemetry, changed_files, command_results)
+                self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                 if tool_name == "run_command":
                     decision = classify_decision_turn(tool_name=tool_name, arguments=record_arguments, result=result, status=status, category=telemetry.category, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, changed_files=changed_files, command_results=command_results, verification_reused=verification_reused)
                     if decision.terminal:
@@ -272,28 +272,17 @@ EXECUTION REQUIREMENT
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
     @staticmethod
-    def _append_checkpoint(
-        messages: list[dict[str, Any]],
-        loop_telemetry: list[dict[str, Any]],
-        changed_files: list[str],
-        command_results: list[dict[str, Any]],
-    ) -> None:
+    def _append_checkpoint(messages: list[dict[str, Any]], loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], workspace_revision: int = 0) -> None:
         if not loop_telemetry or len(loop_telemetry) % TOOL_LOOP_CHECKPOINT_INTERVAL != 0:
             return
-        checkpoint = build_tool_loop_checkpoint(
-            loop_telemetry,
-            changed_files=changed_files,
-            command_results=command_results,
-        )
-        if checkpoint:
-            messages.append({"role": "user", "content": checkpoint})
+        upsert_tool_loop_checkpoint(messages, loop_telemetry, changed_files=changed_files, command_results=command_results, workspace_revision=workspace_revision)
 
     def _progress_guard_failure(self, task_id: str, reason: str, loop_telemetry: list[dict[str, Any]], changed_files: list[str], command_results: list[dict[str, Any]], tool_calls: list[dict[str, Any]], cache: ToolResultCache, verification_reused_count: int = 0) -> AgentResult:
         data = self._build_result_data(content=reason, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
         data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
         data["tool_loop_guard"] = {"tripped": True, "reason": reason}
         data["tool_loop_verification"] = {"reused": verification_reused_count}
-        return AgentResult(status="failed", agent=self.role, task_id=task_id, message=reason, data=data)
+        return AgentResult(status="failed", agent="developer", task_id=task_id, message=reason, data=data)
 
     def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
         self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error, metadata=metadata or {}))
@@ -304,13 +293,6 @@ EXECUTION REQUIREMENT
 
     @staticmethod
     def _build_tool_message(tool_name: str, result: Any) -> str:
-        """Return bounded tool evidence for the next LLM turn.
-
-        Full tool output is deliberately kept in ToolExecutionHistory and in
-        task-level result data. Only this bounded representation is fed back
-        into the model context, preventing large file/command outputs from
-        dominating subsequent prompts.
-        """
         return reduce_tool_result(tool_name, result).content
 
     @staticmethod
