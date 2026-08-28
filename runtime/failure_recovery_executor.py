@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from runtime.failure_recovery_policy import RecoveryAction, RecoveryDecision
 from runtime.task_manager import TaskManager
@@ -38,10 +37,9 @@ class FailureRecoveryExecutor:
             raise TypeError("decision must be a RecoveryDecision")
 
         if decision.action is RecoveryAction.RETRY:
-            task = self.task_manager.get_task(task_id)
             self.task_manager.retry_task(
                 task_id,
-                reason=decision.reason,
+                reason=decision.failure_reason or decision.reason,
                 retryable=True,
             )
             return None
