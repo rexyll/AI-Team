@@ -28,8 +28,8 @@
 ✓ 12.3 Tool-loop Failure Recovery
 ✓ 12.4 Reviewer Reliability Boundary
 ✓ 12.5 Developer Reliability Acceptance Matrix
-▶ 13.1 1k-task dependency graph
-□ 13.2 5k-task scalability
+✓ 13.1 1k-task dependency graph
+▶ 13.2 5k-task scalability
 □ 13.3 Incremental projection
 □ 13.4 Persistent indexes
 □ 13.5 Resource governance
@@ -62,19 +62,21 @@ Task checkpoint 保留 retry attempt、budget、history、status 和 error；res
 
 # Phase 13 — Large Project Execution
 
-## `▶ 13.1` 1k-task dependency graph
+## `✓ 13.1` 1k-task dependency graph
+已完成 1,000 task DAG contract：验证 dependency-first topological order、execution layers、parallel branch 聚合、unknown dependency / cycle rejection，以及 graph construction 对源 task definitions 的隔离。用户已确认专项与全量测试通过（1,328 passed）。
 
-目标：验证当前 dependency graph / scheduler 在 1,000 task 规模下仍保持正确、确定性和可接受的构建、拓扑排序、execution-layer 计算成本。
+## `▶ 13.2` 5k-task scalability
+
+目标：验证当前 dependency graph / scheduler 从 1,000 task 扩展到 5,000 task 后，仍保持正确性、确定性和可接受的计算成本，并为后续 incremental projection / persistent index 提供基线。
 
 验收重点：
-- 1,000 task DAG 正确完成 topological sort；
-- execution layers 保持 dependency ordering；
-- parallel branches 正确聚合；
-- unknown dependency / cycle 仍然拒绝；
-- 不修改 Task lifecycle state；
-- 为后续 5k scalability benchmark 建立固定 contract corpus。
+- 5,000 task chain 正确完成拓扑排序；
+- 5,000 task layered DAG 正确计算 execution layers；
+- scheduler 在 5,000 task ready/dependency set 下无 duplicate / missing task；
+- graph / scheduler 查询保持 read-only；
+- 不引入 O(N²) 级别的明显退化；
+- 记录本地 benchmark 时间，作为后续 13.6 large-project benchmark 的基线。
 
-## `□ 13.2` 5k-task scalability
 ## `□ 13.3` Incremental projection
 ## `□ 13.4` Persistent indexes
 ## `□ 13.5` Resource governance
