@@ -328,6 +328,60 @@ class TaskManager:
             task.error = None
             return task
 
+    def replace_task_graph(self, tasks: list[Task] | tuple[Task, ...]) -> None:
+        """Atomically replace the live task graph at the TaskManager boundary.
+
+        The caller must first materialize and validate the replacement. This
+        method performs the final owner-level checks again while holding the
+        lifecycle lock, so a graph cannot become active between acceptance and
+        replacement. The live mapping is swapped only after every invariant
+        has passed, leaving the existing graph untouched on rejection.
+        """
+        if not isinstance(tasks, (list, tuple)):
+            raise TypeError("tasks must be a list or tuple")
+        replacement = list(tasks)
+        if not all(isinstance(task, Task) for task in replacement):
+            raise TypeError("all replacement tasks must be Task instances")
+
+        with self._lock:
+            active_tasks = [
+                task.id
+                for task in self.tasks.values()
+                if task.status
+                in {
+                    TaskStatus.READY.value,
+                    TaskStatus.RUNNING.value,
+                    TaskStatus.REVIEW_PENDING.value,
+                    TaskStatus.REVIEWING.value,
+                    TaskStatus.REVISION.value,
+                }
+            ]
+            if active_tasks:
+                raise RuntimeError(
+                    "Cannot replace task graph while tasks are active: "
+                    + ", ".join(active_tasks)
+                )
+
+            replacement_by_id: dict[str, Task] = {}
+            for task in replacement:
+                if task.id in replacement_by_id:
+                    raise ValueError(f"Duplicate task id: {task.id}")
+                replacement_by_id[task.id] = task
+
+            missing_completed = [
+                task.id
+                for task in self.tasks.values()
+                if task.status == TaskStatus.COMPLETED.value
+                and task.id not in replacement_by_id
+            ]
+            if missing_completed:
+                raise ValueError(
+                    "Replacement cannot discard completed task history: "
+                    + ", ".join(missing_completed)
+                )
+
+            self.tasks = replacement_by_id
+
     # ------------------------------------------------------------------
     # Backward-compatible lifecycle APIs
     # ------------------------------------------------------------------
