@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 from runtime.tool_loop_batch import SAFE_BATCH_TOOLS
 
@@ -12,20 +12,19 @@ class SafeToolBatchDecision:
     reason: str
 
 
-def classify_safe_tool_batch(tool_calls: list[dict[str, Any]]) -> SafeToolBatchDecision:
-    """Conservatively classify a candidate batch for Developer execution.
+def classify_safe_tool_batch(tool_calls: Iterable[dict[str, Any]]) -> SafeToolBatchDecision:
+    """Compatibility facade over the canonical safe-batch policy.
 
-    The repository already defines the public safe-batch allowlist in
-    ``runtime.tool_loop_batch``. This adapter adds the execution-layer rule
-    that exact duplicate read-only calls are not a batch: they belong to the
-    existing cache/deduplication path. All other read-only calls remain
-    eligible and are never reordered here.
+    ``runtime.tool_loop_batch`` owns the public allowlist. This adapter keeps
+    the execution-layer API while adding only the duplicate-call rule so
+    duplicate reads remain handled by the existing cache/dedup path.
     """
-    if len(tool_calls) < 2:
+    items = list(tool_calls)
+    if len(items) < 2:
         return SafeToolBatchDecision(False, "batch requires at least two tool calls")
 
     identities: set[tuple[str, str]] = set()
-    for index, call in enumerate(tool_calls):
+    for index, call in enumerate(items):
         if not isinstance(call, dict):
             return SafeToolBatchDecision(False, f"call {index} is not a mapping")
         name = call.get("name")
