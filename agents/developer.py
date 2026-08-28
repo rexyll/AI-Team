@@ -16,6 +16,8 @@ from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHE
 from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
 from runtime.tool_loop_decision_turn import classify_decision_turn
 from runtime.tool_result_evidence import reduce_tool_result
+from runtime.safe_tool_batch import classify_safe_tool_batch
+from runtime.safe_tool_batch_executor import execute_safe_tool_batch
 from security.tool_guard import validate_tool_arguments
 from runtime.agent_result import AgentResult
 
@@ -165,6 +167,43 @@ EXECUTION REQUIREMENT
                 data["tool_loop_verification"] = {"reused": verification_reused_count}
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": call.call_id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in response.tool_calls]})
+
+            batched_results: dict[str, Any] = {}
+            batch_candidates: list[dict[str, Any]] = []
+            batch_possible = len(response.tool_calls) > 1
+            if batch_possible:
+                try:
+                    for call in response.tool_calls:
+                        parsed = json.loads(call.arguments)
+                        if not isinstance(parsed, dict):
+                            batch_possible = False
+                            break
+                        tool_function = TOOL_REGISTRY.get(call.name)
+                        tool_schema = TOOL_REGISTRY.schema(call.name)
+                        validated, ignored = validate_tool_arguments(tool_function, parsed, schema=tool_schema)
+                        if ignored:
+                            batch_possible = False
+                            break
+                        if call.name not in CACHEABLE_TOOLS:
+                            batch_possible = False
+                            break
+                        if cache.lookup(call.name, validated) is not None:
+                            batch_possible = False
+                            break
+                        batch_candidates.append({"call_id": call.call_id, "name": call.name, "arguments": dict(validated)})
+                    if batch_possible:
+                        decision = classify_safe_tool_batch(batch_candidates)
+                        if decision.safe:
+                            _, results = execute_safe_tool_batch(
+                                [{"name": item["name"], "arguments": item["arguments"]} for item in batch_candidates],
+                                lambda name, arguments: TOOL_REGISTRY.get(name)(**arguments),
+                            )
+                            batched_results = {item["call_id"]: result for item, result in zip(batch_candidates, results)}
+                except Exception:
+                    # Fall back to the existing serial path; a safe batch is an
+                    # optimization and must never change error semantics.
+                    batched_results = {}
+
             for tool_call in response.tool_calls:
                 tool_name = tool_call.name
                 started_at = datetime.now(timezone.utc).isoformat()
@@ -228,6 +267,11 @@ EXECUTION REQUIREMENT
                             result = cached.result
                             context_result = cached.context_evidence()
                             print("[Cache] exact read-only tool result reused")
+                        elif tool_call.call_id in batched_results:
+                            result = batched_results[tool_call.call_id]
+                            context_result = result
+                            cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
+                            print("[Safe Batch] independent read-only tool result executed concurrently")
                         else:
                             result = tool_function(**validated_arguments)
                             context_result = result
