@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,13 +34,7 @@ def classify_tool_result_for_decision(
     command_results: list[dict[str, Any]],
     verification_reused: bool = False,
 ) -> ToolLoopDecision:
-    """Classify whether a tool result warrants another LLM reasoning turn.
-
-    This is deliberately a policy-only layer. It never executes tools and never
-    declares a task successful by itself. Terminal completion remains subject to
-    the conservative verification fast-path below; failures and recovery signals
-    always retain an LLM decision opportunity.
-    """
+    """Classify whether a tool result warrants another LLM reasoning turn."""
     if status != "completed":
         return ToolLoopDecision(True, "tool_failure_requires_recovery")
     if retry_of is not None:
@@ -73,11 +68,9 @@ def should_take_terminal_verification_fast_path(
 ) -> bool:
     """Return whether a verification call is sufficient to finish a tool loop.
 
-    This policy is deliberately conservative. It only applies to a successful,
-    explicitly recognized full-suite verification command that actually ran
-    after at least one workspace change. Reused evidence is never terminal:
-    reusing an earlier result suppresses execution but does not create new
-    verification evidence for the current decision turn.
+    The policy is deliberately conservative: only a recognized full-suite
+    command that actually ran after a workspace change can terminate the loop.
+    Reused evidence never becomes fresh terminal evidence.
     """
     if tool_name != "run_command" or status != "completed" or verification_reused:
         return False
@@ -87,9 +80,7 @@ def should_take_terminal_verification_fast_path(
     normalized = command.strip().lower()
     if normalized not in TERMINAL_VERIFICATION_COMMANDS:
         return False
-    if not changed_files:
-        return False
-    if not _verification_succeeded(str(result)):
+    if not changed_files or not _verification_succeeded(str(result)):
         return False
     if not command_results:
         return False
@@ -100,17 +91,21 @@ def should_take_terminal_verification_fast_path(
 
 
 def _verification_succeeded(result: str) -> bool:
+    """Recognize positive test evidence without rejecting zero-failure summaries."""
     normalized = result.strip().lower()
     if not normalized:
         return False
-    failure_markers = (
-        "failed",
-        "failure",
-        "error",
-        "traceback",
-        "no tests ran",
-        "assertionerror",
-    )
-    if any(marker in normalized for marker in failure_markers):
+    if any(marker in normalized for marker in ("traceback", "assertionerror", "no tests ran")):
         return False
-    return any(marker in normalized for marker in ("passed", "pass", "success", "ok"))
+
+    # Test runners commonly report both positive and zero failure counts, e.g.
+    # ``1100 passed, 0 failed``. Only a positive failure/error count is fatal.
+    for pattern in (r"\b(\d+)\s+failed\b", r"\b(\d+)\s+failure(?:s)?\b", r"\b(\d+)\s+error(?:s)?\b"):
+        if any(int(count) > 0 for count in re.findall(pattern, normalized)):
+            return False
+
+    return bool(
+        re.search(r"\b\d+\s+passed\b", normalized)
+        or re.search(r"\b\d+\s+success(?:es|ful)?\b", normalized)
+        or re.search(r"\bok\b", normalized)
+    )
