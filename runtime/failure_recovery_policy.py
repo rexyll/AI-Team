@@ -17,6 +17,7 @@ class RecoveryAction(str, Enum):
 class RecoveryDecision:
     action: RecoveryAction
     reason: str
+    failure_reason: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {"action": self.action.value, "reason": self.reason}
@@ -35,15 +36,29 @@ def decide_recovery(
         raise ValueError("retry_attempt cannot exceed max_retries")
 
     if classification.replan_required:
-        return RecoveryDecision(RecoveryAction.REPLAN, "failure requires specification re-planning")
+        reason = "failure requires specification re-planning"
+    elif classification.retryable and retry_attempt < max_retries:
+        reason = "retry budget remains"
+    elif classification.repairable:
+        reason = "failure is repairable"
+    elif classification.retryable:
+        reason = "retry budget is exhausted"
+    else:
+        reason = "no supported recovery action"
 
-    if classification.retryable and retry_attempt < max_retries:
-        return RecoveryDecision(RecoveryAction.RETRY, "retry budget remains")
+    if classification.replan_required:
+        action = RecoveryAction.REPLAN
+    elif classification.retryable and retry_attempt < max_retries:
+        action = RecoveryAction.RETRY
+    elif classification.repairable:
+        action = RecoveryAction.REPAIR
+    elif classification.retryable:
+        action = RecoveryAction.BLOCK
+    else:
+        action = RecoveryAction.BLOCK
 
-    if classification.repairable:
-        return RecoveryDecision(RecoveryAction.REPAIR, "failure is repairable")
-
-    if classification.retryable:
-        return RecoveryDecision(RecoveryAction.BLOCK, "retry budget is exhausted")
-
-    return RecoveryDecision(RecoveryAction.BLOCK, "no supported recovery action")
+    return RecoveryDecision(
+        action=action,
+        reason=reason,
+        failure_reason=classification.reason,
+    )
