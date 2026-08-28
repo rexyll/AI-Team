@@ -29,8 +29,8 @@
 ✓ 12.4 Reviewer Reliability Boundary
 ✓ 12.5 Developer Reliability Acceptance Matrix
 ✓ 13.1 1k-task dependency graph
-▶ 13.2 5k-task scalability
-□ 13.3 Incremental projection
+✓ 13.2 5k-task scalability
+▶ 13.3 Incremental projection
 □ 13.4 Persistent indexes
 □ 13.5 Resource governance
 □ 13.6 Large-project benchmark
@@ -65,19 +65,20 @@ Task checkpoint 保留 retry attempt、budget、history、status 和 error；res
 ## `✓ 13.1` 1k-task dependency graph
 已完成 1,000 task DAG contract：验证 dependency-first topological order、execution layers、parallel branch 聚合、unknown dependency / cycle rejection，以及 graph construction 对源 task definitions 的隔离。用户已确认专项与全量测试通过（1,328 passed）。
 
-## `▶ 13.2` 5k-task scalability
+## `✓ 13.2` 5k-task scalability
+已完成 5,000 task graph / scheduler scalability contract：验证 5k chain、layered dependency graph、ready-set correctness、确定性和 read-only 边界。专项与全量测试已通过。
 
-目标：验证当前 dependency graph / scheduler 从 1,000 task 扩展到 5,000 task 后，仍保持正确性、确定性和可接受的计算成本，并为后续 incremental projection / persistent index 提供基线。
+## `▶ 13.3` Incremental projection
+目标：允许大图只投影目标 task 及其传递依赖，避免每次查询扫描整个 dependency graph，并保持 projection 独立、dependency-closed、cycle-safe。
 
 验收重点：
-- 5,000 task chain 正确完成拓扑排序；
-- 5,000 task layered DAG 正确计算 execution layers；
-- scheduler 在 5,000 task ready/dependency set 下无 duplicate / missing task；
-- graph / scheduler 查询保持 read-only；
-- 不引入 O(N²) 级别的明显退化；
-- 记录本地 benchmark 时间，作为后续 13.6 large-project benchmark 的基线。
+- selected task 的传递依赖完整保留；
+- unknown selected task 明确拒绝；
+- projection 不修改 source graph；
+- empty selection 返回空 graph；
+- projection traversal 成本与 reachable subgraph 规模相关，而非完整 graph 规模；
+- cycle / malformed dependency 不被静默吞掉。
 
-## `□ 13.3` Incremental projection
 ## `□ 13.4` Persistent indexes
 ## `□ 13.5` Resource governance
 ## `□ 13.6` Large-project benchmark
