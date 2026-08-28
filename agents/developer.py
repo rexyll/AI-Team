@@ -311,7 +311,7 @@ EXECUTION REQUIREMENT
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
-                    self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
+                    self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
                     return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count, decision_traces)
                 self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                 if tool_name == "run_command":
@@ -337,8 +337,8 @@ EXECUTION REQUIREMENT
         cache_hits = max(0, cache.hits - cache_hits_before)
         verification_reuses = max(0, verification_reused_count - verification_reuses_before)
         logical_cost = max(0, tool_call_count - cache_hits - verification_reuses)
-        budget_state = decision_budget.state
         decision_budget.record(logical_cost=logical_cost)
+        budget_state = decision_budget.state
         evidence_sources = []
         for item in loop_telemetry[-tool_call_count:]:
             tool_name = item.get("tool_name")
