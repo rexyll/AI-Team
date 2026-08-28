@@ -40,7 +40,7 @@ class ToolLoopDecisionBudgetState:
 
 
 class ToolLoopDecisionBudget:
-    """Track decision turns as a soft budget, never as a correctness gate."""
+    """Track decision turns and logical exploration cost."""
 
     def __init__(self, config: ToolLoopDecisionBudgetConfig | None = None) -> None:
         self.config = config or ToolLoopDecisionBudgetConfig()
@@ -50,6 +50,10 @@ class ToolLoopDecisionBudget:
     @property
     def decisions(self) -> int:
         return self._decisions
+
+    @property
+    def logical_cost(self) -> int:
+        return self._logical_cost
 
     @property
     def state(self) -> ToolLoopDecisionBudgetState:
@@ -70,10 +74,10 @@ class ToolLoopDecisionBudget:
         return self._decisions > 0 and self._decisions % self.config.checkpoint_interval == 0
 
     def should_prioritize_evidence_reuse(self) -> bool:
-        return self._decisions >= self.config.soft_limit
+        return self._logical_cost >= self.config.soft_limit
 
     def should_converge(self, *, correctness_risk: bool = False) -> bool:
-        return self._decisions >= self.config.soft_limit and not correctness_risk
+        return self._logical_cost >= self.config.soft_limit and not correctness_risk
 
     def override_for_correctness(self) -> ToolLoopDecisionBudgetState:
         return ToolLoopDecisionBudgetState(
@@ -89,8 +93,17 @@ def decision_logical_cost(
     tool_calls: int = 0,
     cache_hits: int = 0,
     verification_calls: int = 0,
+    batched_calls: int = 0,
 ) -> int:
-    """Return exploration cost without charging cache hits or verification."""
-    if min(tool_calls, cache_hits, verification_calls) < 0:
+    """Calculate logical exploration cost rather than physical executions.
+
+    ``batched_calls`` documents how many logical observations were grouped;
+    batching itself does not discount their evidence cost. Cache hits and
+    verification reuse are excluded because they do not require new
+    exploratory evidence.
+    """
+    if min(tool_calls, cache_hits, verification_calls, batched_calls) < 0:
         raise ValueError("decision cost components must be non-negative")
+    if batched_calls > tool_calls:
+        raise ValueError("batched_calls cannot exceed tool_calls")
     return max(0, tool_calls - cache_hits - verification_calls)
