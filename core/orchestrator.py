@@ -48,15 +48,19 @@ class Orchestrator:
     def __init__(self, task_manager: TaskManager, agent_router: AgentRouter, max_workers: int = 4,
                  failure_classifier: Callable[[BaseException], FailureKind] | None = None,
                  workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None,
-                 replan_planner: Callable[[str], dict[str, Any]] | None = None):
+                 replan_planner: Callable[[str], dict[str, Any]] | None = None,
+                 recovery_classifier: Callable[[BaseException], FailureClass] | None = None):
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
+        if recovery_classifier is not None and not callable(recovery_classifier):
+            raise TypeError("recovery_classifier must be callable or None")
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
         self.failure_classifier = failure_classifier or self._default_failure_classifier
+        self.recovery_classifier = recovery_classifier
         self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
         self._replan_coordinator = (
             RecoveryReplanCoordinator(task_manager, replan_planner)
@@ -121,6 +125,17 @@ class Orchestrator:
         }:
             return FailureClass.TRANSIENT
         return FailureClass.UNKNOWN
+
+    def _classify_recovery_failure(self, error: BaseException) -> FailureClass:
+        if self.recovery_classifier is not None:
+            failure_class = self.recovery_classifier(error)
+            if not isinstance(failure_class, FailureClass):
+                raise TypeError("recovery_classifier must return FailureClass")
+            return failure_class
+        failure_kind = self.failure_classifier(error)
+        if not isinstance(failure_kind, FailureKind):
+            raise TypeError("failure_classifier must return FailureKind")
+        return self._failure_class_for_kind(failure_kind)
 
     def run(self) -> None:
         print("\n" + "=" * 60)
@@ -226,13 +241,10 @@ class Orchestrator:
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
         if task.status != "failed":
             return False
-        failure_kind = self.failure_classifier(error)
-        if not isinstance(failure_kind, FailureKind):
-            raise TypeError("failure_classifier must return FailureKind")
-
+        failure_class = self._classify_recovery_failure(error)
         reason = f"{type(error).__name__}: {error}"
         classification = classify_failure(
-            failure_class=self._failure_class_for_kind(failure_kind),
+            failure_class=failure_class,
             reason=reason,
         )
         decision = decide_recovery(
@@ -261,8 +273,9 @@ class Orchestrator:
             requirement = f"{task.description}\n\nRecovery reason: {reason}"
             outcome = self._replan_coordinator.prepare(intent, requirement)
             self._replan_coordinator.commit(outcome)
-            self._emit_event("task_replanned", task, payload={
-                "status": task.status,
+            live_task = self.task_manager.get_task(task.id)
+            self._emit_event("task_replanned", live_task, payload={
+                "status": live_task.status,
                 "attempt": outcome.result.attempt,
                 "task_count": len(outcome.replacement.tasks),
             })
