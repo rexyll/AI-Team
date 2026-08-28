@@ -7,8 +7,9 @@ from core.workflow_factory import create_task_workflow
 from runtime.context_builder import build_task_context
 from runtime.dependency_scheduler import DependencyScheduler
 from runtime.failure_classification import FailureClass, classify_failure
-from runtime.failure_recovery_executor import FailureRecoveryExecutor
+from runtime.failure_recovery_executor import FailureRecoveryExecutor, RecoveryIntent
 from runtime.failure_recovery_policy import RecoveryAction, decide_recovery
+from runtime.recovery_replan_coordinator import RecoveryReplanCoordinator
 from runtime.retry_policy import FailureKind
 from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
@@ -46,7 +47,8 @@ class Orchestrator:
 
     def __init__(self, task_manager: TaskManager, agent_router: AgentRouter, max_workers: int = 4,
                  failure_classifier: Callable[[BaseException], FailureKind] | None = None,
-                 workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None):
+                 workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None,
+                 replan_planner: Callable[[str], dict[str, Any]] | None = None):
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
@@ -56,6 +58,10 @@ class Orchestrator:
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
         self.failure_classifier = failure_classifier or self._default_failure_classifier
         self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
+        self._replan_coordinator = (
+            RecoveryReplanCoordinator(task_manager, replan_planner)
+            if replan_planner is not None else None
+        )
         self._state_change_hook: Callable[[TaskManager], None] | None = None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None
@@ -234,14 +240,34 @@ class Orchestrator:
             retry_attempt=task.retry_attempt,
             max_retries=task.max_retries,
         )
-        if decision.action is not RecoveryAction.RETRY:
-            return False
-        self.failure_recovery_executor.execute(task.id, decision)
-        self._emit_event("task_retrying", task, payload={
-            "status": task.status, "retry_attempt": task.retry_attempt,
-            "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason,
-        })
-        return True
+        if decision.action is RecoveryAction.RETRY:
+            self.failure_recovery_executor.execute(task.id, decision)
+            self._emit_event("task_retrying", task, payload={
+                "status": task.status, "retry_attempt": task.retry_attempt,
+                "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason,
+            })
+            return True
+        if decision.action is RecoveryAction.REPLAN:
+            if self._replan_coordinator is None:
+                return False
+            intent = RecoveryIntent(
+                action=decision.action,
+                task_id=task.id,
+                failure_class=decision.failure_class,
+                failure_reason=decision.failure_reason or reason,
+                decision_reason=decision.reason,
+                attempt=decision.retry_attempt,
+            )
+            requirement = f"{task.description}\n\nRecovery reason: {reason}"
+            outcome = self._replan_coordinator.prepare(intent, requirement)
+            self._replan_coordinator.commit(outcome)
+            self._emit_event("task_replanned", task, payload={
+                "status": task.status,
+                "attempt": outcome.result.attempt,
+                "task_count": len(outcome.replacement.tasks),
+            })
+            return True
+        return False
 
     def _handle_no_ready_tasks(self) -> None:
         print("\n[ERROR] 没有可以执行的任务。\n")
