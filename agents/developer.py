@@ -15,6 +15,7 @@ from runtime.tool_loop_progress_guard import ToolLoopProgressGuard
 from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint, DEFAULT_CHECKPOINT_INTERVAL, upsert_tool_loop_checkpoint
 from runtime.tool_loop_verification import should_suppress_verification, record_verification_evidence
 from runtime.tool_loop_decision_turn import classify_decision_turn
+from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
 from runtime.tool_result_evidence import reduce_tool_result
 from runtime.safe_tool_batch import classify_safe_tool_batch
 from runtime.safe_tool_batch_executor import execute_safe_tool_batch
@@ -154,6 +155,7 @@ EXECUTION REQUIREMENT
         prior_signatures: list[tuple[str, str, str, str]] = []
         cache = ToolResultCache()
         progress_guard = ToolLoopProgressGuard()
+        decision_budget = ToolLoopDecisionBudget()
         verification_reused_count = 0
         workspace_revision = 0
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -165,8 +167,12 @@ EXECUTION REQUIREMENT
                 data = self._build_result_data(content=content, changed_files=changed_files, command_results=command_results, tool_calls=tool_calls, loop_telemetry=loop_telemetry)
                 data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
                 data["tool_loop_verification"] = {"reused": verification_reused_count}
+                data["tool_loop_decision_budget"] = {"decisions": decision_budget.decisions, "logical_cost": decision_budget.state.logical_cost, "soft_limit": decision_budget.state.soft_limit, "approaching_limit": decision_budget.state.approaching_limit}
                 return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
             messages.append({"role": "assistant", "content": response.content, "tool_calls": [{"id": call.call_id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}} for call in response.tool_calls]})
+            budget_state = decision_budget.record(logical_cost=len(response.tool_calls))
+            if budget_state.approaching_limit:
+                messages.append({"role": "user", "content": "Decision budget is approaching its soft limit. 优先复用仍然有效的已有证据、checkpoint 和 cache，并尽快完成必要的验证与收敛。不要为了预算而跳过 correctness-required 的重新读取、测试或验证；如果证据不足或工作区发生变化，必须继续获取有效证据。"})
 
             batched_results: dict[str, Any] = {}
             batch_candidates: list[dict[str, Any]] = []
@@ -200,8 +206,6 @@ EXECUTION REQUIREMENT
                             )
                             batched_results = {item["call_id"]: result for item, result in zip(batch_candidates, results)}
                 except Exception:
-                    # Fall back to the existing serial path; a safe batch is an
-                    # optimization and must never change error semantics.
                     batched_results = {}
 
             for tool_call in response.tool_calls:
@@ -312,6 +316,7 @@ EXECUTION REQUIREMENT
                         data["tool_loop_cache"] = {"hits": cache.hits, "misses": cache.misses, "invalidations": cache.invalidations}
                         data["tool_loop_verification"] = {"reused": verification_reused_count}
                         data["tool_loop_decision"] = {"reason": decision.decision.reason, "skip_llm_turn": decision.skip_llm_turn, "terminal": decision.terminal}
+                        data["tool_loop_decision_budget"] = {"decisions": decision_budget.decisions, "logical_cost": decision_budget.state.logical_cost, "soft_limit": decision_budget.state.soft_limit, "approaching_limit": decision_budget.state.approaching_limit}
                         return AgentResult(status="completed", agent=self.role, task_id=context.task_id, message=content, data=data)
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
 
