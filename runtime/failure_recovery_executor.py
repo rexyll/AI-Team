@@ -2,23 +2,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from runtime.failure_classification import FailureClass
 from runtime.failure_recovery_policy import RecoveryAction, RecoveryDecision
 from runtime.task_manager import TaskManager
 
 
 @dataclass(frozen=True)
 class RecoveryIntent:
-    """A non-executing recovery intent for actions owned by higher layers."""
+    """A durable hand-off contract for recovery actions owned by higher layers."""
 
     action: RecoveryAction
     task_id: str
-    reason: str
+    failure_class: FailureClass
+    failure_reason: str
+    decision_reason: str
+    attempt: int
 
-    def to_dict(self) -> dict[str, str]:
+    @property
+    def reason(self) -> str:
+        """Backward-compatible alias for the recovery decision rationale."""
+        return self.decision_reason
+
+    def to_dict(self) -> dict[str, object]:
         return {
             "action": self.action.value,
             "task_id": self.task_id,
-            "reason": self.reason,
+            "failure_class": self.failure_class.value,
+            "failure_reason": self.failure_reason,
+            "decision_reason": self.decision_reason,
+            "attempt": self.attempt,
         }
 
 
@@ -44,8 +56,12 @@ class FailureRecoveryExecutor:
             )
             return None
 
+        failure_reason = decision.failure_reason or decision.reason
         return RecoveryIntent(
             action=decision.action,
             task_id=task_id,
-            reason=decision.reason,
+            failure_class=decision.failure_class,
+            failure_reason=failure_reason,
+            decision_reason=decision.reason,
+            attempt=decision.retry_attempt,
         )
