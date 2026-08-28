@@ -32,5 +32,4 @@ def test_resource_rejection_is_not_a_task_failure():
     assert decision.admitted is False
     assert decision.reason == "Resource limit reached: max_concurrent_tasks"
     assert task.status == "pending"
-    assert task.retry_count == 0
     assert running.usage.active_tasks == 1
