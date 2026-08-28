@@ -11,12 +11,19 @@ from runtime.task_manager import TaskManager
 
 def _manager() -> TaskManager:
     manager = TaskManager(
-        tasks=[Task(id="TASK-001", title="demo", description="demo", role="developer")]
+        tasks=[
+            Task(
+                id="TASK-001",
+                title="demo",
+                description="demo",
+                role="developer",
+                max_retries=2,
+            )
+        ]
     )
     manager.mark_ready("TASK-001")
     manager.mark_running("TASK-001")
     manager.mark_failed("TASK-001", "transient failure")
-    manager.configure_retry("TASK-001", max_retries=2)
     return manager
 
 
