@@ -18,9 +18,9 @@ def build_tool_loop_checkpoint(
 
     The checkpoint contains only decision-relevant counters and recent state.
     Full tool output remains in the execution history and is deliberately not
-    copied into the next LLM prompt. The checkpoint also exposes lightweight
-    verification and duplicate-call state so the model can avoid unnecessary
-    repeated tool turns without changing tool execution semantics.
+    copied into the next LLM prompt. The checkpoint also exposes the most recent
+    action and evidence identity so the model can continue from established
+    work instead of re-exploring the same state.
     """
     if not telemetry:
         return None
@@ -46,6 +46,33 @@ def build_tool_loop_checkpoint(
     ]
     if recent_duplicates:
         lines.append("recent_duplicate_tools=" + ", ".join(recent_duplicates))
+
+    # Carry compact action/evidence identities rather than full tool output.
+    # The full result stays in execution history; these fields let the next
+    # decision recognize what was already attempted and what evidence exists.
+    recent_actions = []
+    recent_evidence = []
+    for item in recent:
+        execution_id = str(item.get("execution_id") or "unknown")
+        tool_name = str(item.get("tool_name") or "unknown")
+        arguments_hash = str(item.get("arguments_hash") or "unknown")
+        category = str(item.get("category") or "unknown")
+        recent_actions.append(f"{execution_id}:{tool_name}:{arguments_hash}:{category}")
+
+        result_hash = str(item.get("result_hash") or "unknown")
+        result_chars = int(item.get("result_chars", 0) or 0)
+        retained_chars = int(item.get("retained_result_chars", result_chars) or 0)
+        truncated = bool(item.get("result_truncated"))
+        duplicate_of = item.get("duplicate_of")
+        retry_of = item.get("retry_of")
+        validity = "retry" if retry_of is not None else "duplicate" if duplicate_of is not None else "fresh"
+        recent_evidence.append(
+            f"{execution_id}:hash={result_hash}:chars={result_chars}:retained={retained_chars}:"
+            f"truncated={str(truncated).lower()}:status={validity}"
+        )
+    lines.append("recent_actions=" + " | ".join(recent_actions))
+    lines.append("recent_evidence=" + " | ".join(recent_evidence))
+
     if changed_files:
         unique_changed_files = list(dict.fromkeys(changed_files))
         lines.append("changed_files=" + ", ".join(unique_changed_files[-8:]))
@@ -62,6 +89,7 @@ def build_tool_loop_checkpoint(
     lines.extend(
         [
             "Use this checkpoint to continue from the current state.",
+            "The recent action/evidence identities describe work already performed; reuse valid evidence instead of re-exploring it.",
             "Do not repeat exploration that is already established unless new evidence requires it.",
             "If a verification command already has a recorded result and no relevant file changed afterward, prefer using that evidence instead of rerunning the same verification.",
             "If a tool call is an exact duplicate and its read-only evidence is still valid, do not issue the same call again; choose a new action or conclude the task.",
