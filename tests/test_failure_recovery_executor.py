@@ -10,7 +10,7 @@ from runtime.task_manager import TaskManager
 
 
 def _manager() -> TaskManager:
-    manager = TaskManager()
+    manager = TaskManager(tasks=[])
     manager.add_task(Task(id="TASK-001", title="demo", description="demo", role="developer"))
     manager.mark_ready("TASK-001")
     manager.mark_running("TASK-001")
