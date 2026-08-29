@@ -18,11 +18,11 @@
 - [x] Crash-after-apply / before-ack recovery state
 - [x] Explicit processing recovery / takeover policy
 - [x] Cross-process duplicate reservation regression tests
-- [ ] Connect delivery identity to the real Task result persistence boundary
-- [ ] Add authoritative sink reconciliation contract
-- [ ] Add durable audit / observability for delivery transitions
-- [ ] Complete cross-process crash / retry integration
-- [ ] Full regression verification
+- [x] Connect delivery identity to the real Task result persistence boundary
+- [x] Add authoritative sink reconciliation contract
+- [x] Add durable audit / observability for delivery transitions
+- [x] Complete cross-process crash / retry integration
+- [x] Full regression verification
 
 ## Design rule
 Execution is intentionally **at-least-once**: retries and crash recovery may execute a logical attempt more than once. Result delivery is **idempotent at the durable commit boundary**: repeated delivery of the same stable delivery identity must not mutate task state more than once.
@@ -33,24 +33,27 @@ A generic Python callback cannot by itself provide globally exactly-once effects
 
 # Phase 15 — Security Hardening
 
-`□ 15.1` Package / dependency policy
-`□ 15.2` Network egress policy
-`□ 15.3` Secret isolation
-`□ 15.4` Prompt injection resistance
-`□ 15.5` Security regression suite
+`[x] 15.1` Package / dependency policy
+`[ ] 15.2` Network egress policy
+`[ ] 15.3` Secret isolation
+`[ ] 15.4` Prompt injection resistance
+`[ ] 15.5` Security regression suite
+
+## 15.1 Dependency policy
+Runtime dependencies must be explicitly declared in `requirements.txt`, use exact `==` version pins, and be declared only once. The policy is enforced by `security.dependency_policy` and its regression tests.
 
 # Phase 16 — Observability / Operations
 
-`□ 16.1` Structured logging
-`□ 16.2` Metrics
-`□ 16.3` Tracing
-`□ 16.4` Operational dashboard
-`□ 16.5` Alerting
+`[ ] 16.1` Structured logging
+`[ ] 16.2` Metrics
+`[ ] 16.3` Tracing
+`[ ] 16.4` Operational dashboard
+`[ ] 16.5` Alerting
 
 # Phase 17 — Developer Experience
 
-`□ 17.1` CLI
-`□ 17.2` Configuration
-`□ 17.3` Plugin API
-`□ 17.4` Documentation
-`□ 17.5` Example projects
+`[ ] 17.1` CLI
+`[ ] 17.2` Configuration
+`[ ] 17.3` Plugin API
+`[ ] 17.4` Documentation
+`[ ] 17.5` Example projects
