@@ -199,3 +199,38 @@ def test_tool_exception_is_classified_and_audited() -> None:
     assert result.error.category == "runtime"
     assert service.audit.records()[0].error == result.error.to_dict()
     assert calls == [{"path": "src/app.py"}]
+
+
+def test_invoke_many_preserves_execution_ids_and_uses_one_boundary() -> None:
+    calls: list[dict[str, Any]] = []
+    service = ToolInvocationService(registry=_registry(calls))
+
+    results = service.invoke_many(
+        role="developer",
+        task_id="TASK-001",
+        invocations=[
+            {"execution_id": "EXEC-007", "tool_name": "read_file", "arguments": {"path": "a.py"}},
+            {"execution_id": "EXEC-008", "tool_name": "read_file", "arguments": {"path": "b.py"}},
+        ],
+    )
+
+    assert [result.output for result in results] == ["content:a.py", "content:b.py"]
+    assert calls == [{"path": "a.py"}, {"path": "b.py"}]
+    assert [record.execution_id for record in service.audit.records()] == ["EXEC-007", "EXEC-008"]
+
+
+def test_invoke_many_rejects_malformed_invocation_before_partial_execution() -> None:
+    calls: list[dict[str, Any]] = []
+    service = ToolInvocationService(registry=_registry(calls))
+
+    with pytest.raises(ValueError, match="missing required fields"):
+        service.invoke_many(
+            role="developer",
+            task_id="TASK-001",
+            invocations=[
+                {"execution_id": "EXEC-009", "tool_name": "read_file", "arguments": {"path": "a.py"}},
+                {"execution_id": "EXEC-010", "arguments": {"path": "b.py"}},
+            ],
+        )
+
+    assert calls == [{"path": "a.py"}]
