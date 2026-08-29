@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from runtime.delivery_audit import DurableDeliveryAuditStore
 from runtime.delivery_store import DeliveryDecision, DurableDeliveryStore
 
 
@@ -36,27 +37,30 @@ class ReconciliationRequired(RuntimeError):
 
 
 class AuthoritativeDeliveryReconciler:
-    """Translate authoritative sink observations into delivery-store actions.
+    """Translate authoritative sink observations into delivery-store actions."""
 
-    The mapping is intentionally strict:
-
-    * APPLIED -> commit the existing processing marker without replaying it.
-    * NOT_APPLIED -> release the marker so the delivery can be retried.
-    * UNKNOWN -> leave the marker processing and require a later reconciliation.
-
-    No callback is replayed by this coordinator. The authoritative sink is the
-    only component allowed to establish whether the external mutation happened.
-    """
-
-    def __init__(self, store: DurableDeliveryStore, sink: AuthoritativeSink) -> None:
+    def __init__(
+        self,
+        store: DurableDeliveryStore,
+        sink: AuthoritativeSink,
+        *,
+        audit_store: DurableDeliveryAuditStore | None = None,
+    ) -> None:
         self.store = store
         self.sink = sink
+        self.audit_store = audit_store
 
     def reconcile(self, key: str) -> DeliveryDecision:
         observation = self.sink.reconcile(key)
         if not isinstance(observation, SinkReconciliation):
             raise TypeError("sink.reconcile() must return SinkReconciliation")
         if observation.delivery_key != key:
+            if self.audit_store is not None:
+                self.audit_store.record(
+                    key,
+                    "reconciliation_rejected",
+                    metadata={"reason": "delivery_key_mismatch", "observed_key": observation.delivery_key},
+                )
             raise ValueError("sink reconciliation delivery key mismatch")
 
         if observation.state == SinkMutationState.APPLIED:
@@ -64,6 +68,12 @@ class AuthoritativeDeliveryReconciler:
         if observation.state == SinkMutationState.NOT_APPLIED:
             return self.store.recover_processing(key, "retry")
         if observation.state == SinkMutationState.UNKNOWN:
+            if self.audit_store is not None:
+                self.audit_store.record(
+                    key,
+                    "reconciliation_required",
+                    metadata={"state": observation.state.value},
+                )
             raise ReconciliationRequired(
                 f"Delivery {key} remains ambiguous; authoritative sink state is unknown"
             )
