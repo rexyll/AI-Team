@@ -205,8 +205,8 @@ EXECUTION REQUIREMENT
                         decision = classify_safe_tool_batch(batch_candidates)
                         if decision.safe:
                             _, results = execute_safe_tool_batch(
-                                [{"name": item["name"], "arguments": item["arguments"]} for item in batch_candidates],
-                                lambda name, arguments: invocation.invoke(tool_name=name, execution_id=f"batch:{name}:{len(batched_results)}", task_id=context.task_id, arguments=arguments).output,
+                                [{"name": item["name"], "arguments": item["arguments"], "execution_id": item["call_id"]} for item in batch_candidates],
+                                lambda name, arguments, execution_id: invocation.invoke(tool_name=name, execution_id=execution_id, task_id=context.task_id, arguments=arguments).output,
                             )
                             batched_results = {item["call_id"]: result for item, result in zip(batch_candidates, results)}
                 except Exception:
