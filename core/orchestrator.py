@@ -10,6 +10,8 @@ from runtime.failure_classification import FailureClass, classify_failure
 from runtime.failure_recovery_executor import FailureRecoveryExecutor, RecoveryIntent
 from runtime.failure_recovery_policy import RecoveryAction, decide_recovery
 from runtime.recovery_replan_coordinator import RecoveryReplanCoordinator
+from runtime.resource_execution import ResourceExecutionCoordinator
+from runtime.resource_governor import ResourceGovernor, ResourceLimits
 from runtime.retry_policy import FailureKind
 from runtime.task_executor import TaskLayerExecutor
 from runtime.task_manager import TaskManager
@@ -49,19 +51,27 @@ class Orchestrator:
                  failure_classifier: Callable[[BaseException], FailureKind] | None = None,
                  workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None,
                  replan_planner: Callable[[str], dict[str, Any]] | None = None,
-                 recovery_classifier: Callable[[BaseException], FailureClass] | None = None):
+                 recovery_classifier: Callable[[BaseException], FailureClass] | None = None,
+                 resource_governor: ResourceGovernor | None = None):
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
         if recovery_classifier is not None and not callable(recovery_classifier):
             raise TypeError("recovery_classifier must be callable or None")
+        if resource_governor is not None and not isinstance(resource_governor, ResourceGovernor):
+            raise TypeError("resource_governor must be a ResourceGovernor or None")
         self.task_manager = task_manager
         self.agent_router = agent_router
         self.task_executor = TaskLayerExecutor(max_workers=max_workers)
         self.failure_classifier = failure_classifier or self._default_failure_classifier
         self.recovery_classifier = recovery_classifier
         self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
+        self._resource_execution = ResourceExecutionCoordinator(
+            resource_governor
+            if resource_governor is not None
+            else ResourceGovernor(ResourceLimits(max_concurrent_tasks=max_workers))
+        )
         self._replan_coordinator = (
             RecoveryReplanCoordinator(task_manager, replan_planner)
             if replan_planner is not None else None
@@ -70,6 +80,10 @@ class Orchestrator:
         self._workflow_event_log = workflow_event_log
         self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None
         self._project_id = project_id
+
+    @property
+    def resource_governor(self) -> ResourceGovernor:
+        return self._resource_execution.governor
 
     def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
         if hook is not None and not callable(hook):
@@ -146,8 +160,12 @@ class Orchestrator:
             if not ready_tasks:
                 self._handle_no_ready_tasks()
                 break
-            self._persist_state_checkpoint()
-            self.task_executor.run_layer(ready_tasks, self._execute_task)
+            try:
+                self._persist_state_checkpoint()
+                self.task_executor.run_layer(ready_tasks, self._execute_task)
+            finally:
+                for task in ready_tasks:
+                    self._resource_execution.finish(task.id)
         print("\n" + "=" * 60)
         print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED")
         print("=" * 60)
@@ -166,11 +184,16 @@ class Orchestrator:
             if task.status == "pending":
                 self.task_manager.mark_ready(task.id)
         already_ready = [task for task in self.task_manager.get_all_tasks() if task.status == "ready"]
-        executable, seen = [], set()
+        candidates, seen = [], set()
         for task in [*scheduled_tasks, *already_ready]:
             if task.id not in seen:
-                executable.append(task)
+                candidates.append(task)
                 seen.add(task.id)
+        executable = []
+        for task in candidates:
+            lifecycle = self._resource_execution.admit(task)
+            if lifecycle is not None:
+                executable.append(task)
         return executable
 
     def _select_developer(self, task) -> object:
@@ -237,6 +260,8 @@ class Orchestrator:
             self._apply_retry_policy(task, exc)
             self._persist_state_checkpoint()
             print(f"[Failed] {task.id}: {exc}")
+        finally:
+            self._resource_execution.finish(task.id)
 
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
         if task.status != "failed":
