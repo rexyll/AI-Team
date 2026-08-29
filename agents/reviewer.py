@@ -8,6 +8,7 @@ from agents.base import BaseAgent
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
+from runtime.provenance import agent_feedback_provenance
 from runtime.task import Task
 
 SYSTEM_PROMPT = """
@@ -257,6 +258,11 @@ REVISION_REQUIRED
         tester_status = None
         if isinstance(tester_result, dict):
             tester_status = tester_result.get("status")
+        provenance = agent_feedback_provenance(
+            task_id=context.task_id,
+            agent_role="reviewer",
+            evidence_id=f"reviewer:{context.task_id}:round:{context.review_round}",
+        )
         return {
             "summary": content.strip(),
             "decision": decision,
@@ -268,6 +274,7 @@ REVISION_REQUIRED
                 "files_changed_count": len(files_changed),
                 "tester_result_available": bool(tester_result),
             },
+            "provenance": provenance.to_dict(),
             "report": content,
         }
 
