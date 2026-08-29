@@ -106,6 +106,19 @@ class ToolExecutionRecord:
             "metadata": deepcopy(self.metadata),
         }
 
+    def to_context_dict(self) -> dict[str, Any]:
+        """Project persistence evidence into the legacy Task.context contract.
+
+        Provenance is a persistence/audit concern and must not silently change
+        the historical Task.context payload shape. The canonical persisted
+        ToolExecutionRecord remains available through ``to_dict``.
+        """
+        payload = self.to_dict()
+        metadata = payload["metadata"]
+        if isinstance(metadata, dict) and "provenance" in metadata:
+            metadata.pop("provenance", None)
+        return payload
+
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ToolExecutionRecord":
         if not isinstance(payload, dict):
