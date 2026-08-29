@@ -35,13 +35,25 @@ def layered_tasks(task_count: int, fanout: int = 50) -> list[dict]:
         raise ValueError("fanout must be positive")
 
     tasks: list[dict] = [{"id": "TASK-00000", "dependencies": []}]
-    for index in range(1, task_count):
-        anchor = ((index - 1) // fanout) * fanout + 1
-        # The first task of every fanout-sized group is a root-level parallel task.
-        # The remaining tasks in that group depend on its anchor. This produces
-        # deterministic layers without introducing the anchor -> itself cycle.
-        dependency = "TASK-00000" if index == anchor else f"TASK-{anchor:05d}"
-        tasks.append({"id": f"TASK-{index:05d}", "dependencies": [dependency]})
+
+    # Keep the initial fanout fully parallel. This gives the benchmark a stable
+    # high-parallelism root layer while still exercising deeper dependency layers.
+    initial_parallel_end = min(task_count - 1, fanout)
+    for index in range(1, initial_parallel_end + 1):
+        tasks.append({"id": f"TASK-{index:05d}", "dependencies": ["TASK-00000"]})
+
+    # Subsequent groups have one anchor in the layer after the roots and fanout-1
+    # dependents in the following layer. The anchor itself depends only on the
+    # root, so no self-dependency can be generated at group boundaries.
+    for index in range(initial_parallel_end + 1, task_count):
+        group_offset = index - (initial_parallel_end + 1)
+        anchor = initial_parallel_end + 1 + (group_offset // fanout) * fanout
+        if index == anchor:
+            dependencies = ["TASK-00000"]
+        else:
+            dependencies = [f"TASK-{anchor:05d}"]
+        tasks.append({"id": f"TASK-{index:05d}", "dependencies": dependencies})
+
     return tasks
 
 
