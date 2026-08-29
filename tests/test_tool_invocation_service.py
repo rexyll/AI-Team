@@ -5,8 +5,9 @@ from typing import Any
 import pytest
 
 from runtime.tool_invocation_service import ToolInvocationService
+from runtime.tool_errors import ToolExecutionError
 from security.runtime_capability import RuntimeCapabilityPolicy
-from security.tool_permission import READ, ToolPermissionPolicy
+from security.tool_permission import ToolPermissionPolicy
 from tools.registry import ToolRegistry
 
 
@@ -57,7 +58,7 @@ def test_authorized_invocation_executes_and_audits() -> None:
     assert records[0].status == "completed"
 
 
-def test_capability_denial_happens_before_tool_execution() -> None:
+def test_read_capability_is_allowed_for_reviewer() -> None:
     calls: list[dict[str, Any]] = []
     service = ToolInvocationService(registry=_registry(calls))
 
@@ -156,3 +157,45 @@ def test_optional_tool_permission_policy_can_add_second_deny_boundary() -> None:
     assert result.error is not None
     assert result.error.category == "permission"
     assert calls == []
+
+
+def test_tool_exception_is_classified_and_audited() -> None:
+    calls: list[dict[str, Any]] = []
+    registry = ToolRegistry()
+
+    def failing_tool(path: str) -> str:
+        calls.append({"path": path})
+        raise ToolExecutionError("internal failure")
+
+    registry.register(
+        "read_file",
+        failing_tool,
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "test failure",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+    )
+    service = ToolInvocationService(registry=registry)
+
+    result = service.invoke(
+        role="developer",
+        task_id="TASK-001",
+        execution_id="EXEC-006",
+        tool_name="read_file",
+        arguments={"path": "src/app.py"},
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "TOOL_EXECUTION_FAILED"
+    assert result.error.category == "runtime"
+    assert service.audit.records()[0].error == result.error.to_dict()
+    assert calls == [{"path": "src/app.py"}]
