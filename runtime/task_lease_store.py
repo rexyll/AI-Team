@@ -4,8 +4,12 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
+from typing import Callable, TypeVar
 
 from runtime.multi_process import TaskLease
+
+
+T = TypeVar("T")
 
 
 class DurableTaskLeaseStore:
@@ -66,6 +70,31 @@ class DurableTaskLeaseStore:
                 self._path(task_id).unlink(missing_ok=True)
                 return None
             return current
+
+    def commit_if_owner(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_id: str,
+        apply_result: Callable[[], T],
+    ) -> T:
+        """Validate ownership and apply a result in one store-level critical section.
+
+        The reference filesystem backend guarantees this boundary for operations
+        routed through the same store instance. A true cross-process atomic CAS
+        still requires a shared transactional coordinator/database backend.
+        """
+        now = self._clock()
+        with self._lock:
+            current = self._load(task_id)
+            if current is None:
+                raise PermissionError("Task has no active worker lease")
+            if current.expires_at <= now:
+                self._path(task_id).unlink(missing_ok=True)
+                raise PermissionError("Task has no active worker lease")
+            if current.worker_id != worker_id or current.lease_id != lease_id:
+                raise PermissionError("Worker lease ownership mismatch")
+            return apply_result()
 
     def _load(self, task_id: str) -> TaskLease | None:
         path = self._path(task_id)
