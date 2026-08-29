@@ -38,28 +38,27 @@
 已完成 crash recovery decision matrix、persistence snapshot reconciliation 与 resource reconciliation，并通过专项与全量测试。
 
 ## `▶ 14.4` Multi-process execution
-已完成第一阶段 worker ownership / lease contract，以及第二阶段 durable ownership：
+已完成 worker lease、durable ownership，以及第三阶段 result commit fencing：
 - 一个 task 同时只能存在一个有效 worker lease；
 - lease 带独立 `worker_id`、`lease_id` 与 TTL；
 - lease 到期后允许其他 worker 接管；
 - stale worker 不能 renew/release 已被其他 worker 接管的 lease；
-- release 幂等；
-- 新增 filesystem-backed `DurableTaskLeaseStore`，使 ownership 不依赖 Python process-local memory；
-- durable lease 使用 atomic temporary-file replacement；
-- 新 worker 可以通过 durable lease store 观察既有 ownership；
-- lease expiration 后可以执行 ownership takeover；
-- stale worker 无法修改 recovered ownership；
-- 已新增 `runtime/task_lease_store.py` 与 `tests/test_task_lease_store.py`；
-- 当前仍是单机 durable reference backend，不宣称已经具备数据库/分布式系统级 fencing 能力。
+- ownership 可以跨 store 实例从 durable lease store 恢复；
+- task result commit 必须先通过当前 lease ownership 验证；
+- lease takeover 后旧 worker 的 late result 被拒绝；
+- 没有 active lease 的 result commit 被拒绝；
+- rejected result 不执行 apply callback，因此不会覆盖新 worker 的结果；
+- 新增 `runtime/result_fencing.py` 与 `tests/test_result_fencing.py`；
+- 当前仍是单机 durable reference backend；真正的跨进程原子 fencing 仍需数据库/外部协调器实现。
 
-### 下一小阶段：ownership fencing × task result commit
+### 下一小阶段：cross-process atomic fencing / integration
 重点验证：
-1. task result commit 必须携带当前 `lease_id`；
-2. lease 被 takeover 后旧 worker 的 late result 必须被拒绝；
-3. completed task 不能被旧 worker 覆盖；
-4. recovery worker 必须先 acquire 新 lease；
-5. release / renew / commit 必须保持 ownership 一致性；
-6. 为 14.5 exactly-once / at-least-once 语义建立明确的 delivery boundary。
+1. lease validation 与 result persistence 必须具备原子边界；
+2. 两个独立 worker 同时提交时最多一个结果生效；
+3. lease takeover 与 late commit 竞态不能产生旧结果覆盖；
+4. Task terminal state 与 ownership fencing 必须一致；
+5. crash recovery、timeout、cancellation 与 ownership 必须统一；
+6. 完成后关闭 14.4，再进入 14.5 delivery semantics。
 
 ## `□ 14.5` Exactly-once / at-least-once semantics
 
