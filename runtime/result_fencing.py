@@ -69,26 +69,23 @@ class ResultCommitFencer:
             decision = self.validate(task_id, worker_id, lease_id)
             if not decision.accepted:
                 raise PermissionError(decision.reason)
-
-            def apply():
-                return self._deliver(apply_result, attempt, delivery_id)
-
-            return apply()
+            return self._deliver(task_id, apply_result, attempt, delivery_id)
 
         return commit_if_owner(
             task_id,
             worker_id,
             lease_id,
-            lambda: self._deliver(apply_result, attempt, delivery_id),
+            lambda: self._deliver(task_id, apply_result, attempt, delivery_id),
         )
 
     def _deliver(
         self,
+        task_id: str,
         apply_result: Callable[[], object],
         attempt: int | None,
         delivery_id: str | None,
     ) -> object:
         if self.delivery_store is None or attempt is None or delivery_id is None:
             return apply_result()
-        key = self.delivery_key("delivery", attempt, delivery_id)
+        key = self.delivery_key(task_id, attempt, delivery_id)
         return self.delivery_store.commit(key, apply_result)
