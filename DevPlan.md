@@ -34,13 +34,19 @@ A generic Python callback cannot by itself provide globally exactly-once effects
 # Phase 15 — Security Hardening
 
 `[x] 15.1` Package / dependency policy
-`[ ] 15.2` Network egress policy
-`[ ] 15.3` Secret isolation
+`[x] 15.2` Network egress policy
+`[x] 15.3` Secret isolation
 `[ ] 15.4` Prompt injection resistance
 `[ ] 15.5` Security regression suite
 
 ## 15.1 Dependency policy
 Runtime dependencies must be explicitly declared in `requirements.txt`, use exact `==` version pins, and be declared only once. The policy is enforced by `security.dependency_policy` and its regression tests.
+
+## 15.2 Network egress policy
+Network access is deny-by-default and requires HTTPS plus an explicitly authorized hostname. Network operations must pass through the enforcement boundary before execution; rejected destinations must never invoke the underlying operation.
+
+## 15.3 Secret isolation
+Secrets are redacted at agent context, tool execution record, durable result, and delivery audit boundaries. End-to-end regression coverage verifies that common API keys, tokens, passwords, authorization values, and credentials cannot cross these observable/persistent boundaries.
 
 # Phase 16 — Observability / Operations
 
