@@ -41,13 +41,14 @@ class BaseAgent(ABC):
         return ContextBuilder(all_tasks=all_tasks).build_agent_context(task, role=self.role)
 
     def _generate(self, prompt: str, *, system_prompt: str = "", temperature: float = 0.2, max_tokens: int = 4096) -> str:
+        secured_system_prompt = augment_system_prompt(system_prompt)
         if isinstance(self.llm, ContextCompactingLLM):
             started = perf_counter()
-            result = self.llm.generate(prompt, system_prompt=augment_system_prompt(system_prompt), temperature=temperature, max_tokens=max_tokens)
+            result = self.llm.generate(prompt, system_prompt=secured_system_prompt, temperature=temperature, max_tokens=max_tokens)
             prompt_chars = self.llm.last_prompt_chars_after
             input_tokens = self.llm.last_input_tokens_after
         else:
-            compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(prompt, system_prompt=augment_system_prompt(system_prompt))
+            compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(prompt, system_prompt=secured_system_prompt)
             started = perf_counter()
             result = self.llm.generate(compact_prompt, system_prompt=compact_system, temperature=temperature, max_tokens=max_tokens)
             prompt_chars = stats.compacted_chars
@@ -80,13 +81,14 @@ class BaseAgent(ABC):
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
+        secured_messages = [{"role": "system", "content": augment_system_prompt("")}, *messages]
         if isinstance(self.llm, ContextCompactingLLM):
-            response = self.llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice, system_prompt=augment_system_prompt(""))
+            response = self.llm.generate_with_tools(secured_messages, tools=tools, tool_choice=tool_choice)
             prompt_chars = self.llm.last_prompt_chars_after
             input_tokens = self.llm.last_input_tokens_after
         else:
-            compacted, stats = self.context_compactor.compact_messages(messages)
-            response = self.llm.generate_with_tools(compacted, tools=tools, tool_choice=tool_choice, system_prompt=augment_system_prompt(""))
+            compacted, stats = self.context_compactor.compact_messages(secured_messages)
+            response = self.llm.generate_with_tools(compacted, tools=tools, tool_choice=tool_choice)
             prompt_chars = stats.compacted_chars
             input_tokens = stats.compacted_tokens
         self.llm_metrics.record_llm_call(prompt_chars=prompt_chars, input_tokens=input_tokens, elapsed_seconds=perf_counter() - started)
