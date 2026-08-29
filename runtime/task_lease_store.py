@@ -7,13 +7,14 @@ from threading import RLock
 from typing import Callable, TypeVar
 
 from runtime.multi_process import TaskLease
+from runtime.process_lock import exclusive_process_lock
 
 
 T = TypeVar("T")
 
 
 class DurableTaskLeaseStore:
-    """Filesystem-backed lease store with atomic replacement semantics."""
+    """Filesystem-backed lease store with process-safe task-level fencing."""
 
     def __init__(self, root: str | Path, *, clock=None) -> None:
         self.root = Path(root)
@@ -26,11 +27,14 @@ class DurableTaskLeaseStore:
             raise ValueError("task_id must be a simple file-safe identifier")
         return self.root / f"{task_id}.lease.json"
 
+    def _process_lock_path(self, task_id: str) -> Path:
+        return self.root / f".{task_id}.lease.lock"
+
     def acquire(self, task_id: str, worker_id: str, lease_id: str, ttl_s: float) -> TaskLease | None:
         if not worker_id or not lease_id or ttl_s <= 0:
             raise ValueError("worker_id, lease_id and positive ttl_s are required")
-        now = self._clock()
-        with self._lock:
+        with exclusive_process_lock(self._process_lock_path(task_id)), self._lock:
+            now = self._clock()
             current = self._load(task_id)
             if current and current.expires_at > now:
                 return None
@@ -41,8 +45,8 @@ class DurableTaskLeaseStore:
     def renew(self, task_id: str, worker_id: str, lease_id: str, ttl_s: float) -> TaskLease | None:
         if ttl_s <= 0:
             raise ValueError("positive ttl_s is required")
-        now = self._clock()
-        with self._lock:
+        with exclusive_process_lock(self._process_lock_path(task_id)), self._lock:
+            now = self._clock()
             current = self._load(task_id)
             if not current or current.expires_at <= now:
                 return None
@@ -53,7 +57,7 @@ class DurableTaskLeaseStore:
             return lease
 
     def release(self, task_id: str, worker_id: str, lease_id: str) -> bool:
-        with self._lock:
+        with exclusive_process_lock(self._process_lock_path(task_id)), self._lock:
             current = self._load(task_id)
             if not current or current.worker_id != worker_id or current.lease_id != lease_id:
                 return False
@@ -61,8 +65,8 @@ class DurableTaskLeaseStore:
             return True
 
     def owner(self, task_id: str) -> TaskLease | None:
-        now = self._clock()
-        with self._lock:
+        with exclusive_process_lock(self._process_lock_path(task_id)), self._lock:
+            now = self._clock()
             current = self._load(task_id)
             if not current:
                 return None
@@ -78,14 +82,15 @@ class DurableTaskLeaseStore:
         lease_id: str,
         apply_result: Callable[[], T],
     ) -> T:
-        """Validate ownership and apply a result in one store-level critical section.
+        """Validate ownership and apply a result inside the task fence.
 
-        The reference filesystem backend guarantees this boundary for operations
-        routed through the same store instance. A true cross-process atomic CAS
-        still requires a shared transactional coordinator/database backend.
+        The process lock serializes this critical section across independent
+        processes using the same filesystem reference backend. The callback is
+        deliberately executed while the fence is held so a lease takeover
+        cannot occur between ownership validation and the protected apply.
         """
-        now = self._clock()
-        with self._lock:
+        with exclusive_process_lock(self._process_lock_path(task_id)), self._lock:
+            now = self._clock()
             current = self._load(task_id)
             if current is None:
                 raise PermissionError("Task has no active worker lease")
