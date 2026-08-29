@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY, RuntimeCapabilityPolicy
+from security.runtime_capability import (
+    DEFAULT_RUNTIME_CAPABILITY_POLICY,
+    RuntimeCapabilityPolicy,
+)
 from security.tool_permission import ToolPermissionError, ToolPermissionPolicy
 from security.tool_guard import ToolArgumentValidationError, validate_tool_arguments
-from runtime.tool_errors import ToolResult if False else ToolError
+from runtime.tool_errors import ToolError, classify_tool_exception
 from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
@@ -149,14 +152,12 @@ class ToolInvocationService:
                 status=status,
                 arguments=arguments,
                 output=output if status == "completed" else None,
-                error=error.to_dict() if hasattr(error, "to_dict") else (error.__dict__ if error is not None else None),
+                error=error.__dict__ if error is not None else None,
             )
         )
 
     @staticmethod
     def _classify_boundary_error(exc: BaseException) -> ToolError:
-        from runtime.tool_errors import classify_tool_exception
-
         if isinstance(exc, KeyError):
             return ToolError("TOOL_UNKNOWN", "unknown", "Unknown tool")
         return classify_tool_exception(exc)
