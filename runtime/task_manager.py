@@ -2,7 +2,11 @@ from threading import RLock
 from typing import Any
 
 from runtime.task import Task
-from runtime.task_status import TaskStatus, can_transition, validate_transition
+from runtime.task_status import (
+    TaskStatus,
+    can_transition,
+    validate_transition,
+)
 
 
 class ResultPayload(dict):
@@ -72,14 +76,7 @@ class TaskManager:
             return task
 
     def _recover_terminal_state(self, task_id: str, target_status: TaskStatus, *, reason: str) -> Task:
-        """Restore an authoritative durable terminal state after recovery.
-
-        This is intentionally separate from ``transition`` so ordinary
-        workflow transitions remain governed by the lifecycle graph. A
-        durable result may legitimately prove that a terminal mutation
-        happened immediately before a process restart, even when the
-        reconstructed in-memory task is still pending.
-        """
+        """Restore an authoritative durable terminal state without relaxing the normal graph."""
         if target_status not in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
             raise ValueError("recovery target must be a terminal result status")
         if not isinstance(reason, str) or not reason.strip():
@@ -91,18 +88,18 @@ class TaskManager:
             raise ValueError(f"Task {task_id} is already terminal at {task.status}")
         previous = task.status
         task.status = target_status.value
-        task.status_history.append(
-            {"from": previous, "to": target_status.value, "reason": reason, "recovery": True}
-        )
+        task.status_history.append({"from": previous, "to": target_status.value, "reason": reason, "recovery": True})
         return task
 
     def is_terminal(self, task_id: str) -> bool:
         with self._lock:
-            return self.get_task(task_id).status in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
+            task = self.get_task(task_id)
+            return task.status in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
 
     def is_active(self, task_id: str) -> bool:
         with self._lock:
-            return self.get_task(task_id).status in {TaskStatus.READY.value, TaskStatus.RUNNING.value, TaskStatus.REVIEW_PENDING.value, TaskStatus.REVIEWING.value, TaskStatus.REVISION.value}
+            task = self.get_task(task_id)
+            return task.status in {TaskStatus.READY.value, TaskStatus.RUNNING.value, TaskStatus.REVIEW_PENDING.value, TaskStatus.REVIEWING.value, TaskStatus.REVISION.value}
 
     def is_finished(self) -> bool:
         with self._lock:
@@ -128,7 +125,7 @@ class TaskManager:
             if not dependency_satisfied_statuses:
                 raise ValueError("dependency_satisfied_statuses must not be empty")
         with self._lock:
-            ready = []
+            ready: list[Task] = []
             for task in self.tasks.values():
                 if task.status != TaskStatus.PENDING.value:
                     continue
@@ -176,7 +173,8 @@ class TaskManager:
             return task
 
     def mark_review_pending(self, task_id: str, result: dict | Any | None = None) -> Task:
-        return self.mark_developer_completed(task_id, result)
+        with self._lock:
+            return self.mark_developer_completed(task_id, result)
 
     def mark_reviewing(self, task_id: str) -> Task:
         with self._lock:
@@ -215,7 +213,9 @@ class TaskManager:
             return task
 
     def mark_blocked(self, task_id: str, error: str) -> Task:
-        if not isinstance(error, str) or not error.strip():
+        if not isinstance(error, str):
+            raise TypeError("error must be a string")
+        if not error.strip():
             raise ValueError("error must be a non-empty string")
         with self._lock:
             task = self.transition(task_id, TaskStatus.BLOCKED)
@@ -223,7 +223,9 @@ class TaskManager:
             return task
 
     def mark_failed(self, task_id: str, error: str) -> Task:
-        if not isinstance(error, str) or not error.strip():
+        if not isinstance(error, str):
+            raise TypeError("error must be a string")
+        if not error.strip():
             raise ValueError("error must be a non-empty string")
         with self._lock:
             task = self.transition(task_id, TaskStatus.FAILED)
@@ -245,54 +247,17 @@ class TaskManager:
             task.error = None
             return task
 
-    def commit_task_result(self, task_id: str, delivery_key: str, result: dict | Any) -> Task:
-        """Commit a Task result durably before exposing terminal state in memory."""
-        if self.result_store is None:
-            raise RuntimeError("TaskManager durable commit requires result_store")
-        normalized = self._normalize_result_payload(result)
-        with self._lock:
-            task = self.get_task(task_id)
-            decision = self.result_store.commit(task_id, delivery_key, dict(normalized), status=TaskStatus.COMPLETED.value)
-            if decision.duplicate:
-                durable = decision.record
-                task.result = ResultPayload(dict(durable.result))
-                if task.status != TaskStatus.COMPLETED.value:
-                    self._recover_terminal_state(task_id, TaskStatus.COMPLETED, reason="durable duplicate result reconciliation")
-                return task
-            task.result = normalized
-            if task.status != TaskStatus.COMPLETED.value:
-                if can_transition(task.status, TaskStatus.COMPLETED):
-                    self.transition(task_id, TaskStatus.COMPLETED)
-                else:
-                    self._recover_terminal_state(task_id, TaskStatus.COMPLETED, reason="durable result commit recovery")
-            self.record_error(task_id, None)
-            return task
-
-    def reconcile_durable_result(self, task_id: str) -> Task:
-        """Restore an already durable result after a process restart."""
-        if self.result_store is None:
-            raise RuntimeError("TaskManager durable reconciliation requires result_store")
-        with self._lock:
-            record = self.result_store.get(task_id)
-            if record is None:
-                raise ValueError(f"No durable result for task {task_id}")
-            task = self.get_task(task_id)
-            task.result = ResultPayload(dict(record.result))
-            if record.status == TaskStatus.COMPLETED.value and task.status != TaskStatus.COMPLETED.value:
-                self._recover_terminal_state(task_id, TaskStatus.COMPLETED, reason="authoritative durable result reconciliation")
-            return task
-
     def replace_task_graph(self, tasks: list[Task] | tuple[Task, ...]) -> None:
         if not isinstance(tasks, (list, tuple)):
             raise TypeError("tasks must be a list or tuple")
         replacement = list(tasks)
         if not all(isinstance(task, Task) for task in replacement):
-            raise TypeError("all replacement tasks must be Task instances")
+            raise TypeError("all tasks must be Task instances")
         with self._lock:
             active_tasks = [task.id for task in self.tasks.values() if task.status in {TaskStatus.READY.value, TaskStatus.RUNNING.value, TaskStatus.REVIEW_PENDING.value, TaskStatus.REVIEWING.value, TaskStatus.REVISION.value}]
             if active_tasks:
                 raise RuntimeError("Cannot replace task graph while tasks are active: " + ", ".join(active_tasks))
-            replacement_by_id = {}
+            replacement_by_id: dict[str, Task] = {}
             for task in replacement:
                 if task.id in replacement_by_id:
                     raise ValueError(f"Duplicate task id: {task.id}")
@@ -341,28 +306,120 @@ class TaskManager:
     def _normalize_result_payload(result: dict | Any) -> ResultPayload:
         if hasattr(result, "to_dict"):
             result = result.to_dict()
-        if isinstance(result, dict):
-            return ResultPayload(result)
-        return ResultPayload({"data": result})
+        if not isinstance(result, dict):
+            raise TypeError("result must be a dict or support to_dict()")
+        payload = dict(result)
+        if "data" in payload:
+            data = payload["data"]
+            if data is None:
+                payload["data"] = {}
+            elif not isinstance(data, dict):
+                raise TypeError("result data must be a dictionary")
+            else:
+                payload["data"] = dict(data)
+        return ResultPayload(payload)
 
-    def record_result(self, task_id: str, result: dict | Any) -> None:
-        task = self.get_task(task_id)
-        task.result = self._normalize_result_payload(result)
+    def record_result(self, task_id: str, result: dict | Any) -> Task:
+        with self._lock:
+            task = self.get_task(task_id)
+            task.result = self._normalize_result_payload(result)
+            return task
 
-    def record_review_result(self, task_id: str, review_result: dict | Any) -> None:
-        task = self.get_task(task_id)
-        task.review_result = self._normalize_result_payload(review_result)
-        task.review_history.append(dict(task.review_result))
+    def record_test_result(self, task_id: str, test_result: dict) -> Task:
+        if not isinstance(test_result, dict):
+            raise TypeError("test_result must be a dict")
+        with self._lock:
+            task = self.get_task(task_id)
+            normalized = self._normalize_result_payload(test_result)
+            task.test_result = normalized
+            if not task.test_history or task.test_history[-1] != normalized:
+                task.test_history.append(normalized)
+            return task
 
-    def record_test_result(self, task_id: str, test_result: dict | Any) -> None:
-        task = self.get_task(task_id)
-        task.test_result = self._normalize_result_payload(test_result)
-        task.test_history.append(dict(task.test_result))
+    def record_review_result(self, task_id: str, review_result: dict, *, increment_round: bool = True) -> Task:
+        if not isinstance(review_result, dict):
+            raise TypeError("review_result must be a dict")
+        with self._lock:
+            task = self.get_task(task_id)
+            normalized = self._normalize_result_payload(review_result)
+            task.review_result = normalized
+            task.review_history.append(normalized)
+            if increment_round:
+                task.review_round += 1
+            return task
 
-    def record_error(self, task_id: str, error: str | None) -> None:
-        task = self.get_task(task_id)
-        task.error = error
+    def set_feedback(self, task_id: str, source: str, feedback: dict | Any) -> Task:
+        if not isinstance(source, str):
+            raise TypeError("feedback source must be a string")
+        if not source.strip():
+            raise ValueError("feedback source must be a non-empty string")
+        with self._lock:
+            task = self.get_task(task_id)
+            if isinstance(feedback, str):
+                normalized_feedback: dict | str = feedback
+            else:
+                normalized_feedback = self._normalize_result_payload(feedback)
+            task.context[f"{source}_feedback"] = normalized_feedback
+            return task
 
-    def set_feedback(self, task_id: str, source: str, feedback: Any) -> None:
-        task = self.get_task(task_id)
-        task.context[f"feedback_{source}"] = feedback
+    def record_error(self, task_id: str, error: str | None) -> Task:
+        if error is not None and not isinstance(error, str):
+            raise TypeError("error must be a string or None")
+        with self._lock:
+            task = self.get_task(task_id)
+            task.error = error
+            return task
+
+    def commit_task_result(self, task_id: str, delivery_key: str, result: dict | Any) -> Task:
+        """Persist the result before exposing its terminal state in memory."""
+        if self.result_store is None:
+            raise RuntimeError("TaskManager durable commit requires result_store")
+        normalized = self._normalize_result_payload(result)
+        with self._lock:
+            task = self.get_task(task_id)
+            decision = self.result_store.commit(
+                task_id,
+                delivery_key,
+                dict(normalized),
+                status=TaskStatus.COMPLETED.value,
+            )
+            if decision.duplicate:
+                durable = decision.record
+                task.result = ResultPayload(dict(durable.result))
+                if task.status != TaskStatus.COMPLETED.value:
+                    self._recover_terminal_state(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        reason="durable duplicate result reconciliation",
+                    )
+                return task
+            task.result = normalized
+            if task.status != TaskStatus.COMPLETED.value:
+                if can_transition(task.status, TaskStatus.COMPLETED):
+                    self.transition(task_id, TaskStatus.COMPLETED)
+                else:
+                    self._recover_terminal_state(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        reason="durable result commit recovery",
+                    )
+            self.record_error(task_id, None)
+            return task
+
+    def reconcile_durable_result(self, task_id: str) -> Task:
+        """Restore an already durable result after a process restart."""
+        if self.result_store is None:
+            raise RuntimeError("TaskManager durable reconciliation requires result_store")
+        with self._lock:
+            record = self.result_store.get(task_id)
+            if record is None:
+                raise ValueError(f"No durable result for task {task_id}")
+            task = self.get_task(task_id)
+            task.result = ResultPayload(dict(record.result))
+            if record.status == TaskStatus.COMPLETED.value and task.status != TaskStatus.COMPLETED.value:
+                self._recover_terminal_state(
+                    task_id,
+                    TaskStatus.COMPLETED,
+                    reason="authoritative durable result reconciliation",
+                )
+            return task
