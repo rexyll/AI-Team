@@ -11,28 +11,33 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 VALID_STATUS_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.PENDING: {
         TaskStatus.READY,
         TaskStatus.BLOCKED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.READY: {
         TaskStatus.RUNNING,
         TaskStatus.BLOCKED,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.RUNNING: {
         TaskStatus.REVIEW_PENDING,
         TaskStatus.COMPLETED,
         TaskStatus.FAILED,
         TaskStatus.REVISION,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.REVIEW_PENDING: {
         TaskStatus.RUNNING,
         TaskStatus.REVIEWING,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.REVIEWING: {
         TaskStatus.REVIEW_PENDING,
@@ -40,16 +45,20 @@ VALID_STATUS_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.COMPLETED,
         TaskStatus.FAILED,
         TaskStatus.REVISION,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.REVISION: {
         TaskStatus.RUNNING,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.COMPLETED: set(),
     TaskStatus.FAILED: set(),
     TaskStatus.BLOCKED: {
         TaskStatus.READY,
+        TaskStatus.CANCELLED,
     },
+    TaskStatus.CANCELLED: set(),
 }
 
 
