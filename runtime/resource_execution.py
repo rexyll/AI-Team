@@ -26,6 +26,8 @@ class ResourceExecutionCoordinator:
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")
         with self._lock:
+            if task.cancellation_requested:
+                return None
             lifecycle = ResourceLifecycle.admit(task, self._governor)
             if lifecycle is None:
                 return None
@@ -42,6 +44,15 @@ class ResourceExecutionCoordinator:
             self._governor = self._governor.finish_task()
             self._active_task_ids.remove(task_id)
             return self._governor
+
+    def cancel(self, task_id: str) -> ResourceGovernor:
+        """Release resources held by a cancelled running task.
+
+        Cancellation and resource release are separate operations: callers
+        cancel the Task first, then use this idempotent method to release its
+        active slot. A task that was never admitted is a no-op.
+        """
+        return self.finish(task_id)
 
     def is_active(self, task_id: str) -> bool:
         with self._lock:
