@@ -11,6 +11,21 @@ class EvidenceGateError(ValueError):
     """Raised when evidence cannot establish a trustworthy gate decision."""
 
 
+def _has_explicit_provenance(value: Any) -> bool:
+    """Return whether provenance was actually supplied by the producer."""
+    if isinstance(value, EvidenceProvenance):
+        return True
+    if not isinstance(value, dict):
+        return False
+    if all(key in value for key in ("source_role", "source_type", "task_id", "evidence_id")):
+        return True
+    provenance = value.get("provenance")
+    if isinstance(provenance, dict):
+        return True
+    data = value.get("data")
+    return isinstance(data, dict) and isinstance(data.get("provenance"), dict)
+
+
 def validate_gate_evidence(
     value: Any,
     *,
@@ -28,6 +43,9 @@ def validate_gate_evidence(
     """
     if not isinstance(task_id, str) or not task_id.strip():
         raise ValueError("task_id must be a non-empty string")
+
+    if not _has_explicit_provenance(value):
+        raise EvidenceGateError("gate evidence is missing explicit provenance")
 
     root = provenance_from_value(value)
     if root is None:
