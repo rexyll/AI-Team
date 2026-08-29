@@ -1,7 +1,7 @@
 import pytest
 
 from agents.reviewer import ReviewerAgent
-from agents.tester import TesterAgent
+from agents import tester as tester_module
 from runtime.agent_context import AgentContext
 from runtime.provenance import EvidenceProvenance, agent_feedback_provenance, tool_evidence_provenance
 from runtime.tool_execution_record import ToolExecutionRecord
@@ -81,6 +81,34 @@ def test_tool_execution_record_contains_immutable_provenance_metadata() -> None:
     }
 
 
+def test_tool_execution_context_projection_excludes_internal_provenance() -> None:
+    record = ToolExecutionRecord(
+        execution_id="call-1",
+        task_id="TASK-001",
+        agent_role="developer",
+        tool_name="read_file",
+        started_at="2026-08-29T00:00:00+00:00",
+        completed_at="2026-08-29T00:00:01+00:00",
+        status="completed",
+        output="ok",
+        metadata={"iteration": 1},
+    )
+
+    assert record.to_context_dict() == {
+        "execution_id": "call-1",
+        "task_id": "TASK-001",
+        "agent_role": "developer",
+        "tool_name": "read_file",
+        "started_at": "2026-08-29T00:00:00+00:00",
+        "completed_at": "2026-08-29T00:00:01+00:00",
+        "status": "completed",
+        "arguments": {},
+        "output": "ok",
+        "error": None,
+        "metadata": {"iteration": 1},
+    }
+
+
 def test_tester_feedback_exposes_provenance() -> None:
     context = AgentContext(
         task_id="TASK-TEST",
@@ -90,7 +118,7 @@ def test_tester_feedback_exposes_provenance() -> None:
         status="running",
     )
 
-    data = TesterAgent._build_result_data(content="TEST_FAILED\nreason", decision="failed", context=context)
+    data = tester_module.TesterAgent._build_result_data(content="TEST_FAILED\nreason", decision="failed", context=context)
 
     assert data["provenance"]["source_role"] == "tester"
     assert data["provenance"]["source_type"] == "agent_feedback"
