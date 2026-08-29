@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Callable, Literal
 
+from runtime.delivery_audit import DurableDeliveryAuditStore
 from runtime.process_lock import exclusive_process_lock
 
 
@@ -35,12 +36,35 @@ class DurableDeliveryStore:
     remains ``processing``. Recovery therefore requires an explicit, externally
     informed decision; the store never guesses whether an external side effect
     happened.
+
+    When an audit store is supplied, every durable delivery decision is also
+    recorded as an append-only audit event. Auditing is observational and does
+    not change the delivery state machine.
     """
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, audit_store: DurableDeliveryAuditStore | None = None) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
+        self.audit_store = audit_store
+
+    def _audit(
+        self,
+        key: str,
+        action: str,
+        *,
+        before: str | None = None,
+        after: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        if self.audit_store is not None:
+            self.audit_store.record(
+                key,
+                action,
+                status_before=before,
+                status_after=after,
+                metadata=metadata,
+            )
 
     def _path(self, key: str) -> Path:
         if not isinstance(key, str) or not key.strip():
@@ -61,8 +85,10 @@ class DurableDeliveryStore:
         with exclusive_process_lock(self._lock_path(key)), self._lock:
             current = self._load(key)
             if current is not None:
+                self._audit(key, "duplicate", before=current.status, after=current.status)
                 return DeliveryDecision(False, True, current.status)
             self._write(DeliveryRecord(key=key, status="processing"))
+            self._audit(key, "begin", after="processing")
             return DeliveryDecision(True, False, "processing")
 
     def complete(self, key: str) -> DeliveryDecision:
@@ -72,18 +98,14 @@ class DurableDeliveryStore:
             if current is None:
                 raise ValueError("delivery must be begun before completion")
             if current.status == "committed":
+                self._audit(key, "duplicate", before="committed", after="committed")
                 return DeliveryDecision(False, True, "committed")
             self._write(DeliveryRecord(key=key, status="committed"))
+            self._audit(key, "complete", before="processing", after="committed")
             return DeliveryDecision(True, False, "committed")
 
     def recover_processing(self, key: str, action: RecoveryAction) -> DeliveryDecision:
-        """Resolve an interrupted delivery using an explicit reconciliation decision.
-
-        ``commit`` is safe only when an authoritative sink/reconciliation check
-        proves the external mutation already happened. ``retry`` is safe only
-        when that check proves it did not happen. Neither decision is inferred
-        from process liveness, timestamps, or the ``processing`` marker itself.
-        """
+        """Resolve an interrupted delivery using an explicit reconciliation decision."""
         if action not in {"commit", "retry"}:
             raise ValueError("action must be 'commit' or 'retry'")
         with exclusive_process_lock(self._lock_path(key)), self._lock:
@@ -91,28 +113,25 @@ class DurableDeliveryStore:
             if current is None:
                 raise ValueError("delivery does not exist")
             if current.status == "committed":
+                self._audit(key, "duplicate", before="committed", after="committed")
                 return DeliveryDecision(False, True, "committed")
             if action == "commit":
                 self._write(DeliveryRecord(key=key, status="committed"))
+                self._audit(key, "recover_commit", before="processing", after="committed")
                 return DeliveryDecision(True, False, "committed")
             self._path(key).unlink(missing_ok=True)
+            self._audit(key, "recover_retry", before="processing", after=None)
             return DeliveryDecision(True, False, None)
 
     def commit(self, key: str, apply_result: Callable[[], object]) -> object:
-        """Reference idempotent delivery operation.
-
-        A duplicate, including a pre-existing ``processing`` record, is never
-        automatically replayed. An interrupted delivery must first be resolved
-        by ``recover_processing`` after reconciling the external sink.
-        """
+        """Reference idempotent delivery operation."""
         decision = self.begin(key)
         if decision.duplicate:
             return None
         try:
             result = apply_result()
         except Exception:
-            # Keep processing durable: the caller/recovery coordinator must
-            # decide whether the external side effect happened.
+            self._audit(key, "processing_after_error", before="processing", after="processing")
             raise
         self.complete(key)
         return result
