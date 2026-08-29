@@ -85,9 +85,21 @@ def agent_feedback_provenance(
 
 
 def provenance_from_value(value: Any) -> EvidenceProvenance | None:
-    """Extract provenance from a canonical result/feedback payload."""
+    """Extract provenance from a provenance, result, or feedback payload."""
+    if isinstance(value, EvidenceProvenance):
+        return value
     if not isinstance(value, dict):
         return None
+
+    # A bare provenance dictionary is itself a valid evidence node. This is
+    # useful for lineage APIs whose inputs are already projected provenance
+    # records (for example ``agent_feedback_provenance(...).to_dict()``).
+    if all(key in value for key in ("source_role", "source_type", "task_id", "evidence_id")):
+        try:
+            return EvidenceProvenance.from_dict(value)
+        except (TypeError, ValueError):
+            pass
+
     candidates = [value.get("provenance")]
     data = value.get("data")
     if isinstance(data, dict):
