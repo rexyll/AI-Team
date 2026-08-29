@@ -1,5 +1,6 @@
 import pytest
 
+from runtime.delivery_audit import DurableDeliveryAuditStore
 from runtime.delivery_reconciliation import (
     AuthoritativeDeliveryReconciler,
     ReconciliationRequired,
@@ -50,6 +51,23 @@ def test_unknown_sink_state_never_guesses_or_replays(tmp_path):
             store, _Sink(SinkMutationState.UNKNOWN)
         ).reconcile("delivery-001")
 
+    assert store.status("delivery-001").status == "processing"
+
+
+def test_unknown_sink_state_is_durably_audited(tmp_path):
+    delivery_root = tmp_path / "delivery"
+    audit = DurableDeliveryAuditStore(tmp_path / "audit")
+    store = DurableDeliveryStore(delivery_root, audit_store=audit)
+    store.begin("delivery-001")
+
+    with pytest.raises(ReconciliationRequired):
+        AuthoritativeDeliveryReconciler(
+            store, _Sink(SinkMutationState.UNKNOWN), audit_store=audit
+        ).reconcile("delivery-001")
+
+    event = audit.records("delivery-001")[-1]
+    assert event.action == "reconciliation_required"
+    assert event.metadata == {"state": "unknown"}
     assert store.status("delivery-001").status == "processing"
 
 
