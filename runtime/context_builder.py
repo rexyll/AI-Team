@@ -7,6 +7,7 @@ from runtime.agent_context import AgentContext
 from runtime.legacy_dependency_bridge import LegacyDependencyBridge
 from runtime.task import Task
 from runtime.task_checkpoint import build_task_checkpoint_summary
+from security.secrets import redact_value
 
 
 class ContextBuilder:
@@ -60,22 +61,22 @@ class ContextBuilder:
             status=task.status,
             review_round=task.review_round,
             dependencies=list(dependencies.keys()),
-            dependency_context=dependencies,
-            task_result=deepcopy(task.result),
+            dependency_context=redact_value(dependencies),
+            task_result=redact_value(deepcopy(task.result)),
             tester_feedback=(
-                deepcopy(tester_feedback)
+                redact_value(deepcopy(tester_feedback))
                 if tester_feedback is not None
                 else {}
             ),
             reviewer_feedback=(
-                deepcopy(reviewer_feedback)
+                redact_value(deepcopy(reviewer_feedback))
                 if reviewer_feedback is not None
                 else {}
             ),
-            history=self._build_history(task),
-            test_history=self._build_test_history(task),
-            review_history=self._build_review_history(task),
-            metadata=self._build_metadata(task, role=context_role),
+            history=redact_value(self._build_history(task)),
+            test_history=redact_value(self._build_test_history(task)),
+            review_history=redact_value(self._build_review_history(task)),
+            metadata=redact_value(self._build_metadata(task, role=context_role)),
         )
 
     def _build_dependency_context(self, task: Task) -> dict[str, Any]:
@@ -118,10 +119,6 @@ class ContextBuilder:
             "dependencies",
             "tester_feedback",
             "reviewer_feedback",
-            # Raw tool-loop history is a persistence/telemetry source, not
-            # prompt context. Developer resumes receive the bounded
-            # ``task_checkpoint`` summary below instead of replaying the full
-            # execution history into every prompt.
             "tool_execution_history",
         }
 
@@ -135,11 +132,6 @@ class ContextBuilder:
             )
         })
 
-        # A completed/failed developer run already persisted its canonical
-        # result on the Task. Reconstruct one detached, compact checkpoint for
-        # the next attempt instead of replaying the complete previous tool
-        # history. This is deliberately developer-local: other roles must not
-        # receive implementation-loop telemetry as part of their context.
         if role == "developer":
             result = getattr(task, "result", {})
             if isinstance(result, dict):
@@ -177,13 +169,7 @@ def build_task_context(
     task: Task,
     all_tasks: dict[str, Task],
 ) -> dict[str, Any] | list[str]:
-    """Backward-compatible functional API.
-
-    Historically Workflow stored ``[]`` for tasks with no declared
-    dependencies. Preserve that legacy shape at this compatibility boundary,
-    while tasks that declare dependencies continue to expose the structured
-    dependency mapping used by context-flow consumers.
-    """
+    """Backward-compatible functional API."""
     if not task.dependencies:
         return []
     return LegacyDependencyBridge(all_tasks).build(task)
