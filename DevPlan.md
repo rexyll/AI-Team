@@ -11,33 +11,14 @@
 # 当前执行顺序
 
 ```text
-✓ 10.1 Tool Loop Telemetry
-✓ 10.2 Real benchmark classification
-✓ 10.3 Duplicate Tool Call suppression
-✓ 10.4 Tool Result Evidence Reduction
-✓ 10.5 Tool Loop Progress Guard
-✓ 10.6 LLM Call Reduction
-✓ 10.7 Tool Loop regression benchmark
-✓ 11.1 Semantic Context Tiers
-✓ 11.2 Task Checkpoint Summary
-✓ 11.3 Context Budget Allocator
-✓ 11.4 Context Quality Contract
-✓ 11.5 Long-run Context Benchmark
-✓ 12.1 Developer Failure Isolation
-✓ 12.2 Retry / Checkpoint Consistency
-✓ 12.3 Tool-loop Failure Recovery
-✓ 12.4 Reviewer Reliability Boundary
-✓ 12.5 Developer Reliability Acceptance Matrix
-✓ 13.1 1k-task dependency graph
-✓ 13.2 5k-task scalability
-✓ 13.3 Incremental projection
-✓ 13.4 Persistent indexes
-✓ 13.5 Resource governance
-✓ 13.6 Large-project benchmark
+✓ 10.x Tool Loop
+✓ 11.x Context Engineering
+✓ 12.x Reliability / Failure Isolation
+✓ 13.x Large Project Scalability
 ✓ 14.1 Cancellation contract
 ✓ 14.2 Timeout contract
-▶ 14.3 Crash recovery matrix
-□ 14.4 Multi-process execution
+✓ 14.3 Crash recovery matrix
+▶ 14.4 Multi-process execution
 □ 14.5 Exactly-once / at-least-once semantics
 □ 15.x Security Hardening
 □ 16.x Observability / Operations
@@ -53,25 +34,30 @@
 ## `✓ 14.2` Timeout contract
 已完成 timeout lifecycle integration 与 retry/recovery boundary，并通过专项与全量测试。
 
-## `▶ 14.3` Crash recovery matrix
-已完成 crash recovery decision matrix 与 persistence/resource reconciliation 第一阶段：
-- terminal `completed` / `failed` / `cancelled` 状态绝不 replay；
-- `running` / `review_pending` / `reviewing` / `revision` 视为 worker interruption，进入显式 `requeue` 路径；
-- `pending` / `ready` / `blocked` 可直接 `restore`，不重复执行已经完成的工作；
-- worker crash 本身不等价于 task failure，不自动写入 `Task.error`；
-- recovery decision 只描述 control-plane action，不直接修改 Task；
-- retry counters 保留在 persistence snapshot 中，不因 crash recovery 自动递增；
-- 新增 `CrashRecoveryCoordinator`，读取 durable Task snapshot 并生成 recovery report；
-- interrupted task 若仍占用 execution resource，则 reconciliation 会释放对应 resource slot；
-- resource release 通过现有 `ResourceExecutionCoordinator`，保持幂等，不重复扣减；
-- reconciliation 不修改 persisted Task snapshot；
-- 可按 task-id subset 执行 recovery inspection；
-- 新增 `runtime/crash_recovery_runtime.py` 与 `tests/test_crash_recovery_runtime.py`。
+## `✓ 14.3` Crash recovery matrix
+已完成 crash recovery decision matrix、persistence snapshot reconciliation 与 resource reconciliation，并通过专项与全量测试。
 
-### 当前待验证
-用户需 Pull 后运行 crash recovery 专项、resource/cancellation 回归及全量 `pytest -q`。通过后关闭 14.3。
+## `▶ 14.4` Multi-process execution
+第一阶段建立 worker ownership / lease 基础：
+- 一个 task 同时只能存在一个有效 worker lease；
+- lease 带独立 `worker_id`、`lease_id` 与 TTL；
+- lease 到期后允许其他 worker 接管；
+- stale worker 不能 renew 已被其他 worker 接管的 lease；
+- stale worker 不能 release 新 worker 的 lease；
+- release 对同一 lease 幂等；
+- lease coordinator 使用 lock 保护本地并发访问；
+- 当前实现作为多进程持久化/分布式协调之前的 reference contract，不宣称跨进程共享内存能力；
+- 新增 `runtime/multi_process.py` 与 `tests/test_multi_process.py`。
 
-## `□ 14.4` Multi-process execution
+### 下一小阶段：Multi-process × durable ownership
+重点验证：
+1. worker lease 能与 durable Task snapshot 绑定；
+2. worker crash 后 lease expiration 能驱动 recovery；
+3. recovery worker 必须先取得新的 ownership；
+4. 旧 worker 无法继续提交结果；
+5. lease renewal 与 timeout/cancellation 保持边界；
+6. 跨进程实现不能依赖 Python process-local memory。
+
 ## `□ 14.5` Exactly-once / at-least-once semantics
 
 # Phase 15 — Security Hardening
