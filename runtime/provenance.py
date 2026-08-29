@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-SOURCE_TYPES = frozenset({"tool_execution", "agent_feedback"})
+SOURCE_TYPES = frozenset({"tool_execution", "agent_feedback", "agent_result"})
 
 
 @dataclass(frozen=True)
@@ -71,6 +71,20 @@ def tool_evidence_provenance(
     )
 
 
+def agent_result_provenance(
+    *, task_id: str, agent_role: str, evidence_id: str | None = None, parent_evidence_id: str | None = None
+) -> EvidenceProvenance:
+    """Create the stable evidence root for one AgentResult boundary."""
+    return EvidenceProvenance(
+        source_role=agent_role,
+        source_type="agent_result",
+        task_id=task_id,
+        evidence_id=evidence_id or f"{agent_role}:{task_id}",
+        status="reported",
+        parent_evidence_id=parent_evidence_id,
+    )
+
+
 def agent_feedback_provenance(
     *, task_id: str, agent_role: str, evidence_id: str, parent_evidence_id: str | None = None
 ) -> EvidenceProvenance:
@@ -85,15 +99,18 @@ def agent_feedback_provenance(
 
 
 def provenance_from_value(value: Any) -> EvidenceProvenance | None:
-    """Extract provenance from a provenance, result, or feedback payload."""
+    """Extract explicit provenance, or synthesize an AgentResult root.
+
+    Explicit producer-supplied provenance always wins. A canonical AgentResult
+    without explicit provenance gets a stable agent-result evidence root so
+    downstream boundaries can preserve lineage without changing the legacy
+    result schema.
+    """
     if isinstance(value, EvidenceProvenance):
         return value
     if not isinstance(value, dict):
         return None
 
-    # A bare provenance dictionary is itself a valid evidence node. This is
-    # useful for lineage APIs whose inputs are already projected provenance
-    # records (for example ``agent_feedback_provenance(...).to_dict()``).
     if all(key in value for key in ("source_role", "source_type", "task_id", "evidence_id")):
         try:
             return EvidenceProvenance.from_dict(value)
@@ -110,4 +127,9 @@ def provenance_from_value(value: Any) -> EvidenceProvenance | None:
                 return EvidenceProvenance.from_dict(candidate)
             except (TypeError, ValueError):
                 continue
+
+    agent = value.get("agent")
+    task_id = value.get("task_id")
+    if isinstance(agent, str) and agent.strip() and isinstance(task_id, str) and task_id.strip():
+        return agent_result_provenance(task_id=task_id, agent_role=agent)
     return None
