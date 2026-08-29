@@ -2,7 +2,7 @@
 
 > 项目仓库：`rexyll/AI-Team`
 > 当前开发分支：`feature/reviewer-reliability-fallback`
-> 更新时间：2026-08-28
+> 更新时间：2026-08-29
 >
 > **项目目的：构建一个可持续运行、可恢复、可审计、可验证的 AI 软件开发团队。**
 
@@ -32,8 +32,8 @@
 ✓ 13.2 5k-task scalability
 ✓ 13.3 Incremental projection
 ✓ 13.4 Persistent indexes
-▶ 13.5 Resource governance
-□ 13.6 Large-project benchmark
+✓ 13.5 Resource governance
+▶ 13.6 Large-project benchmark
 □ 14.x Concurrency / Cancellation / Recovery
 □ 15.x Security Hardening
 □ 16.x Observability / Operations
@@ -55,23 +55,31 @@
 ## `✓ 13.4` Persistent indexes
 已完成 forward / reverse dependency index、transitive affected-set、immutable snapshot、incremental mutation、full rebuild equivalence、repeated mutation equivalence 与 5k scalability contract。
 
-## `▶ 13.5` Resource governance
-第一阶段已建立 project-level resource governor：
+## `✓ 13.5` Resource governance
+已完成 project-level resource governance 与 execution lifecycle integration：
 - `ResourceLimits`：并发 task、tool calls、input tokens、output tokens hard limits；
 - `ResourceUsage`：单调累计 usage snapshot；
 - `ResourceGovernor`：immutable admission/accounting API；
-- concurrency capacity 与 token/tool budget 超限拒绝；
-- task start/finish 不允许突破 active-task 边界；
-- usage snapshot 与 caller 输入均不产生 alias mutation。
+- `ResourceAdmissionDecision`：资源拒绝与 Task failure 明确隔离；
+- `ResourceLifecycle`：admit → consume → finish 生命周期；
+- `ResourceExecutionCoordinator`：并发 admission、out-of-order finish 与 slot release 的线程安全协调；
+- resource rejection 不修改 Task lifecycle、不消耗 retry、不触发 recovery；
+- budget exhaustion 不隐式 finish、不回滚既有 accounting；
+- success / failure / exception execution path 均具备资源释放 contract；
+- 已通过 Resource Governance 专项、execution lifecycle 专项及全量测试。
 
-当前验收重点：
-- hard limit correctness；
-- immutable accounting；
-- zero-mutation on rejected consumption；
-- parameter validation；
-- 与实际 orchestrator / tool telemetry 的接入边界将在下一阶段定义。
+## `▶ 13.6` Large-project benchmark
+目标：建立可重复的 1k / 5k / 10k-task benchmark baseline，量化：
+- graph construction latency；
+- topological sort / execution layer latency；
+- incremental projection / persistent index latency；
+- scheduler ready-set latency；
+- resource admission throughput；
+- memory footprint；
+- deterministic output；
+- serial / bounded-parallel execution overhead。
 
-## `□ 13.6` Large-project benchmark
+验收原则：benchmark 负责测量真实系统能力，不以修改阈值、删除 workload 或弱化 correctness contract 的方式“通过”。
 
 # Phase 14 — Concurrency / Cancellation / Recovery
 
