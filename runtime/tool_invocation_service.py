@@ -122,6 +122,45 @@ class ToolInvocationService:
         )
         return ToolResult.ok(output)
 
+    def invoke_many(
+        self,
+        *,
+        role: str,
+        task_id: str,
+        invocations: list[dict[str, Any]],
+    ) -> list[ToolResult]:
+        """Invoke a sequence through the same authorization and audit boundary.
+
+        This intentionally preserves per-invocation execution IDs and records. It
+        is the migration-safe entry point for callers that currently batch tool
+        calls; optimization of safe batches remains an implementation detail for
+        a later phase and must not bypass authorization or audit.
+        """
+        results: list[ToolResult] = []
+        for invocation in invocations:
+            if not isinstance(invocation, dict):
+                raise TypeError("each invocation must be a dictionary")
+            required = {"execution_id", "tool_name", "arguments"}
+            missing = required - invocation.keys()
+            if missing:
+                raise ValueError(
+                    "invocation is missing required fields: "
+                    + ", ".join(sorted(missing))
+                )
+            arguments = invocation["arguments"]
+            if not isinstance(arguments, dict):
+                raise TypeError("invocation arguments must be a dictionary")
+            results.append(
+                self.invoke(
+                    role=role,
+                    task_id=task_id,
+                    execution_id=str(invocation["execution_id"]),
+                    tool_name=str(invocation["tool_name"]),
+                    arguments=arguments,
+                )
+            )
+        return results
+
     def _append_record(
         self,
         *,
