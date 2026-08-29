@@ -5,6 +5,15 @@ import pytest
 from runtime.task_result_store import DurableTaskResultStore
 
 
+def _commit_result(root, result):
+    store = DurableTaskResultStore(root)
+    try:
+        decision = store.commit("TASK-001", "delivery-a", {"value": 1})
+        result.put((decision.accepted, decision.duplicate))
+    except Exception as exc:
+        result.put(("error", str(exc)))
+
+
 def test_commit_persists_result_and_same_delivery_is_duplicate(tmp_path):
     store = DurableTaskResultStore(tmp_path)
 
@@ -36,18 +45,10 @@ def test_different_delivery_cannot_overwrite_existing_result(tmp_path):
 
 
 def test_independent_processes_have_one_result_commit(tmp_path):
-    def _commit(root, result):
-        store = DurableTaskResultStore(root)
-        try:
-            decision = store.commit("TASK-001", "delivery-a", {"value": 1})
-            result.put((decision.accepted, decision.duplicate))
-        except Exception as exc:
-            result.put(("error", str(exc)))
-
     context = get_context("spawn")
     result = context.Queue()
-    first = context.Process(target=_commit, args=(str(tmp_path), result))
-    second = context.Process(target=_commit, args=(str(tmp_path), result))
+    first = context.Process(target=_commit_result, args=(str(tmp_path), result))
+    second = context.Process(target=_commit_result, args=(str(tmp_path), result))
     first.start()
     second.start()
 
