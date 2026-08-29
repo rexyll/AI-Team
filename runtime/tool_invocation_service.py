@@ -18,13 +18,7 @@ from tools.registry import TOOL_REGISTRY, ToolRegistry
 
 
 class ToolInvocationService:
-    """Single runtime boundary for authorized tool invocation.
-
-    The service owns the ordering of authorization, schema validation,
-    execution, and audit recording. It deliberately keeps the existing
-    ToolRegistry and ToolExecutionRecord contracts intact so callers can
-    migrate incrementally.
-    """
+    """Single runtime boundary for authorized tool invocation."""
 
     def __init__(
         self,
@@ -100,7 +94,7 @@ class ToolInvocationService:
 
         try:
             output = tool_function(**record_arguments)
-        except BaseException as exc:
+        except Exception as exc:
             error = self._classify_boundary_error(exc)
             self._append_record(
                 execution_id=execution_id,
@@ -152,7 +146,7 @@ class ToolInvocationService:
                 status=status,
                 arguments=arguments,
                 output=output if status == "completed" else None,
-                error=error.__dict__ if error is not None else None,
+                error=error.to_dict() if error is not None else None,
             )
         )
 
