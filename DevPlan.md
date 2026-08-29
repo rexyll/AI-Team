@@ -33,8 +33,12 @@
 ✓ 13.3 Incremental projection
 ✓ 13.4 Persistent indexes
 ✓ 13.5 Resource governance
-▶ 13.6 Large-project benchmark
-□ 14.x Concurrency / Cancellation / Recovery
+✓ 13.6 Large-project benchmark
+▶ 14.1 Cancellation contract
+□ 14.2 Timeout contract
+□ 14.3 Crash recovery matrix
+□ 14.4 Multi-process execution
+□ 14.5 Exactly-once / at-least-once semantics
 □ 15.x Security Hardening
 □ 16.x Observability / Operations
 □ 17.x Developer Experience
@@ -68,23 +72,29 @@
 - success / failure / exception execution path 均具备资源释放 contract；
 - 已通过 Resource Governance 专项、execution lifecycle 专项及全量测试。
 
-## `▶ 13.6` Large-project benchmark
-目标：建立可重复的 1k / 5k / 10k-task benchmark baseline，量化：
-- graph construction latency；
-- topological sort / execution layer latency；
-- incremental projection / persistent index latency；
-- scheduler ready-set latency；
-- resource admission throughput；
-- memory footprint；
-- deterministic output；
-- serial / bounded-parallel execution overhead。
+## `✓ 13.6` Large-project benchmark
+已完成可重复的 1k / 5k / 10k-task baseline，并验证 deterministic layered workload、dependency correctness、graph construction、topological sort、execution layers、projection、persistent index、scheduler ready-set、resource admission 与 memory footprint。
 
-验收原则：benchmark 负责测量真实系统能力，不以修改阈值、删除 workload 或弱化 correctness contract 的方式“通过”。
+基线结果（Windows / 当前开发环境）：
+- 1k：graph 0.655ms，topo 0.679ms，layers 1.401ms，projection 0.046ms，index 0.732ms，ready 1.679ms，peak 1.21MB；
+- 5k：graph 3.781ms，topo 3.846ms，layers 7.154ms，projection 0.086ms，index 3.752ms，ready 7.229ms，peak 5.78MB；
+- 10k：graph 6.874ms，topo 6.410ms，layers 16.052ms，projection 0.112ms，index 10.073ms，ready 15.288ms，peak 11.55MB。
+
+结论：当前 dependency graph / projection / index 的规模增长保持可接受，下一阶段应转向执行控制面的 cancellation / timeout / crash recovery，而非继续优化静态 DAG 基础算法。
 
 # Phase 14 — Concurrency / Cancellation / Recovery
 
-`□ 14.1` Cancellation contract
-`□ 14.2` Timeout contract
+## `▶ 14.1` Cancellation contract
+当前实现 cooperative cancellation 基础契约：
+- `CancellationToken` 为线程安全、单调、可重复 request 的取消信号；
+- cancellation reason 只接受非空字符串或 `None`；
+- 首次 cancellation reason 保留，后续 request 不覆盖；
+- `snapshot()` 提供只读状态；
+- `raise_if_requested()` 将取消请求转换为 `CancellationRequested`；
+- `wait()` 支持等待取消事件；
+- 当前节点先建立 primitive contract，后续 14.1 集成 Task lifecycle、scheduler、resource release 前保持该边界。
+
+## `□ 14.2` Timeout contract
 `□ 14.3` Crash recovery matrix
 `□ 14.4` Multi-process execution
 `□ 14.5` Exactly-once / at-least-once semantics
