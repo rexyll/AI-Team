@@ -10,6 +10,7 @@ from runtime.process_lock import exclusive_process_lock
 
 
 DeliveryStatus = Literal["processing", "committed"]
+RecoveryAction = Literal["commit", "retry"]
 
 
 @dataclass(frozen=True)
@@ -28,14 +29,12 @@ class DeliveryDecision:
 class DurableDeliveryStore:
     """Filesystem reference store for durable result-delivery identities.
 
-    A delivery key is reserved durably before the external mutation callback is
-    invoked. A committed record survives a new process/store instance, so a
-    retry can distinguish an already-completed delivery from a first delivery.
-
-    ``processing`` is intentionally observable: a crash after the external
-    mutation but before ``complete`` cannot be falsely claimed to be exactly
-    once by this generic filesystem adapter. Exactly-once *effect* requires the
-    mutation and delivery record to share one transactional/idempotent boundary.
+    Execution is at-least-once. A delivery is durably reserved before its
+    mutation callback and marked committed only after that callback succeeds.
+    If a worker crashes after the mutation but before ``complete``, the record
+    remains ``processing``. Recovery therefore requires an explicit, externally
+    informed decision; the store never guesses whether an external side effect
+    happened.
     """
 
     def __init__(self, root: str | Path) -> None:
@@ -50,7 +49,8 @@ class DurableDeliveryStore:
         return self.root / f"delivery-{safe}.json"
 
     def _lock_path(self, key: str) -> Path:
-        return self.root / f".delivery-{key.replace('/', '_').replace(chr(92), '_')}.lock"
+        safe = key.replace("/", "_").replace(chr(92), "_")
+        return self.root / f".delivery-{safe}.lock"
 
     def status(self, key: str) -> DeliveryRecord | None:
         with exclusive_process_lock(self._lock_path(key)), self._lock:
@@ -76,17 +76,44 @@ class DurableDeliveryStore:
             self._write(DeliveryRecord(key=key, status="committed"))
             return DeliveryDecision(True, False, "committed")
 
+    def recover_processing(self, key: str, action: RecoveryAction) -> DeliveryDecision:
+        """Resolve an interrupted delivery using an explicit reconciliation decision.
+
+        ``commit`` is safe only when an authoritative sink/reconciliation check
+        proves the external mutation already happened. ``retry`` is safe only
+        when that check proves it did not happen. Neither decision is inferred
+        from process liveness, timestamps, or the ``processing`` marker itself.
+        """
+        if action not in {"commit", "retry"}:
+            raise ValueError("action must be 'commit' or 'retry'")
+        with exclusive_process_lock(self._lock_path(key)), self._lock:
+            current = self._load(key)
+            if current is None:
+                raise ValueError("delivery does not exist")
+            if current.status == "committed":
+                return DeliveryDecision(False, True, "committed")
+            if action == "commit":
+                self._write(DeliveryRecord(key=key, status="committed"))
+                return DeliveryDecision(True, False, "committed")
+            self._path(key).unlink(missing_ok=True)
+            return DeliveryDecision(True, False, None)
+
     def commit(self, key: str, apply_result: Callable[[], object]) -> object:
         """Reference idempotent delivery operation.
 
-        The delivery record is persisted before the callback and completed only
-        after it succeeds. A crash in between leaves ``processing`` for explicit
-        recovery rather than silently pretending that exactly-once was achieved.
+        A duplicate, including a pre-existing ``processing`` record, is never
+        automatically replayed. An interrupted delivery must first be resolved
+        by ``recover_processing`` after reconciling the external sink.
         """
         decision = self.begin(key)
         if decision.duplicate:
             return None
-        result = apply_result()
+        try:
+            result = apply_result()
+        except Exception:
+            # Keep processing durable: the caller/recovery coordinator must
+            # decide whether the external side effect happened.
+            raise
         self.complete(key)
         return result
 
