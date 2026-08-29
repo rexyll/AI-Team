@@ -20,7 +20,7 @@ from runtime.developer_decision_trace_collector import DeveloperDecisionTraceCol
 from runtime.tool_result_evidence import reduce_tool_result
 from runtime.safe_tool_batch import classify_safe_tool_batch
 from runtime.safe_tool_batch_executor import execute_safe_tool_batch
-from security.tool_guard import validate_tool_arguments
+from runtime.developer_tool_invocation import DeveloperToolInvocationAdapter
 from runtime.agent_result import AgentResult
 
 MAX_TOOL_ITERATIONS = 50
@@ -148,6 +148,7 @@ EXECUTION REQUIREMENT
                 self.tool_execution_history = ToolExecutionHistory.from_dict(persisted_history)
             except (TypeError, ValueError, KeyError) as exc:
                 raise ValueError(f"task {task.id} contains invalid persisted tool execution history") from exc
+        invocation = DeveloperToolInvocationAdapter(history=self.tool_execution_history)
         changed_files: list[str] = []
         command_results: list[dict[str, Any]] = []
         verification_evidence: list[dict[str, Any]] = []
@@ -189,7 +190,7 @@ EXECUTION REQUIREMENT
                             break
                         tool_function = TOOL_REGISTRY.get(call.name)
                         tool_schema = TOOL_REGISTRY.schema(call.name)
-                        validated, ignored = validate_tool_arguments(tool_function, parsed, schema=tool_schema)
+                        validated, ignored = __import__('security.tool_guard', fromlist=['validate_tool_arguments']).validate_tool_arguments(tool_function, parsed, schema=tool_schema)
                         if ignored:
                             batch_possible = False
                             break
@@ -205,7 +206,7 @@ EXECUTION REQUIREMENT
                         if decision.safe:
                             _, results = execute_safe_tool_batch(
                                 [{"name": item["name"], "arguments": item["arguments"]} for item in batch_candidates],
-                                lambda name, arguments: TOOL_REGISTRY.get(name)(**arguments),
+                                lambda name, arguments: invocation.invoke(tool_name=name, execution_id=f"batch:{name}:{len(batched_results)}", task_id=context.task_id, arguments=arguments).output,
                             )
                             batched_results = {item["call_id"]: result for item, result in zip(batch_candidates, results)}
                 except Exception:
@@ -258,7 +259,7 @@ EXECUTION REQUIREMENT
                 try:
                     tool_function = TOOL_REGISTRY.get(tool_name)
                     tool_schema = TOOL_REGISTRY.schema(tool_name)
-                    validated_arguments, ignored_arguments = validate_tool_arguments(tool_function, arguments, schema=tool_schema)
+                    validated_arguments, ignored_arguments = __import__('security.tool_guard', fromlist=['validate_tool_arguments']).validate_tool_arguments(tool_function, arguments, schema=tool_schema)
                     record_arguments = dict(validated_arguments)
                     if ignored_arguments:
                         print("[Ignored Args] " f"{ignored_arguments}")
@@ -282,13 +283,19 @@ EXECUTION REQUIREMENT
                             cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
                             print("[Safe Batch] independent read-only tool result executed concurrently")
                         else:
-                            result = tool_function(**validated_arguments)
+                            invocation_result = invocation.invoke(tool_name=tool_name, execution_id=tool_call.call_id, task_id=context.task_id, arguments=validated_arguments)
+                            if not invocation_result.success:
+                                error = invocation_result.error.to_dict() if invocation_result.error is not None else {"type": "ToolError", "message": "tool invocation failed"}
+                                result = "Tool error: " + str(error.get("message", "tool invocation failed"))
+                                status = "failed"
+                            else:
+                                result = invocation_result.output
                             context_result = result
                             cache.store(tool_name=tool_name, arguments=validated_arguments, result=result, execution_id=tool_call.call_id)
                         self._record_tool_evidence(tool_name=tool_name, arguments=validated_arguments, result=result, changed_files=changed_files, command_results=command_results)
                         if tool_name == "write_file" and status == "completed":
                             workspace_revision += 1
-                        if tool_name == "run_command" and isinstance(validated_arguments.get("command"), str):
+                        if tool_name == "run_command" and isinstance(validated_arguments.get("command"), str) and status == "completed":
                             verification_evidence.append(record_verification_evidence(command=validated_arguments["command"], result=result, changed_files=changed_files, workspace_revision=workspace_revision))
                     if tool_name != "run_command" or not verification_reused:
                         cache.invalidate_for(tool_name)
@@ -311,7 +318,7 @@ EXECUTION REQUIREMENT
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
-                    self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
+                    self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
                     return self._progress_guard_failure(context.task_id, reason, loop_telemetry, changed_files, command_results, tool_calls, cache, verification_reused_count, decision_traces)
                 self._append_checkpoint(messages, loop_telemetry, changed_files, command_results, workspace_revision)
                 if tool_name == "run_command":
