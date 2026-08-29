@@ -13,7 +13,7 @@ _SECRET_KEY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SECRET_VALUE_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:sk|key|token|secret)[_-]?[A-Za-z0-9]*\s*[=:]\s*)"
+    r"(?P<prefix>\b(?:api[_-]?key|secret|password|passwd|token|authorization|credential)\s*[=:]\s*)"
     r"(?P<value>[^\s,;]+)",
     re.IGNORECASE,
 )
