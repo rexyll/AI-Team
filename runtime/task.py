@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from runtime.cancellation import CancellationRequested, CancellationSnapshot, CancellationToken
+from runtime.task_status import TaskStatus, validate_transition
+
 
 @dataclass
 class Task:
@@ -28,6 +31,15 @@ class Task:
     max_retries: int = 0
     retry_history: list[dict[str, Any]] = field(default_factory=list)
 
+    cancellation_requested: bool = False
+    cancellation_reason: str | None = None
+    _cancellation_token: CancellationToken = field(
+        default_factory=CancellationToken,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
     def configure_retry(self, *, max_retries: int) -> None:
         if not isinstance(max_retries, int) or isinstance(max_retries, bool):
             raise TypeError("max_retries must be an integer")
@@ -38,6 +50,8 @@ class Task:
         self.max_retries = max_retries
 
     def record_retry_attempt(self, *, reason: str, retryable: bool) -> None:
+        if self.cancellation_requested:
+            raise RuntimeError("cancelled task cannot create a retry attempt")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("retry reason must be a non-empty string")
         if not isinstance(retryable, bool):
@@ -55,6 +69,36 @@ class Task:
                 "retryable": retryable,
             }
         )
+
+    def cancel(self, reason: str | None = None) -> CancellationSnapshot:
+        """Request cooperative cancellation and move the task to CANCELLED.
+
+        Cancellation is a control-plane outcome, not a task failure: it never
+        writes ``error`` and never consumes retry budget. Repeated cancellation
+        requests are idempotent and preserve the first reason.
+        """
+        snapshot = self._cancellation_token.request(reason)
+        self.cancellation_requested = snapshot.requested
+        self.cancellation_reason = snapshot.reason
+
+        if self.status != TaskStatus.CANCELLED.value:
+            validate_transition(self.status, TaskStatus.CANCELLED)
+            previous = self.status
+            self.status = TaskStatus.CANCELLED.value
+            self.status_history.append(
+                {
+                    "from": previous,
+                    "to": TaskStatus.CANCELLED.value,
+                    "reason": snapshot.reason,
+                }
+            )
+        return snapshot
+
+    def cancellation_snapshot(self) -> CancellationSnapshot:
+        return self._cancellation_token.snapshot()
+
+    def raise_if_cancelled(self) -> None:
+        self._cancellation_token.raise_if_requested()
 
     def to_dict(self) -> dict[str, Any]:
         """Return the Task's persistence-safe, JSON-friendly state."""
@@ -77,6 +121,8 @@ class Task:
             "retry_attempt": self.retry_attempt,
             "max_retries": self.max_retries,
             "retry_history": self.retry_history,
+            "cancellation_requested": self.cancellation_requested,
+            "cancellation_reason": self.cancellation_reason,
         }
 
     @classmethod
@@ -92,10 +138,6 @@ class Task:
                 "Task payload missing required fields: " + ", ".join(missing)
             )
 
-        # Older/manual project snapshots may encode optional mapping fields as
-        # JSON null. Normalize those values to the dataclass defaults before
-        # contract validation; malformed non-mapping values still fail through
-        # the normal Task contract.
         def _mapping(key: str) -> dict[str, Any]:
             value = payload.get(key)
             if value is None:
@@ -121,7 +163,15 @@ class Task:
             retry_attempt=payload.get("retry_attempt", 0),
             max_retries=payload.get("max_retries", 0),
             retry_history=list(payload.get("retry_history", [])),
+            cancellation_requested=payload.get("cancellation_requested", False),
+            cancellation_reason=payload.get("cancellation_reason"),
         )
+        if task.cancellation_requested:
+            if task.status != TaskStatus.CANCELLED.value:
+                raise ValueError("cancelled Task payload must have cancelled status")
+            task._cancellation_token.request(task.cancellation_reason)
+        elif task.cancellation_reason is not None:
+            raise ValueError("cancellation_reason requires cancellation_requested")
         task.validate_contract()
         return task
 
