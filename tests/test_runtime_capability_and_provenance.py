@@ -59,7 +59,7 @@ def test_tool_and_agent_feedback_provenance_have_distinct_source_types() -> None
     assert feedback.evidence_id == "tester:TASK-001"
 
 
-def test_tool_execution_record_contains_immutable_provenance_metadata() -> None:
+def test_tool_execution_record_derives_provenance_without_changing_serialized_schema() -> None:
     record = ToolExecutionRecord(
         execution_id="call-1",
         task_id="TASK-001",
@@ -71,7 +71,7 @@ def test_tool_execution_record_contains_immutable_provenance_metadata() -> None:
         output="ok",
     )
 
-    assert record.metadata["provenance"] == {
+    assert record.provenance.to_dict() == {
         "source_role": "developer",
         "source_type": "tool_execution",
         "task_id": "TASK-001",
@@ -79,9 +79,10 @@ def test_tool_execution_record_contains_immutable_provenance_metadata() -> None:
         "status": "observed",
         "parent_evidence_id": None,
     }
+    assert "provenance" not in record.to_dict()
 
 
-def test_tool_execution_context_projection_excludes_internal_provenance() -> None:
+def test_tool_execution_context_projection_preserves_stable_schema() -> None:
     record = ToolExecutionRecord(
         execution_id="call-1",
         task_id="TASK-001",
@@ -94,19 +95,7 @@ def test_tool_execution_context_projection_excludes_internal_provenance() -> Non
         metadata={"iteration": 1},
     )
 
-    assert record.to_context_dict() == {
-        "execution_id": "call-1",
-        "task_id": "TASK-001",
-        "agent_role": "developer",
-        "tool_name": "read_file",
-        "started_at": "2026-08-29T00:00:00+00:00",
-        "completed_at": "2026-08-29T00:00:01+00:00",
-        "status": "completed",
-        "arguments": {},
-        "output": "ok",
-        "error": None,
-        "metadata": {"iteration": 1},
-    }
+    assert record.to_context_dict() == record.to_dict()
 
 
 def test_tester_feedback_exposes_provenance() -> None:
