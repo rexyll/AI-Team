@@ -15,6 +15,7 @@ from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
 from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
 from security.prompt_injection import augment_system_prompt
+from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY
 
 
 class BaseAgent(ABC):
@@ -81,19 +82,32 @@ class BaseAgent(ABC):
                 ),
             })
 
+    def _authorized_tool_schemas(self, tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+        """Expose only tools authorized for this agent role to the model."""
+        if tools is None:
+            return None
+        authorized = []
+        for schema in tools:
+            function = schema.get("function", {}) if isinstance(schema, dict) else {}
+            name = function.get("name") if isinstance(function, dict) else None
+            if isinstance(name, str) and DEFAULT_RUNTIME_CAPABILITY_POLICY.allows(self.role, name):
+                authorized.append(schema)
+        return authorized
+
     def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
         security_prompt = self._secured_system_prompt("")
         secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + messages
+        authorized_tools = self._authorized_tool_schemas(tools)
         if isinstance(self.llm, ContextCompactingLLM):
-            response = self.llm.generate_with_tools(secured_messages, tools=tools, tool_choice=tool_choice)
+            response = self.llm.generate_with_tools(secured_messages, tools=authorized_tools, tool_choice=tool_choice)
             prompt_chars = self.llm.last_prompt_chars_after
             input_tokens = self.llm.last_input_tokens_after
         else:
             compacted, stats = self.context_compactor.compact_messages(secured_messages)
-            response = self.llm.generate_with_tools(compacted, tools=tools, tool_choice=tool_choice)
+            response = self.llm.generate_with_tools(compacted, tools=authorized_tools, tool_choice=tool_choice)
             prompt_chars = stats.compacted_chars
             input_tokens = stats.compacted_tokens
         self.llm_metrics.record_llm_call(prompt_chars=prompt_chars, input_tokens=input_tokens, elapsed_seconds=perf_counter() - started)
