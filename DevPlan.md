@@ -35,8 +35,8 @@
 ✓ 13.5 Resource governance
 ✓ 13.6 Large-project benchmark
 ✓ 14.1 Cancellation contract
-▶ 14.2 Timeout contract
-□ 14.3 Crash recovery matrix
+✓ 14.2 Timeout contract
+▶ 14.3 Crash recovery matrix
 □ 14.4 Multi-process execution
 □ 14.5 Exactly-once / at-least-once semantics
 □ 15.x Security Hardening
@@ -50,25 +50,29 @@
 ## `✓ 14.1` Cancellation contract
 已完成 cooperative cancellation primitive 与 lifecycle integration，并通过专项与全量测试。
 
-## `▶ 14.2` Timeout contract
-已完成 timeout lifecycle integration 与 retry/recovery boundary 第一阶段：
-- `TimeoutController` 使用 monotonic clock，并通过 `TimeoutExceeded` 保持独立 timeout 语义；
-- timeout 到期后转换为 Task `CANCELLED`，不写入 `Task.error`，不消耗 retry budget；
-- pre-existing operator cancellation reason 不会被 timeout 覆盖；
-- 已 admission 的 task timeout 后通过 `ResourceExecutionCoordinator` 释放 active resource slot；
-- resource release 幂等，重复 timeout check 不产生额外 slot decrement；
-- timeout decision 明确标记 `retryable=False`，retry policy 不由 timeout controller 隐式触发；
-- 新增 `TimeoutExecutionController`；
-- 新增 `TimeoutRecoveryDecision` / `decide_timeout_recovery()`，将 timeout recovery 变成显式上层策略；
-- 默认 timeout recovery action 为 `none`；显式 `retry` / `recover` 只产生 policy decision，不直接修改 Task；
-- timeout recovery 要求 task 已处于 `CANCELLED`，且 cancellation task 不得携带普通 failure error；
-- 显式 timeout retry 会校验 retry budget，但不会自动增加 `retry_attempt`；
-- `TimeoutExceeded` 被明确识别为 control-plane signal，而非普通 task failure。
+## `✓ 14.2` Timeout contract
+已完成 timeout lifecycle integration 与 retry/recovery boundary，并通过专项与全量测试。
 
-### 当前待验证
-用户需 Pull 后运行 timeout recovery 专项及全量回归。通过后关闭 14.2。
+## `▶ 14.3` Crash recovery matrix
+第一阶段已建立确定性的 crash recovery decision matrix：
+- terminal `completed` / `failed` / `cancelled` 状态绝不 replay；
+- `running` / `review_pending` / `reviewing` / `revision` 视为 worker interruption，进入显式 `requeue` 路径；
+- `pending` / `ready` / `blocked` 可直接 `restore`，不重复执行已经完成的工作；
+- worker crash 本身不等价于 task failure，不自动写入 `Task.error`；
+- interrupted task 的恢复要求 resource reconciliation；
+- recovery decision 只描述 control-plane action，不直接修改 Task；
+- retry counters 保留在 persistence snapshot 中，不因 crash recovery 自动递增；
+- 新增 `runtime/crash_recovery.py` 与 `tests/test_crash_recovery.py`。
 
-## `□ 14.3` Crash recovery matrix
+### 下一小阶段：Crash recovery × persistence × resource reconciliation
+重点验证：
+1. crash 前后的 Task snapshot 可以稳定恢复；
+2. `RUNNING` task 重启后只能进入显式 recovery/requeue；
+3. 已完成 Task 不会被重复执行；
+4. crash 后遗留 resource slot 可以被 reconciliation 清理；
+5. recovery 不自动消耗 retry budget；
+6. recovery 与 cancellation/timeout 状态保持互斥且语义一致。
+
 ## `□ 14.4` Multi-process execution
 ## `□ 14.5` Exactly-once / at-least-once semantics
 
