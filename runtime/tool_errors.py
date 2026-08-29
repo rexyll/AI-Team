@@ -21,6 +21,14 @@ class ToolError:
     message: str
     details: dict[str, Any] | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "category": self.category,
+            "message": self.message,
+            "details": self.details,
+        }
+
 
 class ToolExecutionError(RuntimeError):
     """Base exception for failures that occur while executing a Tool."""
