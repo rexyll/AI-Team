@@ -1,0 +1,1 @@
+cross-process lock support is implemented in runtime/process_lock.py
