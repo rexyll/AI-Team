@@ -48,29 +48,28 @@
 # Phase 14 — Concurrency / Cancellation / Recovery
 
 ## `✓ 14.1` Cancellation contract
-已完成 cooperative cancellation primitive 与 lifecycle integration：
-- `CancellationToken` 线程安全、单调、幂等；
-- 首次 cancellation reason 保留；
-- `Task.cancel()` 进入终态 `CANCELLED`；
-- cancellation 不写 Task.error、不消耗 retry budget；
-- cancelled task 不进入 DependencyScheduler ready/runnable；
-- cancelled task 不得新 admission；
-- running cancelled task 由 coordinator 幂等释放 resource slot；
-- cancellation state 可持久化恢复；
-- cancellation lifecycle 专项与全量测试已通过。
+已完成 cooperative cancellation primitive 与 lifecycle integration，并通过专项与全量测试。
 
 ## `▶ 14.2` Timeout contract
-当前已建立 cooperative timeout 第一层 contract：
-- `TimeoutController` 使用 monotonic clock；
-- `timeout_s=None` 表示不启用 timeout；
-- timeout 必须为正数；
-- deadline 到达时 timeout 只产生 control-plane cancellation，不直接修改 Task.failure / retry state；
-- timeout 使用独立的 `TimeoutExceeded` 异常语义；
-- timeout 与 pre-existing operator cancellation 不覆盖原 cancellation reason；
-- `remaining()` 永不返回负数；
-- expiry / snapshot / cancellation request 均为幂等；
-- 新增 `tests/test_timeout.py`；
-- 下一步需把 timeout 接入 Task lifecycle、scheduler admission 与 resource release，并建立 timeout × retry/recovery boundary contract。
+已完成 timeout lifecycle integration 第一阶段：
+- `TimeoutController` 使用 monotonic clock，并通过 `TimeoutExceeded` 保持独立 timeout 语义；
+- timeout 到期后转换为 Task `CANCELLED`，不写入 `Task.error`，不消耗 retry budget；
+- pre-existing operator cancellation reason 不会被 timeout 覆盖；
+- 已 admission 的 task timeout 后通过 `ResourceExecutionCoordinator` 释放 active resource slot；
+- resource release 幂等，重复 timeout check 不产生额外 slot decrement；
+- timeout decision 明确标记 `retryable=False`，retry policy 不由 timeout controller 隐式触发；
+- 新增 `TimeoutExecutionController` 与 timeout lifecycle integration tests；
+- 用户已确认此前 timeout primitive 专项与全量测试通过；
+- 当前待验证本阶段新增 integration tests 与全量回归。
+
+### 下一小阶段：Timeout × retry/recovery boundary
+验证并明确：
+1. timeout 不应自动调用 `TaskManager.mark_failed()`；
+2. timeout 不应自动增加 `retry_attempt`；
+3. timeout 后不允许重复 admission；
+4. timeout 后 resource slot 必须最终归零；
+5. timeout 发生在 retry/revision 流程中时，不得绕过现有状态机；
+6. timeout recovery 必须由上层策略显式决定，而不是由 timeout primitive 隐式决定。
 
 ## `□ 14.3` Crash recovery matrix
 ## `□ 14.4` Multi-process execution
