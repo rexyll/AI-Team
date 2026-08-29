@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 import json
 
 from security.secrets import redact_value
+from runtime.provenance import tool_evidence_provenance
 
 
 _ALLOWED_STATUS: tuple[str, ...] = (
@@ -72,6 +73,13 @@ class ToolExecutionRecord:
             raise TypeError("arguments must be a JSON object")
         if not isinstance(safe_metadata, dict):
             raise TypeError("metadata must be a JSON object")
+
+        provenance = tool_evidence_provenance(
+            task_id=self.task_id,
+            agent_role=self.agent_role,
+            execution_id=self.execution_id,
+        ).to_dict()
+        safe_metadata.setdefault("provenance", provenance)
 
         object.__setattr__(self, "arguments", deepcopy(safe_arguments))
         object.__setattr__(self, "output", deepcopy(safe_output))
