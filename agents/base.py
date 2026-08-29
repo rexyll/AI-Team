@@ -14,6 +14,7 @@ from runtime.llm_metrics import LLMMetrics
 from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
 from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
+from security.prompt_injection import augment_system_prompt
 
 
 class BaseAgent(ABC):
@@ -25,9 +26,6 @@ class BaseAgent(ABC):
                 "BaseAgent llm must implement BaseLLM, "
                 f"got {type(provider).__name__}"
             )
-        # Keep dependency injection transparent. The owning runtime boundary
-        # may explicitly install ContextCompactingLLM; otherwise BaseAgent
-        # applies the shared compactor directly without changing llm identity.
         self.llm = provider
         self.context_compactor = ContextCompactor()
         self.llm_metrics = LLMMetrics()
@@ -45,11 +43,11 @@ class BaseAgent(ABC):
     def _generate(self, prompt: str, *, system_prompt: str = "", temperature: float = 0.2, max_tokens: int = 4096) -> str:
         if isinstance(self.llm, ContextCompactingLLM):
             started = perf_counter()
-            result = self.llm.generate(prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens)
+            result = self.llm.generate(prompt, system_prompt=augment_system_prompt(system_prompt), temperature=temperature, max_tokens=max_tokens)
             prompt_chars = self.llm.last_prompt_chars_after
             input_tokens = self.llm.last_input_tokens_after
         else:
-            compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(prompt, system_prompt=system_prompt)
+            compact_prompt, compact_system, stats = self.context_compactor.compact_prompt(prompt, system_prompt=augment_system_prompt(system_prompt))
             started = perf_counter()
             result = self.llm.generate(compact_prompt, system_prompt=compact_system, temperature=temperature, max_tokens=max_tokens)
             prompt_chars = stats.compacted_chars
@@ -59,14 +57,7 @@ class BaseAgent(ABC):
         return result
 
     def _prepare_tool_loop_decision_budget(self, messages: list[dict[str, Any]]) -> None:
-        """Record one decision turn and inject a soft reuse checkpoint when needed.
-
-        The budget never terminates execution. It only gives the model an
-        explicit, task-local signal to reuse established evidence/checkpoints
-        before starting another exploratory loop. The counter is reset when a
-        fresh task message list is observed, keeping the budget task-local even
-        when an agent instance is reused by tests or orchestration code.
-        """
+        """Record one decision turn and inject a soft reuse checkpoint when needed."""
         message_set_id = id(messages)
         if self._tool_loop_budget_messages_id != message_set_id:
             self._tool_loop_decision_budget = ToolLoopDecisionBudget()
@@ -90,12 +81,12 @@ class BaseAgent(ABC):
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
         if isinstance(self.llm, ContextCompactingLLM):
-            response = self.llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice)
+            response = self.llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice, system_prompt=augment_system_prompt(""))
             prompt_chars = self.llm.last_prompt_chars_after
             input_tokens = self.llm.last_input_tokens_after
         else:
             compacted, stats = self.context_compactor.compact_messages(messages)
-            response = self.llm.generate_with_tools(compacted, tools=tools, tool_choice=tool_choice)
+            response = self.llm.generate_with_tools(compacted, tools=tools, tool_choice=tool_choice, system_prompt=augment_system_prompt(""))
             prompt_chars = stats.compacted_chars
             input_tokens = stats.compacted_tokens
         self.llm_metrics.record_llm_call(prompt_chars=prompt_chars, input_tokens=input_tokens, elapsed_seconds=perf_counter() - started)
