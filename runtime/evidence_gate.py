@@ -23,8 +23,8 @@ def validate_gate_evidence(
 
     The validator is intentionally fail-closed. It accepts only explicit
     provenance, requires every lineage node to belong to the current task,
-    and optionally constrains the source types/statuses represented by the
-    chain. Missing parent evidence is not silently promoted to a valid root.
+    requires declared parents to be resolvable, and optionally constrains
+    source types/statuses represented by the chain.
     """
     if not isinstance(task_id, str) or not task_id.strip():
         raise ValueError("task_id must be a non-empty string")
@@ -36,6 +36,9 @@ def validate_gate_evidence(
     chain = collect_lineage(value, parents=parents)
     if not chain:
         raise EvidenceGateError("gate evidence produced an empty provenance lineage")
+
+    if chain[-1].parent_evidence_id is not None:
+        raise EvidenceGateError("gate evidence lineage has missing parent evidence")
 
     expected_task_id = task_id.strip()
     if any(item.task_id != expected_task_id for item in chain):
