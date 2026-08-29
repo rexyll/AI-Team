@@ -85,14 +85,20 @@
 # Phase 14 — Concurrency / Cancellation / Recovery
 
 ## `▶ 14.1` Cancellation contract
-当前实现 cooperative cancellation 基础契约：
+当前已完成 cooperative cancellation primitive，并进入 lifecycle integration checkpoint：
 - `CancellationToken` 为线程安全、单调、可重复 request 的取消信号；
 - cancellation reason 只接受非空字符串或 `None`；
 - 首次 cancellation reason 保留，后续 request 不覆盖；
 - `snapshot()` 提供只读状态；
 - `raise_if_requested()` 将取消请求转换为 `CancellationRequested`；
 - `wait()` 支持等待取消事件；
-- 当前节点先建立 primitive contract，后续 14.1 集成 Task lifecycle、scheduler、resource release 前保持该边界。
+- `Task` 增加 cancellation state，并通过 `cancel()` 进入终态 `CANCELLED`；
+- cancellation 不写入 Task.error，不消耗 retry budget；
+- cancelled task 不再进入 DependencyScheduler ready/runnable 集合；
+- cancelled task 不得通过 ResourceExecutionCoordinator 新 admission；
+- 已运行任务取消后由 coordinator 通过幂等 `cancel(task_id)` 释放 active resource slot；
+- cancellation state 可通过 `Task.to_dict()` / `Task.from_dict()` 持久化恢复；
+- 新增 cancellation lifecycle integration contract，待用户专项与全量测试确认后关闭 14.1。
 
 ## `□ 14.2` Timeout contract
 `□ 14.3` Crash recovery matrix
