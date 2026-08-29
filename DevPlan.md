@@ -34,8 +34,8 @@
 ✓ 13.4 Persistent indexes
 ✓ 13.5 Resource governance
 ✓ 13.6 Large-project benchmark
-▶ 14.1 Cancellation contract
-□ 14.2 Timeout contract
+✓ 14.1 Cancellation contract
+▶ 14.2 Timeout contract
 □ 14.3 Crash recovery matrix
 □ 14.4 Multi-process execution
 □ 14.5 Exactly-once / at-least-once semantics
@@ -45,65 +45,36 @@
 □ 18.x Release / Production Readiness
 ```
 
-# Phase 13 — Large Project Execution
-
-## `✓ 13.1` 1k-task dependency graph
-已完成 1,000 task DAG contract：验证 dependency-first topological order、execution layers、parallel branch 聚合、unknown dependency / cycle rejection，以及 graph construction 对源 task definitions 的隔离。用户已确认专项与全量测试通过（1,328 passed）。
-
-## `✓ 13.2` 5k-task scalability
-已完成 5,000 task graph / scheduler scalability contract：验证 5k chain、layered dependency graph、ready-set correctness、确定性和 read-only 边界。专项与全量测试已通过。
-
-## `✓ 13.3` Incremental projection
-已完成 dependency-closed projection：选定 task 会保留全部传递依赖，projection 与 source graph 隔离，并对 projection 执行 unknown dependency / cycle safety 校验；同时完成 5k 大图下小 reachable subgraph 与完整链 projection contract。
-
-## `✓ 13.4` Persistent indexes
-已完成 forward / reverse dependency index、transitive affected-set、immutable snapshot、incremental mutation、full rebuild equivalence、repeated mutation equivalence 与 5k scalability contract。
-
-## `✓ 13.5` Resource governance
-已完成 project-level resource governance 与 execution lifecycle integration：
-- `ResourceLimits`：并发 task、tool calls、input tokens、output tokens hard limits；
-- `ResourceUsage`：单调累计 usage snapshot；
-- `ResourceGovernor`：immutable admission/accounting API；
-- `ResourceAdmissionDecision`：资源拒绝与 Task failure 明确隔离；
-- `ResourceLifecycle`：admit → consume → finish 生命周期；
-- `ResourceExecutionCoordinator`：并发 admission、out-of-order finish 与 slot release 的线程安全协调；
-- resource rejection 不修改 Task lifecycle、不消耗 retry、不触发 recovery；
-- budget exhaustion 不隐式 finish、不回滚既有 accounting；
-- success / failure / exception execution path 均具备资源释放 contract；
-- 已通过 Resource Governance 专项、execution lifecycle 专项及全量测试。
-
-## `✓ 13.6` Large-project benchmark
-已完成可重复的 1k / 5k / 10k-task baseline，并验证 deterministic layered workload、dependency correctness、graph construction、topological sort、execution layers、projection、persistent index、scheduler ready-set、resource admission 与 memory footprint。
-
-基线结果（Windows / 当前开发环境）：
-- 1k：graph 0.655ms，topo 0.679ms，layers 1.401ms，projection 0.046ms，index 0.732ms，ready 1.679ms，peak 1.21MB；
-- 5k：graph 3.781ms，topo 3.846ms，layers 7.154ms，projection 0.086ms，index 3.752ms，ready 7.229ms，peak 5.78MB；
-- 10k：graph 6.874ms，topo 6.410ms，layers 16.052ms，projection 0.112ms，index 10.073ms，ready 15.288ms，peak 11.55MB。
-
-结论：当前 dependency graph / projection / index 的规模增长保持可接受，下一阶段应转向执行控制面的 cancellation / timeout / crash recovery，而非继续优化静态 DAG 基础算法。
-
 # Phase 14 — Concurrency / Cancellation / Recovery
 
-## `▶ 14.1` Cancellation contract
-当前已完成 cooperative cancellation primitive，并进入 lifecycle integration checkpoint：
-- `CancellationToken` 为线程安全、单调、可重复 request 的取消信号；
-- cancellation reason 只接受非空字符串或 `None`；
-- 首次 cancellation reason 保留，后续 request 不覆盖；
-- `snapshot()` 提供只读状态；
-- `raise_if_requested()` 将取消请求转换为 `CancellationRequested`；
-- `wait()` 支持等待取消事件；
-- `Task` 增加 cancellation state，并通过 `cancel()` 进入终态 `CANCELLED`；
-- cancellation 不写入 Task.error，不消耗 retry budget；
-- cancelled task 不再进入 DependencyScheduler ready/runnable 集合；
-- cancelled task 不得通过 ResourceExecutionCoordinator 新 admission；
-- 已运行任务取消后由 coordinator 通过幂等 `cancel(task_id)` 释放 active resource slot；
-- cancellation state 可通过 `Task.to_dict()` / `Task.from_dict()` 持久化恢复；
-- 新增 cancellation lifecycle integration contract，待用户专项与全量测试确认后关闭 14.1。
+## `✓ 14.1` Cancellation contract
+已完成 cooperative cancellation primitive 与 lifecycle integration：
+- `CancellationToken` 线程安全、单调、幂等；
+- 首次 cancellation reason 保留；
+- `Task.cancel()` 进入终态 `CANCELLED`；
+- cancellation 不写 Task.error、不消耗 retry budget；
+- cancelled task 不进入 DependencyScheduler ready/runnable；
+- cancelled task 不得新 admission；
+- running cancelled task 由 coordinator 幂等释放 resource slot；
+- cancellation state 可持久化恢复；
+- cancellation lifecycle 专项与全量测试已通过。
 
-## `□ 14.2` Timeout contract
-`□ 14.3` Crash recovery matrix
-`□ 14.4` Multi-process execution
-`□ 14.5` Exactly-once / at-least-once semantics
+## `▶ 14.2` Timeout contract
+当前已建立 cooperative timeout 第一层 contract：
+- `TimeoutController` 使用 monotonic clock；
+- `timeout_s=None` 表示不启用 timeout；
+- timeout 必须为正数；
+- deadline 到达时 timeout 只产生 control-plane cancellation，不直接修改 Task.failure / retry state；
+- timeout 使用独立的 `TimeoutExceeded` 异常语义；
+- timeout 与 pre-existing operator cancellation 不覆盖原 cancellation reason；
+- `remaining()` 永不返回负数；
+- expiry / snapshot / cancellation request 均为幂等；
+- 新增 `tests/test_timeout.py`；
+- 下一步需把 timeout 接入 Task lifecycle、scheduler admission 与 resource release，并建立 timeout × retry/recovery boundary contract。
+
+## `□ 14.3` Crash recovery matrix
+## `□ 14.4` Multi-process execution
+## `□ 14.5` Exactly-once / at-least-once semantics
 
 # Phase 15 — Security Hardening
 
