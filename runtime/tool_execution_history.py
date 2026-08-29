@@ -9,13 +9,7 @@ if TYPE_CHECKING:
 
 
 class ToolExecutionConflictError(FileExistsError, ValueError):
-    """Raised when one execution id maps to different immutable records.
-
-    The conflict is semantically a duplicate immutable execution identity, so
-    callers can catch this specific error. It also remains compatible with
-    older persistence callers that treated an occupied execution-id path as a
-    ``FileExistsError``.
-    """
+    """Raised when one execution id maps to different immutable records."""
 
 
 class ToolExecutionHistory:
@@ -50,11 +44,7 @@ class ToolExecutionHistory:
         raise self._conflict(record.execution_id)
 
     def merge(self, records: Iterable[ToolExecutionRecord]) -> int:
-        """Merge records atomically by execution-id identity.
-
-        Identical duplicates are ignored. A conflicting record aborts the
-        merge before mutating this history. Returns the number of new records.
-        """
+        """Merge records atomically by execution-id identity."""
         incoming = list(records)
         for record in incoming:
             if not isinstance(record, ToolExecutionRecord):
@@ -93,6 +83,10 @@ class ToolExecutionHistory:
 
     def to_dict(self) -> list[dict]:
         return [record.to_dict() for record in self._records.values()]
+
+    def to_context_dict(self) -> list[dict]:
+        """Project records into the stable Task.context representation."""
+        return [record.to_context_dict() for record in self._records.values()]
 
     @classmethod
     def from_dict(cls, payload: list[dict]) -> "ToolExecutionHistory":
