@@ -54,24 +54,22 @@
 已完成 timeout lifecycle integration 与 retry/recovery boundary，并通过专项与全量测试。
 
 ## `▶ 14.3` Crash recovery matrix
-第一阶段已建立确定性的 crash recovery decision matrix：
+已完成 crash recovery decision matrix 与 persistence/resource reconciliation 第一阶段：
 - terminal `completed` / `failed` / `cancelled` 状态绝不 replay；
 - `running` / `review_pending` / `reviewing` / `revision` 视为 worker interruption，进入显式 `requeue` 路径；
 - `pending` / `ready` / `blocked` 可直接 `restore`，不重复执行已经完成的工作；
 - worker crash 本身不等价于 task failure，不自动写入 `Task.error`；
-- interrupted task 的恢复要求 resource reconciliation；
 - recovery decision 只描述 control-plane action，不直接修改 Task；
 - retry counters 保留在 persistence snapshot 中，不因 crash recovery 自动递增；
-- 新增 `runtime/crash_recovery.py` 与 `tests/test_crash_recovery.py`。
+- 新增 `CrashRecoveryCoordinator`，读取 durable Task snapshot 并生成 recovery report；
+- interrupted task 若仍占用 execution resource，则 reconciliation 会释放对应 resource slot；
+- resource release 通过现有 `ResourceExecutionCoordinator`，保持幂等，不重复扣减；
+- reconciliation 不修改 persisted Task snapshot；
+- 可按 task-id subset 执行 recovery inspection；
+- 新增 `runtime/crash_recovery_runtime.py` 与 `tests/test_crash_recovery_runtime.py`。
 
-### 下一小阶段：Crash recovery × persistence × resource reconciliation
-重点验证：
-1. crash 前后的 Task snapshot 可以稳定恢复；
-2. `RUNNING` task 重启后只能进入显式 recovery/requeue；
-3. 已完成 Task 不会被重复执行；
-4. crash 后遗留 resource slot 可以被 reconciliation 清理；
-5. recovery 不自动消耗 retry budget；
-6. recovery 与 cancellation/timeout 状态保持互斥且语义一致。
+### 当前待验证
+用户需 Pull 后运行 crash recovery 专项、resource/cancellation 回归及全量 `pytest -q`。通过后关闭 14.3。
 
 ## `□ 14.4` Multi-process execution
 ## `□ 14.5` Exactly-once / at-least-once semantics
