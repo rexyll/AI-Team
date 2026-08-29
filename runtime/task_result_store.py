@@ -7,6 +7,7 @@ from threading import RLock
 from typing import Any
 
 from runtime.process_lock import exclusive_process_lock
+from security.secrets import redact_mapping, redact_value
 
 
 @dataclass(frozen=True)
@@ -26,19 +27,7 @@ class TaskResultDecision:
 
 
 class DurableTaskResultStore:
-    """Durable, task-scoped result sink used at the commit boundary.
-
-    A task result is committed together with the delivery identity that caused
-    it. The file replacement is atomic and the task lock serializes independent
-    processes. Re-delivery of the same identity is a no-op. A different delivery
-    cannot silently overwrite an already committed result; the caller must
-    reconcile that conflict explicitly instead of turning a retry into a second
-    state mutation.
-
-    This store deliberately persists the result payload, not an in-memory
-    callback. Therefore a process crash after the replacement is observable on
-    restart and can be reconciled without guessing whether the mutation ran.
-    """
+    """Durable, task-scoped result sink used at the commit boundary."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -78,30 +67,21 @@ class DurableTaskResultStore:
             current = self._load(task_id)
             if current is not None:
                 if current.delivery_key == delivery_key:
-                    return TaskResultDecision(
-                        accepted=False,
-                        duplicate=True,
-                        status=current.status,
-                        record=current,
-                    )
+                    return TaskResultDecision(False, True, current.status, current)
                 raise ValueError(
                     f"Task {task_id} already has a committed result for delivery "
                     f"{current.delivery_key}"
                 )
 
+            sanitized = redact_mapping(result)
             record = TaskResultRecord(
                 task_id=task_id,
                 delivery_key=delivery_key,
                 status=status,
-                result=dict(result),
+                result=sanitized,
             )
             self._write(record)
-            return TaskResultDecision(
-                accepted=True,
-                duplicate=False,
-                status=status,
-                record=record,
-            )
+            return TaskResultDecision(True, False, status, record)
 
     def _load(self, task_id: str) -> TaskResultRecord | None:
         path = self._path(task_id)
@@ -117,19 +97,9 @@ class DurableTaskResultStore:
         delivery_key = data.get("delivery_key")
         status = data.get("status")
         result = data.get("result")
-        if (
-            stored_task_id != task_id
-            or not isinstance(delivery_key, str)
-            or not isinstance(status, str)
-            or not isinstance(result, dict)
-        ):
+        if stored_task_id != task_id or not isinstance(delivery_key, str) or not isinstance(status, str) or not isinstance(result, dict):
             raise ValueError(f"Corrupt task result: {task_id}")
-        return TaskResultRecord(
-            task_id=stored_task_id,
-            delivery_key=delivery_key,
-            status=status,
-            result=dict(result),
-        )
+        return TaskResultRecord(stored_task_id, delivery_key, status, redact_mapping(result))
 
     def _write(self, record: TaskResultRecord) -> None:
         path = self._path(record.task_id)
