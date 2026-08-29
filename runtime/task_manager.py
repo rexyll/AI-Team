@@ -10,13 +10,7 @@ from runtime.task_status import (
 
 
 class ResultPayload(dict):
-    """
-    Canonical result dictionary with backward-compatible access.
-
-    Canonical storage remains exactly the same as AgentResult.to_dict().
-    Legacy callers may still access business fields directly; those
-    fields are resolved from ``data`` and are not stored as extra keys.
-    """
+    """Canonical result dictionary with backward-compatible access."""
 
     def __getitem__(self, key):
         try:
@@ -41,24 +35,15 @@ class ResultPayload(dict):
 
 
 class TaskManager:
-    """
-    Central owner of Task lifecycle state and task execution data.
+    """Central owner of Task lifecycle state and task execution data."""
 
-    Workflow decides WHAT happened. TaskManager decides WHETHER the
-    corresponding state transition is legal and persists the result.
-
-    TaskManager is also the synchronization boundary for shared Task
-    lifecycle state. Worker threads may execute independently, but every
-    lifecycle mutation and state query is protected by one re-entrant lock.
-    The lock never covers agent/tool execution itself.
-    """
-
-    def __init__(self, tasks: list[Task]):
+    def __init__(self, tasks: list[Task], *, result_store=None):
         if not isinstance(tasks, list):
             raise TypeError("tasks must be a list")
 
         self.tasks: dict[str, Task] = {}
         self._lock = RLock()
+        self.result_store = result_store
 
         for task in tasks:
             if not isinstance(task, Task):
@@ -66,10 +51,6 @@ class TaskManager:
             if task.id in self.tasks:
                 raise ValueError(f"Duplicate task id: {task.id}")
             self.tasks[task.id] = task
-
-    # ------------------------------------------------------------------
-    # Basic task access
-    # ------------------------------------------------------------------
 
     def get_task(self, task_id: str) -> Task:
         with self._lock:
@@ -82,58 +63,27 @@ class TaskManager:
         with self._lock:
             return list(self.tasks.values())
 
-    # ------------------------------------------------------------------
-    # State machine
-    # ------------------------------------------------------------------
-
     @staticmethod
-    def can_transition(
-        current: str | TaskStatus,
-        target: str | TaskStatus,
-    ) -> bool:
+    def can_transition(current: str | TaskStatus, target: str | TaskStatus) -> bool:
         return can_transition(current, target)
 
-    def transition(
-        self,
-        task_id: str,
-        target_status: str | TaskStatus,
-    ) -> Task:
+    def transition(self, task_id: str, target_status: str | TaskStatus) -> Task:
         with self._lock:
             task = self.get_task(task_id)
             current_status = task.status
             validate_transition(current_status, target_status)
-            new_status = (
-                target_status.value
-                if isinstance(target_status, TaskStatus)
-                else target_status
-            )
+            new_status = target_status.value if isinstance(target_status, TaskStatus) else target_status
             task.status_history.append({"from": current_status, "to": new_status})
             task.status = new_status
             return task
 
-    # ------------------------------------------------------------------
-    # State queries
-    # ------------------------------------------------------------------
-
     def is_terminal(self, task_id: str) -> bool:
         with self._lock:
-            task = self.get_task(task_id)
-            return task.status in {
-                TaskStatus.COMPLETED.value,
-                TaskStatus.FAILED.value,
-                TaskStatus.BLOCKED.value,
-            }
+            return self.get_task(task_id).status in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
 
     def is_active(self, task_id: str) -> bool:
         with self._lock:
-            task = self.get_task(task_id)
-            return task.status in {
-                TaskStatus.READY.value,
-                TaskStatus.RUNNING.value,
-                TaskStatus.REVIEW_PENDING.value,
-                TaskStatus.REVIEWING.value,
-                TaskStatus.REVISION.value,
-            }
+            return self.get_task(task_id).status in {TaskStatus.READY.value, TaskStatus.RUNNING.value, TaskStatus.REVIEW_PENDING.value, TaskStatus.REVIEWING.value, TaskStatus.REVISION.value}
 
     def is_finished(self) -> bool:
         with self._lock:
@@ -141,10 +91,7 @@ class TaskManager:
 
     def has_failed_tasks(self) -> bool:
         with self._lock:
-            return any(
-                task.status in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
-                for task in self.tasks.values()
-            )
+            return any(task.status in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value} for task in self.tasks.values())
 
     def get_blocked_tasks(self) -> list[Task]:
         with self._lock:
@@ -154,67 +101,29 @@ class TaskManager:
         with self._lock:
             return [task for task in self.tasks.values() if task.status == TaskStatus.FAILED.value]
 
-    # ------------------------------------------------------------------
-    # Dependency scheduling
-    # ------------------------------------------------------------------
-
-    def get_ready_tasks(
-        self,
-        *,
-        dependency_satisfied_statuses: set[str] | None = None,
-    ) -> list[Task]:
-        """Promote pending tasks whose dependencies are satisfied.
-
-        By default only ``completed`` satisfies a dependency, preserving the
-        normal workflow contract. Benchmarks that measure Developer execution
-        before Reviewer approval may explicitly include ``review_pending``.
-        """
+    def get_ready_tasks(self, *, dependency_satisfied_statuses: set[str] | None = None) -> list[Task]:
         if dependency_satisfied_statuses is None:
             dependency_satisfied_statuses = {TaskStatus.COMPLETED.value}
         else:
             dependency_satisfied_statuses = set(dependency_satisfied_statuses)
             if not dependency_satisfied_statuses:
                 raise ValueError("dependency_satisfied_statuses must not be empty")
-
         with self._lock:
-            ready: list[Task] = []
+            ready = []
             for task in self.tasks.values():
                 if task.status != TaskStatus.PENDING.value:
                     continue
-
-                missing_dependencies = [
-                    dependency_id
-                    for dependency_id in task.dependencies
-                    if dependency_id not in self.tasks
-                ]
-                if missing_dependencies:
-                    self.mark_blocked(
-                        task.id,
-                        "Missing dependencies: " + ", ".join(missing_dependencies),
-                    )
+                missing = [d for d in task.dependencies if d not in self.tasks]
+                if missing:
+                    self.mark_blocked(task.id, "Missing dependencies: " + ", ".join(missing))
                     continue
-
-                failed_dependencies = [
-                    dependency_id
-                    for dependency_id in task.dependencies
-                    if self.tasks[dependency_id].status
-                    in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
-                ]
-                if failed_dependencies:
-                    self.mark_blocked(
-                        task.id,
-                        "Blocked by dependencies: " + ", ".join(failed_dependencies),
-                    )
+                failed = [d for d in task.dependencies if self.tasks[d].status in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}]
+                if failed:
+                    self.mark_blocked(task.id, "Blocked by dependencies: " + ", ".join(failed))
                     continue
-
-                dependencies_satisfied = all(
-                    self.tasks[dependency_id].status in dependency_satisfied_statuses
-                    for dependency_id in task.dependencies
-                )
-                if dependencies_satisfied:
+                if all(self.tasks[d].status in dependency_satisfied_statuses for d in task.dependencies):
                     self.mark_ready(task.id)
                     ready.append(task)
-
             return ready
 
     def ensure_executable(self, task_id: str) -> Task:
@@ -224,14 +133,8 @@ class TaskManager:
                 self.get_ready_tasks()
             task = self.get_task(task_id)
             if task.status not in {TaskStatus.READY.value, TaskStatus.RUNNING.value}:
-                raise ValueError(
-                    f"Task {task_id} is not executable from status {task.status}"
-                )
+                raise ValueError(f"Task {task_id} is not executable from status {task.status}")
             return task
-
-    # ------------------------------------------------------------------
-    # Lifecycle operations
-    # ------------------------------------------------------------------
 
     def mark_ready(self, task_id: str) -> Task:
         with self._lock:
@@ -254,8 +157,7 @@ class TaskManager:
             return task
 
     def mark_review_pending(self, task_id: str, result: dict | Any | None = None) -> Task:
-        with self._lock:
-            return self.mark_developer_completed(task_id, result)
+        return self.mark_developer_completed(task_id, result)
 
     def mark_reviewing(self, task_id: str) -> Task:
         with self._lock:
@@ -294,9 +196,7 @@ class TaskManager:
             return task
 
     def mark_blocked(self, task_id: str, error: str) -> Task:
-        if not isinstance(error, str):
-            raise TypeError("error must be a string")
-        if not error.strip():
+        if not isinstance(error, str) or not error.strip():
             raise ValueError("error must be a non-empty string")
         with self._lock:
             task = self.transition(task_id, TaskStatus.BLOCKED)
@@ -304,9 +204,7 @@ class TaskManager:
             return task
 
     def mark_failed(self, task_id: str, error: str) -> Task:
-        if not isinstance(error, str):
-            raise TypeError("error must be a string")
-        if not error.strip():
+        if not isinstance(error, str) or not error.strip():
             raise ValueError("error must be a non-empty string")
         with self._lock:
             task = self.transition(task_id, TaskStatus.FAILED)
@@ -328,63 +226,69 @@ class TaskManager:
             task.error = None
             return task
 
-    def replace_task_graph(self, tasks: list[Task] | tuple[Task, ...]) -> None:
-        """Atomically replace the live task graph at the TaskManager boundary.
+    def commit_task_result(self, task_id: str, delivery_key: str, result: dict | Any) -> Task:
+        """Commit a Task result durably before exposing terminal state in memory.
 
-        The caller must first materialize and validate the replacement. This
-        method performs the final owner-level checks again while holding the
-        lifecycle lock, so a graph cannot become active between acceptance and
-        replacement. The live mapping is swapped only after every invariant
-        has passed, leaving the existing graph untouched on rejection.
+        The durable result record is the recovery source of truth. A duplicate
+        delivery is a no-op, preventing a stale retry from re-applying the
+        result or appending another terminal transition.
         """
+        if self.result_store is None:
+            raise RuntimeError("TaskManager durable commit requires result_store")
+        normalized = self._normalize_result_payload(result)
+        with self._lock:
+            task = self.get_task(task_id)
+            decision = self.result_store.commit(
+                task_id,
+                delivery_key,
+                dict(normalized),
+                status=TaskStatus.COMPLETED.value,
+            )
+            if decision.duplicate:
+                durable = decision.record
+                task.result = ResultPayload(dict(durable.result))
+                if task.status != TaskStatus.COMPLETED.value:
+                    self.transition(task_id, TaskStatus.COMPLETED)
+                return task
+            task.result = normalized
+            if task.status != TaskStatus.COMPLETED.value:
+                self.transition(task_id, TaskStatus.COMPLETED)
+            self.record_error(task_id, None)
+            return task
+
+    def reconcile_durable_result(self, task_id: str) -> Task:
+        """Restore an already durable result after a process restart."""
+        if self.result_store is None:
+            raise RuntimeError("TaskManager durable reconciliation requires result_store")
+        with self._lock:
+            record = self.result_store.get(task_id)
+            if record is None:
+                raise ValueError(f"No durable result for task {task_id}")
+            task = self.get_task(task_id)
+            task.result = ResultPayload(dict(record.result))
+            if record.status == TaskStatus.COMPLETED.value and task.status != TaskStatus.COMPLETED.value:
+                self.transition(task_id, TaskStatus.COMPLETED)
+            return task
+
+    def replace_task_graph(self, tasks: list[Task] | tuple[Task, ...]) -> None:
         if not isinstance(tasks, (list, tuple)):
             raise TypeError("tasks must be a list or tuple")
         replacement = list(tasks)
         if not all(isinstance(task, Task) for task in replacement):
             raise TypeError("all replacement tasks must be Task instances")
-
         with self._lock:
-            active_tasks = [
-                task.id
-                for task in self.tasks.values()
-                if task.status
-                in {
-                    TaskStatus.READY.value,
-                    TaskStatus.RUNNING.value,
-                    TaskStatus.REVIEW_PENDING.value,
-                    TaskStatus.REVIEWING.value,
-                    TaskStatus.REVISION.value,
-                }
-            ]
+            active_tasks = [task.id for task in self.tasks.values() if task.status in {TaskStatus.READY.value, TaskStatus.RUNNING.value, TaskStatus.REVIEW_PENDING.value, TaskStatus.REVIEWING.value, TaskStatus.REVISION.value}]
             if active_tasks:
-                raise RuntimeError(
-                    "Cannot replace task graph while tasks are active: "
-                    + ", ".join(active_tasks)
-                )
-
-            replacement_by_id: dict[str, Task] = {}
+                raise RuntimeError("Cannot replace task graph while tasks are active: " + ", ".join(active_tasks))
+            replacement_by_id = {}
             for task in replacement:
                 if task.id in replacement_by_id:
                     raise ValueError(f"Duplicate task id: {task.id}")
                 replacement_by_id[task.id] = task
-
-            missing_completed = [
-                task.id
-                for task in self.tasks.values()
-                if task.status == TaskStatus.COMPLETED.value
-                and task.id not in replacement_by_id
-            ]
+            missing_completed = [task.id for task in self.tasks.values() if task.status == TaskStatus.COMPLETED.value and task.id not in replacement_by_id]
             if missing_completed:
-                raise ValueError(
-                    "Replacement cannot discard completed task history: "
-                    + ", ".join(missing_completed)
-                )
-
+                raise ValueError("Replacement cannot discard completed task history: " + ", ".join(missing_completed))
             self.tasks = replacement_by_id
-
-    # ------------------------------------------------------------------
-    # Backward-compatible lifecycle APIs
-    # ------------------------------------------------------------------
 
     def mark_revision(self, task_id: str, review: dict) -> None:
         with self._lock:
@@ -420,10 +324,6 @@ class TaskManager:
                 self.mark_review_revision_required(task_id, normalized)
                 return "running"
             raise ValueError(f"Unknown reviewer status: {status}")
-
-    # ------------------------------------------------------------------
-    # Result normalization and persistence
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_result_payload(result: dict | Any) -> ResultPayload:
@@ -471,21 +371,12 @@ class TaskManager:
                 task.review_round += 1
             return task
 
-    # ------------------------------------------------------------------
-    # Feedback and errors
-    # ------------------------------------------------------------------
-
     def set_feedback(self, task_id: str, source: str, feedback: dict | Any) -> Task:
-        if not isinstance(source, str):
-            raise TypeError("feedback source must be a string")
-        if not source.strip():
+        if not isinstance(source, str) or not source.strip():
             raise ValueError("feedback source must be a non-empty string")
         with self._lock:
             task = self.get_task(task_id)
-            if isinstance(feedback, str):
-                normalized_feedback: dict | str = feedback
-            else:
-                normalized_feedback = self._normalize_result_payload(feedback)
+            normalized_feedback = feedback if isinstance(feedback, str) else self._normalize_result_payload(feedback)
             task.context[f"{source}_feedback"] = normalized_feedback
             return task
 
