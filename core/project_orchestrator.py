@@ -108,7 +108,8 @@ class ProjectOrchestrator:
                 raise ValueError(f"persisted tool execution history references unknown task: {task_id}")
             records_by_task.setdefault(task_id, []).append(record)
         for task_id, records in records_by_task.items():
-            tasks[task_id].context["tool_execution_history"] = records
+            task_history = ToolExecutionHistory.from_dict(records)
+            tasks[task_id].context["tool_execution_history"] = task_history.to_context_dict()
 
     def _rehydrate_workflow_event_log(self, project_id: str, event_persistence: WorkflowEventPersistenceAdapter | None) -> None:
         """Restore events for recovery without making recovery itself durable."""
@@ -163,14 +164,7 @@ class ProjectOrchestrator:
         orchestrator = self.create_orchestrator(task_manager)
         log = self._ensure_workflow_event_log()
         if log is not None:
-            # Route through the public setter so the workflow event sink is
-            # rebuilt together with the log; patching the log attribute alone
-            # left the sink as None and silently dropped all workflow-level
-            # lifecycle events from durable persistence.
-            orchestrator.set_workflow_event_log(
-                log,
-                project_id=self._resolved_project_id(),
-            )
+            orchestrator.set_workflow_event_log(log, project_id=self._resolved_project_id())
         set_hook = getattr(orchestrator, "set_state_change_hook", None)
         if state_change_hook is not None and callable(set_hook):
             set_hook(state_change_hook)
