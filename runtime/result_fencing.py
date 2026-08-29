@@ -26,8 +26,24 @@ class ResultCommitFencer:
             return ResultCommitDecision(False, "Worker lease ownership mismatch")
         return ResultCommitDecision(True, "Worker lease ownership verified")
 
-    def commit(self, task_id: str, worker_id: str, lease_id: str, apply_result: Callable[[], object]) -> object:
-        decision = self.validate(task_id, worker_id, lease_id)
-        if not decision.accepted:
-            raise PermissionError(decision.reason)
-        return apply_result()
+    def commit(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_id: str,
+        apply_result: Callable[[], object],
+    ) -> object:
+        """Atomically validate lease ownership and apply the result.
+
+        DurableTaskLeaseStore keeps validation and application inside its store
+        critical section, eliminating the local validate-then-apply TOCTOU gap.
+        Backends with true cross-process transactions can implement the same
+        ``commit_if_owner`` contract with a database/external coordinator.
+        """
+        commit_if_owner = getattr(self.lease_store, "commit_if_owner", None)
+        if commit_if_owner is None:
+            decision = self.validate(task_id, worker_id, lease_id)
+            if not decision.accepted:
+                raise PermissionError(decision.reason)
+            return apply_result()
+        return commit_if_owner(task_id, worker_id, lease_id, apply_result)
