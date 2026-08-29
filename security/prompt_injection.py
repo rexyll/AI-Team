@@ -18,9 +18,10 @@ def augment_system_prompt(system_prompt: str) -> str:
     """Append the common trust-boundary policy to an agent system prompt."""
     if not isinstance(system_prompt, str):
         raise TypeError("system_prompt must be a string")
-    if not system_prompt.strip():
+    normalized = system_prompt.strip()
+    if not normalized:
         return UNTRUSTED_CONTENT_POLICY
-    return f"{system_prompt.rstrip()}\n\n{UNTRUSTED_CONTENT_POLICY}"
+    return f"{normalized}\n\n{UNTRUSTED_CONTENT_POLICY}"
 
 
 def untrusted_content(label: str, value: Any) -> str:
