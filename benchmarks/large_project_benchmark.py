@@ -36,15 +36,17 @@ def layered_tasks(task_count: int, fanout: int = 50) -> list[dict]:
 
     tasks: list[dict] = [{"id": "TASK-00000", "dependencies": []}]
 
-    # Keep the initial fanout fully parallel. This gives the benchmark a stable
-    # high-parallelism root layer while still exercising deeper dependency layers.
+    # The benchmark's first execution layer intentionally contains the root plus
+    # one complete fanout of independent tasks. This is the stable high-parallelism
+    # contract used by the large-project benchmark.
     initial_parallel_end = min(task_count - 1, fanout)
     for index in range(1, initial_parallel_end + 1):
-        tasks.append({"id": f"TASK-{index:05d}", "dependencies": ["TASK-00000"]})
+        tasks.append({"id": f"TASK-{index:05d}", "dependencies": []})
 
-    # Subsequent groups have one anchor in the layer after the roots and fanout-1
-    # dependents in the following layer. The anchor itself depends only on the
-    # root, so no self-dependency can be generated at group boundaries.
+    # After the initial parallel layer, create deterministic two-level groups.
+    # Each group's anchor depends on the root, while the remaining tasks depend on
+    # that anchor. Anchors therefore execute in the second layer and their
+    # dependents in the third layer, with no self-dependencies.
     for index in range(initial_parallel_end + 1, task_count):
         group_offset = index - (initial_parallel_end + 1)
         anchor = initial_parallel_end + 1 + (group_offset // fanout) * fanout
