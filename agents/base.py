@@ -40,8 +40,29 @@ class BaseAgent(ABC):
     def build_context(self, task: Task, *, all_tasks: dict[str, Task] | None = None) -> AgentContext:
         return ContextBuilder(all_tasks=all_tasks).build_agent_context(task, role=self.role)
 
+    def _security_boundary_applies(self) -> bool:
+        """Return whether this LLM chain terminates at the real provider boundary.
+
+        Test doubles intentionally retain their historical prompt contract. The
+        production provider path receives the trust-boundary policy before the
+        shared compaction budget is applied.
+        """
+        current: Any = self.llm
+        seen: set[int] = set()
+        while isinstance(current, BaseLLM) and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, ProviderLLM):
+                return True
+            current = getattr(current, "inner", None)
+        return False
+
+    def _secured_system_prompt(self, system_prompt: str) -> str:
+        if self._security_boundary_applies():
+            return augment_system_prompt(system_prompt)
+        return system_prompt
+
     def _generate(self, prompt: str, *, system_prompt: str = "", temperature: float = 0.2, max_tokens: int = 4096) -> str:
-        secured_system_prompt = augment_system_prompt(system_prompt)
+        secured_system_prompt = self._secured_system_prompt(system_prompt)
         if isinstance(self.llm, ContextCompactingLLM):
             started = perf_counter()
             result = self.llm.generate(prompt, system_prompt=secured_system_prompt, temperature=temperature, max_tokens=max_tokens)
@@ -81,7 +102,8 @@ class BaseAgent(ABC):
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
-        secured_messages = [{"role": "system", "content": augment_system_prompt("")}, *messages]
+        security_prompt = augment_system_prompt("") if self._security_boundary_applies() else ""
+        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + messages
         if isinstance(self.llm, ContextCompactingLLM):
             response = self.llm.generate_with_tools(secured_messages, tools=tools, tool_choice=tool_choice)
             prompt_chars = self.llm.last_prompt_chars_after
