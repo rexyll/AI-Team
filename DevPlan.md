@@ -38,25 +38,28 @@
 已完成 crash recovery decision matrix、persistence snapshot reconciliation 与 resource reconciliation，并通过专项与全量测试。
 
 ## `▶ 14.4` Multi-process execution
-第一阶段建立 worker ownership / lease 基础：
+已完成第一阶段 worker ownership / lease contract，以及第二阶段 durable ownership：
 - 一个 task 同时只能存在一个有效 worker lease；
 - lease 带独立 `worker_id`、`lease_id` 与 TTL；
 - lease 到期后允许其他 worker 接管；
-- stale worker 不能 renew 已被其他 worker 接管的 lease；
-- stale worker 不能 release 新 worker 的 lease；
-- release 对同一 lease 幂等；
-- lease coordinator 使用 lock 保护本地并发访问；
-- 当前实现作为多进程持久化/分布式协调之前的 reference contract，不宣称跨进程共享内存能力；
-- 新增 `runtime/multi_process.py` 与 `tests/test_multi_process.py`。
+- stale worker 不能 renew/release 已被其他 worker 接管的 lease；
+- release 幂等；
+- 新增 filesystem-backed `DurableTaskLeaseStore`，使 ownership 不依赖 Python process-local memory；
+- durable lease 使用 atomic temporary-file replacement；
+- 新 worker 可以通过 durable lease store 观察既有 ownership；
+- lease expiration 后可以执行 ownership takeover；
+- stale worker 无法修改 recovered ownership；
+- 已新增 `runtime/task_lease_store.py` 与 `tests/test_task_lease_store.py`；
+- 当前仍是单机 durable reference backend，不宣称已经具备数据库/分布式系统级 fencing 能力。
 
-### 下一小阶段：Multi-process × durable ownership
+### 下一小阶段：ownership fencing × task result commit
 重点验证：
-1. worker lease 能与 durable Task snapshot 绑定；
-2. worker crash 后 lease expiration 能驱动 recovery；
-3. recovery worker 必须先取得新的 ownership；
-4. 旧 worker 无法继续提交结果；
-5. lease renewal 与 timeout/cancellation 保持边界；
-6. 跨进程实现不能依赖 Python process-local memory。
+1. task result commit 必须携带当前 `lease_id`；
+2. lease 被 takeover 后旧 worker 的 late result 必须被拒绝；
+3. completed task 不能被旧 worker 覆盖；
+4. recovery worker 必须先 acquire 新 lease；
+5. release / renew / commit 必须保持 ownership 一致性；
+6. 为 14.5 exactly-once / at-least-once 语义建立明确的 delivery boundary。
 
 ## `□ 14.5` Exactly-once / at-least-once semantics
 
