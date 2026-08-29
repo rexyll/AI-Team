@@ -51,25 +51,22 @@
 已完成 cooperative cancellation primitive 与 lifecycle integration，并通过专项与全量测试。
 
 ## `▶ 14.2` Timeout contract
-已完成 timeout lifecycle integration 第一阶段：
+已完成 timeout lifecycle integration 与 retry/recovery boundary 第一阶段：
 - `TimeoutController` 使用 monotonic clock，并通过 `TimeoutExceeded` 保持独立 timeout 语义；
 - timeout 到期后转换为 Task `CANCELLED`，不写入 `Task.error`，不消耗 retry budget；
 - pre-existing operator cancellation reason 不会被 timeout 覆盖；
 - 已 admission 的 task timeout 后通过 `ResourceExecutionCoordinator` 释放 active resource slot；
 - resource release 幂等，重复 timeout check 不产生额外 slot decrement；
 - timeout decision 明确标记 `retryable=False`，retry policy 不由 timeout controller 隐式触发；
-- 新增 `TimeoutExecutionController` 与 timeout lifecycle integration tests；
-- 用户已确认此前 timeout primitive 专项与全量测试通过；
-- 当前待验证本阶段新增 integration tests 与全量回归。
+- 新增 `TimeoutExecutionController`；
+- 新增 `TimeoutRecoveryDecision` / `decide_timeout_recovery()`，将 timeout recovery 变成显式上层策略；
+- 默认 timeout recovery action 为 `none`；显式 `retry` / `recover` 只产生 policy decision，不直接修改 Task；
+- timeout recovery 要求 task 已处于 `CANCELLED`，且 cancellation task 不得携带普通 failure error；
+- 显式 timeout retry 会校验 retry budget，但不会自动增加 `retry_attempt`；
+- `TimeoutExceeded` 被明确识别为 control-plane signal，而非普通 task failure。
 
-### 下一小阶段：Timeout × retry/recovery boundary
-验证并明确：
-1. timeout 不应自动调用 `TaskManager.mark_failed()`；
-2. timeout 不应自动增加 `retry_attempt`；
-3. timeout 后不允许重复 admission；
-4. timeout 后 resource slot 必须最终归零；
-5. timeout 发生在 retry/revision 流程中时，不得绕过现有状态机；
-6. timeout recovery 必须由上层策略显式决定，而不是由 timeout primitive 隐式决定。
+### 当前待验证
+用户需 Pull 后运行 timeout recovery 专项及全量回归。通过后关闭 14.2。
 
 ## `□ 14.3` Crash recovery matrix
 ## `□ 14.4` Multi-process execution
