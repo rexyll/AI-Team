@@ -36,7 +36,16 @@ class DependencyScheduler:
         topological_sort(self._graph)
 
     def get_ready_tasks(self) -> list[Task]:
-        return [task for task in self._tasks.values() if task.status in {TaskStatus.PENDING.value, TaskStatus.READY.value} and all(self._tasks[d].status == TaskStatus.COMPLETED.value for d in task.dependencies)]
+        return [
+            task
+            for task in self._tasks.values()
+            if task.status in {TaskStatus.PENDING.value, TaskStatus.READY.value}
+            and not task.cancellation_requested
+            and all(
+                self._tasks[d].status == TaskStatus.COMPLETED.value
+                for d in task.dependencies
+            )
+        ]
 
     def get_admissible_tasks(self, governor: ResourceGovernor) -> list[Task]:
         """Return dependency-ready tasks that fit the current concurrency budget."""
@@ -52,9 +61,21 @@ class DependencyScheduler:
         for task in self._tasks.values():
             if task.status != TaskStatus.PENDING.value:
                 continue
-            failed = [d for d in task.dependencies if self._tasks[d].status in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}]
+            failed = [
+                d
+                for d in task.dependencies
+                if self._tasks[d].status
+                in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
+            ]
             if failed:
-                decisions.append(SchedulerDecision(task.id, False, True, "Blocked by dependencies: " + ", ".join(failed)))
+                decisions.append(
+                    SchedulerDecision(
+                        task.id,
+                        False,
+                        True,
+                        "Blocked by dependencies: " + ", ".join(failed),
+                    )
+                )
         return decisions
 
     def get_execution_layers(self) -> list[list[str]]:
@@ -64,11 +85,40 @@ class DependencyScheduler:
         if task_id not in self._tasks:
             raise KeyError(f"Unknown task id: {task_id}")
         task = self._tasks[task_id]
-        if task.status in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}:
-            return SchedulerDecision(task_id, False, task.status == TaskStatus.BLOCKED.value, f"Task is {task.status}")
-        failed = [d for d in task.dependencies if self._tasks[d].status in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}]
+        if task.status == TaskStatus.CANCELLED.value:
+            return SchedulerDecision(task_id, False, False, "Task is cancelled")
+        if task.status in {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.BLOCKED.value,
+        }:
+            return SchedulerDecision(
+                task_id,
+                False,
+                task.status == TaskStatus.BLOCKED.value,
+                f"Task is {task.status}",
+            )
+        failed = [
+            d
+            for d in task.dependencies
+            if self._tasks[d].status
+            in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
+        ]
         if failed:
-            return SchedulerDecision(task_id, False, True, "Blocked by dependencies: " + ", ".join(failed))
-        if all(self._tasks[d].status == TaskStatus.COMPLETED.value for d in task.dependencies):
+            return SchedulerDecision(
+                task_id,
+                False,
+                True,
+                "Blocked by dependencies: " + ", ".join(failed),
+            )
+        if all(
+            self._tasks[d].status == TaskStatus.COMPLETED.value
+            for d in task.dependencies
+        ):
             return SchedulerDecision(task_id, True, False)
-        return SchedulerDecision(task_id, False, False, "Dependencies are not completed")
+        return SchedulerDecision(
+            task_id,
+            False,
+            False,
+            "Dependencies are not completed",
+        )
