@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from runtime.result_fencing import ResultCommitFencer
@@ -52,3 +54,36 @@ def test_result_commit_is_rejected_without_active_lease(tmp_path):
 
     with pytest.raises(PermissionError, match="no active worker lease"):
         fencer.commit("TASK-001", "worker-a", "lease-a", lambda: "result")
+
+
+def test_commit_holds_store_boundary_while_result_is_applied(tmp_path):
+    clock = FakeClock()
+    store = DurableTaskLeaseStore(tmp_path, clock=clock)
+    store.acquire("TASK-001", "worker-a", "lease-a", 10)
+    fencer = ResultCommitFencer(store)
+    started = threading.Event()
+    release_callback = threading.Event()
+    commit_result = []
+    takeover_result = []
+
+    def apply_result():
+        started.set()
+        assert release_callback.wait(timeout=2)
+        return "worker-a-result"
+
+    def commit():
+        commit_result.append(fencer.commit("TASK-001", "worker-a", "lease-a", apply_result))
+
+    thread = threading.Thread(target=commit)
+    thread.start()
+    assert started.wait(timeout=2)
+
+    clock.advance(10)
+    takeover_result.append(store.acquire("TASK-001", "worker-b", "lease-b", 10))
+    assert takeover_result == [None]
+
+    release_callback.set()
+    thread.join(timeout=2)
+
+    assert commit_result == ["worker-a-result"]
+    assert store.owner("TASK-001").worker_id == "worker-a"
