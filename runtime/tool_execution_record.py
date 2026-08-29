@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 import json
 
+from security.secrets import redact_value
+
 
 _ALLOWED_STATUS: tuple[str, ...] = (
     "completed",
@@ -61,10 +63,10 @@ class ToolExecutionRecord:
         if not isinstance(self.metadata, dict):
             raise TypeError("metadata must be a dictionary")
 
-        safe_arguments = _json_safe(self.arguments, field_name="arguments")
-        safe_output = _json_safe(self.output, field_name="output")
-        safe_error = _json_safe(self.error, field_name="error")
-        safe_metadata = _json_safe(self.metadata, field_name="metadata")
+        safe_arguments = _json_safe(redact_value(self.arguments), field_name="arguments")
+        safe_output = _json_safe(redact_value(self.output), field_name="output")
+        safe_error = _json_safe(redact_value(self.error), field_name="error")
+        safe_metadata = _json_safe(redact_value(self.metadata), field_name="metadata")
 
         if not isinstance(safe_arguments, dict):
             raise TypeError("arguments must be a JSON object")
