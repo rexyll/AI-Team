@@ -33,10 +33,14 @@ def layered_tasks(task_count: int, fanout: int = 50) -> list[dict]:
         raise ValueError("task_count must be positive")
     if fanout <= 0:
         raise ValueError("fanout must be positive")
+
     tasks: list[dict] = [{"id": "TASK-00000", "dependencies": []}]
     for index in range(1, task_count):
         anchor = ((index - 1) // fanout) * fanout + 1
-        dependency = "TASK-00000" if index <= fanout else f"TASK-{anchor:05d}"
+        # The first task of every fanout-sized group is a root-level parallel task.
+        # The remaining tasks in that group depend on its anchor. This produces
+        # deterministic layers without introducing the anchor -> itself cycle.
+        dependency = "TASK-00000" if index == anchor else f"TASK-{anchor:05d}"
         tasks.append({"id": f"TASK-{index:05d}", "dependencies": [dependency]})
     return tasks
 
