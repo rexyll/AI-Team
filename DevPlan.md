@@ -49,7 +49,9 @@
 - 没有 active lease 的 result commit 被拒绝；
 - rejected result 不执行 apply callback，因此不会覆盖新 worker 的结果；
 - 新增 `runtime/result_fencing.py` 与 `tests/test_result_fencing.py`；
-- 当前仍是单机 durable reference backend；真正的跨进程原子 fencing 仍需数据库/外部协调器实现。
+- 新增 OS-level per-task process lock，使 filesystem reference backend 的 lease acquire/renew/release/owner/commit boundary 可跨独立进程串行化；
+- 新增 `runtime/process_lock.py` 与跨进程锁 contract 测试；
+- 当前仍是单机 durable reference backend；真正的跨主机分布式 fencing 仍需数据库/外部协调器实现。
 
 ### 下一小阶段：cross-process atomic fencing / integration
 重点验证：
