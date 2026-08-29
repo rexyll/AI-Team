@@ -18,8 +18,8 @@
 ✓ 14.1 Cancellation contract
 ✓ 14.2 Timeout contract
 ✓ 14.3 Crash recovery matrix
-▶ 14.4 Multi-process execution
-□ 14.5 Exactly-once / at-least-once semantics
+✓ 14.4 Multi-process execution
+▶ 14.5 Exactly-once / at-least-once semantics
 □ 15.x Security Hardening
 □ 16.x Observability / Operations
 □ 17.x Developer Experience
@@ -37,8 +37,8 @@
 ## `✓ 14.3` Crash recovery matrix
 已完成 crash recovery decision matrix、persistence snapshot reconciliation 与 resource reconciliation，并通过专项与全量测试。
 
-## `▶ 14.4` Multi-process execution
-已完成 worker lease、durable ownership，以及第三阶段 result commit fencing：
+## `✓ 14.4` Multi-process execution
+已完成 worker lease、durable ownership、OS-level per-task process lock，以及 result commit fencing：
 - 一个 task 同时只能存在一个有效 worker lease；
 - lease 带独立 `worker_id`、`lease_id` 与 TTL；
 - lease 到期后允许其他 worker 接管；
@@ -47,22 +47,33 @@
 - task result commit 必须先通过当前 lease ownership 验证；
 - lease takeover 后旧 worker 的 late result 被拒绝；
 - 没有 active lease 的 result commit 被拒绝；
-- rejected result 不执行 apply callback，因此不会覆盖新 worker 的结果；
-- 新增 `runtime/result_fencing.py` 与 `tests/test_result_fencing.py`；
-- 新增 OS-level per-task process lock，使 filesystem reference backend 的 lease acquire/renew/release/owner/commit boundary 可跨独立进程串行化；
-- 新增 `runtime/process_lock.py` 与跨进程锁 contract 测试；
-- 当前仍是单机 durable reference backend；真正的跨主机分布式 fencing 仍需数据库/外部协调器实现。
+- rejected result 不执行 apply callback；
+- filesystem reference backend 的 lease 与 commit boundary 使用 OS-level per-task process lock；
+- 独立进程 regression tests 验证同一 task 的 fencing 行为；
+- 用户已确认专项、Phase 14 回归及全量 `pytest -q` 全部通过。
 
-### 下一小阶段：cross-process atomic fencing / integration
-重点验证：
-1. lease validation 与 result persistence 必须具备原子边界；
-2. 两个独立 worker 同时提交时最多一个结果生效；
-3. lease takeover 与 late commit 竞态不能产生旧结果覆盖；
-4. Task terminal state 与 ownership fencing 必须一致；
-5. crash recovery、timeout、cancellation 与 ownership 必须统一；
-6. 完成后关闭 14.4，再进入 14.5 delivery semantics。
+## `▶ 14.5` Exactly-once / at-least-once semantics
+第一阶段已开始，明确执行与交付语义：
+- execution layer 定义为 **at-least-once**，允许 retry / crash recovery 导致重复执行；
+- delivery layer 引入稳定 `task_id + attempt + delivery_id` identity，并通过 SHA-256 形成持久化 key；
+- 新增 `runtime/delivery_store.py`，提供 filesystem-backed durable delivery record；
+- delivery 状态明确区分 `processing` 与 `committed`；
+- duplicate committed delivery 不再次执行 callback；
+- delivery record 可跨新的 store/process 实例恢复；
+- 独立进程只能有一个 worker 成功 reserve 相同 delivery identity；
+- `ResultCommitFencer` 已接入 durable delivery dedup，同时继续保留 lease ownership fencing；
+- `processing` 在 crash 后故意保留，避免把 crash-after-apply / before-ack 错误地宣称为 exactly-once。
 
-## `□ 14.5` Exactly-once / at-least-once semantics
+### 14.5 下一阶段
+1. 将 delivery identity 与真实 Task result persistence 建立同一 durable boundary；
+2. 设计 crash-after-apply / before-ack 的恢复协议；
+3. 明确 `processing` delivery 的 recovery / takeover policy；
+4. 验证两个独立进程提交同一 delivery 时最多产生一个 durable effect；
+5. 将 dedup 状态纳入审计与 observability；
+6. 完成跨进程 crash / retry regression；
+7. 用户专项与全量测试通过后关闭 14.5。
+
+> 重要语义边界：通用 Python callback 无法单独提供跨进程真正的 exactly-once effect。当前 reference implementation 提供 durable deduplication 与明确的 crash-recovery 状态；真正 exactly-once effect 必须让业务 mutation 与 delivery record 共享事务或使用本身幂等的 durable sink。
 
 # Phase 15 — Security Hardening
 
