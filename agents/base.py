@@ -110,6 +110,8 @@ class BaseAgent(ABC):
             response = self.llm.generate_with_tools(compacted, tools=authorized_tools, tool_choice=tool_choice)
             prompt_chars = stats.compacted_chars
             input_tokens = stats.compacted_tokens
+        for tool_call in response.tool_calls:
+            DEFAULT_RUNTIME_CAPABILITY_POLICY.require(self.role, tool_call.name)
         self.llm_metrics.record_llm_call(prompt_chars=prompt_chars, input_tokens=input_tokens, elapsed_seconds=perf_counter() - started)
         self.llm_metrics.record_tool_calls(len(response.tool_calls))
         self.llm_metrics.finish()
