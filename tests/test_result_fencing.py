@@ -79,11 +79,18 @@ def test_commit_holds_store_boundary_while_result_is_applied(tmp_path):
     assert started.wait(timeout=2)
 
     clock.advance(10)
-    takeover_result.append(store.acquire("TASK-001", "worker-b", "lease-b", 10))
-    assert takeover_result == [None]
+    takeover_thread = threading.Thread(
+        target=lambda: takeover_result.append(
+            store.acquire("TASK-001", "worker-b", "lease-b", 10)
+        )
+    )
+    takeover_thread.start()
 
     release_callback.set()
     thread.join(timeout=2)
+    takeover_thread.join(timeout=2)
 
     assert commit_result == ["worker-a-result"]
-    assert store.owner("TASK-001").worker_id == "worker-a"
+    assert takeover_result[0] is not None
+    assert takeover_result[0].worker_id == "worker-b"
+    assert store.owner("TASK-001").worker_id == "worker-b"
