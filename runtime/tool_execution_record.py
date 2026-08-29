@@ -74,13 +74,6 @@ class ToolExecutionRecord:
         if not isinstance(safe_metadata, dict):
             raise TypeError("metadata must be a JSON object")
 
-        provenance = tool_evidence_provenance(
-            task_id=self.task_id,
-            agent_role=self.agent_role,
-            execution_id=self.execution_id,
-        ).to_dict()
-        safe_metadata.setdefault("provenance", provenance)
-
         object.__setattr__(self, "arguments", deepcopy(safe_arguments))
         object.__setattr__(self, "output", deepcopy(safe_output))
         object.__setattr__(self, "error", deepcopy(safe_error))
@@ -90,6 +83,15 @@ class ToolExecutionRecord:
             raise ValueError("completed tool execution cannot contain an error")
         if self.status != "completed" and self.error is None:
             raise ValueError("non-completed tool execution must contain an error")
+
+    @property
+    def provenance(self):
+        """Derive tool evidence lineage without changing the persistence schema."""
+        return tool_evidence_provenance(
+            task_id=self.task_id,
+            agent_role=self.agent_role,
+            execution_id=self.execution_id,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,17 +109,8 @@ class ToolExecutionRecord:
         }
 
     def to_context_dict(self) -> dict[str, Any]:
-        """Project persistence evidence into the legacy Task.context contract.
-
-        Provenance is a persistence/audit concern and must not silently change
-        the historical Task.context payload shape. The canonical persisted
-        ToolExecutionRecord remains available through ``to_dict``.
-        """
-        payload = self.to_dict()
-        metadata = payload["metadata"]
-        if isinstance(metadata, dict) and "provenance" in metadata:
-            metadata.pop("provenance", None)
-        return payload
+        """Project the record into the stable Task.context representation."""
+        return self.to_dict()
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ToolExecutionRecord":
