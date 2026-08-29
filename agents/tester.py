@@ -6,6 +6,7 @@ from agents.base import BaseAgent
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
+from runtime.provenance import agent_feedback_provenance
 from runtime.task import Task
 
 SYSTEM_PROMPT = """
@@ -47,6 +48,7 @@ TEST_FAILED
 2. 判定必须以该英文标记表达——禁止仅用中文"通过/失败"表述结论；
 3. 原因说明放在后续行，可使用中文。
 """
+
 
 class TesterAgent(BaseAgent):
     @property
@@ -137,12 +139,18 @@ TEST_FAILED
                 files_value = data.get("files_changed", [])
                 if isinstance(files_value, list):
                     files_changed = list(files_value)
+        provenance = agent_feedback_provenance(
+            task_id=context.task_id,
+            agent_role="tester",
+            evidence_id=f"tester:{context.task_id}",
+        )
         return {
             "summary": content.strip(),
             "decision": decision,
             "tests": tests,
             "files_changed": files_changed,
             "validation": {"test_evidence_count": len(tests), "files_changed_count": len(files_changed), "evidence_available": bool(tests)},
+            "provenance": provenance.to_dict(),
             "report": content,
         }
 
