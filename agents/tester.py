@@ -6,7 +6,7 @@ from agents.base import BaseAgent
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
-from runtime.provenance import agent_feedback_provenance
+from runtime.provenance import agent_feedback_provenance, provenance_from_value
 from runtime.task import Task
 
 SYSTEM_PROMPT = """
@@ -139,10 +139,12 @@ TEST_FAILED
                 files_value = data.get("files_changed", [])
                 if isinstance(files_value, list):
                     files_changed = list(files_value)
+        parent = provenance_from_value(developer_result)
         provenance = agent_feedback_provenance(
             task_id=context.task_id,
             agent_role="tester",
             evidence_id=f"tester:{context.task_id}",
+            parent_evidence_id=parent.evidence_id if parent else None,
         )
         return {
             "summary": content.strip(),
