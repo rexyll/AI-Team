@@ -1,5 +1,5 @@
 from runtime.evidence_lineage import collect_lineage
-from runtime.provenance import agent_feedback_provenance, tool_evidence_provenance
+from runtime.provenance import agent_feedback_provenance, agent_result_provenance, provenance_from_value, tool_evidence_provenance
 
 
 def test_collect_lineage_follows_explicit_child_to_root_links() -> None:
@@ -30,3 +30,31 @@ def test_collect_lineage_rejects_cycles() -> None:
         assert "cycle" in str(exc)
     else:
         raise AssertionError("provenance cycles must be rejected")
+
+
+def test_provenance_from_agent_result_synthesizes_stable_evidence_root() -> None:
+    result = {
+        "status": "completed",
+        "agent": "developer",
+        "task_id": "TASK-001",
+        "message": "implemented",
+        "data": {},
+    }
+
+    provenance = provenance_from_value(result)
+
+    assert provenance == agent_result_provenance(task_id="TASK-001", agent_role="developer")
+    assert provenance.source_type == "agent_result"
+    assert provenance.evidence_id == "developer:TASK-001"
+
+
+def test_explicit_result_provenance_takes_precedence_over_synthesized_root() -> None:
+    explicit = agent_result_provenance(task_id="TASK-001", agent_role="developer", evidence_id="developer:explicit")
+    result = {
+        "status": "completed",
+        "agent": "developer",
+        "task_id": "TASK-001",
+        "data": {"provenance": explicit.to_dict()},
+    }
+
+    assert provenance_from_value(result) == explicit
