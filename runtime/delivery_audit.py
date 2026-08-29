@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from runtime.process_lock import exclusive_process_lock
+from security.secrets import redact_mapping, redact_value
 
 
 @dataclass(frozen=True)
@@ -21,13 +22,7 @@ class DeliveryAuditEvent:
 
 
 class DurableDeliveryAuditStore:
-    """Append-only durable audit log for delivery state transitions.
-
-    Audit writes are serialized with an OS-level lock so independent workers
-    cannot interleave records. The audit is observational: failure to write an
-    audit record is surfaced to the caller rather than silently weakening the
-    delivery semantics.
-    """
+    """Append-only durable audit log for delivery state transitions."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -49,7 +44,7 @@ class DurableDeliveryAuditStore:
             raise ValueError("delivery key must be a non-empty string")
         if not isinstance(action, str) or not action.strip():
             raise ValueError("audit action must be a non-empty string")
-        payload = dict(metadata or {})
+        payload = redact_mapping(metadata or {})
         event = DeliveryAuditEvent(
             event_id=uuid4().hex,
             delivery_key=delivery_key,
@@ -91,7 +86,7 @@ class DurableDeliveryAuditStore:
                     action=data["action"],
                     status_before=data.get("status_before"),
                     status_after=data.get("status_after"),
-                    metadata=dict(data.get("metadata") or {}),
+                    metadata=redact_mapping(dict(data.get("metadata") or {})),
                 )
                 if delivery_key is None or event.delivery_key == delivery_key:
                     events.append(event)
