@@ -12,6 +12,7 @@ from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
 from runtime.tool_result import ToolResult
+from runtime.tracing import DEFAULT_TRACER
 from tools.registry import TOOL_REGISTRY, ToolRegistry
 
 
@@ -59,7 +60,17 @@ class ToolInvocationService:
             self._append_record(execution_id=execution_id, task_id=task_id, role=role, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
             return ToolResult.fail(error)
         try:
-            output = tool_function(**record_arguments)
+            with DEFAULT_TRACER.span(
+                "tool.invoke",
+                attributes={
+                    "task_id": task_id,
+                    "agent_role": role,
+                    "tool_name": tool_name,
+                    "execution_id": execution_id,
+                },
+            ) as span:
+                output = tool_function(**record_arguments)
+                span.set_attribute("status", "completed")
         except Exception as exc:
             error = self._classify_boundary_error(exc)
             self._append_record(execution_id=execution_id, task_id=task_id, role=role, tool_name=tool_name, started_at=started_at, status="failed", arguments=record_arguments, output=None, error=error)
