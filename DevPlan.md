@@ -98,7 +98,11 @@ Remaining:
 - [x] Detached snapshot/export contract
 - [x] Explicit parent / trace-id support
 - [x] Concurrency isolation regression coverage
-- [ ] Integrate tracing into workflow → task → stage → LLM/tool lifecycle
+- [x] Instrument every concrete Agent.run as a `workflow.stage.<role>` span with `task_id`, role, stage, and result status
+- [x] Instrument BaseAgent LLM calls as child spans of the active agent stage
+- [x] Instrument authorized tool execution as a child span of the active agent stage
+- [x] Add lifecycle regression coverage for Agent → LLM and Agent → Tool trace lineage
+- [ ] Add an explicit workflow/task root span around `TaskWorkflow.execute`
 - [ ] Correlate tracing with structured logs and metrics
 - [ ] Full observability regression verification
 
