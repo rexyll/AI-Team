@@ -1,5 +1,3 @@
-import pytest
-
 from agents.architect import ArchitectAgent
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
@@ -54,7 +52,7 @@ def test_architect_fences_task_and_context_fields():
 def test_tester_fences_developer_result():
     llm = MockLLM("TEST_FAILED\nEvidence is insufficient.")
     task = make_task(
-        task_result={
+        result={
             "status": "completed",
             "agent": "developer",
             "task_id": "TASK-INJECT-001",
@@ -105,7 +103,5 @@ def test_reviewer_fences_all_review_evidence():
 
 def test_fenced_model_data_does_not_change_runtime_tool_authorization():
     agent = TesterAgent(llm=MockLLM("TEST_FAILED"))
-    with pytest.raises(Exception):
-        agent._authorized_tool_schemas(
-            [{"type": "function", "function": {"name": "write_file"}}]
-        )
+    schemas = [{"type": "function", "function": {"name": "write_file"}}]
+    assert agent._authorized_tool_schemas(schemas) == []
