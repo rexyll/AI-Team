@@ -41,7 +41,7 @@ def test_live_lease_blocks_takeover():
     manager = FencedTaskLeaseManager(TaskLeaseManager(default_ttl_seconds=30))
     manager.acquire("TASK-RECOVER", "worker-a", now=NOW)
     trigger = WorkflowRecoveryTrigger(manager)
-    decision = trigger.evaluate(_task(), _assessment())
+    decision = trigger.evaluate(_task(), _assessment(), now=NOW)
     assert decision.state is RecoveryTriggerState.WAITING_FOR_LEASE_EXPIRY
     assert not decision.should_recover
 
