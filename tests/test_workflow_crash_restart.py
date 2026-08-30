@@ -2,6 +2,7 @@ from runtime.persistent_task_manager import PersistentTaskManager
 from runtime.task import Task
 from runtime.task_state_store import InMemoryTaskStateStore
 from runtime.task_status import TaskStatus
+from runtime.workflow_checkpoint import WorkflowCheckpoint
 from runtime.workflow_recovery import WorkflowRecovery
 from runtime.workflow_resume import WorkflowResumePlanner
 
@@ -22,15 +23,15 @@ def test_crash_restart_recovers_completed_and_resumable_state_without_replaying_
     manager = _manager(store)
     before = store.snapshot()
 
-    recovered_tasks = WorkflowRecovery().recover_tasks([
-        __import__("runtime.workflow_checkpoint", fromlist=["WorkflowCheckpoint"]).WorkflowCheckpoint.capture(
-            manager.get_task("TASK-DONE")
-        ),
-        __import__("runtime.workflow_checkpoint", fromlist=["WorkflowCheckpoint"]).WorkflowCheckpoint.capture(
-            manager.get_task("TASK-RESUME")
-        ),
-    ]).tasks
-    restarted = PersistentTaskManager(recovered_tasks, state_store=store, persist_initial=False)
+    checkpoints = [
+        WorkflowCheckpoint.capture(manager.get_task("TASK-DONE")),
+        WorkflowCheckpoint.capture(manager.get_task("TASK-RESUME")),
+    ]
+    recovered_tasks = WorkflowRecovery().recover_tasks(checkpoints).tasks
+
+    # WorkflowExecutionState exposes an immutable tuple; TaskManager intentionally
+    # requires a concrete list of tasks at construction time.
+    restarted = PersistentTaskManager(list(recovered_tasks), state_store=store, persist_initial=False)
     plan = WorkflowResumePlanner().plan(restarted.list_tasks())
 
     assert plan.resumable_task_ids == ("TASK-RESUME",)
