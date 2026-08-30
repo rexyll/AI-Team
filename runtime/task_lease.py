@@ -33,28 +33,16 @@ class TaskLease:
 
 
 class TaskLeaseManager:
-    """Thread-safe task ownership boundary for concurrent workers.
-
-    This first lease boundary intentionally does not mutate Task lifecycle state.
-    Execution code can acquire ownership before touching a Task and must present
-    the returned opaque token when releasing it.
-    """
+    """Thread-safe task ownership boundary for concurrent workers."""
 
     def __init__(self, *, default_ttl_seconds: float = 60.0) -> None:
-        if isinstance(default_ttl_seconds, bool) or default_ttl_seconds <= 0:
+        if isinstance(default_ttl_seconds, bool) or not isinstance(default_ttl_seconds, (int, float)) or default_ttl_seconds <= 0:
             raise ValueError("default_ttl_seconds must be positive")
         self.default_ttl_seconds = float(default_ttl_seconds)
         self._leases: dict[str, TaskLease] = {}
         self._lock = RLock()
 
-    def acquire(
-        self,
-        task_id: str,
-        owner_id: str,
-        *,
-        ttl_seconds: float | None = None,
-        now: datetime | None = None,
-    ) -> TaskLease:
+    def acquire(self, task_id: str, owner_id: str, *, ttl_seconds: float | None = None, now: datetime | None = None) -> TaskLease:
         self._validate_identity(task_id, "task_id")
         self._validate_identity(owner_id, "owner_id")
         ttl = self.default_ttl_seconds if ttl_seconds is None else ttl_seconds
@@ -65,12 +53,7 @@ class TaskLeaseManager:
             existing = self._leases.get(task_id)
             if existing is not None and not existing.is_expired(now=current_time):
                 raise LeaseUnavailable(f"Task {task_id} is leased by {existing.owner_id}")
-            lease = TaskLease(
-                task_id=task_id,
-                owner_id=owner_id,
-                token=uuid4().hex,
-                expires_at=current_time + timedelta(seconds=float(ttl)),
-            )
+            lease = TaskLease(task_id, owner_id, uuid4().hex, current_time + timedelta(seconds=float(ttl)))
             self._leases[task_id] = lease
             return lease
 
@@ -95,6 +78,20 @@ class TaskLeaseManager:
                 del self._leases[task_id]
                 return None
             return lease
+
+    def expire(self, *, now: datetime | None = None) -> tuple[TaskLease, ...]:
+        """Remove and return all leases that are expired at ``now``.
+
+        Expiry is monotonic with respect to the supplied clock: a lease whose
+        expiry equals ``now`` is considered expired. The operation is atomic,
+        so acquisition cannot observe a half-cleaned lease set.
+        """
+        current_time = self._utc_now(now)
+        with self._lock:
+            expired = tuple(lease for lease in self._leases.values() if lease.is_expired(now=current_time))
+            for lease in expired:
+                self._leases.pop(lease.task_id, None)
+            return expired
 
     @staticmethod
     def _validate_identity(value: str, name: str) -> None:
