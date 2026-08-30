@@ -8,6 +8,7 @@ from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
 from runtime.provenance import agent_feedback_provenance, provenance_from_value
 from runtime.task import Task
+from security.prompt_injection import untrusted_content
 
 SYSTEM_PROMPT = """
 你是一名专业的软件测试工程师（Tester Agent）。
@@ -76,19 +77,19 @@ TASK
 ====================
 
 Task ID:
-{view['task_id']}
+{untrusted_content("task.id", view['task_id'])}
 
 Title:
-{view['task_title']}
+{untrusted_content("task.title", view['task_title'])}
 
 Description:
-{view['task_description']}
+{untrusted_content("task.description", view['task_description'])}
 
 ====================
 DEVELOPER RESULT
 ====================
 
-{view['task_result']}
+{untrusted_content("developer.result", view['task_result'])}
 
 ====================
 TESTING REQUIREMENTS
