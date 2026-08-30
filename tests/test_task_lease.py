@@ -28,12 +28,39 @@ def test_release_requires_exact_owner_and_token():
     assert manager.get("TASK-1", now=BASE) is None
 
 
-def test_expired_lease_no_longer_blocks_acquisition():
+def test_expiry_is_exact_at_deadline_and_allows_reacquisition():
     manager = TaskLeaseManager(default_ttl_seconds=10)
-    manager.acquire("TASK-1", "worker-a", now=BASE)
-    replacement = manager.acquire("TASK-1", "worker-b", now=BASE + timedelta(seconds=10))
+    first = manager.acquire("TASK-1", "worker-a", now=BASE)
+    assert manager.get("TASK-1", now=first.expires_at) is None
+    replacement = manager.acquire("TASK-1", "worker-b", now=first.expires_at)
     assert replacement.owner_id == "worker-b"
-    assert replacement.token
+    assert replacement.token != first.token
+
+
+def test_expire_removes_only_stale_leases_atomically():
+    manager = TaskLeaseManager(default_ttl_seconds=10)
+    stale = manager.acquire("TASK-STALE", "worker-a", now=BASE)
+    live = manager.acquire("TASK-LIVE", "worker-b", now=BASE)
+    expired = manager.expire(now=BASE + timedelta(seconds=10))
+    assert [lease.task_id for lease in expired] == [stale.task_id, live.task_id]
+    assert manager.get("TASK-STALE", now=BASE + timedelta(seconds=10)) is None
+    assert manager.get("TASK-LIVE", now=BASE + timedelta(seconds=10)) is None
+
+
+def test_expire_does_not_remove_live_lease():
+    manager = TaskLeaseManager(default_ttl_seconds=10)
+    live = manager.acquire("TASK-LIVE", "worker-a", now=BASE)
+    assert manager.expire(now=BASE + timedelta(seconds=9)) == ()
+    assert manager.get("TASK-LIVE", now=BASE + timedelta(seconds=9)) == live
+
+
+def test_expired_owner_cannot_release_a_replacement_lease():
+    manager = TaskLeaseManager(default_ttl_seconds=10)
+    stale = manager.acquire("TASK-1", "worker-a", now=BASE)
+    replacement = manager.acquire("TASK-1", "worker-b", now=stale.expires_at)
+    with pytest.raises(LeaseOwnershipError):
+        manager.release("TASK-1", "worker-a", stale.token)
+    manager.release("TASK-1", "worker-b", replacement.token)
 
 
 def test_lease_tokens_are_unique_between_acquisitions():
