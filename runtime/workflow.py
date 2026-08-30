@@ -227,23 +227,14 @@ class TaskWorkflow:
 
     @staticmethod
     def _attest_stage_feedback(outcome: StageOutcome, *, stage: str) -> None:
-        """Attest legacy stage results only when crossing the gate boundary.
-
-        Direct ``_run_tester``/``_run_reviewer`` calls remain side-effect free;
-        the trusted workflow boundary adds the explicit feedback provenance
-        required by the evidence gate before storing or consuming the result.
-        """
+        """Attest legacy stage results only when crossing the gate boundary."""
         if outcome.result is None:
             return
         data = dict(outcome.result.data)
         if isinstance(data.get("provenance"), dict):
             return
         evidence_id = f"{stage}:{outcome.result.task_id}"
-        parent_evidence_id = (
-            f"developer:{outcome.result.task_id}"
-            if stage == "tester"
-            else f"tester:{outcome.result.task_id}"
-        )
+        parent_evidence_id = f"developer:{outcome.result.task_id}" if stage == "tester" else f"tester:{outcome.result.task_id}"
         data["provenance"] = agent_feedback_provenance(
             task_id=outcome.result.task_id,
             agent_role=stage,
@@ -260,50 +251,21 @@ class TaskWorkflow:
 
     def _validate_tester_gate_outcome(self, task: Task, outcome: StageOutcome) -> None:
         developer_result = task.result
-
-        # A direct transition-contract test may invoke the tester transition
-        # without executing the developer stage first. Task.result uses an empty
-        # dict as its default value, so treat both None and {} as "no parent
-        # evidence". Real workflow execution provides a non-empty developer result.
         if not developer_result:
             return
-
-        chain = validate_tester_gate_evidence(
-            outcome.result_dict,
-            task_id=task.id,
-            parents=(developer_result,),
-        )
+        chain = validate_tester_gate_evidence(outcome.result_dict, task_id=task.id, parents=(developer_result,))
         self._require_direct_parent(chain, developer_result, stage="tester")
 
     def _validate_reviewer_gate_outcome(self, task: Task, outcome: StageOutcome) -> None:
         tester_feedback = task.context.get("tester_feedback")
-
         parent_values = []
-
-        # Task.context does not necessarily contain tester_feedback when the
-        # reviewer transition is invoked directly by a transition-contract test.
-        # Only a non-empty feedback payload represents actual parent evidence.
         if tester_feedback:
             parent_values.append(tester_feedback)
-
-        # Task.result defaults to {} before the Developer stage has executed.
-        # Do not treat that empty compatibility/default value as evidence.
         if task.result:
             parent_values.append(task.result)
-
-        # A direct transition-contract test may invoke the reviewer transition
-        # without running the developer/tester stages first. There is then no
-        # parent evidence to validate. Real workflow execution still supplies
-        # trusted parent evidence and therefore remains subject to the gate.
         if not parent_values:
             return
-
-        chain = validate_reviewer_gate_evidence(
-            outcome.result_dict,
-            task_id=task.id,
-            parents=tuple(parent_values),
-        )
-
+        chain = validate_reviewer_gate_evidence(outcome.result_dict, task_id=task.id, parents=tuple(parent_values))
         if self.tester is not None:
             self._require_direct_parent(chain, tester_feedback, stage="reviewer")
 
@@ -327,13 +289,11 @@ class TaskWorkflow:
     def execute(self, task_id: str) -> Task:
         task = self.task_manager.ensure_executable(task_id)
         last_gate_note = "unknown"
-
         for round_index in range(1, self.max_review_rounds + 1):
             if task.status == "ready":
                 self.task_manager.mark_running(task_id)
                 self._emit_event("task_started", task, payload={"status": task.status})
                 self._checkpoint()
-
             self._build_context(task)
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
@@ -350,12 +310,10 @@ class TaskWorkflow:
                 if len(raw_message) > 120:
                     message_head += "…"
             print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: developer={developer_outcome.status}{dev_metrics} | {message_head}")
-
             if task.status == "failed":
                 if developer_outcome.exception is not None:
                     raise developer_outcome.exception
                 return task
-
             if self.tester is not None:
                 tester_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_tester(task), stage="tester")
                 self._attest_stage_feedback(tester_outcome, stage="tester")
@@ -373,13 +331,11 @@ class TaskWorkflow:
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
                 print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester=skipped")
-
             self._emit_event("review_started", task, payload={"status": task.status})
             review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
             self._attest_stage_feedback(review_outcome, stage="reviewer")
             review_action = self._apply_reviewer_outcome(task, review_outcome)
             print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: reviewer={review_outcome.status}")
-
             recovery_attempt = 0
             while review_action == "retry" and recovery_attempt < self.max_reviewer_recovery_attempts:
                 recovery_attempt += 1
@@ -391,7 +347,6 @@ class TaskWorkflow:
                 self._attest_stage_feedback(review_outcome, stage="reviewer")
                 review_action = self._apply_reviewer_outcome(task, review_outcome)
                 print(f"[Gate] {task.id} recovery {recovery_attempt}/{self.max_reviewer_recovery_attempts}: reviewer={review_outcome.status}")
-
             if review_action == "completed":
                 return task
             if review_action == "failed":
@@ -404,7 +359,6 @@ class TaskWorkflow:
             if review_action == "revision":
                 last_gate_note = f"reviewer 要求返工（第 {round_index} 轮）"
                 continue
-
         reason = f"质量门禁在 {self.max_review_rounds} 轮内未通过（最后状态: {last_gate_note}）"
         print(f"[Gate] {task.id}: {reason}")
         self.task_manager.record_error(task.id, reason)
@@ -457,7 +411,7 @@ class TaskWorkflow:
         if outcome.status == "failed":
             self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.QUALITY_GATE_FAILURE)
             self.task_manager.record_test_result(task.id, outcome.result_dict)
-            self.task_manager.set_feedback(task.id, "tester", outcome.result)
+            self.task_manager.set_feedback(task.id, "tester", outcome.result_dict)
             self.task_manager.record_error(task.id, None)
             self._emit_event("tester_rejected", task, payload=outcome.to_dict())
             self._checkpoint()
@@ -516,7 +470,6 @@ class TaskWorkflow:
         if outcome.result is not None and isinstance(outcome.result.data, dict):
             execution = outcome.result.data.get("reviewer_execution", {})
         recovery_source = execution.get("source") == "recovery"
-
         if outcome.status == "approved":
             try:
                 self._validate_reviewer_gate_outcome(task, outcome)
@@ -566,5 +519,11 @@ class TaskWorkflow:
 
     def _build_context(self, task: Task) -> None:
         context = build_task_context(task, self.task_manager.tasks)
-        # Keep the compatibility context field even when there are no dependencies.
         task.context["dependencies"] = context
+
+
+# Install only after TaskWorkflow is fully defined. Doing this from
+# runtime/__init__.py causes agents.base -> runtime.* -> workflow ->
+# agent_router -> agents.base circular imports.
+from runtime.workflow_root_tracing import install_workflow_root_tracing
+install_workflow_root_tracing()
