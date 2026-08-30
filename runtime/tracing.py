@@ -4,6 +4,7 @@ import json
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
@@ -34,7 +35,7 @@ def _safe_attributes(attributes: Mapping[str, Any] | None) -> dict[str, Any]:
         json.dumps(safe, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as exc:
         raise TypeError("trace attributes must be JSON serializable") from exc
-    return safe
+    return deepcopy(safe)
 
 
 @dataclass
@@ -84,7 +85,7 @@ class TraceSpan:
         if error is not None:
             if not isinstance(error, str):
                 raise TypeError("span error must be a string or None")
-            self.error = error
+            self.error = redact_mapping({"error": error})["error"]
             self.status = "error"
         self.duration_seconds = max(0.0, monotonic() - getattr(self, "_started_monotonic", monotonic()))
         self.ended_at = _timestamp()
@@ -101,7 +102,7 @@ class TraceSpan:
             "duration_seconds": self.duration_seconds,
             "status": self.status,
             "error": self.error,
-            "attributes": dict(self.attributes),
+            "attributes": deepcopy(self.attributes),
         }
 
 
@@ -166,18 +167,12 @@ class Tracer:
         span.finish()
         record = span.to_dict()
         with self._lock:
-            self._completed.append(dict(record))
+            self._completed.append(deepcopy(record))
         return record
 
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [
-                {
-                    **record,
-                    "attributes": dict(record["attributes"]),
-                }
-                for record in self._completed
-            ]
+            return deepcopy(self._completed)
 
     def reset(self) -> None:
         with self._lock:
