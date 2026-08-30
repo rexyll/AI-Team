@@ -96,3 +96,18 @@ def test_developer_tool_result_is_fenced_before_model_dispatch():
 
     assert '<untrusted-data source="tool.result.call-1">' in tool_message
     assert HOSTILE in tool_message
+
+
+def test_developer_checkpoint_is_fenced_as_data():
+    agent = DeveloperAgent(llm=MockLLM())
+    messages = [
+        {"role": "user", "content": "initial developer prompt"},
+        {"role": "user", "content": "TOOL LOOP CHECKPOINT\nchanged_files=foo.py\nlast_command=pytest -q"},
+    ]
+
+    secured = agent._secure_model_messages(messages)
+    checkpoint = secured[-1]["content"]
+
+    assert '<untrusted-data source="tool_loop.checkpoint">' in checkpoint
+    assert "changed_files=foo.py" in checkpoint
+    assert "last_command=pytest -q" in checkpoint
