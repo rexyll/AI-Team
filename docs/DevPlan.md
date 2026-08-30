@@ -43,7 +43,7 @@
 - [x] Restore dependency / execution state
 - [x] Resume only safe states
 - [x] Prevent duplicate completed work
-- [ ] Recovery idempotency
+- [x] Recovery idempotency
 - [ ] Crash/restart integration tests
 
 ### 17.3 Crash Consistency
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.2 recovery idempotency**, then add crash/restart integration tests. The safe-resume policy now rejects completed and unknown/terminal states before execution.
+Implement **17.2 crash/restart integration tests**. Recovery planning is now deterministic, non-mutating, duplicate-ID safe, and completed tasks are excluded from resume.
