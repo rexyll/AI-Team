@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Iterable, Protocol
 
+from .structured_logging import StructuredLogger
 from .workflow_event import WorkflowEvent
 
 
@@ -20,9 +21,15 @@ class WorkflowEventConflictError(ValueError):
 class WorkflowEventLog:
     """Ordered in-memory index of immutable workflow events."""
 
-    def __init__(self, persistence_sink: WorkflowEventPersistenceSink | None = None) -> None:
+    def __init__(
+        self,
+        persistence_sink: WorkflowEventPersistenceSink | None = None,
+        logger: StructuredLogger | None = None,
+    ) -> None:
         if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
             raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
+        if logger is not None and not callable(getattr(logger, "info", None)):
+            raise TypeError("logger must provide info(event, fields=...) or be None")
         self._events: dict[str, WorkflowEvent] = {}
         self._append_sequence: dict[str, int] = {}
         self._next_append_sequence = 0
@@ -30,6 +37,7 @@ class WorkflowEventLog:
         self._project_indexes: dict[str, list[WorkflowEvent]] = {}
         self._task_indexes: dict[str, list[WorkflowEvent]] = {}
         self._persistence_sink = persistence_sink
+        self._logger = logger or StructuredLogger()
         self._lock = threading.RLock()
 
     @property
@@ -50,6 +58,18 @@ class WorkflowEventLog:
         if self._persistence_sink is not None:
             self._persistence_sink.save_if_absent(event)
 
+    def _log_event(self, event: str, *, workflow_event: WorkflowEvent, **fields: Any) -> None:
+        self._logger.info(
+            event,
+            fields={
+                "event_id": workflow_event.event_id,
+                "event_type": workflow_event.event_type,
+                "project_id": workflow_event.project_id,
+                "task_id": workflow_event.task_id,
+                **fields,
+            },
+        )
+
     def _invalidate_indexes(self) -> None:
         self._all_index = None
         self._project_indexes.clear()
@@ -68,10 +88,12 @@ class WorkflowEventLog:
             raise TypeError("event must be a WorkflowEvent")
         with self._lock:
             if event.event_id in self._events:
+                self._log_event("workflow.event.duplicate", workflow_event=event, operation="append")
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
             self._record_event(event, preserve_append_order=True)
             self._invalidate_indexes()
+            self._log_event("workflow.event.appended", workflow_event=event, operation="append")
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
         if not isinstance(event, WorkflowEvent):
@@ -82,9 +104,12 @@ class WorkflowEventLog:
                 self._persist_if_configured(event)
                 self._record_event(event, preserve_append_order=True)
                 self._invalidate_indexes()
+                self._log_event("workflow.event.appended", workflow_event=event, operation="append_if_absent")
                 return True
             if existing == event:
+                self._log_event("workflow.event.duplicate", workflow_event=event, operation="append_if_absent")
                 return False
+            self._log_event("workflow.event.conflict", workflow_event=event, operation="append_if_absent")
             raise self._conflict(event.event_id)
 
     def merge(self, events: Iterable[WorkflowEvent]) -> int:
@@ -98,10 +123,12 @@ class WorkflowEventLog:
                 existing = self._events.get(event.event_id)
                 if existing is not None:
                     if existing != event:
+                        self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                         raise self._conflict(event.event_id)
                     continue
                 previous = pending.get(event.event_id)
                 if previous is not None and previous != event:
+                    self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                     raise self._conflict(event.event_id)
                 pending[event.event_id] = event
             if self._persistence_sink is not None:
@@ -110,6 +137,15 @@ class WorkflowEventLog:
                 self._record_event(event, preserve_append_order=False)
             if pending:
                 self._invalidate_indexes()
+            if incoming:
+                sample = next(iter(pending.values()), incoming[0])
+                self._log_event(
+                    "workflow.event.merge.completed",
+                    workflow_event=sample,
+                    operation="merge",
+                    received_count=len(incoming),
+                    committed_count=len(pending),
+                )
             return len(pending)
 
     @staticmethod
