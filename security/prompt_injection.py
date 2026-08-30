@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 
@@ -45,3 +46,59 @@ def untrusted_content(label: str, value: Any) -> str:
     else:
         rendered = json.dumps(value, ensure_ascii=False, indent=2, default=str)
     return f"{_UNTRUSTED_OPEN.format(source=source)}\n{rendered}\n{_UNTRUSTED_CLOSE}"
+
+
+def fence_developer_prompt(prompt: str) -> str:
+    """Fence application-controlled Developer prompt fields before tool-loop use.
+
+    Developer has a tool loop, so its initial user message is built before the
+    generic BaseAgent tool-message boundary is applied.  This adapter keeps the
+    existing prompt layout while fencing every task/evidence field that can
+    contain attacker-controlled repository or agent output.
+    """
+    if not isinstance(prompt, str):
+        raise TypeError("prompt must be a string")
+
+    patterns = (
+        ("task.id", r"(?ms)(Task ID:\s*)(.*?)(?=\nRole:)"),
+        ("task.role", r"(?ms)(Role:\s*)(.*?)(?=\nTitle:)"),
+        ("task.title", r"(?ms)(Title:\s*)(.*?)(?=\nDescription:)"),
+        ("task.description", r"(?ms)(Description:\s*)(.*?)(?=\nStatus:)"),
+        ("task.status", r"(?ms)(Status:\s*)(.*?)(?=\nDependencies:)"),
+        ("task.dependencies", r"(?ms)(Dependencies:\s*)(.*?)(?=\nCurrent Task Result:)"),
+        ("task.result", r"(?ms)(Current Task Result:\s*\n)(.*?)(?=\nTester Feedback:)"),
+        ("tester.feedback", r"(?ms)(Tester Feedback:\s*\n)(.*?)(?=\nReview Round:)"),
+        ("review.round", r"(?ms)(Review Round:\s*)(.*?)(?=\nExecution History:)"),
+        ("execution.history", r"(?ms)(Execution History:\s*\n)(.*?)(?=\nMetadata:)"),
+        ("task.metadata", r"(?ms)(Metadata:\s*\n)(.*?)(?=\n====================\nEXECUTION REQUIREMENT)"),
+    )
+
+    secured = prompt
+    for source, pattern in patterns:
+        match = re.search(pattern, secured)
+        if match is None:
+            continue
+        prefix, value = match.group(1), match.group(2)
+        replacement = prefix + untrusted_content(source, value.strip())
+        secured = secured[: match.start()] + replacement + secured[match.end() :]
+
+    # Dependency and previous-review blocks are variable-length sections and
+    # are fenced independently so their producer output cannot become policy.
+    dependency_marker = "====================\nUPSTREAM AGENT CONTEXT\n===================="
+    review_marker = "====================\nPREVIOUS REVIEW FEEDBACK\n===================="
+    execution_marker = "====================\nEXECUTION REQUIREMENT\n===================="
+    if dependency_marker in secured:
+        start = secured.index(dependency_marker)
+        end = secured.find(review_marker, start)
+        if end < 0:
+            end = secured.find(execution_marker, start)
+        if end >= 0:
+            block = secured[start:end]
+            secured = secured[:start] + untrusted_content("dependency.context", block) + secured[end:]
+    if review_marker in secured:
+        start = secured.index(review_marker)
+        end = secured.find(execution_marker, start)
+        if end >= 0:
+            block = secured[start:end]
+            secured = secured[:start] + untrusted_content("reviewer.feedback", block) + secured[end:]
+    return secured
