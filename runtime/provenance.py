@@ -105,10 +105,23 @@ def provenance_from_value(value: Any) -> EvidenceProvenance | None:
     without explicit provenance gets a stable agent-result evidence root so
     downstream boundaries can preserve lineage without changing the legacy
     result schema.
+
+    Objects exposing the project's canonical ``to_dict()`` contract are
+    accepted as values as well. This is intentionally generic to avoid a
+    runtime import cycle between provenance and AgentResult.
     """
     if isinstance(value, EvidenceProvenance):
         return value
+
     if not isinstance(value, dict):
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            try:
+                payload = to_dict()
+            except (TypeError, ValueError):
+                return None
+            if isinstance(payload, dict):
+                return provenance_from_value(payload)
         return None
 
     if all(key in value for key in ("source_role", "source_type", "task_id", "evidence_id")):
