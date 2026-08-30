@@ -53,7 +53,7 @@
 - [x] Recovery failure isolation
 
 ### 17.4 Concurrency / Lease Control
-- [ ] Task lease boundary
+- [x] Task lease boundary
 - [ ] Lease expiry
 - [ ] Ownership fencing
 - [ ] Duplicate worker prevention
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Begin **17.4 Concurrency / Lease Control** with the task lease boundary. Recovery failures are now isolated per checkpoint, while valid tasks continue recovering; the next reliability boundary is preventing two workers from owning and executing the same task concurrently.
+Implement **17.4.2 Lease Expiry**. The task lease boundary now guarantees one live owner per task and requires an opaque owner token for release. The next boundary is deterministic expiry and safe reacquisition after a lease becomes stale.
