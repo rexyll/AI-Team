@@ -89,6 +89,19 @@ Remaining:
 `[ ] 16.4` Operational dashboard
 `[ ] 16.5` Alerting
 
+### 16.3 Tracing — foundation implemented
+- [x] Provider-independent `Tracer` / `TraceSpan` primitives
+- [x] `trace_id`, `span_id`, and `parent_span_id` lineage
+- [x] Context-local current span via `ContextVar`
+- [x] Duration and success/error status capture
+- [x] Secret-safe, JSON-safe span attributes
+- [x] Detached snapshot/export contract
+- [x] Explicit parent / trace-id support
+- [x] Concurrency isolation regression coverage
+- [ ] Integrate tracing into workflow → task → stage → LLM/tool lifecycle
+- [ ] Correlate tracing with structured logs and metrics
+- [ ] Full observability regression verification
+
 # Phase 17 — Developer Experience
 
 `[ ] 17.1` CLI
