@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.task_status import TaskStatus, validate_transition
@@ -22,7 +24,9 @@ class PersistentTaskManager(TaskManager):
     def transition(self, task_id: str, target_status: str | TaskStatus) -> Task:
         with self._lock:
             task = self.get_task(task_id)
-            before = task.to_dict()
+            # Task.to_dict() contains mutable containers owned by the Task;
+            # rollback therefore requires a deep snapshot before mutation.
+            before = deepcopy(task.to_dict())
             current = task.status
             validate_transition(current, target_status)
             new_status = target_status.value if isinstance(target_status, TaskStatus) else target_status
