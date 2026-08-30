@@ -51,15 +51,22 @@ Secrets are redacted at agent context, tool execution record, durable result, an
 ## 15.4 Prompt injection resistance — in progress
 The model must treat task descriptions, dependency outputs, tool results, repository files, test output, and agent feedback as **untrusted data**, not as instructions that can override the system policy or tool permissions.
 
-Completed in this increment:
+Completed in previous increments:
 - [x] Define the reusable untrusted-content boundary helper in `security.prompt_injection`.
 - [x] Add canonical `<untrusted-data source="...">` fencing with application-controlled provenance labels.
 - [x] Add regression coverage for hostile text, structured tool results, invalid labels, fence-breaking labels, and authoritative system trust policy.
 
+Completed in this increment:
+- [x] Fence Architect task, dependency, result, history, and metadata fields at the model-facing prompt boundary.
+- [x] Fence Tester task and Developer-result fields at the model-facing prompt boundary.
+- [x] Fence Reviewer task, Developer result, Tester feedback, Reviewer feedback, dependency context, history, metadata, and review-round fields at the model-facing prompt boundary.
+- [x] Fence tool-produced content centrally in `BaseAgent` before it is sent back to the model, without mutating runtime/audit messages.
+- [x] Add model-boundary regression coverage using hostile task/result/feedback content.
+
 Remaining implementation boundary:
-- [ ] Apply the fencing helper to every model-facing task/dependency/tool/repository/test/agent-feedback field.
+- [ ] Apply the fencing helper to the remaining Developer model-facing task/dependency/feedback fields and tool-loop checkpoint data.
 - [ ] Add a policy that untrusted content cannot authorize new tools, broaden workspace scope, bypass security guards, or override system/developer instructions.
-- [ ] Add adversarial prompt-injection regression cases for repository files, tool output, dependency context, tester feedback, and reviewer feedback.
+- [ ] Add adversarial prompt-injection regression cases for repository files, tool output, dependency context, tester feedback, and reviewer feedback, including the Developer tool-loop path.
 - [ ] Ensure prompt-injection attempts are observable in the execution/audit trail without persisting secrets.
 - [ ] Verify that legitimate task instructions remain executable while embedded hostile instructions are treated as data.
 
