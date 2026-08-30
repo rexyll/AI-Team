@@ -8,7 +8,10 @@ from typing import Any, Mapping
 from security.secrets import redact_mapping
 
 
-_RESERVED = {"message", "asctime", "levelname", "name", "pathname", "filename", "module", "lineno"}
+# These names belong to the stdlib LogRecord namespace and must not leak into
+# or collide with the structured envelope.  ``message`` is intentionally not
+# reserved: application messages are valid structured fields under ``fields``.
+_RESERVED = {"asctime", "levelname", "name", "pathname", "filename", "module", "lineno"}
 
 
 def build_log_record(
