@@ -47,7 +47,7 @@
 - [x] Crash/restart integration tests
 
 ### 17.3 Crash Consistency
-- [ ] Atomic checkpoint semantics
+- [x] Atomic checkpoint semantics
 - [ ] Interrupted write handling
 - [ ] Corrupt-state quarantine
 - [ ] Recovery failure isolation
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Begin **17.3 Crash Consistency** with atomic checkpoint semantics. The workflow recovery path now has deterministic planning and a crash/restart regression contract.
+Implement **17.3 interrupted-write handling**. Atomic batch checkpoint validation is now covered by a dedicated state-store contract; the next boundary is simulating write interruption and proving the previously committed snapshot remains intact.
