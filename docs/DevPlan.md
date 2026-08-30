@@ -55,7 +55,7 @@
 ### 17.4 Concurrency / Lease Control
 - [x] Task lease boundary
 - [x] Lease expiry
-- [ ] Ownership fencing
+- [x] Ownership fencing
 - [ ] Duplicate worker prevention
 
 ### 17.5 Stuck Task Detection
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.4.3 Ownership Fencing**. Lease expiry is now explicit and deterministic, with exact-deadline cleanup and safe reacquisition. The next boundary is preventing a stale worker from mutating or releasing a task after ownership has transferred to a replacement worker.
+Implement **17.4.4 Duplicate Worker Prevention**. Ownership now carries a monotonically increasing fencing generation, so stale workers cannot release, renew, or validate operations after a lease has transferred. The next boundary is integrating lease acquisition into execution so concurrent workers cannot both enter the same task's execution path.
