@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Event
 
 import pytest
 
@@ -12,24 +12,30 @@ from runtime.workflow_execution_lease import WorkflowExecutionLease
 def test_only_one_concurrent_worker_enters_guarded_execution():
     execution = WorkflowExecutionLease(FencedTaskLeaseManager(TaskLeaseManager(default_ttl_seconds=30)), owner_id="worker-a")
     other = WorkflowExecutionLease(execution.lease_manager, owner_id="worker-b")
-    first_started = Barrier(2)
+    entered_event = Event()
+    release_event = Event()
     entered = []
 
     def first():
         def action(_lease):
             entered.append("a")
-            first_started.wait()
+            entered_event.set()
+            release_event.wait(timeout=2)
             return "a"
         return LeaseGuardedExecutor(execution).execute("TASK-1", action)
 
     def second():
-        first_started.wait()
+        assert entered_event.wait(timeout=2)
         with pytest.raises(LeaseUnavailable):
-            return LeaseGuardedExecutor(other).execute("TASK-1", lambda _lease: entered.append("b"))
+            LeaseGuardedExecutor(other).execute("TASK-1", lambda _lease: entered.append("b"))
+        return "rejected"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        assert pool.submit(first).result() == "a"
-        pool.submit(second).result()
+        first_future = pool.submit(first)
+        second_future = pool.submit(second)
+        assert second_future.result() == "rejected"
+        release_event.set()
+        assert first_future.result() == "a"
 
     assert entered == ["a"]
 
