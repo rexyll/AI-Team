@@ -133,14 +133,25 @@ Implemented in this increment:
 - [x] Add CLI/dashboard integration contract tests
 - [ ] Full Phase 16.4 regression verification
 
-### 16.5 Alerting — planned
-- [ ] Define alertable operational conditions
-- [ ] Failure-rate / latency / retry thresholds
+### 16.5 Alerting — in progress
+- [x] Define alertable operational conditions foundation
+- [x] Failure-rate threshold rule
+- [x] Latency threshold rule
+- [x] Retry threshold rule
 - [ ] Reviewer rejection / recovery alerts
 - [ ] Tool-loop anomaly alerts
-- [ ] Alert deduplication and cooldown semantics
-- [ ] Provider-independent alert interface
-- [ ] Alert regression tests
+- [x] Alert deduplication and cooldown semantics
+- [x] Provider-independent alert interface
+- [x] Alert rule / cooldown regression tests
+
+### 16.6 Alert delivery — planned
+- [ ] Provider-independent alert sink interface
+- [ ] Structured alert event emission
+- [ ] Console / log sink
+- [ ] Webhook sink with network-egress enforcement
+- [ ] Delivery retry / failure semantics
+- [ ] Alert delivery observability
+- [ ] Alert delivery regression tests
 
 # Phase 17 — Developer Experience
 
