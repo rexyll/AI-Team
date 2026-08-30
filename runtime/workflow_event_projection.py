@@ -87,7 +87,7 @@ class WorkflowEventProjector:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
 
-        selected = ordered_events if isinstance(events, WorkflowEventLog) and project_id is not None or ordered else [
+        selected = ordered_events if (isinstance(events, WorkflowEventLog) and project_id is not None) or ordered else [
             event for event in ordered_events if event.project_id == project_id
         ]
         if not selected and ordered_events:
@@ -146,7 +146,17 @@ class WorkflowEventProjector:
         materialized = list(events)
         if any(not isinstance(event, WorkflowEvent) for event in materialized):
             raise TypeError("events must contain WorkflowEvent values")
-        return sorted(materialized, key=WorkflowEventLog._global_sort_key)
+        # A bare iterable has no append-sequence metadata. Use immutable event
+        # fields for deterministic replay independent of iterable type.
+        return sorted(
+            materialized,
+            key=lambda event: (
+                event.project_id,
+                event.task_id if event.task_id is not None else "\uffff",
+                event.occurred_at,
+                event.event_id,
+            ),
+        )
 
     @staticmethod
     def _validate_event(event: WorkflowEvent, project_id: str) -> None:
