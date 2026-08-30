@@ -34,7 +34,7 @@
 - [x] Atomic lifecycle commit / rollback
 - [x] Recovery loading boundary
 - [x] Recovery snapshot validation
-- [ ] Persistent manager bootstrap from recovered state
+- [x] Persistent manager bootstrap from recovered state
 - [ ] Recovery regression suite against full workflow lifecycle
 
 ### 17.2 Workflow Resume / Recovery
@@ -74,4 +74,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.1 Persistent manager bootstrap from recovered state**, then close 17.1 with a full workflow recovery regression suite before entering 17.2.
+Run and validate the new **full workflow recovery regression suite**, then close 17.1 and enter 17.2 only after the complete test suite remains green.
