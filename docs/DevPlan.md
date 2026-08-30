@@ -54,7 +54,7 @@
 
 ### 17.4 Concurrency / Lease Control
 - [x] Task lease boundary
-- [ ] Lease expiry
+- [x] Lease expiry
 - [ ] Ownership fencing
 - [ ] Duplicate worker prevention
 
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.4.2 Lease Expiry**. The task lease boundary now guarantees one live owner per task and requires an opaque owner token for release. The next boundary is deterministic expiry and safe reacquisition after a lease becomes stale.
+Implement **17.4.3 Ownership Fencing**. Lease expiry is now explicit and deterministic, with exact-deadline cleanup and safe reacquisition. The next boundary is preventing a stale worker from mutating or releasing a task after ownership has transferred to a replacement worker.
