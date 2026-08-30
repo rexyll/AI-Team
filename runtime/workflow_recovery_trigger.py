@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from runtime.task import Task
@@ -32,13 +33,7 @@ class RecoveryTriggerDecision:
 
 
 class WorkflowRecoveryTrigger:
-    """Turn a stuck assessment into a safe, side-effect-free recovery decision.
-
-    A trigger never mutates Task state and never performs recovery itself. A live
-    lease blocks takeover so a transient liveness signal cannot race an owner
-    that still holds execution authority. Recovery becomes eligible only after
-    the task is classified STUCK and no live execution lease remains.
-    """
+    """Turn a stuck assessment into a safe, side-effect-free recovery decision."""
 
     def __init__(self, lease_manager: FencedTaskLeaseManager, recovery: WorkflowRecovery | None = None) -> None:
         if lease_manager is None:
@@ -48,7 +43,13 @@ class WorkflowRecoveryTrigger:
         self._leases = lease_manager
         self._recovery = recovery or WorkflowRecovery()
 
-    def evaluate(self, task: Task, assessment: StuckTaskAssessment) -> RecoveryTriggerDecision:
+    def evaluate(
+        self,
+        task: Task,
+        assessment: StuckTaskAssessment,
+        *,
+        now: datetime | None = None,
+    ) -> RecoveryTriggerDecision:
         if not isinstance(task, Task):
             raise RecoveryTriggerError("task must be a Task")
         if not isinstance(assessment, StuckTaskAssessment):
@@ -60,7 +61,7 @@ class WorkflowRecoveryTrigger:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.NOT_STUCK, "task is not classified as stuck")
         if task.status not in RESUMABLE_STATUSES:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.NOT_RESUMABLE, "task status is not resumable")
-        if self._leases.get(task.id) is not None:
+        if self._leases.get(task.id, now=now) is not None:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.WAITING_FOR_LEASE_EXPIRY, "active execution lease still exists")
         return RecoveryTriggerDecision(task.id, RecoveryTriggerState.TRIGGERED, "stuck task has no active execution lease")
 
