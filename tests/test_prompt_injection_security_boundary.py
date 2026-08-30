@@ -3,6 +3,7 @@ import pytest
 from agents.developer import DeveloperAgent
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
+from runtime.llm.base import LLMResponse
 from runtime.llm.mock import MockLLM
 from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY
 from security.tool_permission import ToolPermissionError
@@ -84,3 +85,50 @@ def test_developer_authorization_does_not_turn_hostile_content_into_policy():
     assert visible == ["read_file", "write_file", "delete_file", "run_command"]
     assert DEFAULT_RUNTIME_CAPABILITY_POLICY.allows("developer", "write_file")
     assert DEFAULT_RUNTIME_CAPABILITY_POLICY.allows("developer", "run_command")
+
+
+def test_model_tool_call_cannot_bypass_runtime_capability_policy():
+    schemas = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "delete_file"}},
+        {"type": "function", "function": {"name": "run_command"}},
+    ]
+    hostile_call = {
+        "tool_calls": [
+            {
+                "call_id": "hostile-write",
+                "name": "write_file",
+                "arguments": '{"path":"../outside/pwned.txt","content":"owned"}',
+            }
+        ]
+    }
+
+    # The model can emit an unauthorized call even if the schema was supplied
+    # by an integration boundary. BaseAgent must reject it before execution;
+    # no tool implementation is invoked in this test.
+    for agent in (
+        TesterAgent(llm=MockLLM(tool_script=[hostile_call])),
+        ReviewerAgent(llm=MockLLM(tool_script=[hostile_call])),
+    ):
+        with pytest.raises(ToolPermissionError):
+            agent._generate_with_tools(
+                [{"role": "user", "content": HOSTILE}],
+                tools=schemas,
+            )
+
+
+def test_workspace_boundary_is_enforced_by_the_actual_write_tool(tmp_path, monkeypatch):
+    from security import workspace
+    from tools.filesystem import write_file
+
+    workspace.set_default_workspace_root(tmp_path)
+    monkeypatch.setattr(workspace, "DEFAULT_SANDBOX", workspace.WorkspaceSandbox(tmp_path))
+
+    write_file("allowed.txt", "safe")
+    assert (tmp_path / "allowed.txt").read_text(encoding="utf-8") == "safe"
+
+    with pytest.raises(PermissionError, match="outside workspace"):
+        write_file(f"../outside/{HOSTILE}.txt", "pwned")
+
+    assert not (tmp_path.parent / "outside").exists()
