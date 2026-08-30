@@ -56,3 +56,28 @@ def test_dashboard_does_not_expose_trace_identity_as_metric_dimension():
     snapshot = ObservabilityDashboard(tracer=Tracer()).snapshot([_task("TASK-001", "developer", "completed")])
     assert "trace_id" not in snapshot.workflow.__dict__
     assert "span_id" not in snapshot.workflow.__dict__
+
+
+def test_dashboard_aggregates_duration_llm_tools_retries_and_recovery():
+    tracer = Tracer()
+    task = _task("TASK-TELEMETRY", "developer", "completed")
+    task.retry_history.append({"attempt": 1, "reason": "transient", "retryable": True})
+    task.status_history.append({"from": "running", "to": "completed", "recovery": True})
+    with tracer.span("workflow.task", attributes={"task_id": task.id}):
+        with tracer.span("llm.call", attributes={"task_id": task.id}):
+            pass
+        with tracer.span("tool.execute", attributes={"task_id": task.id}):
+            pass
+
+    snapshot = ObservabilityDashboard(tracer=tracer).snapshot([task])
+    item = snapshot.tasks[0]
+    assert item.duration_seconds is not None
+    assert item.llm_calls == 1
+    assert item.tool_calls == 1
+    assert item.retry_count == 1
+    assert item.recovery_count == 1
+    assert snapshot.workflow.llm_calls == 1
+    assert snapshot.workflow.tool_calls == 1
+    assert snapshot.workflow.retries == 1
+    assert snapshot.workflow.recoveries == 1
+    assert snapshot.agents[0].average_duration_seconds is not None
