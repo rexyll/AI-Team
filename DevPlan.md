@@ -66,9 +66,9 @@ Completed in this increment:
 - [x] Keep runtime capability authorization independent from model-provided or untrusted content.
 - [x] Add adversarial Developer regression coverage for hostile task data, dependency context, tester/reviewer feedback, tool results, and checkpoint content.
 - [x] Verify legitimate Developer execution requirements remain outside the untrusted-data fencing.
+- [x] Make prompt-injection attempts observable in workflow execution/audit events using rule/source/count metadata only; never persist inspected raw content.
 
 Remaining implementation boundary:
-- [ ] Make prompt-injection attempts observable in the execution/audit trail without persisting secrets.
 - [ ] Add end-to-end evidence that injection attempts cannot alter actual workspace scope or tool-guard decisions.
 - [ ] Consolidate all prompt-injection defenses into the Phase 15.5 security regression suite.
 
