@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from security.prompt_injection_audit import build_audit_payload, detect_prompt_injection
+
 
 def _json_safe(value: Any, *, field_name: str) -> Any:
     try:
@@ -39,6 +41,21 @@ class WorkflowEvent:
         safe_payload = _json_safe(self.payload, field_name="payload")
         if not isinstance(safe_payload, dict):
             raise TypeError("payload must be a JSON object")
+
+        # Workflow events are an execution/audit boundary. If event payloads
+        # contain a high-confidence prompt-injection signal, persist only the
+        # rule/source/count metadata. Never copy the inspected text into the
+        # security finding, and leave ordinary payloads byte-for-byte unchanged.
+        findings = detect_prompt_injection(safe_payload, source=f"workflow.event.{self.event_type}")
+        if findings:
+            safe_payload = dict(safe_payload)
+            safe_payload["security"] = {
+                "prompt_injection": build_audit_payload(
+                    findings,
+                    stage=self.event_type,
+                )
+            }
+
         object.__setattr__(self, "payload", deepcopy(safe_payload))
 
     def to_dict(self) -> dict[str, Any]:
