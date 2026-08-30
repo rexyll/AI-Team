@@ -198,7 +198,7 @@ EXECUTION CONTEXT
 
 history={untrusted_content("execution.history", history)}
 metadata={untrusted_content("task.metadata", metadata)}
-review_round={untrusted_content("review.round", view['review_round'])}
+{untrusted_content("review.round", f"review_round={view['review_round']}")}
 
 ====================
 REVIEW REQUIREMENTS
