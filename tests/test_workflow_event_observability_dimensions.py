@@ -9,14 +9,14 @@ class NullLogger:
         return {"event": event, "fields": dict(fields or {})}
 
 
-def _event(event_id="EV-001"):
+def _event(event_id="EV-001", *, payload=None):
     return WorkflowEvent(
         event_id=event_id,
         event_type="task.completed",
         project_id="PROJECT-001",
         occurred_at="2026-08-30T00:00:00Z",
         task_id="TASK-001",
-        payload={},
+        payload={} if payload is None else payload,
     )
 
 
@@ -52,7 +52,9 @@ def test_contextual_metric_is_emitted_for_duplicate_and_conflict_outcomes():
     assert log.append_if_absent(event) is False
 
     try:
-        log.append_if_absent(_event(event_id="EV-001"))
+        # Same event_id, different immutable payload: this is a conflict,
+        # not a second duplicate.
+        log.append_if_absent(_event(payload={"changed": True}))
     except ValueError:
         pass
 
@@ -62,6 +64,7 @@ def test_contextual_metric_is_emitted_for_duplicate_and_conflict_outcomes():
     }
     assert outcomes["appended"] == 1.0
     assert outcomes["duplicate"] == 1.0
+    assert outcomes["conflict"] == 1.0
 
 
 def test_event_logger_and_contextual_metric_share_project_and_task_dimensions():
