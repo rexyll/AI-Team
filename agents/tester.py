@@ -52,6 +52,11 @@ TEST_FAILED
 
 
 class TesterAgent(BaseAgent):
+    # Pytest treats imported classes whose names start with ``Test`` as
+    # potential test classes. TesterAgent is an application class, not a test
+    # container, so explicitly opt it out of pytest collection.
+    __test__ = False
+
     @property
     def role(self) -> str:
         return "tester"
