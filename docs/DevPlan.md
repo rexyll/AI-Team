@@ -48,8 +48,8 @@
 
 ### 17.3 Crash Consistency
 - [x] Atomic checkpoint semantics
-- [ ] Interrupted write handling
-- [ ] Corrupt-state quarantine
+- [x] Interrupted write handling
+- [x] Corrupt-state quarantine
 - [ ] Recovery failure isolation
 
 ### 17.4 Concurrency / Lease Control
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.3 interrupted-write handling**. Atomic batch checkpoint validation is now covered by a dedicated state-store contract; the next boundary is simulating write interruption and proving the previously committed snapshot remains intact.
+Implement **17.3 recovery failure isolation**. Corrupt or duplicate checkpoint entries are now quarantined individually so valid checkpoints can continue through recovery; the remaining boundary is isolating unexpected recovery failures without losing unrelated valid state.
