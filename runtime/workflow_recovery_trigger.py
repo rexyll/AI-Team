@@ -6,7 +6,7 @@ from enum import Enum
 from runtime.task import Task
 from runtime.task_lease_fencing import FencedTaskLeaseManager
 from runtime.task_stuck import StuckTaskAssessment, TaskLivenessState
-from runtime.workflow_recovery import WorkflowRecovery
+from runtime.workflow_recovery import RESUMABLE_STATUSES, WorkflowRecovery
 
 
 class RecoveryTriggerError(ValueError):
@@ -58,7 +58,7 @@ class WorkflowRecoveryTrigger:
 
         if assessment.state is not TaskLivenessState.STUCK:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.NOT_STUCK, "task is not classified as stuck")
-        if not self._recovery._is_resumable_status(task.status):
+        if task.status not in RESUMABLE_STATUSES:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.NOT_RESUMABLE, "task status is not resumable")
         if self._leases.get(task.id) is not None:
             return RecoveryTriggerDecision(task.id, RecoveryTriggerState.WAITING_FOR_LEASE_EXPIRY, "active execution lease still exists")
