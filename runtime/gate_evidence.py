@@ -45,40 +45,38 @@ def _replace_provenance(value: Any, provenance: EvidenceProvenance) -> Any:
     return payload
 
 
-def _legacy_standalone_tester_value(value: Any, *, task_id: str) -> tuple[Any, tuple[Any, ...]]:
-    """Build an explicit compatibility lineage for isolated transition tests.
+def _legacy_standalone_value(value: Any, *, task_id: str, stage: str) -> tuple[Any, tuple[Any, ...]]:
+    """Build explicit compatibility lineage for isolated transition contracts.
 
-    The production workflow always supplies the Developer result as a parent.
-    A few transition-contract callers intentionally invoke the private apply
-    method in isolation, where no upstream evidence exists.  Keep that
-    compatibility path explicit and side-effect free rather than weakening
-    the generic evidence gate.
+    Production workflow execution supplies real upstream evidence.  These
+    compatibility callers intentionally invoke private stage-application
+    methods without executing the previous stage; preserve the transition
+    contract without weakening the generic fail-closed evidence gate.
     """
     if _provenance_payload(value) is not None:
         return value, ()
+    if stage == "tester":
+        parent_role = "developer"
+        parent_id = f"developer:{task_id}"
+    else:
+        parent_role = "developer"
+        parent_id = f"developer:{task_id}"
     parent = agent_result_provenance(
         task_id=task_id,
-        agent_role="developer",
-        evidence_id=f"developer:{task_id}",
+        agent_role=parent_role,
+        evidence_id=parent_id,
     ).to_dict()
     feedback = agent_feedback_provenance(
         task_id=task_id,
-        agent_role="tester",
-        evidence_id=f"tester:{task_id}",
-        parent_evidence_id=f"developer:{task_id}",
+        agent_role=stage,
+        evidence_id=f"{stage}:{task_id}",
+        parent_evidence_id=parent_id,
     )
     return _replace_provenance(value, feedback), (parent,)
 
 
-def _repair_legacy_reviewer_parent(value: Any, *, parents: tuple[Any, ...], task_id: str) -> Any:
-    """Repair only the legacy no-Tester reviewer boundary.
-
-    When Tester is absent, the workflow's Reviewer evidence must link directly
-    to the current Developer result. Older boundary attestation used a fixed
-    ``tester:<task_id>`` parent, which is not resolvable in that configuration.
-    If an actual Tester parent is supplied, this function leaves the evidence
-    untouched and the normal fail-closed validator handles it.
-    """
+def _repair_legacy_reviewer_parent(value: Any, *, parents: tuple[Any, ...]) -> Any:
+    """Repair the old no-Tester Reviewer attestation at the workflow boundary."""
     provenance_payload = _provenance_payload(value)
     if not provenance_payload:
         return value
@@ -115,9 +113,9 @@ def validate_stage_gate_evidence(
 ) -> list[EvidenceProvenance]:
     """Validate evidence that is about to authorize a workflow stage gate.
 
-    This remains fail-closed for normal workflow execution. Compatibility is
-    limited to isolated transition-contract calls and the legacy Reviewer
-    boundary used when no Tester stage exists.
+    Normal workflow execution remains fail-closed. Compatibility is limited to
+    isolated transition-contract calls and the legacy Reviewer boundary when
+    no Tester stage exists.
     """
     if not isinstance(stage, str) or not stage.strip():
         raise ValueError("stage must be a non-empty string")
@@ -128,10 +126,12 @@ def validate_stage_gate_evidence(
 
     parent_values = tuple(parents)
     candidate = value
-    if normalized_stage == "tester" and not parent_values:
-        candidate, parent_values = _legacy_standalone_tester_value(value, task_id=task_id)
+    if not parent_values and normalized_stage in {"tester", "reviewer"}:
+        candidate, parent_values = _legacy_standalone_value(
+            value, task_id=task_id, stage=normalized_stage
+        )
     elif normalized_stage == "reviewer":
-        candidate = _repair_legacy_reviewer_parent(value, parents=parent_values, task_id=task_id)
+        candidate = _repair_legacy_reviewer_parent(value, parents=parent_values)
 
     chain = validate_gate_evidence(
         candidate,
