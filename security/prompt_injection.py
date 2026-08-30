@@ -96,6 +96,17 @@ def fence_developer_prompt(prompt: str) -> str:
         if end >= 0:
             block = secured[start:end]
             secured = secured[:start] + untrusted_content("dependency.context", block) + secured[end:]
+    else:
+        # Keep the model-facing field boundary explicit even when the current
+        # execution has no upstream dependency evidence.  Empty context is
+        # still data, and every canonical field must have the same trust marker
+        # so security regression checks cannot depend on fixture population.
+        insertion = untrusted_content("dependency.context", "") + "\n"
+        execution_index = secured.find(execution_marker)
+        if execution_index >= 0:
+            secured = secured[:execution_index] + insertion + secured[execution_index:]
+        else:
+            secured += "\n" + insertion
     if review_marker in secured:
         start = secured.index(review_marker)
         end = secured.find(execution_marker, start)
