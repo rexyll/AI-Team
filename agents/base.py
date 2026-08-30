@@ -125,12 +125,15 @@ class BaseAgent(ABC):
         fenced: list[dict[str, Any]] = []
         initial_user_seen = False
         for message in secured:
-            if isinstance(message, dict) and message.get("role") == "user" and not initial_user_seen:
+            if isinstance(message, dict) and message.get("role") == "user":
                 copied = dict(message)
                 content = copied.get("content", "")
                 if isinstance(content, str):
-                    copied["content"] = fence_developer_prompt(content)
-                initial_user_seen = True
+                    if not initial_user_seen:
+                        copied["content"] = fence_developer_prompt(content)
+                        initial_user_seen = True
+                    elif content.startswith("TOOL LOOP CHECKPOINT") or content.startswith("DECISION BUDGET CHECKPOINT"):
+                        copied["content"] = untrusted_content("tool_loop.checkpoint", content)
                 fenced.append(copied)
             else:
                 fenced.append(message)
