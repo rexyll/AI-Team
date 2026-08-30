@@ -70,7 +70,10 @@ def fence_developer_prompt(prompt: str) -> str:
         ("tester.feedback", r"(?ms)(Tester Feedback:\s*\n)(.*?)(?=\nReview Round:)"),
         ("review.round", r"(?ms)(Review Round:\s*)(.*?)(?=\nExecution History:)"),
         ("execution.history", r"(?ms)(Execution History:\s*\n)(.*?)(?=\nMetadata:)"),
-        ("task.metadata", r"(?ms)(Metadata:\s*\n)(.*?)(?=\n====================\nEXECUTION REQUIREMENT)"),
+        (
+            "task.metadata",
+            r"(?ms)(Metadata:\s*\n)(.*?)(?=\n====================\n(?:UPSTREAM AGENT CONTEXT|PREVIOUS REVIEW FEEDBACK|EXECUTION REQUIREMENT))",
+        ),
     )
 
     secured = prompt
@@ -82,8 +85,6 @@ def fence_developer_prompt(prompt: str) -> str:
         replacement = prefix + untrusted_content(source, value.strip())
         secured = secured[: match.start()] + replacement + secured[match.end() :]
 
-    # Dependency and previous-review blocks are variable-length sections and
-    # are fenced independently so their producer output cannot become policy.
     dependency_marker = "====================\nUPSTREAM AGENT CONTEXT\n===================="
     review_marker = "====================\nPREVIOUS REVIEW FEEDBACK\n===================="
     execution_marker = "====================\nEXECUTION REQUIREMENT\n===================="
