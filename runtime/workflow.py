@@ -8,7 +8,7 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.evidence_gate import EvidenceGateError
 from runtime.gate_evidence import validate_reviewer_gate_evidence, validate_tester_gate_evidence
-from runtime.provenance import provenance_from_value
+from runtime.provenance import agent_feedback_provenance, provenance_from_value
 from enum import Enum
 import os
 from dataclasses import dataclass
@@ -225,6 +225,39 @@ class TaskWorkflow:
         if len(chain) < 2 or chain[1].evidence_id != expected.evidence_id:
             raise EvidenceGateError(f"{stage} gate evidence is not linked to current parent evidence")
 
+    @staticmethod
+    def _attest_stage_feedback(outcome: StageOutcome, *, stage: str) -> None:
+        """Attest legacy stage results only when crossing the gate boundary.
+
+        Direct ``_run_tester``/``_run_reviewer`` calls remain side-effect free;
+        the trusted workflow boundary adds the explicit feedback provenance
+        required by the evidence gate before storing or consuming the result.
+        """
+        if outcome.result is None:
+            return
+        data = dict(outcome.result.data)
+        if isinstance(data.get("provenance"), dict):
+            return
+        evidence_id = f"{stage}:{outcome.result.task_id}"
+        parent_evidence_id = (
+            f"developer:{outcome.result.task_id}"
+            if stage == "tester"
+            else f"tester:{outcome.result.task_id}"
+        )
+        data["provenance"] = agent_feedback_provenance(
+            task_id=outcome.result.task_id,
+            agent_role=stage,
+            evidence_id=evidence_id,
+            parent_evidence_id=parent_evidence_id,
+        ).to_dict()
+        outcome.result = AgentResult(
+            status=outcome.result.status,
+            agent=outcome.result.agent,
+            task_id=outcome.result.task_id,
+            message=outcome.result.message,
+            data=data,
+        )
+
     def _validate_tester_gate_outcome(self, task: Task, outcome: StageOutcome) -> None:
         developer_result = task.result
         parents = () if developer_result is None else (developer_result,)
@@ -301,6 +334,7 @@ class TaskWorkflow:
 
             if self.tester is not None:
                 tester_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_tester(task), stage="tester")
+                self._attest_stage_feedback(tester_outcome, stage="tester")
                 tester_passed = self._handle_tester_result(task, tester_outcome)
                 print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester={tester_outcome.status}")
                 if not tester_passed:
@@ -318,6 +352,7 @@ class TaskWorkflow:
 
             self._emit_event("review_started", task, payload={"status": task.status})
             review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
+            self._attest_stage_feedback(review_outcome, stage="reviewer")
             review_action = self._apply_reviewer_outcome(task, review_outcome)
             print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: reviewer={review_outcome.status}")
 
@@ -329,6 +364,7 @@ class TaskWorkflow:
                 self._checkpoint()
                 self._emit_event("review_started", task, payload={"status": task.status, "recovery_attempt": recovery_attempt})
                 review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
+                self._attest_stage_feedback(review_outcome, stage="reviewer")
                 review_action = self._apply_reviewer_outcome(task, review_outcome)
                 print(f"[Gate] {task.id} recovery {recovery_attempt}/{self.max_reviewer_recovery_attempts}: reviewer={review_outcome.status}")
 
