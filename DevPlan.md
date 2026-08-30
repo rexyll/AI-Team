@@ -138,7 +138,7 @@ Implemented in this increment:
 - [x] Failure-rate threshold rule
 - [x] Latency threshold rule
 - [x] Retry threshold rule
-- [ ] Reviewer rejection / recovery alerts
+- [x] Reviewer rejection / recovery alerts
 - [ ] Tool-loop anomaly alerts
 - [x] Alert deduplication and cooldown semantics
 - [x] Provider-independent alert interface
