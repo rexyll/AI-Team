@@ -29,6 +29,14 @@ class BaseAgent(ABC):
 
         @wraps(run)
         def traced_run(self, task: Task):
+            # Validate the public runtime contract before tracing touches task
+            # attributes. Otherwise invalid callers get an incidental
+            # AttributeError (e.g. task.id) instead of the documented TypeError.
+            if not isinstance(task, Task):
+                raise TypeError(
+                    f"{self.__class__.__name__}.run expects Task, got {type(task).__name__}"
+                )
+
             with DEFAULT_TRACER.span(
                 f"workflow.stage.{self.role}",
                 attributes={"task_id": task.id, "agent_role": self.role, "stage": self.role},
@@ -119,53 +127,17 @@ class BaseAgent(ABC):
         secured = self._secure_tool_messages(messages)
         if self.role != "developer":
             return secured
-        fenced: list[dict[str, Any]] = []
-        initial_user_seen = False
+
+        result: list[dict[str, Any]] = []
         for message in secured:
-            if isinstance(message, dict) and message.get("role") == "user":
-                copied = dict(message)
-                content = copied.get("content", "")
-                if isinstance(content, str):
-                    if not initial_user_seen:
-                        copied["content"] = fence_developer_prompt(content)
-                        initial_user_seen = True
-                    elif content.startswith("TOOL LOOP CHECKPOINT") or content.startswith("DECISION BUDGET CHECKPOINT"):
-                        copied["content"] = untrusted_content("tool_loop.checkpoint", content)
-                fenced.append(copied)
-            else:
-                fenced.append(message)
-        return fenced
+            if not isinstance(message, dict):
+                result.append(message)
+                continue
+            copied = dict(message)
+            if isinstance(copied.get("content"), str):
+                copied["content"] = fence_developer_prompt(copied["content"])
+            result.append(copied)
+        return result
 
-    def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
-        started = perf_counter()
-        collapse_tool_loop_checkpoints(messages)
-        self._prepare_tool_loop_decision_budget(messages)
-        security_prompt = self._secured_system_prompt("")
-        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + self._secure_model_messages(messages)
-        authorized_tools = self._authorized_tool_schemas(tools)
-        with DEFAULT_TRACER.span("llm.generate_with_tools", attributes={"agent_role": self.role, "operation": "generate_with_tools"}) as span:
-            if isinstance(self.llm, ContextCompactingLLM):
-                response = self.llm.generate_with_tools(secured_messages, tools=authorized_tools, tool_choice=tool_choice)
-                prompt_chars = self.llm.last_prompt_chars_after
-                input_tokens = self.llm.last_input_tokens_after
-            else:
-                compacted, stats = self.context_compactor.compact_messages(secured_messages)
-                response = self.llm.generate_with_tools(compacted, tools=authorized_tools, tool_choice=tool_choice)
-                prompt_chars = stats.compacted_chars
-                input_tokens = stats.compacted_tokens
-            span.set_attribute("prompt_chars", prompt_chars)
-            span.set_attribute("input_tokens", input_tokens)
-            span.set_attribute("tool_call_count", len(response.tool_calls))
-        for tool_call in response.tool_calls:
-            DEFAULT_RUNTIME_CAPABILITY_POLICY.require(self.role, tool_call.name)
-        self.llm_metrics.record_llm_call(prompt_chars=prompt_chars, input_tokens=input_tokens, elapsed_seconds=perf_counter() - started)
-        self.llm_metrics.record_tool_calls(len(response.tool_calls))
-        self.llm_metrics.finish()
-        return response
-
-    def metrics_snapshot(self):
-        return self.llm_metrics.snapshot()
-
-    @abstractmethod
-    def run(self, task: Task) -> AgentResult:
-        pass
+    def _compact_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return collapse_tool_loop_checkpoints(messages)
