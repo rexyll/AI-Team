@@ -1,30 +1,36 @@
+from agents.base import BaseAgent
 from runtime.agent_router import AgentRouter
 from runtime.agent_result import AgentResult
+from runtime.llm.mock import MockLLM
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.tracing import DEFAULT_TRACER
 from runtime.workflow import TaskWorkflow
 
 
-class _Developer:
-    role = "developer"
+class _Developer(BaseAgent):
+    @property
+    def role(self) -> str:
+        return "developer"
 
     def run(self, task):
         return AgentResult(
             status="completed",
-            agent="developer",
+            agent=self.role,
             task_id=task.id,
             message="done",
         )
 
 
-class _Reviewer:
-    role = "reviewer"
+class _Reviewer(BaseAgent):
+    @property
+    def role(self) -> str:
+        return "reviewer"
 
     def run(self, task):
         return AgentResult(
             status="approved",
-            agent="reviewer",
+            agent=self.role,
             task_id=task.id,
             message="APPROVED",
         )
@@ -39,8 +45,8 @@ def test_task_workflow_execute_creates_root_span_for_agent_stage_lineage():
         role="developer",
         status="ready",
     )
-    developer = _Developer()
-    reviewer = _Reviewer()
+    developer = _Developer(llm=MockLLM("done"))
+    reviewer = _Reviewer(llm=MockLLM("APPROVED"))
     router = AgentRouter()
     router.register("developer", developer)
     router.register("reviewer", reviewer)
