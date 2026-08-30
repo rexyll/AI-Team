@@ -3,7 +3,6 @@ import pytest
 from agents.developer import DeveloperAgent
 from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
-from runtime.llm.base import LLMResponse
 from runtime.llm.mock import MockLLM
 from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY
 from security.tool_permission import ToolPermissionError
@@ -123,7 +122,6 @@ def test_workspace_boundary_is_enforced_by_the_actual_write_tool(tmp_path, monke
     from tools.filesystem import write_file
 
     workspace.set_default_workspace_root(tmp_path)
-    monkeypatch.setattr(workspace, "DEFAULT_SANDBOX", workspace.WorkspaceSandbox(tmp_path))
 
     write_file("allowed.txt", "safe")
     assert (tmp_path / "allowed.txt").read_text(encoding="utf-8") == "safe"
