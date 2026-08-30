@@ -44,7 +44,7 @@
 - [x] Resume only safe states
 - [x] Prevent duplicate completed work
 - [x] Recovery idempotency
-- [ ] Crash/restart integration tests
+- [x] Crash/restart integration tests
 
 ### 17.3 Crash Consistency
 - [ ] Atomic checkpoint semantics
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.2 crash/restart integration tests**. Recovery planning is now deterministic, non-mutating, duplicate-ID safe, and completed tasks are excluded from resume.
+Begin **17.3 Crash Consistency** with atomic checkpoint semantics. The workflow recovery path now has deterministic planning and a crash/restart regression contract.
