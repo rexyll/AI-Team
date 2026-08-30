@@ -50,7 +50,7 @@
 - [x] Atomic checkpoint semantics
 - [x] Interrupted write handling
 - [x] Corrupt-state quarantine
-- [ ] Recovery failure isolation
+- [x] Recovery failure isolation
 
 ### 17.4 Concurrency / Lease Control
 - [ ] Task lease boundary
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.3 recovery failure isolation**. Corrupt or duplicate checkpoint entries are now quarantined individually so valid checkpoints can continue through recovery; the remaining boundary is isolating unexpected recovery failures without losing unrelated valid state.
+Begin **17.4 Concurrency / Lease Control** with the task lease boundary. Recovery failures are now isolated per checkpoint, while valid tasks continue recovering; the next reliability boundary is preventing two workers from owning and executing the same task concurrently.
