@@ -48,12 +48,16 @@ Network access is deny-by-default and requires HTTPS plus an explicitly authoriz
 ## 15.3 Secret isolation
 Secrets are redacted at agent context, tool execution record, durable result, and delivery audit boundaries. End-to-end regression coverage verifies that common API keys, tokens, passwords, authorization values, and credentials cannot cross these observable/persistent boundaries.
 
-## 15.4 Prompt injection resistance — next work
+## 15.4 Prompt injection resistance — in progress
 The model must treat task descriptions, dependency outputs, tool results, repository files, test output, and agent feedback as **untrusted data**, not as instructions that can override the system policy or tool permissions.
 
-Planned implementation boundary:
-- [ ] Define an explicit untrusted-content / instruction boundary in the agent context model.
-- [ ] Add canonical delimiters and provenance labels when untrusted repository/tool/agent content is injected into model context.
+Completed in this increment:
+- [x] Define the reusable untrusted-content boundary helper in `security.prompt_injection`.
+- [x] Add canonical `<untrusted-data source="...">` fencing with application-controlled provenance labels.
+- [x] Add regression coverage for hostile text, structured tool results, invalid labels, fence-breaking labels, and authoritative system trust policy.
+
+Remaining implementation boundary:
+- [ ] Apply the fencing helper to every model-facing task/dependency/tool/repository/test/agent-feedback field.
 - [ ] Add a policy that untrusted content cannot authorize new tools, broaden workspace scope, bypass security guards, or override system/developer instructions.
 - [ ] Add adversarial prompt-injection regression cases for repository files, tool output, dependency context, tester feedback, and reviewer feedback.
 - [ ] Ensure prompt-injection attempts are observable in the execution/audit trail without persisting secrets.
