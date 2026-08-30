@@ -18,7 +18,8 @@ def test_recovery_observability_emits_audit_event_and_metric():
     observation = observer.takeover("TASK-1", generation=7, reason="stuck task")
 
     assert observation.event_type == "workflow.recovery.takeover"
-    event = log.get("RECOVERY-" + log.list_all()[0].event_id.removeprefix("RECOVERY-"))
+    event = log.list_all()[0]
+    assert event.event_id.startswith("RECOVERY-")
     assert event.task_id == "TASK-1"
     assert event.project_id == "PROJECT-1"
     assert event.payload == {"outcome": "takeover", "reason": "stuck task", "generation": 7}
