@@ -1,9 +1,13 @@
+from pathlib import Path
+
 from agents.base import BaseAgent
 from runtime.agent_result import AgentResult
 from runtime.llm.mock import MockLLM
 from runtime.task import Task
 from runtime.tool_invocation_service import ToolInvocationService
 from runtime.tracing import DEFAULT_TRACER
+from security.workspace import WorkspaceSandbox
+import security.workspace as workspace_module
 
 
 class _TracingAgent(BaseAgent):
@@ -49,10 +53,16 @@ def test_agent_run_and_llm_share_trace_lineage_and_task_attributes():
     assert llm["trace_id"] == stage["trace_id"]
 
 
-def test_tool_invocation_creates_child_span_with_safe_runtime_identity(tmp_path):
+def test_tool_invocation_creates_child_span_with_safe_runtime_identity(tmp_path: Path, monkeypatch):
     DEFAULT_TRACER.reset()
     target = tmp_path / "trace.txt"
     target.write_text("hello", encoding="utf-8")
+
+    # Production filesystem tools are deliberately sandboxed to the configured
+    # workspace root. The integration test must therefore place its fixture
+    # inside an isolated temporary workspace rather than passing an arbitrary
+    # pytest temp path outside the production sandbox.
+    monkeypatch.setattr(workspace_module, "DEFAULT_SANDBOX", WorkspaceSandbox(tmp_path))
 
     service = ToolInvocationService()
     result = service.invoke(
@@ -64,6 +74,7 @@ def test_tool_invocation_creates_child_span_with_safe_runtime_identity(tmp_path)
     )
 
     assert result.success is True
+    assert result.output == "hello"
     records = DEFAULT_TRACER.snapshot()
     assert len(records) == 1
     span = records[0]
