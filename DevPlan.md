@@ -36,7 +36,7 @@ A generic Python callback cannot by itself provide globally exactly-once effects
 `[x] 15.1` Package / dependency policy
 `[x] 15.2` Network egress policy
 `[x] 15.3` Secret isolation
-`[ ] 15.4` Prompt injection resistance
+`[x] 15.4` Prompt injection resistance
 `[ ] 15.5` Security regression suite
 
 ## 15.1 Dependency policy
@@ -48,7 +48,7 @@ Network access is deny-by-default and requires HTTPS plus an explicitly authoriz
 ## 15.3 Secret isolation
 Secrets are redacted at agent context, tool execution record, durable result, and delivery audit boundaries. End-to-end regression coverage verifies that common API keys, tokens, passwords, authorization values, and credentials cannot cross these observable/persistent boundaries.
 
-## 15.4 Prompt injection resistance — in progress
+## 15.4 Prompt injection resistance — completed
 The model must treat task descriptions, dependency outputs, tool results, repository files, test output, and agent feedback as **untrusted data**, not as instructions that can override the system policy or tool permissions.
 
 Completed in previous increments:
@@ -67,20 +67,19 @@ Completed in this increment:
 - [x] Add adversarial Developer regression coverage for hostile task data, dependency context, tester/reviewer feedback, tool results, and checkpoint content.
 - [x] Verify legitimate Developer execution requirements remain outside the untrusted-data fencing.
 - [x] Make prompt-injection attempts observable in workflow execution/audit events using rule/source/count metadata only; never persist inspected raw content.
-
-Remaining implementation boundary:
-- [ ] Add end-to-end evidence that injection attempts cannot alter actual workspace scope or tool-guard decisions.
-- [ ] Consolidate all prompt-injection defenses into the Phase 15.5 security regression suite.
+- [x] Add end-to-end evidence that injection attempts cannot alter actual workspace scope or tool-guard decisions.
+- [x] Consolidate prompt-injection defenses into the Phase 15.5 security regression suite runner.
 
 ## 15.5 Security regression suite
 Current completed coverage includes strict evidence-gate provenance validation and workflow evidence-lineage regression coverage. In particular, gate validation remains fail-closed when explicit provenance is missing; isolated workflow transition-contract compatibility must not synthesize provenance inside the generic evidence validator.
 
-Planned completion:
-- [x] Evidence gate requires explicit provenance.
-- [x] Tester/reviewer evidence lineage regression coverage.
-- [ ] Consolidate dependency, egress, secret-isolation, prompt-injection, and evidence-gate security tests into a documented security regression command/suite.
-- [ ] Add cross-boundary regression coverage for security-policy bypass attempts.
-- [ ] Full security regression verification after 15.4 is implemented.
+Implemented in this increment:
+- [x] Add a deterministic security regression runner covering dependency, egress, secret-isolation, prompt-injection, workspace/tool-security, and evidence-gate tests.
+- [x] Document the security regression command and boundary expectations in `SECURITY.md`.
+
+Remaining:
+- [ ] Add/expand cross-boundary regression coverage for security-policy bypass attempts as new boundaries are introduced.
+- [ ] Full security regression verification after the consolidated runner is pulled locally.
 
 # Phase 16 — Observability / Operations
 
