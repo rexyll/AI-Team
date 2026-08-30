@@ -15,7 +15,7 @@ def _task() -> Task:
         description=HOSTILE,
         role="developer",
         status="running",
-        dependencies=[HOSTILE],
+        dependencies=["TASK-ARCH"],
         review_round=3,
     )
     task.result = {"message": HOSTILE, "data": {"report": HOSTILE}}
@@ -25,17 +25,33 @@ def _task() -> Task:
         {
             "hostile_metadata": HOSTILE,
             "execution_history": [HOSTILE],
-            "dependency_context": {
-                "TASK-ARCH": {"role": "architect", "title": HOSTILE, "result": {"architecture": HOSTILE}}
-            },
             "reviewer_feedback": {"message": HOSTILE},
         }
     )
     return task
 
 
+def _dependency() -> Task:
+    dependency = Task(
+        id="TASK-ARCH",
+        title=HOSTILE,
+        description=HOSTILE,
+        role="architect",
+        status="completed",
+    )
+    dependency.result = {
+        "status": "completed",
+        "agent": "architect",
+        "task_id": "TASK-ARCH",
+        "message": HOSTILE,
+        "data": {"architecture": HOSTILE},
+    }
+    return dependency
+
+
 def _context() -> AgentContext:
-    return DeveloperAgent(llm=MockLLM()).build_context(_task())
+    agent = DeveloperAgent(llm=MockLLM())
+    return agent.build_context(_task(), all_tasks={"TASK-ARCH": _dependency()})
 
 
 def test_developer_fences_all_model_facing_task_and_evidence_fields():
