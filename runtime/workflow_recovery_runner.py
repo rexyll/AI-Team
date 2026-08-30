@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from runtime.task import Task
 from runtime.task_status import TaskStatus
-from runtime.task_lease_fencing import FencedTaskLeaseManager
-from runtime.workflow_execution_lease import WorkflowExecutionLease
+from runtime.task_lease_fencing import FencedLease, FencedTaskLeaseManager
 from runtime.workflow_recovery_takeover import RecoveryTakeover, WorkflowRecoveryTakeover
 
 
@@ -22,7 +20,7 @@ class RecoveryRunResult:
 
 
 class WorkflowRecoveryRunner:
-    """Resume a recovered workflow while retaining fenced execution ownership."""
+    """Resume a recovered workflow while retaining the already-acquired fenced lease."""
 
     def __init__(self, workflow, lease_manager: FencedTaskLeaseManager) -> None:
         if workflow is None or not callable(getattr(workflow, "execute", None)):
@@ -70,22 +68,18 @@ class WorkflowRecoveryRunner:
             self._safe_release(takeover)
             raise WorkflowRecoveryRunError("workflow task manager state differs from checkpoint")
 
-        execution = WorkflowExecutionLease(self._leases, owner_id=owner_id)
         try:
-            result = execution.run(
-                takeover.task.id,
-                lambda lease: self._execute_fenced(lease, takeover.task.id),
-                ttl_seconds=ttl_seconds,
-                now=now,
-            )
+            result = self._execute_fenced(takeover.lease, takeover.task.id, now=now)
             return RecoveryRunResult(task=result, takeover=takeover)
         except Exception as exc:
             raise WorkflowRecoveryRunError("recovered workflow execution failed") from exc
+        finally:
+            self._safe_release(takeover)
 
-    def _execute_fenced(self, lease, task_id: str) -> Task:
-        self._leases.assert_current(task_id, lease.owner_id, lease.token, lease.generation)
+    def _execute_fenced(self, lease: FencedLease, task_id: str, *, now: datetime | None = None) -> Task:
+        self._leases.assert_current(task_id, lease.lease.owner_id, lease.lease.token, lease.generation, now=now)
         result = self._workflow.execute(task_id)
-        self._leases.assert_current(task_id, lease.owner_id, lease.token, lease.generation)
+        self._leases.assert_current(task_id, lease.lease.owner_id, lease.lease.token, lease.generation, now=now)
         return result
 
     def _safe_release(self, takeover: RecoveryTakeover) -> None:
