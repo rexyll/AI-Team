@@ -4,6 +4,7 @@ from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
 from runtime.task import Task
+from security.prompt_injection import untrusted_content
 
 
 SYSTEM_PROMPT = """
@@ -38,13 +39,13 @@ TASK CONTEXT
 ====================
 
 任务 ID：
-{view['task_id']}
+{untrusted_content("task.id", view['task_id'])}
 
 任务名称：
-{view['task_title']}
+{untrusted_content("task.title", view['task_title'])}
 
 任务描述：
-{view['task_description']}
+{untrusted_content("task.description", view['task_description'])}
 
 Agent Role：
 {view['role']}
@@ -53,19 +54,19 @@ Agent Role：
 {view['status']}
 
 任务依赖：
-{view['dependencies']}
+{untrusted_content("task.dependencies", view['dependencies'])}
 
 Dependency Context：
-{view['dependency_context']}
+{untrusted_content("dependency.context", view['dependency_context'])}
 
 当前任务已有结果：
-{view['task_result']}
+{untrusted_content("task.result", view['task_result'])}
 
 Execution History：
-{view['history']}
+{untrusted_content("execution.history", view['history'])}
 
 Metadata：
-{view['metadata']}
+{untrusted_content("task.metadata", view['metadata'])}
 
 ====================
 ARCHITECTURE REQUIREMENTS
