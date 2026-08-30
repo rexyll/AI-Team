@@ -40,9 +40,9 @@
 
 ### 17.2 Workflow Resume / Recovery
 - [x] Define resumable workflow checkpoint contract
-- [ ] Restore dependency / execution state
-- [ ] Resume only safe states
-- [ ] Prevent duplicate completed work
+- [x] Restore dependency / execution state
+- [x] Resume only safe states
+- [x] Prevent duplicate completed work
 - [ ] Recovery idempotency
 - [ ] Crash/restart integration tests
 
@@ -75,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.2 dependency/execution-state restoration**, then add safe-resume and duplicate-completion guards before crash/restart integration.
+Implement **17.2 recovery idempotency**, then add crash/restart integration tests. The safe-resume policy now rejects completed and unknown/terminal states before execution.
