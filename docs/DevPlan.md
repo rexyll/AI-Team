@@ -35,10 +35,11 @@
 - [x] Recovery loading boundary
 - [x] Recovery snapshot validation
 - [x] Persistent manager bootstrap from recovered state
-- [ ] Recovery regression suite against full workflow lifecycle
+- [x] Full workflow lifecycle recovery regression
+- [x] Phase 17.1 complete
 
 ### 17.2 Workflow Resume / Recovery
-- [ ] Define resumable workflow checkpoint contract
+- [x] Define resumable workflow checkpoint contract
 - [ ] Restore dependency / execution state
 - [ ] Resume only safe states
 - [ ] Prevent duplicate completed work
@@ -74,4 +75,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Run and validate the new **full workflow recovery regression suite**, then close 17.1 and enter 17.2 only after the complete test suite remains green.
+Implement **17.2 dependency/execution-state restoration**, then add safe-resume and duplicate-completion guards before crash/restart integration.
