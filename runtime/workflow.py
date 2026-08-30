@@ -6,6 +6,9 @@ from runtime.context_builder import build_task_context
 from runtime.workflow_transition import WorkflowOutcomeKind, get_workflow_transition
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
+from runtime.evidence_gate import EvidenceGateError
+from runtime.gate_evidence import validate_reviewer_gate_evidence, validate_tester_gate_evidence
+from runtime.provenance import provenance_from_value
 from enum import Enum
 import os
 from dataclasses import dataclass
@@ -214,6 +217,39 @@ class TaskWorkflow:
     def _capture_reviewer_feedback(self, task: Task, feedback: dict[str, Any]) -> None:
         task.context["reviewer_feedback"] = feedback
 
+    @staticmethod
+    def _require_direct_parent(chain, expected_parent: Any, *, stage: str) -> None:
+        expected = provenance_from_value(expected_parent)
+        if expected is None:
+            raise EvidenceGateError(f"{stage} gate is missing its required parent evidence")
+        if len(chain) < 2 or chain[1].evidence_id != expected.evidence_id:
+            raise EvidenceGateError(f"{stage} gate evidence is not linked to current parent evidence")
+
+    def _validate_tester_gate_outcome(self, task: Task, outcome: StageOutcome) -> None:
+        developer_result = task.result
+        parents = () if developer_result is None else (developer_result,)
+        chain = validate_tester_gate_evidence(
+            outcome.result_dict,
+            task_id=task.id,
+            parents=parents,
+        )
+        self._require_direct_parent(chain, developer_result, stage="tester")
+
+    def _validate_reviewer_gate_outcome(self, task: Task, outcome: StageOutcome) -> None:
+        tester_feedback = task.context.get("tester_feedback")
+        parent_values = []
+        if tester_feedback is not None:
+            parent_values.append(tester_feedback)
+        if task.result is not None:
+            parent_values.append(task.result)
+        chain = validate_reviewer_gate_evidence(
+            outcome.result_dict,
+            task_id=task.id,
+            parents=tuple(parent_values),
+        )
+        if self.tester is not None:
+            self._require_direct_parent(chain, tester_feedback, stage="reviewer")
+
     def _run_gate_with_invalid_tolerance(self, run_gate, *, stage: str):
         try:
             extra_attempts = max(0, int(os.getenv("LLM_INVALID_VERDICT_ATTEMPTS", "2")))
@@ -335,6 +371,16 @@ class TaskWorkflow:
 
     def _apply_tester_outcome(self, task: Task, outcome: StageOutcome) -> None:
         if outcome.status == "passed":
+            try:
+                self._validate_tester_gate_outcome(task, outcome)
+            except EvidenceGateError as exc:
+                self.task_manager.record_test_result(task.id, outcome.result_dict)
+                self.task_manager.set_feedback(task.id, "tester", outcome.result)
+                self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.INVALID_RESULT)
+                self.task_manager.record_error(task.id, f"Tester evidence validation failed: {exc}")
+                self._emit_event("tester_invalid_evidence", task, payload={**outcome.to_dict(), "error": str(exc)})
+                self._checkpoint()
+                return
             self._transition_for_outcome(task, WorkflowStage.TESTER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_test_result(task.id, outcome.result_dict)
             self.task_manager.set_feedback(task.id, "tester", outcome.result)
@@ -369,7 +415,7 @@ class TaskWorkflow:
 
     def _handle_tester_result(self, task: Task, outcome: StageOutcome) -> bool:
         self._apply_tester_outcome(task, outcome)
-        return outcome.status == "passed" and outcome.exception is None
+        return outcome.status == "passed" and outcome.exception is None and task.status == "reviewing"
 
     def _run_developer(self, task: Task) -> StageOutcome:
         try:
@@ -412,6 +458,16 @@ class TaskWorkflow:
         recovery_source = execution.get("source") == "recovery"
 
         if outcome.status == "approved":
+            try:
+                self._validate_reviewer_gate_outcome(task, outcome)
+            except EvidenceGateError as exc:
+                self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.INVALID_RESULT)
+                self.task_manager.record_review_result(task.id, outcome.result_dict)
+                self.task_manager.set_feedback(task.id, "reviewer", outcome.result_dict)
+                self.task_manager.record_error(task.id, f"Reviewer evidence validation failed: {exc}")
+                self._emit_event("reviewer_invalid_evidence", task, payload={**outcome.to_dict(), "error": str(exc)})
+                self._checkpoint()
+                return "failed"
             self._transition_for_outcome(task, WorkflowStage.REVIEWER, WorkflowOutcomeKind.SUCCESS)
             self.task_manager.record_review_result(task.id, outcome.result_dict)
             self.task_manager.record_error(task.id, None)
