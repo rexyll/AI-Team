@@ -22,34 +22,29 @@ class WorkflowEventConflictError(ValueError):
 class WorkflowEventLog:
     """Ordered in-memory index of immutable workflow events."""
 
-    def __init__(
-        self,
-        persistence_sink: WorkflowEventPersistenceSink | None = None,
-        logger: StructuredLogger | None = None,
-        metrics: MetricsRegistry | None = None,
-    ) -> None:
+    def __init__(self, persistence_sink=None, logger=None, metrics=None) -> None:
         if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
             raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
         if logger is not None and not callable(getattr(logger, "info", None)):
             raise TypeError("logger must provide info(event, fields=...) or be None")
         if metrics is not None and not callable(getattr(metrics, "inc", None)):
             raise TypeError("metrics must provide inc(name, ...) or be None")
-        self._events: dict[str, WorkflowEvent] = {}
-        self._append_sequence: dict[str, int] = {}
+        self._events = {}
+        self._append_sequence = {}
         self._next_append_sequence = 0
-        self._all_index: list[WorkflowEvent] | None = None
-        self._project_indexes: dict[str, list[WorkflowEvent]] = {}
-        self._task_indexes: dict[str, list[WorkflowEvent]] = {}
+        self._all_index = None
+        self._project_indexes = {}
+        self._task_indexes = {}
         self._persistence_sink = persistence_sink
         self._logger = logger or StructuredLogger()
         self._metrics = metrics or DEFAULT_METRICS
         self._lock = threading.RLock()
 
     @property
-    def persistence_sink(self) -> WorkflowEventPersistenceSink | None:
+    def persistence_sink(self):
         return self._persistence_sink
 
-    def set_persistence_sink(self, persistence_sink: WorkflowEventPersistenceSink | None) -> None:
+    def set_persistence_sink(self, persistence_sink) -> None:
         if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
             raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
         with self._lock:
@@ -64,36 +59,13 @@ class WorkflowEventLog:
             self._persistence_sink.save_if_absent(event)
 
     def _log_event(self, event: str, *, workflow_event: WorkflowEvent, **fields: Any) -> None:
-        self._logger.info(
-            event,
-            fields={
-                "event_id": workflow_event.event_id,
-                "event_type": workflow_event.event_type,
-                "project_id": workflow_event.project_id,
-                "task_id": workflow_event.task_id,
-                **fields,
-            },
-        )
+        self._logger.info(event, fields={"event_id": workflow_event.event_id, "event_type": workflow_event.event_type, "project_id": workflow_event.project_id, "task_id": workflow_event.task_id, **fields})
 
     def _record_metric(self, outcome: str, *, workflow_event: WorkflowEvent, operation: str) -> None:
-        self._metrics.inc(
-            "workflow.events.total",
-            labels={
-                "outcome": outcome,
-                "operation": operation,
-                "event_type": workflow_event.event_type,
-            },
-        )
+        self._metrics.inc("workflow.events.total", labels={"outcome": outcome, "operation": operation, "event_type": workflow_event.event_type})
 
     def _record_context_metric(self, workflow_event: WorkflowEvent, *, operation: str, outcome: str) -> None:
-        """Record a queryable workflow metric without putting trace identity in labels."""
-        labels = {
-            "project_id": workflow_event.project_id,
-            "task_id": workflow_event.task_id or "",
-            "event_type": workflow_event.event_type,
-            "operation": operation,
-            "outcome": outcome,
-        }
+        labels = {"project_id": workflow_event.project_id, "task_id": workflow_event.task_id or "", "event_type": workflow_event.event_type, "operation": operation, "outcome": outcome}
         self._metrics.inc("workflow.events.contextual_total", labels=labels)
 
     def _record_size_metric(self) -> None:
@@ -158,7 +130,7 @@ class WorkflowEventLog:
             if not isinstance(event, WorkflowEvent):
                 raise TypeError("events must contain WorkflowEvent values")
         with self._lock:
-            pending: dict[str, WorkflowEvent] = {}
+            pending = {}
             for event in incoming:
                 existing = self._events.get(event.event_id)
                 if existing is not None:
@@ -184,62 +156,43 @@ class WorkflowEventLog:
                 self._record_size_metric()
             if incoming:
                 sample = next(iter(pending.values()), incoming[0])
-                self._log_event(
-                    "workflow.event.merge.completed",
-                    workflow_event=sample,
-                    operation="merge",
-                    received_count=len(incoming),
-                    committed_count=len(pending),
-                )
+                self._log_event("workflow.event.merge.completed", workflow_event=sample, operation="merge", received_count=len(incoming), committed_count=len(pending))
             return len(pending)
 
-    @staticmethod
-    def _global_sort_key(event: WorkflowEvent) -> tuple[str, str, str, str]:
-        return (
-            event.project_id,
-            event.task_id if event.task_id is not None else "\uffff",
-            event.occurred_at,
-            event.event_id,
-        )
+    def _global_sort_key(self, event: WorkflowEvent):
+        sequence = self._append_sequence.get(event.event_id)
+        if sequence is not None:
+            return (event.project_id, event.task_id if event.task_id is not None else "\uffff", event.occurred_at, 0, sequence)
+        return (event.project_id, event.task_id if event.task_id is not None else "\uffff", event.occurred_at, 1, event.event_id)
 
-    def _project_sort_key(self, event: WorkflowEvent) -> tuple[int, str, str]:
-        return (
-            1 if event.event_type == "project.resumed" else 0,
-            event.occurred_at,
-            event.event_id,
-        )
+    def _project_sort_key(self, event: WorkflowEvent):
+        return (1 if event.event_type == "project.resumed" else 0, event.occurred_at, event.event_id)
 
-    def list_all(self) -> list[WorkflowEvent]:
+    def list_all(self):
         with self._lock:
             if self._all_index is None:
                 self._all_index = sorted(self._events.values(), key=self._global_sort_key)
             return list(self._all_index)
 
-    def list_for_project(self, project_id: str) -> list[WorkflowEvent]:
+    def list_for_project(self, project_id: str):
         with self._lock:
             cached = self._project_indexes.get(project_id)
             if cached is None:
-                cached = sorted(
-                    (event for event in self._events.values() if event.project_id == project_id),
-                    key=self._project_sort_key,
-                )
+                cached = sorted((event for event in self._events.values() if event.project_id == project_id), key=self._project_sort_key)
                 self._project_indexes[project_id] = cached
             return list(cached)
 
-    def _task_sort_key(self, event: WorkflowEvent) -> tuple[int, int | str, str]:
+    def _task_sort_key(self, event: WorkflowEvent):
         sequence = self._append_sequence.get(event.event_id)
         if sequence is not None:
             return (0, sequence, "")
         return (1, 0, f"{event.occurred_at}\x00{event.event_id}")
 
-    def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
+    def list_for_task(self, task_id: str):
         with self._lock:
             cached = self._task_indexes.get(task_id)
             if cached is None:
-                cached = sorted(
-                    (event for event in self._events.values() if event.task_id == task_id),
-                    key=self._task_sort_key,
-                )
+                cached = sorted((event for event in self._events.values() if event.task_id == task_id), key=self._task_sort_key)
                 self._task_indexes[task_id] = cached
             return list(cached)
 
@@ -251,12 +204,12 @@ class WorkflowEventLog:
         with self._lock:
             return len(self._events)
 
-    def to_dict(self) -> list[dict]:
+    def to_dict(self):
         with self._lock:
             return [event.to_dict() for event in self._events.values()]
 
     @classmethod
-    def from_dict(cls, payload: list[dict]) -> "WorkflowEventLog":
+    def from_dict(cls, payload):
         if not isinstance(payload, list):
             raise TypeError("workflow event log payload must be a list")
         log = cls()
