@@ -1,4 +1,4 @@
-from threading import Barrier, Lock, Thread
+from threading import Event, Lock, Thread
 
 import pytest
 
@@ -18,8 +18,8 @@ class _Developer:
         self.release = release
 
     def run(self, task):
-        self.entered.acquire()
-        self.release.wait()
+        self.entered.set()
+        self.release.wait(timeout=2)
         return AgentResult("completed", "developer", task.id, "done")
 
 
@@ -28,7 +28,7 @@ class _Reviewer:
         return AgentResult("approved", "reviewer", task.id, "approved")
 
 
-def _workflow(task, developer, owner):
+def _workflow(task, developer, owner, lease_manager):
     router = AgentRouter()
     router.register("developer", developer)
     reviewer = _Reviewer()
@@ -42,18 +42,14 @@ def _workflow(task, developer, owner):
     )
 
 
-lease_manager = FencedTaskLeaseManager(default_ttl_seconds=30)
-
-
 def test_only_one_workflow_worker_enters_execution():
-    global lease_manager
     lease_manager = FencedTaskLeaseManager(default_ttl_seconds=30)
     task_a = Task("TASK-CONCURRENT", "concurrent", "test", "developer", status="ready")
     task_b = Task("TASK-CONCURRENT", "concurrent", "test", "developer", status="ready")
-    entered = Lock()
-    release = Barrier(2)
-    first = _workflow(task_a, _Developer(entered, release), "worker-a")
-    second = _workflow(task_b, _Developer(Lock(), Barrier(2)), "worker-b")
+    entered = Event()
+    release = Event()
+    first = _workflow(task_a, _Developer(entered, release), "worker-a", lease_manager)
+    second = _workflow(task_b, _Developer(Event(), Event()), "worker-b", lease_manager)
 
     errors = []
     results = []
@@ -66,14 +62,15 @@ def test_only_one_workflow_worker_enters_execution():
 
     t1 = Thread(target=run, args=(first,))
     t1.start()
-    entered.acquire()
+    assert entered.wait(timeout=2)
     t2 = Thread(target=run, args=(second,))
     t2.start()
     t2.join(timeout=2)
     assert any(isinstance(error, LeaseUnavailable) for error in errors)
-    release.wait(timeout=2)
+    release.set()
     t1.join(timeout=2)
     assert len(results) == 1
+    assert not t1.is_alive()
 
 
 def test_lease_guard_releases_after_workflow_exception():
