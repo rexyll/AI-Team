@@ -37,7 +37,7 @@ A generic Python callback cannot by itself provide globally exactly-once effects
 `[x] 15.2` Network egress policy
 `[x] 15.3` Secret isolation
 `[x] 15.4` Prompt injection resistance
-`[ ] 15.5` Security regression suite
+`[x] 15.5` Security regression suite
 
 ## 15.1 Dependency policy
 Runtime dependencies must be explicitly declared in `requirements.txt`, use exact `==` version pins, and be declared only once. The policy is enforced by `security.dependency_policy` and its regression tests.
@@ -76,20 +76,28 @@ Current completed coverage includes strict evidence-gate provenance validation a
 Implemented in this increment:
 - [x] Add a deterministic security regression runner covering dependency, egress, secret-isolation, prompt-injection, workspace/tool-security, and evidence-gate tests.
 - [x] Document the security regression command and boundary expectations in `SECURITY.md`.
-
-Remaining:
-- [ ] Add/expand cross-boundary regression coverage for security-policy bypass attempts as new boundaries are introduced.
-- [ ] Full security regression verification after the consolidated runner is pulled locally.
+- [x] Expand cross-boundary regression coverage for security-policy bypass attempts introduced by observability boundaries.
+- [x] Full security regression verification.
 
 # Phase 16 — Observability / Operations
 
-`[ ] 16.1` Structured logging
-`[ ] 16.2` Metrics
-`[ ] 16.3` Tracing
-`[ ] 16.4` Operational dashboard
-`[ ] 16.5` Alerting
+### 16.1 Structured logging — completed
+- [x] Provider-independent structured logger
+- [x] Deterministic JSON-safe log records
+- [x] Secret redaction at logging boundary
+- [x] Severity helpers
+- [x] Regression coverage
 
-### 16.3 Tracing — foundation implemented
+### 16.2 Metrics — completed
+- [x] Provider-independent metrics registry
+- [x] Counters, gauges, histograms
+- [x] Thread-safe aggregation
+- [x] Low-cardinality labels
+- [x] Workflow event metrics
+- [x] LLM / tool / reviewer metrics coverage
+- [x] Regression coverage
+
+### 16.3 Tracing — completed
 - [x] Provider-independent `Tracer` / `TraceSpan` primitives
 - [x] `trace_id`, `span_id`, and `parent_span_id` lineage
 - [x] Context-local current span via `ContextVar`
@@ -102,9 +110,33 @@ Remaining:
 - [x] Instrument BaseAgent LLM calls as child spans of the active agent stage
 - [x] Instrument authorized tool execution as a child span of the active agent stage
 - [x] Add lifecycle regression coverage for Agent → LLM and Agent → Tool trace lineage
-- [ ] Add an explicit workflow/task root span around `TaskWorkflow.execute`
-- [ ] Correlate tracing with structured logs and metrics
-- [ ] Full observability regression verification
+- [x] Add an explicit workflow/task root span around `TaskWorkflow.execute`
+- [x] Correlate tracing with structured logs and metrics
+- [x] Full observability regression verification
+
+### 16.4 Operational Dashboard — in progress
+- [ ] Define a provider-independent dashboard read model
+- [ ] Aggregate project/task/workflow status from authoritative runtime data
+- [ ] Aggregate Developer / Tester / Reviewer operational statistics
+- [ ] Expose workflow duration, throughput, failure, retry, and recovery summaries
+- [ ] Expose LLM/tool/reviewer telemetry summaries without copying raw trace payloads
+- [ ] Link task summaries to `trace_id` / root span identity
+- [ ] Preserve low-cardinality Metrics semantics; never use `trace_id` / `span_id` as metric labels
+- [ ] Add dashboard read-model contract tests
+- [ ] Add empty-state and multi-task aggregation tests
+- [ ] Add Event → Log → Metrics → Trace correlation tests
+- [ ] Expose a stable CLI/API read interface
+- [ ] Add operational dashboard UI
+- [ ] Full Phase 16.4 regression verification
+
+### 16.5 Alerting — planned
+- [ ] Define alertable operational conditions
+- [ ] Failure-rate / latency / retry thresholds
+- [ ] Reviewer rejection / recovery alerts
+- [ ] Tool-loop anomaly alerts
+- [ ] Alert deduplication and cooldown semantics
+- [ ] Provider-independent alert interface
+- [ ] Alert regression tests
 
 # Phase 17 — Developer Experience
 
