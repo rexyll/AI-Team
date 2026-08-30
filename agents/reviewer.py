@@ -10,6 +10,7 @@ from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
 from runtime.provenance import agent_feedback_provenance, provenance_from_value
 from runtime.task import Task
+from security.prompt_injection import untrusted_content
 
 SYSTEM_PROMPT = """
 你是一名专业的软件代码 Reviewer。
@@ -159,45 +160,45 @@ TASK
 ====================
 
 Task ID:
-{view['task_id']}
+{untrusted_content("task.id", view['task_id'])}
 
 Title:
-{view['task_title']}
+{untrusted_content("task.title", view['task_title'])}
 
 Description:
-{view['task_description']}
+{untrusted_content("task.description", view['task_description'])}
 
 ====================
 DEVELOPER RESULT (BOUNDED)
 ====================
 
-{developer_result}
+{untrusted_content("developer.result", developer_result)}
 
 ====================
 TESTER RESULT
 ====================
 
-{tester_feedback}
+{untrusted_content("tester.feedback", tester_feedback)}
 
 ====================
 PREVIOUS REVIEW RESULT
 ====================
 
-{reviewer_feedback}
+{untrusted_content("reviewer.feedback", reviewer_feedback)}
 
 ====================
 UPSTREAM CONTEXT
 ====================
 
-{dependency_context}
+{untrusted_content("dependency.context", dependency_context)}
 
 ====================
 EXECUTION CONTEXT
 ====================
 
-history={history}
-metadata={metadata}
-review_round={view['review_round']}
+history={untrusted_content("execution.history", history)}
+metadata={untrusted_content("task.metadata", metadata)}
+review_round={untrusted_content("review.round", view['review_round'])}
 
 ====================
 REVIEW REQUIREMENTS
