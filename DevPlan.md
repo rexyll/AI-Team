@@ -61,14 +61,16 @@ Completed in this increment:
 - [x] Fence Tester task and Developer-result fields at the model-facing prompt boundary.
 - [x] Fence Reviewer task, Developer result, Tester feedback, Reviewer feedback, dependency context, history, metadata, and review-round fields at the model-facing prompt boundary.
 - [x] Fence tool-produced content centrally in `BaseAgent` before it is sent back to the model, without mutating runtime/audit messages.
-- [x] Add model-boundary regression coverage using hostile task/result/feedback content.
+- [x] Fence Developer task/dependency/feedback/result/history/metadata/review-round fields at the tool-loop model boundary.
+- [x] Fence Developer tool-loop checkpoints before they are returned to the model.
+- [x] Keep runtime capability authorization independent from model-provided or untrusted content.
+- [x] Add adversarial Developer regression coverage for hostile task data, dependency context, tester/reviewer feedback, tool results, and checkpoint content.
+- [x] Verify legitimate Developer execution requirements remain outside the untrusted-data fencing.
 
 Remaining implementation boundary:
-- [ ] Apply the fencing helper to the remaining Developer model-facing task/dependency/feedback fields and tool-loop checkpoint data.
-- [ ] Add a policy that untrusted content cannot authorize new tools, broaden workspace scope, bypass security guards, or override system/developer instructions.
-- [ ] Add adversarial prompt-injection regression cases for repository files, tool output, dependency context, tester feedback, and reviewer feedback, including the Developer tool-loop path.
-- [ ] Ensure prompt-injection attempts are observable in the execution/audit trail without persisting secrets.
-- [ ] Verify that legitimate task instructions remain executable while embedded hostile instructions are treated as data.
+- [ ] Make prompt-injection attempts observable in the execution/audit trail without persisting secrets.
+- [ ] Add end-to-end evidence that injection attempts cannot alter actual workspace scope or tool-guard decisions.
+- [ ] Consolidate all prompt-injection defenses into the Phase 15.5 security regression suite.
 
 ## 15.5 Security regression suite
 Current completed coverage includes strict evidence-gate provenance validation and workflow evidence-lineage regression coverage. In particular, gate validation remains fail-closed when explicit provenance is missing; isolated workflow transition-contract compatibility must not synthesize provenance inside the generic evidence validator.
