@@ -45,34 +45,34 @@ def _replace_provenance(value: Any, provenance: EvidenceProvenance) -> Any:
     return payload
 
 
-def _legacy_standalone_value(value: Any, *, task_id: str, stage: str) -> tuple[Any, tuple[Any, ...]]:
-    """Build explicit compatibility lineage for isolated transition contracts.
+# def _legacy_standalone_value(value: Any, *, task_id: str, stage: str) -> tuple[Any, tuple[Any, ...]]:
+#     """Build explicit compatibility lineage for isolated transition contracts.
 
-    Production workflow execution supplies real upstream evidence.  These
-    compatibility callers intentionally invoke private stage-application
-    methods without executing the previous stage; preserve the transition
-    contract without weakening the generic fail-closed evidence gate.
-    """
-    if _provenance_payload(value) is not None:
-        return value, ()
-    if stage == "tester":
-        parent_role = "developer"
-        parent_id = f"developer:{task_id}"
-    else:
-        parent_role = "developer"
-        parent_id = f"developer:{task_id}"
-    parent = agent_result_provenance(
-        task_id=task_id,
-        agent_role=parent_role,
-        evidence_id=parent_id,
-    ).to_dict()
-    feedback = agent_feedback_provenance(
-        task_id=task_id,
-        agent_role=stage,
-        evidence_id=f"{stage}:{task_id}",
-        parent_evidence_id=parent_id,
-    )
-    return _replace_provenance(value, feedback), (parent,)
+#     Production workflow execution supplies real upstream evidence.  These
+#     compatibility callers intentionally invoke private stage-application
+#     methods without executing the previous stage; preserve the transition
+#     contract without weakening the generic fail-closed evidence gate.
+#     """
+#     if _provenance_payload(value) is not None:
+#         return value, ()
+#     if stage == "tester":
+#         parent_role = "developer"
+#         parent_id = f"developer:{task_id}"
+#     else:
+#         parent_role = "developer"
+#         parent_id = f"developer:{task_id}"
+#     parent = agent_result_provenance(
+#         task_id=task_id,
+#         agent_role=parent_role,
+#         evidence_id=parent_id,
+#     ).to_dict()
+#     feedback = agent_feedback_provenance(
+#         task_id=task_id,
+#         agent_role=stage,
+#         evidence_id=f"{stage}:{task_id}",
+#         parent_evidence_id=parent_id,
+#     )
+#     return _replace_provenance(value, feedback), (parent,)
 
 
 def _repair_legacy_reviewer_parent(value: Any, *, parents: tuple[Any, ...]) -> Any:
@@ -113,12 +113,13 @@ def validate_stage_gate_evidence(
 ) -> list[EvidenceProvenance]:
     """Validate evidence that is about to authorize a workflow stage gate.
 
-    Normal workflow execution remains fail-closed. Compatibility is limited to
-    isolated transition-contract calls and the legacy Reviewer boundary when
-    no Tester stage exists.
+    Evidence validation is fail-closed: explicit provenance is always required.
+    Compatibility handling belongs at the workflow boundary and must never
+    synthesize provenance inside the generic evidence validator.
     """
     if not isinstance(stage, str) or not stage.strip():
         raise ValueError("stage must be a non-empty string")
+
     normalized_stage = stage.strip().lower()
     expected_role = _STAGE_SOURCE_ROLES.get(normalized_stage)
     if expected_role is None:
@@ -126,32 +127,41 @@ def validate_stage_gate_evidence(
 
     parent_values = tuple(parents)
     candidate = value
-    if not parent_values and normalized_stage in {"tester", "reviewer"}:
-        candidate, parent_values = _legacy_standalone_value(
-            value, task_id=task_id, stage=normalized_stage
+
+    if normalized_stage == "reviewer":
+        candidate = _repair_legacy_reviewer_parent(
+            value,
+            parents=parent_values,
         )
-    elif normalized_stage == "reviewer":
-        candidate = _repair_legacy_reviewer_parent(value, parents=parent_values)
 
     chain = validate_gate_evidence(
         candidate,
         task_id=task_id,
         parents=parent_values,
-        required_source_types=("tool_execution", "agent_result", "agent_feedback"),
+        required_source_types=(
+            "tool_execution",
+            "agent_result",
+            "agent_feedback",
+        ),
     )
+
     terminal = chain[0]
+
     if terminal.source_type != "agent_feedback":
         raise EvidenceGateError(
             f"{normalized_stage} gate evidence must terminate in explicit agent_feedback"
         )
+
     if terminal.source_role != expected_role:
         raise EvidenceGateError(
             f"{normalized_stage} gate evidence has unexpected source_role"
         )
+
     if terminal.status != "reported":
         raise EvidenceGateError(
             f"{normalized_stage} gate evidence has unexpected status"
         )
+
     return chain
 
 
