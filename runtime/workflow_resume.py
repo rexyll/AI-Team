@@ -32,8 +32,10 @@ class WorkflowResumePlanner:
         seen: set[str] = set()
         decisions: list[ResumeDecision] = []
         for task in tasks:
+            if not isinstance(task, Task):
+                raise WorkflowResumeError("tasks must contain Task values")
             if task.id in seen:
                 raise WorkflowResumeError(f"duplicate task id: {task.id}")
             seen.add(task.id)
-            decisions.append(self._guard.evaluate(task))
+            decisions.append(self._guard.decide(task))
         return ResumePlan(tuple(decisions))
