@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Iterable, Protocol
 
+from .metrics import DEFAULT_METRICS, MetricsRegistry
 from .structured_logging import StructuredLogger
 from .workflow_event import WorkflowEvent
 
@@ -25,11 +26,14 @@ class WorkflowEventLog:
         self,
         persistence_sink: WorkflowEventPersistenceSink | None = None,
         logger: StructuredLogger | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         if persistence_sink is not None and not callable(getattr(persistence_sink, "save_if_absent", None)):
             raise TypeError("persistence_sink must provide save_if_absent(event) or be None")
         if logger is not None and not callable(getattr(logger, "info", None)):
             raise TypeError("logger must provide info(event, fields=...) or be None")
+        if metrics is not None and not callable(getattr(metrics, "inc", None)):
+            raise TypeError("metrics must provide inc(name, ...) or be None")
         self._events: dict[str, WorkflowEvent] = {}
         self._append_sequence: dict[str, int] = {}
         self._next_append_sequence = 0
@@ -38,6 +42,7 @@ class WorkflowEventLog:
         self._task_indexes: dict[str, list[WorkflowEvent]] = {}
         self._persistence_sink = persistence_sink
         self._logger = logger or StructuredLogger()
+        self._metrics = metrics or DEFAULT_METRICS
         self._lock = threading.RLock()
 
     @property
@@ -70,6 +75,19 @@ class WorkflowEventLog:
             },
         )
 
+    def _record_metric(self, outcome: str, *, workflow_event: WorkflowEvent, operation: str) -> None:
+        self._metrics.inc(
+            "workflow.events.total",
+            labels={
+                "outcome": outcome,
+                "operation": operation,
+                "event_type": workflow_event.event_type,
+            },
+        )
+
+    def _record_size_metric(self) -> None:
+        self._metrics.set_gauge("workflow.event_log.size", len(self._events))
+
     def _invalidate_indexes(self) -> None:
         self._all_index = None
         self._project_indexes.clear()
@@ -88,11 +106,14 @@ class WorkflowEventLog:
             raise TypeError("event must be a WorkflowEvent")
         with self._lock:
             if event.event_id in self._events:
+                self._record_metric("duplicate", workflow_event=event, operation="append")
                 self._log_event("workflow.event.duplicate", workflow_event=event, operation="append")
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
             self._record_event(event, preserve_append_order=True)
             self._invalidate_indexes()
+            self._record_metric("appended", workflow_event=event, operation="append")
+            self._record_size_metric()
             self._log_event("workflow.event.appended", workflow_event=event, operation="append")
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
@@ -104,11 +125,15 @@ class WorkflowEventLog:
                 self._persist_if_configured(event)
                 self._record_event(event, preserve_append_order=True)
                 self._invalidate_indexes()
+                self._record_metric("appended", workflow_event=event, operation="append_if_absent")
+                self._record_size_metric()
                 self._log_event("workflow.event.appended", workflow_event=event, operation="append_if_absent")
                 return True
             if existing == event:
+                self._record_metric("duplicate", workflow_event=event, operation="append_if_absent")
                 self._log_event("workflow.event.duplicate", workflow_event=event, operation="append_if_absent")
                 return False
+            self._record_metric("conflict", workflow_event=event, operation="append_if_absent")
             self._log_event("workflow.event.conflict", workflow_event=event, operation="append_if_absent")
             raise self._conflict(event.event_id)
 
@@ -123,11 +148,14 @@ class WorkflowEventLog:
                 existing = self._events.get(event.event_id)
                 if existing is not None:
                     if existing != event:
+                        self._record_metric("conflict", workflow_event=event, operation="merge")
                         self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                         raise self._conflict(event.event_id)
+                    self._record_metric("duplicate", workflow_event=event, operation="merge")
                     continue
                 previous = pending.get(event.event_id)
                 if previous is not None and previous != event:
+                    self._record_metric("conflict", workflow_event=event, operation="merge")
                     self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                     raise self._conflict(event.event_id)
                 pending[event.event_id] = event
@@ -135,8 +163,10 @@ class WorkflowEventLog:
                 self._persistence_sink.save_if_absent_many(pending.values())
             for event in pending.values():
                 self._record_event(event, preserve_append_order=False)
+                self._record_metric("appended", workflow_event=event, operation="merge")
             if pending:
                 self._invalidate_indexes()
+                self._record_size_metric()
             if incoming:
                 sample = next(iter(pending.values()), incoming[0])
                 self._log_event(
@@ -184,14 +214,7 @@ class WorkflowEventLog:
     def _task_sort_key(self, event: WorkflowEvent) -> tuple[int, int | str, str]:
         sequence = self._append_sequence.get(event.event_id)
         if sequence is not None:
-            # A task-local lifecycle is causally ordered by the moment the
-            # event was appended. This is stronger than occurred_at, whose
-            # wall-clock resolution/ordering is not guaranteed under fast
-            # serial execution or concurrent producers.
             return (0, sequence, "")
-        # Events reconstructed through merge/from_dict do not have an
-        # in-memory append sequence. Preserve their persisted chronological
-        # ordering as the best available fallback.
         return (1, 0, f"{event.occurred_at}\x00{event.event_id}")
 
     def list_for_task(self, task_id: str) -> list[WorkflowEvent]:
