@@ -24,8 +24,6 @@ class PersistentTaskManager(TaskManager):
     def transition(self, task_id: str, target_status: str | TaskStatus) -> Task:
         with self._lock:
             task = self.get_task(task_id)
-            # Task.to_dict() contains mutable containers owned by the Task;
-            # rollback therefore requires a deep snapshot before mutation.
             before = deepcopy(task.to_dict())
             current = task.status
             validate_transition(current, target_status)
@@ -35,8 +33,13 @@ class PersistentTaskManager(TaskManager):
                 task.status = new_status
                 self._persist_state(task)
             except Exception:
+                # Restore every mutable field in-place so existing references to
+                # the Task remain valid after a failed durable commit.
                 restored = Task.from_dict(before)
-                task.__dict__.clear()
-                task.__dict__.update(restored.__dict__)
+                for key, value in restored.__dict__.items():
+                    setattr(task, key, value)
+                for key in tuple(task.__dict__):
+                    if key not in restored.__dict__:
+                        delattr(task, key)
                 raise
             return task
