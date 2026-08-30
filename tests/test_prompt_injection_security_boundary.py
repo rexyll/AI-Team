@@ -38,21 +38,34 @@ def test_hostile_tool_argument_cannot_escape_workspace_boundary():
 
 def test_model_cannot_make_reviewer_or_tester_write_tool_visible():
     hostile_task = HOSTILE
-    for agent in (
+    agents = (
         TesterAgent(llm=MockLLM(hostile_task)),
         ReviewerAgent(llm=MockLLM(hostile_task)),
-    ):
-        schemas = [
-            {"type": "function", "function": {"name": "read_file"}},
-            {"type": "function", "function": {"name": "write_file"}},
-            {"type": "function", "function": {"name": "delete_file"}},
-            {"type": "function", "function": {"name": "run_command"}},
-        ]
-        visible = [item["function"]["name"] for item in agent._authorized_tool_schemas(schemas)]
+    )
+    schemas = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "delete_file"}},
+        {"type": "function", "function": {"name": "run_command"}},
+    ]
+
+    tester_visible = [
+        item["function"]["name"]
+        for item in agents[0]._authorized_tool_schemas(schemas)
+    ]
+    reviewer_visible = [
+        item["function"]["name"]
+        for item in agents[1]._authorized_tool_schemas(schemas)
+    ]
+
+    # Tester is intentionally allowed to execute tests/commands, but cannot
+    # mutate files. Reviewer is read-only. Neither role can gain write access
+    # from hostile model-facing content.
+    assert tester_visible == ["read_file", "run_command"]
+    assert reviewer_visible == ["read_file"]
+    for visible in (tester_visible, reviewer_visible):
         assert "write_file" not in visible
         assert "delete_file" not in visible
-        assert "run_command" not in visible
-        assert visible == ["read_file"]
 
 
 def test_developer_authorization_does_not_turn_hostile_content_into_policy():
