@@ -57,6 +57,11 @@
 - [x] Lease expiry
 - [x] Ownership fencing
 - [ ] Duplicate worker prevention
+  - [x] Shared execution lease boundary
+  - [x] Concurrent entry rejection contract
+  - [x] Failure-safe lease cleanup contract
+  - [ ] Integrate execution lease into TaskWorkflow
+  - [ ] End-to-end duplicate execution regression
 
 ### 17.5 Stuck Task Detection
 - [ ] Heartbeat / liveness contract
@@ -75,4 +80,4 @@
 - [ ] Full test suite
 
 ### Current next step
-Implement **17.4.4 Duplicate Worker Prevention**. Ownership now carries a monotonically increasing fencing generation, so stale workers cannot release, renew, or validate operations after a lease has transferred. The next boundary is integrating lease acquisition into execution so concurrent workers cannot both enter the same task's execution path.
+Complete **17.4.4 Duplicate Worker Prevention** by integrating the lease boundary into the actual `TaskWorkflow.execute()` entry point and adding an end-to-end concurrent execution regression. A reusable `LeaseGuardedExecutor` now provides the shared execution boundary and deterministic race contracts; the workflow integration remains intentionally pending until it can be added without bypassing the existing Developer/Tester/Reviewer lifecycle semantics.
