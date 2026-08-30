@@ -6,11 +6,9 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from security.secrets import redact_mapping
+from runtime.tracing import get_current_span
 
 
-# These names belong to the stdlib LogRecord namespace and must not leak into
-# or collide with the structured envelope.  ``message`` is intentionally not
-# reserved: application messages are valid structured fields under ``fields``.
 _RESERVED = {"asctime", "levelname", "name", "pathname", "filename", "module", "lineno"}
 
 
@@ -22,9 +20,9 @@ def build_log_record(
 ) -> dict[str, Any]:
     """Build a deterministic JSON-safe structured log record.
 
-    Structured logs are an observability boundary: arbitrary fields are copied,
-    JSON validated, and secret-bearing keys are redacted before serialization.
-    Application fields cannot overwrite the canonical envelope.
+    When a trace span is active, the record is automatically correlated with
+    that span. Trace identifiers are metadata, not application-controlled
+    fields, so callers cannot spoof the correlation values.
     """
     if not isinstance(event, str) or not event.strip():
         raise ValueError("event must be a non-empty string")
@@ -41,6 +39,10 @@ def build_log_record(
         "event": event.strip(),
         "fields": safe_fields,
     }
+    current_span = get_current_span()
+    if current_span is not None:
+        record["trace_id"] = current_span.trace_id
+        record["span_id"] = current_span.span_id
     try:
         json.dumps(record, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as exc:
