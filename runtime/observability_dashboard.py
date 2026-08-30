@@ -12,6 +12,17 @@ _ACTIVE_STATUSES = {"ready", "running", "review_pending", "reviewing", "revision
 
 
 @dataclass(frozen=True)
+class DashboardToolCallSummary:
+    """Bounded tool telemetry exposed to operational consumers."""
+
+    task_id: str
+    execution_id: str | None = None
+    duplicate_of: str | None = None
+    retry_of: str | None = None
+    result_chars: int = 0
+
+
+@dataclass(frozen=True)
 class DashboardTaskSummary:
     task_id: str
     title: str
@@ -57,6 +68,9 @@ class DashboardWorkflowSummary:
     tool_calls: int = 0
     retries: int = 0
     recoveries: int = 0
+    duplicate_tool_calls: int = 0
+    retry_tool_calls: int = 0
+    tool_result_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,7 @@ class DashboardSnapshot:
     workflow: DashboardWorkflowSummary
     agents: tuple[DashboardAgentSummary, ...] = field(default_factory=tuple)
     tasks: tuple[DashboardTaskSummary, ...] = field(default_factory=tuple)
+    tool_calls: tuple[DashboardToolCallSummary, ...] = field(default_factory=tuple)
 
 
 class ObservabilityDashboard:
@@ -77,6 +92,7 @@ class ObservabilityDashboard:
     def snapshot(self, tasks: Iterable[Any], *, project_id: str | None = None) -> DashboardSnapshot:
         task_list = list(tasks)
         summaries: list[DashboardTaskSummary] = []
+        tool_summaries: list[DashboardToolCallSummary] = []
         for task in task_list:
             if not hasattr(task, "id") or not hasattr(task, "status"):
                 raise TypeError("tasks must contain Task-like objects with id and status")
@@ -92,6 +108,7 @@ class ObservabilityDashboard:
                 error=getattr(task, "error", None), duration_seconds=duration,
                 llm_calls=llm_calls, tool_calls=tool_calls, recovery_count=recovery_count,
             ))
+            tool_summaries.extend(self._tool_summary(task))
 
         statuses = Counter(item.status for item in summaries)
         total = len(summaries)
@@ -101,6 +118,9 @@ class ObservabilityDashboard:
         active = sum(statuses.get(s, 0) for s in _ACTIVE_STATUSES)
         pending = statuses.get("pending", 0)
         durations = [item.duration_seconds for item in summaries if item.duration_seconds is not None]
+        duplicate_count = sum(item.duplicate_of is not None for item in tool_summaries)
+        retry_count = sum(item.retry_of is not None for item in tool_summaries)
+        result_chars = sum(max(0, item.result_chars) for item in tool_summaries)
         workflow = DashboardWorkflowSummary(
             total_tasks=total, completed=completed, failed=failed, blocked=blocked,
             active=active, pending=pending, success_rate=completed / total if total else 0.0,
@@ -110,6 +130,9 @@ class ObservabilityDashboard:
             tool_calls=sum(item.tool_calls for item in summaries),
             retries=sum(item.retry_count for item in summaries),
             recoveries=sum(item.recovery_count for item in summaries),
+            duplicate_tool_calls=duplicate_count,
+            retry_tool_calls=retry_count,
+            tool_result_chars=result_chars,
         )
 
         by_role: dict[str, list[DashboardTaskSummary]] = {}
@@ -118,8 +141,28 @@ class ObservabilityDashboard:
         agents = tuple(self._agent_summary(role, role_tasks) for role, role_tasks in sorted(by_role.items()))
         return DashboardSnapshot(
             generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            project_id=project_id, workflow=workflow, agents=agents, tasks=tuple(summaries),
+            project_id=project_id, workflow=workflow, agents=agents,
+            tasks=tuple(summaries), tool_calls=tuple(tool_summaries),
         )
+
+    def _tool_summary(self, task: Any) -> list[DashboardToolCallSummary]:
+        task_id = getattr(task, "id", None)
+        if not isinstance(task_id, str):
+            return []
+        records = [record for record in self.tracer.snapshot() if record.get("attributes", {}).get("task_id") == task_id]
+        result: list[DashboardToolCallSummary] = []
+        for record in records:
+            if not str(record.get("name", "")).startswith("tool."):
+                continue
+            attributes = record.get("attributes", {})
+            result.append(DashboardToolCallSummary(
+                task_id=task_id,
+                execution_id=attributes.get("execution_id"),
+                duplicate_of=attributes.get("duplicate_of"),
+                retry_of=attributes.get("retry_of"),
+                result_chars=max(0, int(attributes.get("result_chars", 0) or 0)),
+            ))
+        return result
 
     @staticmethod
     def _agent_summary(role: str, tasks: list[DashboardTaskSummary]) -> DashboardAgentSummary:
