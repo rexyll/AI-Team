@@ -5,7 +5,6 @@ import pytest
 from runtime.task import Task
 from runtime.task_lease import TaskLeaseManager
 from runtime.task_lease_fencing import FencedTaskLeaseManager
-from runtime.task_liveness import TaskLiveness
 from runtime.task_stuck import StuckTaskAssessment, TaskLivenessState
 from runtime.workflow_recovery_trigger import (
     RecoveryTriggerError,
@@ -14,7 +13,7 @@ from runtime.workflow_recovery_trigger import (
 )
 
 
-NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)
 
 
 def _task(status="running"):
