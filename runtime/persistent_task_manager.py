@@ -4,19 +4,29 @@ from copy import deepcopy
 
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.task_recovery import TaskRecovery
 from runtime.task_status import TaskStatus, validate_transition
 
 
 class PersistentTaskManager(TaskManager):
     """TaskManager variant that durably persists lifecycle mutations."""
 
-    def __init__(self, tasks: list[Task], *, state_store, result_store=None):
+    def __init__(self, tasks: list[Task], *, state_store, result_store=None, persist_initial=True):
         if state_store is None:
             raise ValueError("state_store is required")
         super().__init__(tasks, result_store=result_store)
         self.state_store = state_store
-        for task in self.tasks.values():
-            self._persist_state(task)
+        if persist_initial:
+            for task in self.tasks.values():
+                self._persist_state(task)
+
+    @classmethod
+    def from_state_store(cls, state_store, *, result_store=None):
+        """Bootstrap entirely from durable task snapshots without creating transitions."""
+        recovery = TaskRecovery(state_store)
+        snapshots = state_store.snapshot()
+        tasks = [recovery.recover(task_id) for task_id in snapshots]
+        return cls(tasks, state_store=state_store, result_store=result_store, persist_initial=False)
 
     def _persist_state(self, task: Task) -> None:
         self.state_store.save(task)
@@ -33,8 +43,6 @@ class PersistentTaskManager(TaskManager):
                 task.status = new_status
                 self._persist_state(task)
             except Exception:
-                # Restore every mutable field in-place so existing references to
-                # the Task remain valid after a failed durable commit.
                 restored = Task.from_dict(before)
                 for key, value in restored.__dict__.items():
                     setattr(task, key, value)
