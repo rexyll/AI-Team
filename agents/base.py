@@ -9,12 +9,12 @@ from runtime.context_builder import ContextBuilder
 from runtime.context_compaction import ContextCompactor
 from runtime.llm.base import BaseLLM, LLMResponse
 from runtime.llm.context_compacting import ContextCompactingLLM
+from runtime.llm.metrics import LLMMetrics
 from runtime.llm.provider import ProviderLLM
-from runtime.llm_metrics import LLMMetrics
 from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
 from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
-from security.prompt_injection import augment_system_prompt
+from security.prompt_injection import augment_system_prompt, untrusted_content
 from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY
 
 
@@ -42,7 +42,7 @@ class BaseAgent(ABC):
         return ContextBuilder(all_tasks=all_tasks).build_agent_context(task, role=self.role)
 
     def _secured_system_prompt(self, system_prompt: str) -> str:
-        """Compile the agent instructions with the common trust policy."""
+        """Compile the agent instructions with the common trust-boundary policy."""
         return augment_system_prompt(system_prompt)
 
     def _generate(self, prompt: str, *, system_prompt: str = "", temperature: float = 0.2, max_tokens: int = 4096) -> str:
@@ -94,12 +94,34 @@ class BaseAgent(ABC):
                 authorized.append(schema)
         return authorized
 
+    @staticmethod
+    def _secure_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fence tool-produced content before it is sent back to the model.
+
+        Tool output is data supplied by the execution environment and may
+        contain repository text, command output, generated files, or hostile
+        instructions.  The original message list is left untouched so runtime
+        history and audit data preserve the actual tool result.
+        """
+        secured: list[dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") != "tool":
+                secured.append(message)
+                continue
+            copied = dict(message)
+            copied["content"] = untrusted_content(
+                f"tool.result.{message.get('tool_call_id', 'unknown')}",
+                message.get("content", ""),
+            )
+            secured.append(copied)
+        return secured
+
     def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
         security_prompt = self._secured_system_prompt("")
-        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + messages
+        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + self._secure_tool_messages(messages)
         authorized_tools = self._authorized_tool_schemas(tools)
         if isinstance(self.llm, ContextCompactingLLM):
             response = self.llm.generate_with_tools(secured_messages, tools=authorized_tools, tool_choice=tool_choice)
