@@ -32,7 +32,7 @@ def test_crash_restart_recovers_completed_and_resumable_state_without_replaying_
     # WorkflowExecutionState exposes an immutable tuple; TaskManager intentionally
     # requires a concrete list of tasks at construction time.
     restarted = PersistentTaskManager(list(recovered_tasks), state_store=store, persist_initial=False)
-    plan = WorkflowResumePlanner().plan(restarted.list_tasks())
+    plan = WorkflowResumePlanner().plan(list(restarted.tasks.values()))
 
     assert plan.resumable_task_ids == ("TASK-RESUME",)
     assert restarted.get_task("TASK-DONE").status == TaskStatus.COMPLETED.value
