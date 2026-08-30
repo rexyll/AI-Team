@@ -115,17 +115,17 @@ Implemented in this increment:
 - [x] Full observability regression verification
 
 ### 16.4 Operational Dashboard — in progress
-- [ ] Define a provider-independent dashboard read model
-- [ ] Aggregate project/task/workflow status from authoritative runtime data
-- [ ] Aggregate Developer / Tester / Reviewer operational statistics
-- [ ] Expose workflow duration, throughput, failure, retry, and recovery summaries
-- [ ] Expose LLM/tool/reviewer telemetry summaries without copying raw trace payloads
-- [ ] Link task summaries to `trace_id` / root span identity
-- [ ] Preserve low-cardinality Metrics semantics; never use `trace_id` / `span_id` as metric labels
-- [ ] Add dashboard read-model contract tests
-- [ ] Add empty-state and multi-task aggregation tests
-- [ ] Add Event → Log → Metrics → Trace correlation tests
-- [ ] Expose a stable CLI/API read interface
+- [x] Define a provider-independent dashboard read model
+- [x] Aggregate project/task/workflow status from authoritative runtime data
+- [x] Aggregate Developer / Tester / Reviewer operational statistics
+- [x] Expose workflow duration, throughput, failure, retry, and recovery summaries
+- [x] Expose LLM/tool/reviewer telemetry summaries without copying raw trace payloads
+- [x] Link task summaries to `trace_id` / root span identity
+- [x] Preserve low-cardinality Metrics semantics; never use `trace_id` / `span_id` as metric labels
+- [x] Add dashboard read-model contract tests
+- [x] Add empty-state and multi-task aggregation tests
+- [x] Add Event → Log → Metrics → Trace correlation tests
+- [x] Expose a stable CLI/API read interface
 - [ ] Add operational dashboard UI
 - [ ] Full Phase 16.4 regression verification
 
