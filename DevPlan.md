@@ -129,7 +129,8 @@ Implemented in this increment:
 - [x] Add dependency-free operational dashboard UI renderer
 - [x] Add dashboard HTML export entry point
 - [x] Add dashboard UI rendering/export contract tests
-- [ ] Integrate dashboard export into the primary CLI
+- [x] Integrate dashboard export into the primary CLI
+- [x] Add CLI/dashboard integration contract tests
 - [ ] Full Phase 16.4 regression verification
 
 ### 16.5 Alerting — planned
