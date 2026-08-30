@@ -9,7 +9,7 @@ from runtime.context_builder import ContextBuilder
 from runtime.context_compaction import ContextCompactor
 from runtime.llm.base import BaseLLM, LLMResponse
 from runtime.llm.context_compacting import ContextCompactingLLM
-from runtime.llm.metrics import LLMMetrics
+from runtime.llm_metrics import LLMMetrics
 from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
