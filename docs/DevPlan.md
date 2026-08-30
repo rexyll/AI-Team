@@ -25,14 +25,53 @@
 - [x] Cross-component delivery regression contracts
 - [x] Phase 16.6 implementation complete
 
-### Phase 16.6 closure criteria
-- Alert evaluation and delivery remain separate concerns.
-- Delivery is idempotent by delivery identity within the manager lifecycle.
-- Retry attempts are bounded.
-- Webhook delivery must pass the existing Network Egress Policy.
-- Structured alert events contain bounded metadata only.
-- Delivery metrics use low-cardinality dimensions.
-- Cross-component regression tests cover deduplication, retry, failure, success, and metric behavior.
+## Phase 17 — Runtime Reliability
 
-### Next
-Proceed to Phase 17 planning and implementation after local full-suite verification.
+### 17.1 Runtime State Persistence
+- [x] State-store boundary
+- [x] Snapshot isolation
+- [x] TaskManager lifecycle persistence integration
+- [x] Atomic lifecycle commit / rollback
+- [x] Recovery loading boundary
+- [x] Recovery snapshot validation
+- [ ] Persistent manager bootstrap from recovered state
+- [ ] Recovery regression suite against full workflow lifecycle
+
+### 17.2 Workflow Resume / Recovery
+- [ ] Define resumable workflow checkpoint contract
+- [ ] Restore dependency / execution state
+- [ ] Resume only safe states
+- [ ] Prevent duplicate completed work
+- [ ] Recovery idempotency
+- [ ] Crash/restart integration tests
+
+### 17.3 Crash Consistency
+- [ ] Atomic checkpoint semantics
+- [ ] Interrupted write handling
+- [ ] Corrupt-state quarantine
+- [ ] Recovery failure isolation
+
+### 17.4 Concurrency / Lease Control
+- [ ] Task lease boundary
+- [ ] Lease expiry
+- [ ] Ownership fencing
+- [ ] Duplicate worker prevention
+
+### 17.5 Stuck Task Detection
+- [ ] Heartbeat / liveness contract
+- [ ] Stuck-task classification
+- [ ] Recovery trigger
+
+### 17.6 Recovery Observability
+- [ ] Recovery metrics
+- [ ] Recovery tracing
+- [ ] Recovery audit events
+
+### 17.7 Full Reliability Regression
+- [ ] Persistence → recovery → resume end-to-end tests
+- [ ] Crash simulation
+- [ ] Concurrency regression
+- [ ] Full test suite
+
+### Current next step
+Implement **17.1 Persistent manager bootstrap from recovered state**, then close 17.1 with a full workflow recovery regression suite before entering 17.2.
