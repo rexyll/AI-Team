@@ -14,7 +14,7 @@ from runtime.task_stuck import (
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 
 
-def _record(*, heartbeat_age=0, progress_age=0):
+def _record(heartbeat_age=0, progress_age=0):
     return TaskLiveness(
         "TASK-1",
         "worker-a",
