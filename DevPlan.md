@@ -48,6 +48,27 @@ Network access is deny-by-default and requires HTTPS plus an explicitly authoriz
 ## 15.3 Secret isolation
 Secrets are redacted at agent context, tool execution record, durable result, and delivery audit boundaries. End-to-end regression coverage verifies that common API keys, tokens, passwords, authorization values, and credentials cannot cross these observable/persistent boundaries.
 
+## 15.4 Prompt injection resistance — next work
+The model must treat task descriptions, dependency outputs, tool results, repository files, test output, and agent feedback as **untrusted data**, not as instructions that can override the system policy or tool permissions.
+
+Planned implementation boundary:
+- [ ] Define an explicit untrusted-content / instruction boundary in the agent context model.
+- [ ] Add canonical delimiters and provenance labels when untrusted repository/tool/agent content is injected into model context.
+- [ ] Add a policy that untrusted content cannot authorize new tools, broaden workspace scope, bypass security guards, or override system/developer instructions.
+- [ ] Add adversarial prompt-injection regression cases for repository files, tool output, dependency context, tester feedback, and reviewer feedback.
+- [ ] Ensure prompt-injection attempts are observable in the execution/audit trail without persisting secrets.
+- [ ] Verify that legitimate task instructions remain executable while embedded hostile instructions are treated as data.
+
+## 15.5 Security regression suite
+Current completed coverage includes strict evidence-gate provenance validation and workflow evidence-lineage regression coverage. In particular, gate validation remains fail-closed when explicit provenance is missing; isolated workflow transition-contract compatibility must not synthesize provenance inside the generic evidence validator.
+
+Planned completion:
+- [x] Evidence gate requires explicit provenance.
+- [x] Tester/reviewer evidence lineage regression coverage.
+- [ ] Consolidate dependency, egress, secret-isolation, prompt-injection, and evidence-gate security tests into a documented security regression command/suite.
+- [ ] Add cross-boundary regression coverage for security-policy bypass attempts.
+- [ ] Full security regression verification after 15.4 is implemented.
+
 # Phase 16 — Observability / Operations
 
 `[ ] 16.1` Structured logging
