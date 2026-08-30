@@ -126,7 +126,10 @@ Implemented in this increment:
 - [x] Add empty-state and multi-task aggregation tests
 - [x] Add Event → Log → Metrics → Trace correlation tests
 - [x] Expose a stable CLI/API read interface
-- [ ] Add operational dashboard UI
+- [x] Add dependency-free operational dashboard UI renderer
+- [x] Add dashboard HTML export entry point
+- [x] Add dashboard UI rendering/export contract tests
+- [ ] Integrate dashboard export into the primary CLI
 - [ ] Full Phase 16.4 regression verification
 
 ### 16.5 Alerting — planned
