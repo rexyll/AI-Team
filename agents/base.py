@@ -14,7 +14,7 @@ from runtime.llm.provider import ProviderLLM
 from runtime.task import Task
 from runtime.tool_loop_checkpoint import collapse_tool_loop_checkpoints
 from runtime.tool_loop_decision_budget import ToolLoopDecisionBudget
-from security.prompt_injection import augment_system_prompt, untrusted_content
+from security.prompt_injection import augment_system_prompt, fence_developer_prompt, untrusted_content
 from security.runtime_capability import DEFAULT_RUNTIME_CAPABILITY_POLICY
 
 
@@ -116,12 +116,32 @@ class BaseAgent(ABC):
             secured.append(copied)
         return secured
 
+    def _secure_model_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply model-input fencing without mutating runtime conversation state."""
+        secured = self._secure_tool_messages(messages)
+        if self.role != "developer":
+            return secured
+
+        fenced: list[dict[str, Any]] = []
+        initial_user_seen = False
+        for message in secured:
+            if isinstance(message, dict) and message.get("role") == "user" and not initial_user_seen:
+                copied = dict(message)
+                content = copied.get("content", "")
+                if isinstance(content, str):
+                    copied["content"] = fence_developer_prompt(content)
+                initial_user_seen = True
+                fenced.append(copied)
+            else:
+                fenced.append(message)
+        return fenced
+
     def _generate_with_tools(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None, tool_choice: str = "auto") -> LLMResponse:
         started = perf_counter()
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
         security_prompt = self._secured_system_prompt("")
-        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + self._secure_tool_messages(messages)
+        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + self._secure_model_messages(messages)
         authorized_tools = self._authorized_tool_schemas(tools)
         if isinstance(self.llm, ContextCompactingLLM):
             response = self.llm.generate_with_tools(secured_messages, tools=authorized_tools, tool_choice=tool_choice)
