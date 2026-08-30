@@ -139,10 +139,12 @@ Implemented in this increment:
 - [x] Latency threshold rule
 - [x] Retry threshold rule
 - [x] Reviewer rejection / recovery alerts
-- [ ] Tool-loop anomaly alerts
+- [x] Tool-loop anomaly alert rules
+- [x] Expose bounded tool-loop telemetry through the dashboard read model
 - [x] Alert deduplication and cooldown semantics
 - [x] Provider-independent alert interface
 - [x] Alert rule / cooldown regression tests
+- [ ] Full Phase 16.5 regression verification
 
 ### 16.6 Alert delivery — planned
 - [ ] Provider-independent alert sink interface
