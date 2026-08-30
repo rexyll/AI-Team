@@ -85,8 +85,23 @@ class WorkflowEventLog:
             },
         )
 
+    def _record_context_metric(self, workflow_event: WorkflowEvent, *, operation: str, outcome: str) -> None:
+        """Record a queryable workflow metric without putting trace identity in labels."""
+        labels = {
+            "project_id": workflow_event.project_id,
+            "task_id": workflow_event.task_id or "",
+            "event_type": workflow_event.event_type,
+            "operation": operation,
+            "outcome": outcome,
+        }
+        self._metrics.inc("workflow.events.contextual_total", labels=labels)
+
     def _record_size_metric(self) -> None:
         self._metrics.set_gauge("workflow.event_log.size", len(self._events))
+
+    def _record_observability_metrics(self, workflow_event: WorkflowEvent, *, operation: str, outcome: str) -> None:
+        self._record_metric(outcome, workflow_event=workflow_event, operation=operation)
+        self._record_context_metric(workflow_event, operation=operation, outcome=outcome)
 
     def _invalidate_indexes(self) -> None:
         self._all_index = None
@@ -106,13 +121,13 @@ class WorkflowEventLog:
             raise TypeError("event must be a WorkflowEvent")
         with self._lock:
             if event.event_id in self._events:
-                self._record_metric("duplicate", workflow_event=event, operation="append")
+                self._record_observability_metrics(event, outcome="duplicate", operation="append")
                 self._log_event("workflow.event.duplicate", workflow_event=event, operation="append")
                 raise ValueError(f"event_id already exists: {event.event_id}")
             self._persist_if_configured(event)
             self._record_event(event, preserve_append_order=True)
             self._invalidate_indexes()
-            self._record_metric("appended", workflow_event=event, operation="append")
+            self._record_observability_metrics(event, outcome="appended", operation="append")
             self._record_size_metric()
             self._log_event("workflow.event.appended", workflow_event=event, operation="append")
 
@@ -125,15 +140,15 @@ class WorkflowEventLog:
                 self._persist_if_configured(event)
                 self._record_event(event, preserve_append_order=True)
                 self._invalidate_indexes()
-                self._record_metric("appended", workflow_event=event, operation="append_if_absent")
+                self._record_observability_metrics(event, outcome="appended", operation="append_if_absent")
                 self._record_size_metric()
                 self._log_event("workflow.event.appended", workflow_event=event, operation="append_if_absent")
                 return True
             if existing == event:
-                self._record_metric("duplicate", workflow_event=event, operation="append_if_absent")
+                self._record_observability_metrics(event, outcome="duplicate", operation="append_if_absent")
                 self._log_event("workflow.event.duplicate", workflow_event=event, operation="append_if_absent")
                 return False
-            self._record_metric("conflict", workflow_event=event, operation="append_if_absent")
+            self._record_observability_metrics(event, outcome="conflict", operation="append_if_absent")
             self._log_event("workflow.event.conflict", workflow_event=event, operation="append_if_absent")
             raise self._conflict(event.event_id)
 
@@ -148,14 +163,14 @@ class WorkflowEventLog:
                 existing = self._events.get(event.event_id)
                 if existing is not None:
                     if existing != event:
-                        self._record_metric("conflict", workflow_event=event, operation="merge")
+                        self._record_observability_metrics(event, outcome="conflict", operation="merge")
                         self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                         raise self._conflict(event.event_id)
-                    self._record_metric("duplicate", workflow_event=event, operation="merge")
+                    self._record_observability_metrics(event, outcome="duplicate", operation="merge")
                     continue
                 previous = pending.get(event.event_id)
                 if previous is not None and previous != event:
-                    self._record_metric("conflict", workflow_event=event, operation="merge")
+                    self._record_observability_metrics(event, outcome="conflict", operation="merge")
                     self._log_event("workflow.event.conflict", workflow_event=event, operation="merge")
                     raise self._conflict(event.event_id)
                 pending[event.event_id] = event
@@ -163,7 +178,7 @@ class WorkflowEventLog:
                 self._persistence_sink.save_if_absent_many(pending.values())
             for event in pending.values():
                 self._record_event(event, preserve_append_order=False)
-                self._record_metric("appended", workflow_event=event, operation="merge")
+                self._record_observability_metrics(event, outcome="appended", operation="merge")
             if pending:
                 self._invalidate_indexes()
                 self._record_size_metric()
