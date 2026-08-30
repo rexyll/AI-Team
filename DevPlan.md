@@ -146,14 +146,15 @@ Implemented in this increment:
 - [x] Alert rule / cooldown regression tests
 - [ ] Full Phase 16.5 regression verification
 
-### 16.6 Alert delivery — planned
-- [ ] Provider-independent alert sink interface
-- [ ] Structured alert event emission
-- [ ] Console / log sink
-- [ ] Webhook sink with network-egress enforcement
-- [ ] Delivery retry / failure semantics
-- [ ] Alert delivery observability
-- [ ] Alert delivery regression tests
+### 16.6 Alert delivery — in progress
+- [x] Provider-independent alert sink interface
+- [x] Structured alert event emission
+- [x] Console / log sink
+- [x] Webhook sink with network-egress enforcement
+- [x] Delivery retry / failure semantics
+- [x] Alert delivery observability
+- [x] Alert delivery regression tests
+- [ ] Full Phase 16.6 regression verification
 
 # Phase 17 — Developer Experience
 
