@@ -114,7 +114,7 @@ Implemented in this increment:
 - [x] Correlate tracing with structured logs and metrics
 - [x] Full observability regression verification
 
-### 16.4 Operational Dashboard — in progress
+### 16.4 Operational Dashboard — completed
 - [x] Define a provider-independent dashboard read model
 - [x] Aggregate project/task/workflow status from authoritative runtime data
 - [x] Aggregate Developer / Tester / Reviewer operational statistics
@@ -131,9 +131,9 @@ Implemented in this increment:
 - [x] Add dashboard UI rendering/export contract tests
 - [x] Integrate dashboard export into the primary CLI
 - [x] Add CLI/dashboard integration contract tests
-- [ ] Full Phase 16.4 regression verification
+- [x] Full Phase 16.4 regression verification
 
-### 16.5 Alerting — in progress
+### 16.5 Alerting — completed
 - [x] Define alertable operational conditions foundation
 - [x] Failure-rate threshold rule
 - [x] Latency threshold rule
@@ -144,9 +144,9 @@ Implemented in this increment:
 - [x] Alert deduplication and cooldown semantics
 - [x] Provider-independent alert interface
 - [x] Alert rule / cooldown regression tests
-- [ ] Full Phase 16.5 regression verification
+- [x] Full Phase 16.5 regression verification
 
-### 16.6 Alert delivery — in progress
+### 16.6 Alert delivery — completed
 - [x] Provider-independent alert sink interface
 - [x] Structured alert event emission
 - [x] Console / log sink
@@ -154,7 +154,7 @@ Implemented in this increment:
 - [x] Delivery retry / failure semantics
 - [x] Alert delivery observability
 - [x] Alert delivery regression tests
-- [ ] Full Phase 16.6 regression verification
+- [x] Full Phase 16.6 regression verification
 
 # Phase 17 — Developer Experience
 
