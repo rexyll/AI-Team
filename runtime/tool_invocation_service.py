@@ -11,6 +11,7 @@ from runtime.tool_errors import ToolError, classify_tool_exception
 from runtime.tool_execution_audit import ToolExecutionAudit
 from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
+from runtime.tool_invocation import ToolInvocation
 from runtime.tool_result import ToolResult
 from runtime.tracing import DEFAULT_TRACER
 from tools.registry import TOOL_REGISTRY, ToolRegistry
@@ -42,76 +43,76 @@ class ToolInvocationService:
         return ToolExecutionAudit(self._history)
 
     def invoke(self, *, role: str, task_id: str, execution_id: str, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Authorize, validate, execute, and record one tool invocation."""
+        request = ToolInvocation(role=role, task_id=task_id, execution_id=execution_id, tool_name=tool_name, arguments=arguments)
+        return self.invoke_request(request)
+
+    def invoke_request(self, request: ToolInvocation) -> ToolResult:
+        """Authorize, validate, execute, and record one canonical request."""
+        if not isinstance(request, ToolInvocation):
+            raise TypeError("request must be a ToolInvocation")
         started_at = datetime.now(timezone.utc).isoformat()
-        record_arguments = dict(arguments) if isinstance(arguments, dict) else {}
+        record_arguments = request.as_dict()
         try:
-            tool_function = self._registry.get(tool_name)
-            tool_schema = self._registry.schema(tool_name)
-            self._capability_policy.require(role, tool_name)
+            tool_function = self._registry.get(request.tool_name)
+            tool_schema = self._registry.schema(request.tool_name)
+            self._capability_policy.require(request.role, request.tool_name)
             if self._permission_policy is not None:
-                for capability in self._capability_policy.required_capabilities(tool_name):
-                    self._permission_policy.require(tool_name, capability)
-            validated, _ = validate_tool_arguments(tool_function, arguments, schema=tool_schema)
+                for capability in self._capability_policy.required_capabilities(request.tool_name):
+                    self._permission_policy.require(request.tool_name, capability)
+            validated, _ = validate_tool_arguments(tool_function, request.as_dict(), schema=tool_schema)
             record_arguments = dict(validated)
         except (KeyError, ToolPermissionError, ToolArgumentValidationError, TypeError, ValueError) as exc:
             error = self._classify_boundary_error(exc)
             status = "invalid_arguments" if error.category == "argument_validation" else "failed"
-            self._append_record(execution_id=execution_id, task_id=task_id, role=role, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
+            self._append_record(execution_id=request.execution_id, task_id=request.task_id, role=request.role, tool_name=request.tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error)
             return ToolResult.fail(error)
         try:
             with DEFAULT_TRACER.span(
                 "tool.invoke",
                 attributes={
-                    "task_id": task_id,
-                    "agent_role": role,
-                    "tool_name": tool_name,
-                    "execution_id": execution_id,
+                    "task_id": request.task_id,
+                    "agent_role": request.role,
+                    "tool_name": request.tool_name,
+                    "execution_id": request.execution_id,
                 },
             ) as span:
                 output = tool_function(**record_arguments)
                 span.set_attribute("status", "completed")
         except Exception as exc:
             error = self._classify_boundary_error(exc)
-            self._append_record(execution_id=execution_id, task_id=task_id, role=role, tool_name=tool_name, started_at=started_at, status="failed", arguments=record_arguments, output=None, error=error)
+            self._append_record(execution_id=request.execution_id, task_id=request.task_id, role=request.role, tool_name=request.tool_name, started_at=started_at, status="failed", arguments=record_arguments, output=None, error=error)
             return ToolResult.fail(error)
-        self._append_record(execution_id=execution_id, task_id=task_id, role=role, tool_name=tool_name, started_at=started_at, status="completed", arguments=record_arguments, output=output, error=None)
+        self._append_record(execution_id=request.execution_id, task_id=request.task_id, role=request.role, tool_name=request.tool_name, started_at=started_at, status="completed", arguments=record_arguments, output=output, error=None)
         return ToolResult.ok(output)
 
     def invoke_many(self, *, role: str, task_id: str, invocations: list[dict[str, Any]]) -> list[ToolResult]:
-        self._validate_invocation_shapes(invocations)
-        return [self.invoke(role=role, task_id=task_id, execution_id=str(item["execution_id"]), tool_name=str(item["tool_name"]), arguments=item["arguments"]) for item in invocations]
+        requests = self._build_requests(role=role, task_id=task_id, invocations=invocations)
+        return [self.invoke_request(request) for request in requests]
 
     def invoke_many_concurrent(self, *, role: str, task_id: str, invocations: list[dict[str, Any]], max_workers: int | None = None) -> list[ToolResult]:
         """Run independent calls concurrently while every call remains audited."""
-        self._validate_invocation_shapes(invocations)
-        if not invocations:
+        requests = self._build_requests(role=role, task_id=task_id, invocations=invocations)
+        if not requests:
             return []
-        workers = max_workers or len(invocations)
-        workers = max(1, min(workers, len(invocations)))
+        workers = max_workers or len(requests)
+        workers = max(1, min(workers, len(requests)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(self.invoke, role=role, task_id=task_id, execution_id=str(item["execution_id"]), tool_name=str(item["tool_name"]), arguments=item["arguments"]) for item in invocations]
+            futures = [pool.submit(self.invoke_request, request) for request in requests]
             return [future.result() for future in futures]
 
     @staticmethod
-    def _validate_invocation_shapes(invocations: list[dict[str, Any]]) -> None:
+    def _build_requests(*, role: str, task_id: str, invocations: list[dict[str, Any]]) -> list[ToolInvocation]:
         if not isinstance(invocations, list):
             raise TypeError("invocations must be a list")
+        requests: list[ToolInvocation] = []
         seen: set[str] = set()
         for invocation in invocations:
-            if not isinstance(invocation, dict):
-                raise TypeError("each invocation must be a dictionary")
-            missing = {"execution_id", "tool_name", "arguments"} - invocation.keys()
-            if missing:
-                raise ValueError("invocation is missing required fields: " + ", ".join(sorted(missing)))
-            execution_id = str(invocation["execution_id"])
-            if not execution_id:
-                raise ValueError("execution_id must not be empty")
-            if execution_id in seen:
-                raise ValueError(f"duplicate execution_id in invocation batch: {execution_id}")
-            seen.add(execution_id)
-            if not isinstance(invocation["arguments"], dict):
-                raise TypeError("invocation arguments must be a dictionary")
+            request = ToolInvocation.from_dict(invocation, role=role, task_id=task_id)
+            if request.execution_id in seen:
+                raise ValueError(f"duplicate execution_id in invocation batch: {request.execution_id}")
+            seen.add(request.execution_id)
+            requests.append(request)
+        return requests
 
     def _append_record(self, *, execution_id: str, task_id: str, role: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: ToolError | None) -> None:
         self._history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output if status == "completed" else None, error=error.to_dict() if error is not None else None))
