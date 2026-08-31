@@ -21,6 +21,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--require-valid-sample",
+        action="store_true",
+        help="Exit non-zero when any baseline/candidate sample is incomplete or failed.",
+    )
     return parser
 
 
@@ -30,12 +35,15 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--developers values must be greater than 0")
 
     executor_factory = build_live_executor_factory(provider_profile=args.provider, model=args.model)
+    invalid_samples: list[int] = []
     for developer_count in args.developers:
         comparison = RealDeveloperABBenchmark(
             scenario_factory=SCENARIOS[args.scenario],
             executor_factory=executor_factory,
             scenario_name=args.scenario,
         ).run(developer_count)
+        if not comparison.sample_valid:
+            invalid_samples.append(developer_count)
         payload = comparison.to_dict()
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -88,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"candidate_duplicate_tool_calls={candidate.duplicate_tool_calls} "
                 f"duplicate_tool_calls_delta={comparison.duplicate_tool_calls_delta}"
             )
+    if args.require_valid_sample and invalid_samples:
+        counts = ", ".join(str(count) for count in invalid_samples)
+        print(f"invalid benchmark samples for developer counts: {counts}", file=__import__("sys").stderr)
+        return 2
     return 0
 
 
