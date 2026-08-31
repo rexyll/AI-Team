@@ -30,6 +30,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _exact_duplicate_tool_calls(result) -> int:
+    return result.tool_call_category_counts.get("exact_duplicate", 0)
+
+
+def _duplicate_execution_tool_calls(result) -> int:
+    """Exact duplicate requests minus those served by the read-only cache."""
+    return max(0, _exact_duplicate_tool_calls(result) - result.cache_hits)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if any(count <= 0 for count in args.developers):
@@ -73,9 +82,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"input_token_change_ratio={comparison.input_token_change_ratio:.4f}"
             )
             print(
-                f"baseline_exact_duplicate_tool_calls={baseline.tool_call_category_counts.get('exact_duplicate', 0)} "
-                f"candidate_exact_duplicate_tool_calls={candidate.tool_call_category_counts.get('exact_duplicate', 0)} "
+                f"baseline_exact_duplicate_tool_calls={_exact_duplicate_tool_calls(baseline)} "
+                f"candidate_exact_duplicate_tool_calls={_exact_duplicate_tool_calls(candidate)} "
                 f"exact_duplicate_tool_calls_delta={comparison.exact_duplicate_tool_calls_delta}"
+            )
+            print(
+                f"baseline_duplicate_execution_tool_calls={_duplicate_execution_tool_calls(baseline)} "
+                f"candidate_duplicate_execution_tool_calls={_duplicate_execution_tool_calls(candidate)} "
+                f"duplicate_execution_tool_calls_delta={comparison.duplicate_execution_tool_calls_delta}"
+            )
+            print(
+                f"baseline_cache_hits={baseline.cache_hits} candidate_cache_hits={candidate.cache_hits} "
+                f"cache_hits_delta={candidate.cache_hits - baseline.cache_hits}"
             )
             print(
                 f"baseline_cache_probe_excess={comparison._cache_probe_excess(baseline)} "
