@@ -35,8 +35,8 @@ def _exact_duplicate_tool_calls(result) -> int:
 
 
 def _duplicate_execution_tool_calls(result) -> int:
-    """Exact duplicate requests minus those served by the read-only cache."""
-    return max(0, _exact_duplicate_tool_calls(result) - result.cache_hits)
+    """Return exact-duplicate calls that actually executed the tool."""
+    return result.duplicate_execution_tool_calls
 
 
 def main(argv: list[str] | None = None) -> int:
