@@ -27,6 +27,7 @@ class BenchmarkABTrialSummary:
     median_duplicate_execution_tool_calls_delta: float | None
     median_cache_hits_delta: float | None
     median_decision_trace_delta: float | None
+    cache_hit_observations: int
 
     @classmethod
     def from_comparisons(cls, comparisons: Iterable[BenchmarkABComparison]) -> "BenchmarkABTrialSummary":
@@ -49,6 +50,11 @@ class BenchmarkABTrialSummary:
             values = tuple(values)
             return float(median(values)) if values else None
 
+        cache_hit_deltas = tuple(
+            float(item.candidate.cache_hits - item.baseline.cache_hits)
+            for item in valid
+        )
+
         return cls(
             trials=len(items),
             valid_trials=len(valid),
@@ -60,8 +66,9 @@ class BenchmarkABTrialSummary:
             median_input_token_change_ratio=med(item.input_token_change_ratio for item in valid),
             median_exact_duplicate_tool_calls_delta=med(float(item.exact_duplicate_tool_calls_delta) for item in valid),
             median_duplicate_execution_tool_calls_delta=med(float(item.duplicate_execution_tool_calls_delta) for item in valid),
-            median_cache_hits_delta=med(float(item.candidate.cache_hits - item.baseline.cache_hits) for item in valid),
+            median_cache_hits_delta=med(cache_hit_deltas),
             median_decision_trace_delta=med(float(item.decision_trace_delta) for item in valid),
+            cache_hit_observations=sum(1 for delta in cache_hit_deltas if delta > 0),
         )
 
     @property
@@ -96,8 +103,8 @@ class BenchmarkABTrialSummary:
 
     @property
     def cache_effect_observed(self) -> bool:
-        """Whether valid live trials observed at least one additional cache hit."""
-        return (self.median_cache_hits_delta or 0.0) > 0
+        """Whether any valid live trial observed an additional candidate cache hit."""
+        return self.cache_hit_observations > 0
 
     @property
     def verdict(self) -> str:
@@ -122,6 +129,7 @@ class BenchmarkABTrialSummary:
             "reliability_preserved": self.reliability_preserved,
             "efficiency_improved": self.efficiency_improved,
             "cache_effect_observed": self.cache_effect_observed,
+            "cache_hit_observations": self.cache_hit_observations,
             "verdict": self.verdict,
             "median": {
                 "duration_change_ratio": self.median_duration_change_ratio,
