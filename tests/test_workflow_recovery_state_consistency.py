@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from runtime.task import Task
-from runtime.task_lease import TaskLeaseManager, LeaseOwnershipError
+from runtime.task_lease import TaskLeaseManager
 from runtime.task_lease_fencing import FencedTaskLeaseManager
 from runtime.task_manager import TaskManager
 from runtime.task_stuck import StuckTaskAssessment, TaskLivenessState
@@ -73,12 +73,13 @@ def test_checkpoint_restore_matches_event_projection_for_resumable_state():
 
 
 def test_retry_checkpoint_replays_ready_state_and_clears_active_error():
-    task = _task("failed")
-    task.error = "temporary"
-    task.record_retry_attempt(reason="temporary", retryable=True)
-    task.status = "ready"
-    task.error = None
-    checkpoint = WorkflowCheckpoint.capture(task)
+    task = _task("pending")
+    manager = TaskManager([task])
+    manager.mark_ready(TASK_ID)
+    manager.mark_running(TASK_ID)
+    manager.mark_failed(TASK_ID, "temporary")
+    manager.retry_task(TASK_ID, reason="temporary", retryable=True)
+    checkpoint = WorkflowCheckpoint.capture(manager.get_task(TASK_ID))
     log = WorkflowEventLog()
     log.merge(
         [
