@@ -258,9 +258,11 @@ class WorkflowEventProjector:
         if event.event_type in {"tester_invalid_result", "reviewer_invalid_result"}:
             if event.payload.get("status") != "invalid_result":
                 raise ValueError(f"invalid result event status mismatch: {event.event_id}")
-        if event.event_type in {"tester_skipped"}:
+        if event.event_type == "tester_skipped":
             status = event.payload.get("status")
-            if status is not None and status != "skipped":
+            # `skipped` is the canonical event status. Accept `reviewing` as a
+            # legacy runtime emission so already-persisted logs remain readable.
+            if status is not None and status not in {"skipped", "reviewing"}:
                 raise ValueError(f"tester skipped status mismatch: {event.event_id}")
         if event.event_type == "task_retrying":
             for field in ("status", "retry_attempt", "max_retries", "reason"):
@@ -288,43 +290,61 @@ class WorkflowEventProjector:
         state["last_event_id"] = event.event_id
         state["last_event_type"] = event_type
         state["last_occurred_at"] = event.occurred_at
+
+        # Error is a historical diagnostic fact. Successful/review lifecycle
+        # events must never erase an earlier failure or retry reason.
+        def capture_error(payload: dict[str, object], *, fallback: str | None = None) -> None:
+            value = payload.get("error") or payload.get("message") or fallback
+            if isinstance(value, str) and value:
+                state["error"] = value
+
         if event_type == "task_started":
-            state.update(lifecycle_status=TaskStatus.RUNNING.value, error=None)
+            state["lifecycle_status"] = TaskStatus.RUNNING.value
         elif event_type == "developer_completed":
-            state.update(lifecycle_status=TaskStatus.REVIEW_PENDING.value, error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEW_PENDING.value
         elif event_type in {"developer_failed", "developer_invalid_result"}:
-            state.update(lifecycle_status=TaskStatus.FAILED.value, error=event.payload.get("error") or event.payload.get("message"))
+            state["lifecycle_status"] = TaskStatus.FAILED.value
+            capture_error(event.payload)
         elif event_type == "tester_skipped":
-            state.update(lifecycle_status=TaskStatus.REVIEW_PENDING.value, error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEW_PENDING.value
         elif event_type in {"tester_passed", "tester_completed"}:
-            state.update(lifecycle_status=TaskStatus.REVIEWING.value, error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEWING.value
         elif event_type == "tester_rejected":
-            state.update(lifecycle_status=TaskStatus.RUNNING.value, error=None)
+            state["lifecycle_status"] = TaskStatus.RUNNING.value
         elif event_type in {"tester_failed", "tester_invalid_result", "tester_invalid_evidence"}:
-            state.update(lifecycle_status=TaskStatus.FAILED.value, error=event.payload.get("error") or event.payload.get("message"))
+            state["lifecycle_status"] = TaskStatus.FAILED.value
+            capture_error(event.payload)
         elif event_type == "review_started":
-            state.update(lifecycle_status=TaskStatus.REVIEWING.value, review_status="started", error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEWING.value
+            state["review_status"] = "started"
         elif event_type == "reviewer_fallback":
-            state.update(lifecycle_status=TaskStatus.REVIEW_PENDING.value, review_status="recovery", error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEW_PENDING.value
+            state["review_status"] = "recovery"
         elif event_type == "reviewer_retry":
-            state.update(lifecycle_status=TaskStatus.REVIEWING.value, review_status="retrying", error=None)
+            state["lifecycle_status"] = TaskStatus.REVIEWING.value
+            state["review_status"] = "retrying"
         elif event_type == "reviewer_revision":
-            state.update(lifecycle_status=TaskStatus.RUNNING.value, review_status="revision", error=None)
+            state["lifecycle_status"] = TaskStatus.RUNNING.value
+            state["review_status"] = "revision"
         elif event_type == "reviewer_approved":
-            state.update(lifecycle_status=TaskStatus.COMPLETED.value, review_status="approved", error=None)
+            state["lifecycle_status"] = TaskStatus.COMPLETED.value
+            state["review_status"] = "approved"
         elif event_type in {"reviewer_failed", "reviewer_invalid_result", "reviewer_invalid_evidence"}:
-            state.update(lifecycle_status=TaskStatus.FAILED.value, error=event.payload.get("error") or event.payload.get("message"))
+            state["lifecycle_status"] = TaskStatus.FAILED.value
+            capture_error(event.payload)
         elif event_type == "task_failed":
-            state.update(lifecycle_status=TaskStatus.FAILED.value, error=event.payload.get("error") or event.payload.get("message"))
+            state["lifecycle_status"] = TaskStatus.FAILED.value
+            capture_error(event.payload)
         elif event_type == "task_retrying":
-            state.update(
-                lifecycle_status=TaskStatus.READY.value,
-                retry_attempt=event.payload["retry_attempt"],
-                max_retries=event.payload["max_retries"],
-                error=None,
+            state["lifecycle_status"] = TaskStatus.READY.value
+            state["retry_attempt"] = event.payload["retry_attempt"]
+            state["max_retries"] = event.payload["max_retries"]
+            capture_error(
+                event.payload,
+                fallback=event.payload.get("reason") if isinstance(event.payload.get("reason"), str) else None,
             )
         elif event_type == "task_completed":
-            state.update(lifecycle_status=TaskStatus.COMPLETED.value, error=None)
+            state["lifecycle_status"] = TaskStatus.COMPLETED.value
 
     @staticmethod
     def _project_lifecycle(tasks: tuple[WorkflowTaskProjection, ...], *, resumed: bool) -> str:
