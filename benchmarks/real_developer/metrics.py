@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +26,7 @@ class RealDeveloperTaskMetrics:
     cache_misses: int = 0
     cache_invalidations: int = 0
     failed: bool = False
+    failure_reason: str | None = None
     llm_profiles: tuple[LLMCallProfile, ...] = ()
     tool_loop_telemetry: tuple[dict[str, Any], ...] = ()
     developer_decision_trace: tuple[dict[str, Any], ...] = ()
@@ -108,6 +107,12 @@ class RealDeveloperTaskMetrics:
             raise ValueError("developer_id must be non-empty")
         if self.duration_seconds < 0 or self.llm_latency_seconds < 0:
             raise ValueError("durations must be non-negative")
+        if self.failure_reason is not None and not isinstance(self.failure_reason, str):
+            raise ValueError("failure_reason must be a string or None")
+        if self.failed and not self.failure_reason:
+            raise ValueError("failed task metrics must include failure_reason")
+        if not self.failed and self.failure_reason is not None:
+            raise ValueError("successful task metrics cannot include failure_reason")
         for name, value in (
             ("llm_calls", self.llm_calls), ("input_tokens", self.input_tokens), ("output_tokens", self.output_tokens),
             ("tool_calls", self.tool_calls), ("test_commands", self.test_commands), ("unique_tool_calls", self.unique_tool_calls),
@@ -202,6 +207,14 @@ class RealDeveloperBenchmarkResult:
                 counts[reason] = counts.get(reason, 0) + count
         return dict(sorted(counts.items()))
     @property
+    def failure_reasons(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.task_metrics:
+            if not item.failed or not item.failure_reason:
+                continue
+            counts[item.failure_reason] = counts.get(item.failure_reason, 0) + 1
+        return dict(sorted(counts.items()))
+    @property
     def avg_llm_latency_seconds(self) -> float: return self.llm_latency_seconds / self.llm_calls if self.llm_calls else 0.0
     @property
     def developer_utilization(self) -> float:
@@ -259,6 +272,7 @@ class RealDeveloperBenchmarkResult:
             "tool_call_category_counts": self.tool_call_category_counts,
             "decision_trace_count": self.decision_trace_count,
             "decision_trace_reason_counts": self.decision_trace_reason_counts,
+            "failure_reasons": self.failure_reasons,
             "developer_utilization": self.developer_utilization, "avg_llm_calls_per_task": self.avg_llm_calls_per_task,
             "avg_input_tokens_per_task": self.avg_input_tokens_per_task, "avg_tool_calls_per_task": self.avg_tool_calls_per_task,
             "max_llm_calls_per_task": self.max_llm_calls_per_task, "max_prompt_chars_per_task": self.max_prompt_chars_per_task,
