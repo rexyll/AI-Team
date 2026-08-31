@@ -9,12 +9,13 @@ from benchmarks.real_developer.ab_trials import BenchmarkABTrialSummary
 from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult, RealDeveloperTaskMetrics
 
 
-def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int = 0, blocked: int = 0) -> RealDeveloperBenchmarkResult:
+def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int = 0, blocked: int = 0, input_tokens: int = 0) -> RealDeveloperBenchmarkResult:
     task = RealDeveloperTaskMetrics(
         task_id="TASK-TRIAL",
         developer_id="developer-1",
         duration_seconds=duration,
         llm_calls=llm_calls,
+        input_tokens=input_tokens,
         failed=failed > 0,
         failure_reason="failure" if failed > 0 else None,
     )
@@ -30,9 +31,9 @@ def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int 
     )
 
 
-def _comparison(*, valid: bool, duration_delta: float) -> BenchmarkABComparison:
-    baseline = _result(duration=10.0, llm_calls=2)
-    candidate = _result(duration=10.0 + duration_delta, llm_calls=2)
+def _comparison(*, valid: bool, duration_delta: float, llm_delta: int = 0, input_delta: int = 0) -> BenchmarkABComparison:
+    baseline = _result(duration=10.0, llm_calls=10, input_tokens=100)
+    candidate = _result(duration=10.0 + duration_delta, llm_calls=10 + llm_delta, input_tokens=100 + input_delta)
     if not valid:
         baseline = replace(baseline, failed=1, completed=0)
     return BenchmarkABComparison(baseline=baseline, candidate=candidate)
@@ -64,6 +65,55 @@ def test_summary_has_none_for_performance_medians_when_all_trials_invalid() -> N
     assert summary.valid_trials == 0
     assert summary.median_duration_change_ratio is None
     assert summary.to_dict()["median"]["duration_change_ratio"] is None
+    assert summary.verdict == "insufficient_valid_samples"
+
+
+def test_summary_rejects_reliability_regression_before_efficiency_claim() -> None:
+    comparisons = tuple(
+        _comparison(valid=True, duration_delta=-2.0)
+        for _ in range(4)
+    ) + (
+        _comparison(valid=False, duration_delta=-8.0),
+    )
+    baseline_failure = _result(duration=10.0, llm_calls=10)
+    candidate_failure = _result(duration=9.0, llm_calls=8, completed=0, failed=1)
+    comparisons = comparisons[:-1] + (BenchmarkABComparison(baseline=baseline_failure, candidate=candidate_failure),)
+
+    summary = BenchmarkABTrialSummary.from_comparisons(comparisons)
+
+    assert summary.statistically_ready is True
+    assert summary.reliability_preserved is False
+    assert summary.efficiency_improved is False
+    assert summary.verdict == "reliability_regression"
+
+
+def test_summary_marks_unambiguous_efficiency_improvement() -> None:
+    comparisons = tuple(
+        _comparison(valid=True, duration_delta=-2.0, llm_delta=-1, input_delta=-20)
+        for _ in range(4)
+    )
+
+    summary = BenchmarkABTrialSummary.from_comparisons(comparisons)
+
+    assert summary.statistically_ready is True
+    assert summary.reliability_preserved is True
+    assert summary.efficiency_improved is True
+    assert summary.verdict == "efficiency_improved"
+    assert summary.cache_effect_observed is False
+
+
+def test_summary_defaults_to_no_clear_gain_when_duration_improves_but_cost_rises() -> None:
+    comparisons = tuple(
+        _comparison(valid=True, duration_delta=-2.0, llm_delta=1, input_delta=10)
+        for _ in range(4)
+    )
+
+    summary = BenchmarkABTrialSummary.from_comparisons(comparisons)
+
+    assert summary.statistically_ready is True
+    assert summary.reliability_preserved is True
+    assert summary.efficiency_improved is False
+    assert summary.verdict == "no_clear_efficiency_gain"
 
 
 def test_trials_cli_rejects_non_positive_trials() -> None:
