@@ -184,12 +184,12 @@ Implemented in this increment:
 - [x] Documentation
 - [x] Full Phase 17.3 regression verification
 
-### 17.4 Documentation
-- [ ] Align README/user guide/version references with current runtime
-- [ ] CLI reference
-- [ ] Configuration reference
-- [ ] Extension/plugin guide
-- [ ] Operational troubleshooting guide
+### 17.4 Documentation — completed
+- [x] Align README/user guide/version references with current runtime
+- [x] CLI reference
+- [x] Configuration reference
+- [x] Extension/plugin guide
+- [x] Operational troubleshooting guide
 
 ### 17.5 Example projects
 - [ ] Minimal deterministic example
