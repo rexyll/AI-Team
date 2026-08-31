@@ -182,6 +182,7 @@ Implemented in this increment:
 - [x] Capability/security boundary for plugins
 - [x] Plugin regression tests
 - [x] Documentation
+- [x] Full Phase 17.3 regression verification
 
 ### 17.4 Documentation — completed
 - [x] Align README/user guide/version references with current runtime
@@ -242,9 +243,9 @@ Exact-duplicate analysis is separated from failure-recovery retry analysis. Only
 
 A cache-probe diagnostic distinguishes a genuine duplicate tool call from repeated cache inspection. When per-call category telemetry is available, `cache_probe_excess = max(0, cache_hits - exact_duplicate_tool_calls)` identifies possible duplicate cache probing without changing runtime behavior.
 
-A side-effect-free `ToolResultCache.contains()` probe is available for preflight decisions. It does not change hit/miss counters, LRU recency, or cached values. The Developer loop has not yet been changed to use it because real benchmark evidence must first show that the preflight probe is materially redundant; this preserves the evidence-backed optimization rule.
+A side-effect-free `ToolResultCache.contains()` probe is now available for preflight decisions. It does not change hit/miss counters, LRU recency, or cached values. The Developer loop has not yet been changed to use it because real benchmark evidence must first show that the preflight probe is materially redundant; this preserves the evidence-backed optimization rule.
 
-The real-Developer benchmark now preserves `developer_decision_trace` from the agent result through task metrics and exposes aggregate decision counts/reason summaries. This makes individual decision-turn behavior measurable before any LLM-turn suppression is introduced.
+The real-Developer benchmark now preserves Developer decision traces through Executor → task metrics → aggregate benchmark results. A/B comparison reports include LLM-call, duration, token, exact-duplicate, cache-probe, and decision-trace deltas plus decision-reason counts. This provides the evidence surface required before changing the Developer loop for performance.
 
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
