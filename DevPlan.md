@@ -191,9 +191,15 @@ Implemented in this increment:
 - [x] Extension/plugin guide
 - [x] Operational troubleshooting guide
 
-### 17.5 Example projects
+### 17.5 Example projects — completed
 - [x] Minimal deterministic example
 - [x] Example with tests and review loop
 - [x] Example demonstrating workspace isolation
-- [ ] Example demonstrating operational dashboard/alerts
+- [x] Example demonstrating operational dashboard/alerts
 - [x] Example documentation
+
+## Phase 17 acceptance
+All Phase 17 developer-experience contracts and examples are implemented and covered by the full regression suite. The current development branch is the accepted working branch for these changes.
+
+## Next planning gate
+Phase 17.5 is the final node currently defined in this development plan. Any Phase 18 work should be planned from a fresh repository-state review rather than inferred or silently added to this plan.
