@@ -61,7 +61,7 @@ Completed in this increment:
 - [x] Fence Tester task and Developer-result fields at the model-facing prompt boundary.
 - [x] Fence Reviewer task, Developer result, Tester feedback, Reviewer feedback, dependency context, history, metadata, and review-round fields at the model-facing prompt boundary.
 - [x] Fence tool-produced content centrally in `BaseAgent` before it is sent back to the model, without mutating runtime/audit messages.
-- [x] Fence Developer task/dependency/feedback/result/history/metadata/review-round fields at the tool-loop model boundary.
+- [x] Fence Developer task/dependency/feedback/result/history/metadata/review-round fields at the Developer tool-loop model boundary.
 - [x] Fence Developer tool-loop checkpoints before they are returned to the model.
 - [x] Keep runtime capability authorization independent from model-provided or untrusted content.
 - [x] Add adversarial Developer regression coverage for hostile task data, dependency context, tester/reviewer feedback, tool results, and checkpoint content.
@@ -168,13 +168,13 @@ Implemented in this increment:
 - [x] Add CLI parser and JSON-output regression coverage
 - [x] Full Phase 17.1 regression verification
 
-### 17.2 Configuration — in progress
+### 17.2 Configuration — completed
 - [x] Define a stable configuration contract
 - [x] Provider/model configuration validation
 - [x] CLI/environment precedence rules
 - [x] Configuration regression tests
-- [ ] Documentation
-- [ ] Full Phase 17.2 regression verification
+- [x] Documentation
+- [x] Full Phase 17.2 regression verification
 
 ### 17.3 Plugin API
 - [ ] Define extension points and lifecycle
