@@ -3,6 +3,34 @@ from __future__ import annotations
 import pytest
 
 from runtime.tool_invocation import ToolInvocation
+from runtime.tool_invocation_service import ToolInvocationService
+from tools.registry import ToolRegistry
+
+
+def _registry(calls: list[dict[str, str]]) -> ToolRegistry:
+    registry = ToolRegistry()
+
+    def fake_read_file(path: str) -> str:
+        calls.append({"path": path})
+        return f"content:{path}"
+
+    registry.register(
+        "read_file",
+        fake_read_file,
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "test read",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+    )
+    return registry
 
 
 def test_tool_invocation_is_immutable_and_detaches_arguments() -> None:
@@ -41,9 +69,6 @@ def test_tool_invocation_from_dict_enforces_batch_shape() -> None:
 
 
 def test_tool_invocation_service_accepts_canonical_request() -> None:
-    from tests.test_tool_invocation_service import _registry
-    from runtime.tool_invocation_service import ToolInvocationService
-
     calls: list[dict[str, str]] = []
     service = ToolInvocationService(registry=_registry(calls))
     request = ToolInvocation("developer", "TASK-001", "EXEC-004", "read_file", {"path": "src/app.py"})
