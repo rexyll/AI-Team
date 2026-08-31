@@ -23,6 +23,34 @@ def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int
     return result.duplicate_execution_tool_calls
 
 
+def _cache_reuse_marker_available(result: RealDeveloperBenchmarkResult) -> bool:
+    """Return whether telemetry includes the per-call cache reuse marker."""
+    return any(
+        "cache_reused" in item
+        for task in result.task_metrics
+        for item in task.tool_loop_telemetry
+    )
+
+
+def _cache_probe_excess(result: RealDeveloperBenchmarkResult) -> int:
+    """Estimate cache hits that cannot be explained by duplicate requests.
+
+    New telemetry records per-call ``cache_reused`` facts, which are preferred.
+    Legacy telemetry has no such marker, so retain the historical compatible
+    estimate of ``cache_hits - exact_duplicate_requests``.
+    """
+    if _cache_reuse_marker_available(result):
+        cache_reused_tool_calls = sum(
+            1
+            for task in result.task_metrics
+            for item in task.tool_loop_telemetry
+            if item.get("cache_reused", False)
+        )
+        return max(0, result.cache_hits - cache_reused_tool_calls)
+    exact_duplicate_requests = _exact_duplicate_tool_calls(result)
+    return max(0, result.cache_hits - exact_duplicate_requests)
+
+
 def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]:
     """Return a stable benchmark snapshot suitable for baseline comparison."""
     if not isinstance(result, RealDeveloperBenchmarkResult):
@@ -35,7 +63,7 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         for item in (entry for task in result.task_metrics for entry in task.tool_loop_telemetry)
         if item.get("cache_reused", False)
     )
-    cache_probe_excess = max(0, result.cache_hits - cache_reused_tool_calls)
+    cache_probe_excess = _cache_probe_excess(result)
     return {
         "scenario": result.scenario,
         "developer_count": result.developer_count,
@@ -94,13 +122,7 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
         duplicate_count = _duplicate_execution_tool_calls(result)
         duplicate_requests = category_counts.get("exact_duplicate", 0)
         duplicate_message_suffix = " Cache-served repeated requests are excluded from this finding. Failure-recovery retries are excluded from this finding."
-        cache_reused_tool_calls = sum(
-            1
-            for task in result.task_metrics
-            for item in task.tool_loop_telemetry
-            if item.get("cache_reused", False)
-        )
-        cache_probe_excess = max(0, result.cache_hits - cache_reused_tool_calls)
+        cache_probe_excess = _cache_probe_excess(result)
     else:
         duplicate_count = result.duplicate_tool_calls
         duplicate_requests = duplicate_count
