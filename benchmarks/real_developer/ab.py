@@ -67,9 +67,8 @@ class BenchmarkABComparison:
 
     @staticmethod
     def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
-        """Return exact duplicates that were actually executed, excluding cache-served repeats."""
-        exact_duplicates = BenchmarkABComparison._exact_duplicate_tool_calls(result)
-        return max(0, exact_duplicates - result.cache_hits)
+        """Return exact-duplicate calls that actually executed the tool."""
+        return result.duplicate_execution_tool_calls
 
     @property
     def exact_duplicate_tool_calls_delta(self) -> int:
