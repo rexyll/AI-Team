@@ -49,12 +49,14 @@ def test_ab_comparison_exposes_efficiency_deltas_and_decision_reasons() -> None:
     assert comparison.llm_call_change_ratio == -0.25
     assert comparison.duration_delta == -2.0
     assert comparison.exact_duplicate_tool_calls_delta == 2
+    assert comparison.duplicate_execution_tool_calls_delta == 0
     assert comparison.cache_probe_excess_delta == 0
     assert comparison.decision_trace_delta == -1
     assert comparison.correctness_preserved is True
 
     payload = comparison.to_dict()
     assert payload["delta"]["exact_duplicate_tool_calls"] == 2
+    assert payload["delta"]["duplicate_execution_tool_calls"] == 0
     assert payload["delta"]["decision_trace_count"] == -1
     assert payload["delta"]["decision_reason_counts"]["candidate"]["new_evidence_requires_reasoning"] == 3
 
@@ -67,6 +69,21 @@ def test_ab_comparison_detects_cache_probe_excess_from_candidate_telemetry() -> 
 
     assert comparison.cache_probe_excess_delta == 2
     assert comparison.sample_valid is True
+
+
+def test_ab_comparison_distinguishes_duplicate_requests_from_actual_duplicate_execution() -> None:
+    baseline = _result(tool_calls=5, exact_duplicates=1, cache_hits=0, llm_calls=2, duration=5.0)
+    candidate = _result(tool_calls=8, exact_duplicates=5, cache_hits=4, llm_calls=2, duration=5.0)
+
+    comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
+
+    assert comparison.exact_duplicate_tool_calls_delta == 4
+    assert comparison.duplicate_execution_tool_calls_delta == 3
+    assert comparison.sample_valid is True
+
+    payload = comparison.to_dict()
+    assert payload["delta"]["exact_duplicate_tool_calls"] == 4
+    assert payload["delta"]["duplicate_execution_tool_calls"] == 3
 
 
 def test_ab_comparison_does_not_call_failed_retry_a_correctness_improvement() -> None:
@@ -122,4 +139,5 @@ def test_ab_comparison_does_not_call_failed_retry_a_correctness_improvement() ->
     comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
 
     assert comparison.exact_duplicate_tool_calls_delta == 0
+    assert comparison.duplicate_execution_tool_calls_delta == 0
     assert comparison.correctness_preserved is True
