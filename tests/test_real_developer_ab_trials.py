@@ -9,13 +9,14 @@ from benchmarks.real_developer.ab_trials import BenchmarkABTrialSummary
 from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult, RealDeveloperTaskMetrics
 
 
-def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int = 0, blocked: int = 0, input_tokens: int = 0) -> RealDeveloperBenchmarkResult:
+def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int = 0, blocked: int = 0, input_tokens: int = 0, cache_hits: int = 0) -> RealDeveloperBenchmarkResult:
     task = RealDeveloperTaskMetrics(
         task_id="TASK-TRIAL",
         developer_id="developer-1",
         duration_seconds=duration,
         llm_calls=llm_calls,
         input_tokens=input_tokens,
+        cache_hits=cache_hits,
         failed=failed > 0,
         failure_reason="failure" if failed > 0 else None,
     )
@@ -31,9 +32,9 @@ def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int 
     )
 
 
-def _comparison(*, valid: bool, duration_delta: float, llm_delta: int = 0, input_delta: int = 0) -> BenchmarkABComparison:
-    baseline = _result(duration=10.0, llm_calls=10, input_tokens=100)
-    candidate = _result(duration=10.0 + duration_delta, llm_calls=10 + llm_delta, input_tokens=100 + input_delta)
+def _comparison(*, valid: bool, duration_delta: float, llm_delta: int = 0, input_delta: int = 0, cache_delta: int = 0) -> BenchmarkABComparison:
+    baseline = _result(duration=10.0, llm_calls=10, input_tokens=100, cache_hits=0)
+    candidate = _result(duration=10.0 + duration_delta, llm_calls=10 + llm_delta, input_tokens=100 + input_delta, cache_hits=cache_delta)
     if not valid:
         baseline = replace(baseline, failed=1, completed=0)
     return BenchmarkABComparison(baseline=baseline, candidate=candidate)
@@ -114,6 +115,21 @@ def test_summary_defaults_to_no_clear_gain_when_duration_improves_but_cost_rises
     assert summary.reliability_preserved is True
     assert summary.efficiency_improved is False
     assert summary.verdict == "no_clear_efficiency_gain"
+
+
+def test_cache_effect_is_observed_when_any_valid_trial_has_a_cache_hit() -> None:
+    comparisons = (
+        _comparison(valid=True, duration_delta=1.0, cache_delta=0),
+        _comparison(valid=True, duration_delta=1.0, cache_delta=1),
+        _comparison(valid=True, duration_delta=1.0, cache_delta=0),
+        _comparison(valid=True, duration_delta=1.0, cache_delta=0),
+    )
+
+    summary = BenchmarkABTrialSummary.from_comparisons(comparisons)
+
+    assert summary.median_cache_hits_delta == 0.0
+    assert summary.cache_hit_observations == 1
+    assert summary.cache_effect_observed is True
 
 
 def test_trials_cli_rejects_non_positive_trials() -> None:
