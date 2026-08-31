@@ -52,26 +52,35 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
 def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tuple[EfficiencyFinding, ...]:
     """Identify measurable hotspots without claiming causality.
 
-    Only ``exact_duplicate`` calls are treated as direct duplicate-execution
-    candidates. Failure-recovery retries remain separately classified because
-    repeating a failed operation can be necessary for correctness.
+    When category telemetry is available, only ``exact_duplicate`` calls are
+    treated as direct duplicate-execution candidates. For legacy metric-only
+    results without per-call categories, ``duplicate_tool_calls`` remains an
+    intentionally coarse compatibility signal. Failure-recovery calls are
+    excluded whenever category telemetry makes that distinction observable.
     """
     if not isinstance(result, RealDeveloperBenchmarkResult):
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
 
     findings: list[EfficiencyFinding] = []
     category_counts = result.tool_call_category_counts
-    exact_duplicates = category_counts.get("exact_duplicate", 0)
-    if exact_duplicates:
-        ratio = exact_duplicates / result.tool_calls if result.tool_calls else 0.0
+    has_category_telemetry = bool(result.tool_loop_telemetry)
+    if has_category_telemetry:
+        duplicate_count = category_counts.get("exact_duplicate", 0)
+        duplicate_message_suffix = " Failure-recovery retries are excluded from this finding."
+    else:
+        duplicate_count = result.duplicate_tool_calls
+        duplicate_message_suffix = " Per-call categories were unavailable, so this is a coarse legacy signal and may include retries."
+
+    if duplicate_count:
+        ratio = duplicate_count / result.tool_calls if result.tool_calls else 0.0
         findings.append(
             EfficiencyFinding(
                 kind="duplicate_tool_execution",
                 observed=ratio,
                 message=(
-                    f"{exact_duplicates} of {result.tool_calls} tool calls were exact duplicates; "
-                    "inspect whether cacheable/read-only evidence could be reused earlier. "
-                    "Failure-recovery retries are excluded from this finding."
+                    f"{duplicate_count} of {result.tool_calls} tool calls were classified as "
+                    "duplicates; inspect whether cacheable/read-only evidence could be reused earlier."
+                    + duplicate_message_suffix
                 ),
             )
         )
