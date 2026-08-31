@@ -98,7 +98,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"duplicate_tool_calls_delta={comparison.duplicate_tool_calls_delta}"
             )
             print(f"baseline_failure_reasons={baseline.failure_reasons}")
+            print(f"baseline_failure_stages={baseline.failure_stages}")
             print(f"candidate_failure_reasons={candidate.failure_reasons}")
+            print(f"candidate_failure_stages={candidate.failure_stages}")
     if args.require_valid_sample and invalid_samples:
         counts = ", ".join(str(count) for count in invalid_samples)
         print(f"invalid benchmark samples for developer counts: {counts}", file=sys.stderr)
