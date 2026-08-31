@@ -7,9 +7,13 @@ from typing import Iterable
 from .ab import BenchmarkABComparison
 
 
+MIN_RECOMMENDED_VALID_TRIALS = 3
+MIN_RECOMMENDED_VALID_SAMPLE_RATE = 0.8
+
+
 @dataclass(frozen=True)
 class BenchmarkABTrialSummary:
-    """Aggregate only valid A/B trials; invalid samples remain diagnostics."""
+    """Aggregate valid paired A/B trials and expose conservative verdict signals."""
 
     trials: int
     valid_trials: int
@@ -60,14 +64,65 @@ class BenchmarkABTrialSummary:
             median_decision_trace_delta=med(float(item.decision_trace_delta) for item in valid),
         )
 
+    @property
+    def valid_sample_rate(self) -> float:
+        return self.valid_trials / self.trials if self.trials else 0.0
+
+    @property
+    def reliability_preserved(self) -> bool:
+        """Conservative reliability check across all requested paired trials."""
+        return self.candidate_success_rate >= self.baseline_success_rate
+
+    @property
+    def statistically_ready(self) -> bool:
+        """Whether enough valid paired trials exist for an efficiency conclusion."""
+        return (
+            self.valid_trials >= MIN_RECOMMENDED_VALID_TRIALS
+            and self.valid_sample_rate >= MIN_RECOMMENDED_VALID_SAMPLE_RATE
+        )
+
+    @property
+    def efficiency_improved(self) -> bool | None:
+        """Whether the median valid-trial profile shows an unambiguous improvement."""
+        if self.median_duration_change_ratio is None:
+            return None
+        return (
+            self.reliability_preserved
+            and self.median_duration_change_ratio < 0
+            and (self.median_llm_call_change_ratio or 0.0) <= 0
+            and (self.median_input_token_change_ratio or 0.0) <= 0
+            and (self.median_duplicate_execution_tool_calls_delta or 0.0) <= 0
+        )
+
+    @property
+    def cache_effect_observed(self) -> bool:
+        """Whether valid live trials observed at least one additional cache hit."""
+        return (self.median_cache_hits_delta or 0.0) > 0
+
+    @property
+    def verdict(self) -> str:
+        """Return a conservative experiment conclusion."""
+        if not self.statistically_ready:
+            return "insufficient_valid_samples"
+        if not self.reliability_preserved:
+            return "reliability_regression"
+        if self.efficiency_improved is True:
+            return "efficiency_improved"
+        return "no_clear_efficiency_gain"
+
     def to_dict(self) -> dict[str, object]:
         return {
             "trials": self.trials,
             "valid_trials": self.valid_trials,
             "invalid_trials": self.invalid_trials,
+            "valid_sample_rate": self.valid_sample_rate,
             "baseline_success_rate": self.baseline_success_rate,
             "candidate_success_rate": self.candidate_success_rate,
-            "valid_sample_rate": (self.valid_trials / self.trials) if self.trials else 0.0,
+            "statistically_ready": self.statistically_ready,
+            "reliability_preserved": self.reliability_preserved,
+            "efficiency_improved": self.efficiency_improved,
+            "cache_effect_observed": self.cache_effect_observed,
+            "verdict": self.verdict,
             "median": {
                 "duration_change_ratio": self.median_duration_change_ratio,
                 "llm_call_change_ratio": self.median_llm_call_change_ratio,
