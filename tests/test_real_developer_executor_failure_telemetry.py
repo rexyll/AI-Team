@@ -1,4 +1,5 @@
 from runtime.agent_result import AgentResult
+from runtime.llm.base import BaseLLM
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.tool_execution_record import ToolExecutionRecord
@@ -6,7 +7,7 @@ from runtime.tool_execution_record import ToolExecutionRecord
 from benchmarks.real_developer.executor import DeveloperAgentExecutor
 
 
-class _NoOpLLM:
+class _NoOpLLM(BaseLLM):
     def generate(self, prompt, *, system_prompt="", temperature=0.2, max_tokens=4096):
         return "ok"
 
