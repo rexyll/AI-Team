@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .ab import BenchmarkABComparison
 from .metrics import RealDeveloperBenchmarkResult
 
 
@@ -14,12 +15,23 @@ class EfficiencyFinding:
     message: str
 
 
+def _exact_duplicate_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+    return result.tool_call_category_counts.get("exact_duplicate", 0)
+
+
+def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+    """Return exact duplicates that actually executed, excluding cache-served repeats."""
+    return max(0, _exact_duplicate_tool_calls(result) - result.cache_hits)
+
+
 def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]:
     """Return a stable benchmark snapshot suitable for baseline comparison."""
     if not isinstance(result, RealDeveloperBenchmarkResult):
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
     category_counts = result.tool_call_category_counts
     exact_duplicate_tool_calls = category_counts.get("exact_duplicate", 0)
+    duplicate_execution_tool_calls = _duplicate_execution_tool_calls(result)
+    cache_reused_tool_calls = min(result.cache_hits, exact_duplicate_tool_calls)
     cache_probe_excess = max(0, result.cache_hits - exact_duplicate_tool_calls)
     return {
         "scenario": result.scenario,
@@ -36,6 +48,8 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         "unique_tool_calls": result.unique_tool_calls,
         "duplicate_tool_calls": result.duplicate_tool_calls,
         "exact_duplicate_tool_calls": exact_duplicate_tool_calls,
+        "duplicate_execution_tool_calls": duplicate_execution_tool_calls,
+        "cache_reused_tool_calls": cache_reused_tool_calls,
         "retry_tool_calls": result.retry_tool_calls,
         "tool_result_chars": result.tool_result_chars,
         "cache_hits": result.cache_hits,
@@ -61,11 +75,11 @@ def _tool_loop_category_telemetry_available(result: RealDeveloperBenchmarkResult
 def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tuple[EfficiencyFinding, ...]:
     """Identify measurable hotspots without claiming causality.
 
-    When category telemetry is available, only ``exact_duplicate`` calls are
-    treated as direct duplicate-execution candidates. For legacy metric-only
-    results without per-call categories, ``duplicate_tool_calls`` remains an
-    intentionally coarse compatibility signal. Failure-recovery calls are
-    excluded whenever category telemetry makes that distinction observable.
+    When category telemetry is available, only exact duplicate calls that were
+    actually executed are treated as direct duplicate-execution candidates.
+    Cache-served repeated requests remain visible through cache telemetry but do
+    not count as repeated tool executions. Legacy metric-only results continue
+    using the coarse duplicate_tool_calls field.
     """
     if not isinstance(result, RealDeveloperBenchmarkResult):
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
@@ -74,11 +88,13 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
     category_counts = result.tool_call_category_counts
     has_category_telemetry = _tool_loop_category_telemetry_available(result)
     if has_category_telemetry:
-        duplicate_count = category_counts.get("exact_duplicate", 0)
-        duplicate_message_suffix = " Failure-recovery retries are excluded from this finding."
-        cache_probe_excess = max(0, result.cache_hits - duplicate_count)
+        duplicate_count = _duplicate_execution_tool_calls(result)
+        duplicate_requests = category_counts.get("exact_duplicate", 0)
+        duplicate_message_suffix = " Cache-served repeated requests are excluded from this finding. Failure-recovery retries are excluded from this finding."
+        cache_probe_excess = max(0, result.cache_hits - duplicate_requests)
     else:
         duplicate_count = result.duplicate_tool_calls
+        duplicate_requests = duplicate_count
         duplicate_message_suffix = " Per-call categories were unavailable, so this is a coarse legacy signal and may include retries."
         cache_probe_excess = 0
 
@@ -89,8 +105,9 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
                 kind="duplicate_tool_execution",
                 observed=ratio,
                 message=(
-                    f"{duplicate_count} of {result.tool_calls} tool calls were classified as "
-                    "duplicates; inspect whether cacheable/read-only evidence could be reused earlier."
+                    f"{duplicate_count} of {result.tool_calls} tool calls were actually executed as "
+                    f"duplicates ({duplicate_requests} duplicate requests were classified); inspect whether "
+                    "cacheable/read-only evidence could be reused earlier."
                     + duplicate_message_suffix
                 ),
             )
