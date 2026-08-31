@@ -34,6 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _trial_failure_reasons(comparison) -> dict[str, object]:
+    return {
+        "baseline": getattr(comparison.baseline, "failure_reasons", {}),
+        "candidate": getattr(comparison.candidate, "failure_reasons", {}),
+        "baseline_stages": getattr(comparison.baseline, "failure_stages", {}),
+        "candidate_stages": getattr(comparison.candidate, "failure_stages", {}),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if any(count <= 0 for count in args.developers):
@@ -51,17 +60,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         comparisons = []
         invalid_trial_numbers: list[int] = []
+        invalid_trial_details: dict[str, dict[str, object]] = {}
         for trial_index in range(1, args.trials + 1):
             comparison = benchmark.run(developer_count)
             comparisons.append(comparison)
             if not comparison.sample_valid:
                 invalid_trial_numbers.append(trial_index)
+                invalid_trial_details[str(trial_index)] = _trial_failure_reasons(comparison)
 
         summary = BenchmarkABTrialSummary.from_comparisons(comparisons)
         payload = {
             "scenario": args.scenario,
             "developers": developer_count,
             "summary": summary.to_dict(),
+            "invalid_trials": invalid_trial_details,
         }
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -88,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             if invalid_trial_numbers:
                 print(f"invalid_trials={invalid_trial_numbers}")
+                for trial_number in invalid_trial_numbers:
+                    details = invalid_trial_details[str(trial_number)]
+                    print(f"invalid_trial_{trial_number}_details={details}")
 
         if args.require_valid_trial and invalid_trial_numbers:
             exit_code = 2
