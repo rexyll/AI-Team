@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime.alerting import AlertManager, AlertRule, AlertSeverity
-from runtime.alert_delivery import AlertDelivery, AlertDeliveryManager
+from runtime.alert_delivery import AlertDelivery, AlertDeliveryManager, DeliveryStatus
 from runtime.observability_dashboard import ObservabilityDashboard
 from runtime.task import Task
 
@@ -50,7 +50,13 @@ def main() -> int:
     sink = ConsoleSink()
     delivery = AlertDeliveryManager(sink)
     for index, alert in enumerate(emitted, start=1):
-        delivery.deliver(AlertDelivery(f"{snapshot.project_id}:alert:{index}", alert, status="retrying"))
+        delivery.deliver(
+            AlertDelivery(
+                f"{snapshot.project_id}:alert:{index}",
+                alert,
+                status=DeliveryStatus.RETRYING,
+            )
+        )
     return 0
 
 
