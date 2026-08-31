@@ -205,22 +205,25 @@ All Phase 17 developer-experience contracts and examples are implemented and cov
 
 Phase 18 is a fresh repository-state-driven hardening phase. It must not introduce parallel runtime implementations merely to satisfy examples or tests. New abstractions must consolidate existing production boundaries and preserve backward compatibility unless a contract explicitly requires a breaking change.
 
-### 18.1 Canonical Tool Invocation Boundary — in progress
+### 18.1 Canonical Tool Invocation Boundary — completed
 - [x] Review existing `ToolInvocationService` as the current authorization/execution boundary
 - [x] Confirm `DeveloperToolInvocationAdapter` remains a thin compatibility adapter
 - [x] Introduce a canonical immutable tool invocation request contract
 - [x] Make single and batch invocation share the same request validation path
 - [x] Preserve capability, permission, argument-validation, audit, and tracing boundaries
-- [ ] Add contract tests for single/batch/concurrent equivalence
-- [ ] Remove duplicated invocation-shape semantics from agent-facing code
+- [x] Add contract tests for single/batch/concurrent equivalence
+- [x] Remove duplicated invocation-shape semantics from agent-facing code
 - [x] Keep mutation/read-only cache decisions outside the authorization boundary
-- [ ] Full 18.1 regression verification
+- [x] Full 18.1 regression verification
 
-### 18.2 Runtime State / Persistence Consistency
-- [ ] Audit authoritative state owners and compatibility wrappers
+### 18.2 Runtime State / Persistence Consistency — in progress
+- [x] Audit authoritative state owners and compatibility wrappers
+- [x] Define a canonical `TaskStateStore` snapshot contract
+- [x] Make in-memory task-state persistence support atomic batch snapshots
+- [x] Align `AtomicTaskStateStore` with the canonical task-state contract
 - [ ] Verify recovery/replay semantics against current event projection
 - [ ] Verify lease/recovery state transitions against task lifecycle
-- [ ] Add cross-boundary consistency contracts
+- [ ] Add cross-boundary consistency contracts to the full regression suite
 - [ ] Full regression verification
 
 ### 18.3 Performance / Tool-loop Efficiency
