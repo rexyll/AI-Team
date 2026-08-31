@@ -126,13 +126,23 @@ def build_regression_report(
     return ToolLoopRegressionReport(changes=changes)
 
 
-def assert_regression_gate(report: ToolLoopRegressionReport) -> None:
-    """Enforce the release gate: correctness stable and no cost regression.
+def assert_regression_gate(
+    report: ToolLoopRegressionReport,
+    *,
+    max_cost_increase: float = 0.0,
+) -> None:
+    """Enforce correctness plus an explicit relative cost-increase threshold.
 
-    Cost metrics are intentionally limited to the optimization targets of
-    Phase 10.7. Duplicate/retry ratios may trade off independently and are
-    therefore reported but not hard-gated here.
+    ``max_cost_increase`` is a caller-selected tolerance for measurement noise.
+    The default preserves the original zero-regression contract. Duplicate and
+    retry ratios remain informational because an optimization may legitimately
+    trade one for another.
     """
+    if isinstance(max_cost_increase, bool) or not isinstance(max_cost_increase, (int, float)):
+        raise TypeError("max_cost_increase must be a number")
+    if max_cost_increase < 0:
+        raise ValueError("max_cost_increase must be >= 0")
+
     gated_metrics = (
         "llm_calls",
         "tool_calls",
@@ -143,7 +153,9 @@ def assert_regression_gate(report: ToolLoopRegressionReport) -> None:
     failures: list[str] = []
     for scenario, changes in report.changes.items():
         for metric in gated_metrics:
-            if changes[metric] > 0:
-                failures.append(f"{scenario}:{metric} increased by {changes[metric]:.3f}")
+            if changes[metric] > max_cost_increase:
+                failures.append(
+                    f"{scenario}:{metric} increased by {changes[metric]:.3f}"
+                )
     if failures:
         raise AssertionError("tool-loop regression gate failed: " + "; ".join(failures))
