@@ -20,13 +20,7 @@ class CachedToolResult:
     source_execution_id: str
 
     def context_evidence(self) -> str:
-        """Return a compact marker suitable for a repeated read-only request.
-
-        The full result remains available through ``result`` for audit/result
-        handling. A duplicate tool call does not need to inject that full result
-        into the next LLM prompt again because the original tool evidence
-        is already present in the conversation/checkpoint.
-        """
+        """Return a compact marker suitable for a repeated read-only tool request."""
         return (
             "TOOL RESULT REUSED: exact read-only request was already executed; "
             f"no tool execution was repeated. Source execution={self.source_execution_id}. "
@@ -35,13 +29,7 @@ class CachedToolResult:
 
 
 class ToolResultCache:
-    """Conservative, bounded cache for exact repeated read-only tool calls.
-
-    Only read_file/list_files are cacheable. Any tool that may mutate or execute
-    workspace state invalidates the cache, so a cached read can never survive a
-    known state-changing operation. Entries are bounded to keep long tool loops
-    from turning deduplication into an unbounded memory cache.
-    """
+    """Conservative, bounded cache for exact repeated read-only tool calls."""
 
     DEFAULT_MAX_ENTRIES = 64
 
@@ -67,12 +55,7 @@ class ToolResultCache:
         return self._invalidations
 
     def contains(self, tool_name: str, arguments: dict[str, Any]) -> bool:
-        """Return whether an exact cache entry exists without recording a lookup.
-
-        This probe is intentionally side-effect-free: it does not change hit/miss
-        counters, recency, or the cached value. It is suitable for preflight
-        decisions such as safe-batch eligibility.
-        """
+        """Return whether an exact cache entry exists without changing cache state."""
         if tool_name not in CACHEABLE_TOOLS:
             return False
         key = (tool_name, stable_hash(arguments))
