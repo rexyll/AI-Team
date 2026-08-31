@@ -150,7 +150,8 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
                 observed=float(cache_probe_excess),
                 message=(
                     f"{cache_probe_excess} cache hits were not represented by cache-reuse telemetry; "
-                    "inspect cache accounting or duplicate-request classification."
+                    f"the agent may probe the cache more than once for the same evidence. "
+                    "Inspect cache accounting or duplicate-request classification."
                 ),
             )
         )
