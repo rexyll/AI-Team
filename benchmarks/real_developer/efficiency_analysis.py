@@ -15,14 +15,11 @@ class EfficiencyFinding:
 
 
 def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]:
-    """Return a stable benchmark snapshot suitable for baseline comparison.
-
-    Duration is included as observed telemetry, but callers should prefer the
-    count/ratio fields for deterministic comparisons because wall-clock timing
-    varies across machines and provider latency.
-    """
+    """Return a stable benchmark snapshot suitable for baseline comparison."""
     if not isinstance(result, RealDeveloperBenchmarkResult):
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
+    category_counts = result.tool_call_category_counts
+    exact_duplicate_tool_calls = category_counts.get("exact_duplicate", 0)
     return {
         "scenario": result.scenario,
         "developer_count": result.developer_count,
@@ -37,6 +34,7 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         "tool_calls": result.tool_calls,
         "unique_tool_calls": result.unique_tool_calls,
         "duplicate_tool_calls": result.duplicate_tool_calls,
+        "exact_duplicate_tool_calls": exact_duplicate_tool_calls,
         "retry_tool_calls": result.retry_tool_calls,
         "tool_result_chars": result.tool_result_chars,
         "cache_hits": result.cache_hits,
@@ -47,29 +45,33 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         "llm_time_ratio": result.llm_time_ratio,
         "avg_llm_calls_per_task": result.avg_llm_calls_per_task,
         "avg_tool_calls_per_task": result.avg_tool_calls_per_task,
+        "tool_call_category_counts": category_counts,
     }
 
 
 def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tuple[EfficiencyFinding, ...]:
     """Identify measurable hotspots without claiming causality.
 
-    A duplicate tool call is a concrete optimization candidate. Multiple LLM
-    turns and LLM-dominated wall time are investigation signals; they do not
-    prove that any individual turn is unnecessary.
+    Only ``exact_duplicate`` calls are treated as direct duplicate-execution
+    candidates. Failure-recovery retries remain separately classified because
+    repeating a failed operation can be necessary for correctness.
     """
     if not isinstance(result, RealDeveloperBenchmarkResult):
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
 
     findings: list[EfficiencyFinding] = []
-    if result.duplicate_tool_calls:
+    category_counts = result.tool_call_category_counts
+    exact_duplicates = category_counts.get("exact_duplicate", 0)
+    if exact_duplicates:
+        ratio = exact_duplicates / result.tool_calls if result.tool_calls else 0.0
         findings.append(
             EfficiencyFinding(
                 kind="duplicate_tool_execution",
-                observed=result.duplicate_tool_call_ratio,
+                observed=ratio,
                 message=(
-                    f"{result.duplicate_tool_calls} of {result.tool_calls} tool calls "
-                    "were classified as duplicates; inspect whether cacheable/read-only "
-                    "evidence could be reused earlier."
+                    f"{exact_duplicates} of {result.tool_calls} tool calls were exact duplicates; "
+                    "inspect whether cacheable/read-only evidence could be reused earlier. "
+                    "Failure-recovery retries are excluded from this finding."
                 ),
             )
         )
