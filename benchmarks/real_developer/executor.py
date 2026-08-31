@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Callable
+from typing import Any, Callable
 
 from agents.developer import DeveloperAgent
 from runtime.agent_config import AgentConfig
@@ -37,6 +37,47 @@ class DeveloperAgentExecutor:
             compacting_llm = ContextCompactingLLM(llm)
             self._bindings.append(_DeveloperBinding(developer_id=f"developer-{index + 1}", agent=DeveloperAgent(config=config, llm=compacting_llm), llm=llm))
 
+    @staticmethod
+    def _recover_partial_tool_telemetry(agent: DeveloperAgent, task_id: str) -> tuple[dict[str, Any], ...]:
+        history = getattr(agent, "tool_execution_history", None)
+        if history is None or not hasattr(history, "list_for_task"):
+            return ()
+        try:
+            records = history.list_for_task(task_id)
+        except Exception:
+            return ()
+        telemetry: list[dict[str, Any]] = []
+        for record in records:
+            item = dict(getattr(record, "metadata", {}) or {})
+            item.setdefault("execution_id", record.execution_id)
+            item.setdefault("tool_name", record.tool_name)
+            item.setdefault("arguments_hash", "")
+            item.setdefault("result_hash", "")
+            item.setdefault("result_chars", len(str(record.output or "")))
+            item.setdefault("retained_result_chars", item["result_chars"])
+            item.setdefault("result_truncated", False)
+            item.setdefault("duplicate_of", None)
+            item.setdefault("retry_of", None)
+            item.setdefault("category", "other")
+            telemetry.append(item)
+        return tuple(telemetry)
+
+    @classmethod
+    def _metrics_from_partial_history(
+        cls,
+        agent: DeveloperAgent,
+        task_id: str,
+    ) -> tuple[int, int, int, int, int, int, tuple[dict[str, Any], ...]]:
+        telemetry = cls._recover_partial_tool_telemetry(agent, task_id)
+        tool_calls = len(telemetry)
+        duplicate_tool_calls = sum(1 for item in telemetry if item.get("duplicate_of"))
+        retry_tool_calls = sum(1 for item in telemetry if item.get("retry_of"))
+        unique_tool_calls = max(0, tool_calls - duplicate_tool_calls)
+        test_commands = sum(1 for item in telemetry if item.get("tool_name") == "run_command")
+        tool_result_chars = sum(int(item.get("result_chars", 0) or 0) for item in telemetry)
+        largest_tool_result_chars = max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0)
+        return tool_calls, test_commands, unique_tool_calls, duplicate_tool_calls, retry_tool_calls, tool_result_chars, telemetry
+
     def run_task(self, task: Task, developer_id: str) -> RealDeveloperTaskMetrics:
         binding = next((item for item in self._bindings if item.developer_id == developer_id), None)
         if binding is None:
@@ -51,12 +92,18 @@ class DeveloperAgentExecutor:
             raise TypeError("DeveloperAgent must use ContextCompactingLLM")
         before_events = len(compacting_llm.compaction_events)
         started = perf_counter()
-        self.manager.mark_running(task.id)
         cache_hits = cache_misses = cache_invalidations = 0
+        tool_calls = test_commands = unique_tool_calls = duplicate_tool_calls = retry_tool_calls = 0
+        tool_result_chars = largest_tool_result_chars = 0
         tool_loop_telemetry: tuple[dict, ...] = ()
         developer_decision_trace: tuple[dict, ...] = ()
         failure_reason: str | None = None
+        failure_stage: str | None = None
+        failed = False
+        result = None
+
         try:
+            self.manager.mark_running(task.id)
             result = binding.agent.run(task)
             validation = result.data.get("validation", {}) if isinstance(result.data, dict) else {}
             cache_data = result.data.get("tool_loop_cache", {}) if isinstance(result.data, dict) else {}
@@ -75,20 +122,38 @@ class DeveloperAgentExecutor:
             cache_misses = int(cache_data.get("misses", 0) or 0)
             cache_invalidations = int(cache_data.get("invalidations", 0) or 0)
             if result.status == "completed":
-                self.manager.mark_developer_completed(task.id, result.data)
-                failed = False
+                try:
+                    self.manager.mark_developer_completed(task.id, result.data)
+                except Exception as exc:
+                    failure_reason = f"{type(exc).__name__}: {exc}"
+                    failure_stage = "task_manager_transition"
+                    failed = True
+                else:
+                    failed = False
             else:
                 failure_reason = str(result.message or "Developer returned failed status")
+                failure_stage = "agent_result"
                 self.manager.mark_failed(task.id, failure_reason)
                 failed = True
         except Exception as exc:
             failure_reason = f"{type(exc).__name__}: {exc}"
-            self.manager.mark_failed(task.id, failure_reason)
+            failure_stage = "agent_run" if result is None else "task_manager_transition"
             failed = True
-            tool_calls = test_commands = unique_tool_calls = duplicate_tool_calls = retry_tool_calls = 0
-            tool_result_chars = largest_tool_result_chars = 0
-            tool_loop_telemetry = ()
-            developer_decision_trace = ()
+            if result is None or not tool_loop_telemetry:
+                (
+                    tool_calls,
+                    test_commands,
+                    unique_tool_calls,
+                    duplicate_tool_calls,
+                    retry_tool_calls,
+                    tool_result_chars,
+                    tool_loop_telemetry,
+                ) = self._metrics_from_partial_history(binding.agent, task.id)
+                largest_tool_result_chars = max((int(item.get("result_chars", 0) or 0) for item in tool_loop_telemetry), default=0)
+            try:
+                self.manager.mark_failed(task.id, failure_reason)
+            except Exception:
+                pass
 
         events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
@@ -98,7 +163,7 @@ class DeveloperAgentExecutor:
             tool_calls=tool_calls, test_commands=test_commands, unique_tool_calls=unique_tool_calls,
             duplicate_tool_calls=duplicate_tool_calls, retry_tool_calls=retry_tool_calls, tool_result_chars=tool_result_chars,
             largest_tool_result_chars=largest_tool_result_chars, cache_hits=cache_hits, cache_misses=cache_misses,
-            cache_invalidations=cache_invalidations, failed=failed, failure_reason=failure_reason,
+            cache_invalidations=cache_invalidations, failed=failed, failure_reason=failure_reason, failure_stage=failure_stage,
             llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
             tool_loop_telemetry=tool_loop_telemetry,
             developer_decision_trace=developer_decision_trace,
