@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from typing import Iterator
 
 import security.workspace as workspace_module
-from security.workspace import set_default_workspace_root
+from security.workspace import PROJECT_ROOT, set_default_workspace_root
 
 
 def _build_reference_document() -> str:
@@ -187,9 +187,10 @@ def test_paginate_rejects_invalid_page() -> None:
 
 @contextmanager
 def isolated_benchmark_workspace() -> Iterator[Path]:
-    """Create a fresh benchmark project and temporarily make it the sandbox root."""
+    """Create a fresh benchmark project under the authorized project sandbox."""
     previous = workspace_module.DEFAULT_SANDBOX
-    with TemporaryDirectory(prefix="ai_team_real_developer_") as directory:
+    PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="ai_team_real_developer_", dir=str(PROJECT_ROOT)) as directory:
         root = Path(directory).resolve()
         for relative, content in _FIXTURE_FILES.items():
             target = root / relative
