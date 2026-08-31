@@ -42,6 +42,8 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         "cache_misses": result.cache_misses,
         "cache_invalidations": result.cache_invalidations,
         "cache_probe_excess": cache_probe_excess,
+        "llm_decision_trace_count": result.decision_trace_count,
+        "llm_decision_trace_reason_counts": result.decision_trace_reason_counts,
         "duplicate_tool_call_ratio": result.duplicate_tool_call_ratio,
         "retry_tool_call_ratio": result.retry_tool_call_ratio,
         "llm_time_ratio": result.llm_time_ratio,
