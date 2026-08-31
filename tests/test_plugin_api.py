@@ -138,8 +138,8 @@ def test_plugin_tool_adapter_binds_role_and_preserves_runtime_result_boundary():
     result = adapter.invoke(
         task_id="TASK-PLUGIN-001",
         execution_id="EXEC-PLUGIN-001",
-        tool_name="read_file",
-        arguments={"path": "README.md"},
+        tool_name="write_file",
+        arguments={"path": "README.md", "content": "should-not-write"},
     )
 
     assert result.success is False
@@ -148,7 +148,7 @@ def test_plugin_tool_adapter_binds_role_and_preserves_runtime_result_boundary():
     assert service.audit.count() == 1
     record = service.audit.records()[0]
     assert record.agent_role == "reviewer"
-    assert record.tool_name == "read_file"
+    assert record.tool_name == "write_file"
 
 
 def test_plugin_tool_adapter_cannot_override_host_assigned_role():
