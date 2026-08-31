@@ -239,6 +239,8 @@ Current evidence baseline from the existing real-Developer telemetry includes a 
 
 The benchmark layer now exposes deterministic snapshot fields and evidence-based efficiency findings, while regression gates accept an explicit relative cost tolerance without weakening the default zero-increase policy.
 
+Exact-duplicate analysis is now separated from failure-recovery retry analysis. Only calls classified as `exact_duplicate` are treated as direct duplicate-execution optimization candidates; required failure-recovery retries remain correctness-sensitive and are not counted as wasted exploration.
+
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
 - [ ] Define stable integration contracts
