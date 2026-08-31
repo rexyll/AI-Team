@@ -5,10 +5,9 @@ from runtime.task import Task
 
 _REFERENCE_READ_REQUIREMENT = (
     "Before editing, inspect the relevant source and test files. "
-    "Also read docs/benchmark_reference.md exactly twice as two separate "
-    "read_file calls before modification. This repeated read is intentional "
-    "controlled benchmark workload; do not skip the second read. Do not look "
-    "for tasks.json; the task definition is already provided here. "
+    "Read docs/benchmark_reference.md once before modification as additional repository evidence; "
+    "read it again only if new evidence shows the first read is insufficient. "
+    "Do not look for tasks.json; the task definition is already provided here. "
     "After editing, run the relevant test command exactly as specified. "
     "Use only repository-safe pytest commands such as `python -m pytest tests/test_helpers.py -q`. "
     "Do NOT use `python -c`, PowerShell inline code, temporary scripts, shell chaining, "
