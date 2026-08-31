@@ -197,7 +197,7 @@ EXECUTION REQUIREMENT
                         if call.name not in CACHEABLE_TOOLS:
                             batch_possible = False
                             break
-                        if cache.lookup(call.name, validated) is not None:
+                        if cache.contains(call.name, validated):
                             batch_possible = False
                             break
                         batch_candidates.append({"call_id": call.call_id, "name": call.name, "arguments": dict(validated)})
