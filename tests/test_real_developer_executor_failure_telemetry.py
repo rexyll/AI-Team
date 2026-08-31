@@ -2,6 +2,7 @@ from runtime.agent_result import AgentResult
 from runtime.llm.base import BaseLLM
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.tool_execution_record import ToolExecutionRecord
 
 from benchmarks.real_developer.executor import DeveloperAgentExecutor
@@ -55,6 +56,7 @@ def test_agent_exception_preserves_partial_tool_telemetry() -> None:
     task = Task("TASK-EXEC-FAIL-001", "failure", "exercise executor failure", "developer", status="ready")
     executor, manager = _executor(task)
     binding = executor._bindings[0]
+    binding.agent.tool_execution_history = ToolExecutionHistory()
 
     def exploding_run(current_task: Task):
         binding.agent.tool_execution_history.append(_record(current_task.id))
