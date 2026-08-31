@@ -23,8 +23,12 @@ def main() -> int:
     )
     manager = TaskManager([task])
     agent = MockAgent("developer")
+
+    manager.mark_ready(task.id)
+    manager.mark_running(task.id)
     result = agent.run(task)
     manager.mark_completed(task.id, result)
+
     final_task = manager.get_task(task.id)
     print(f"task={final_task.id} status={final_task.status} agent={result.agent}")
     return 0 if final_task.status == "completed" else 1
