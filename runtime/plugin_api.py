@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 PLUGIN_API_VERSION = "1.0"
+
 
 class PluginError(RuntimeError):
     """Base error for plugin contract violations."""
 
+
 class PluginLifecycleError(PluginError):
     """Raised when plugin lifecycle operations are invalid."""
+
 
 @dataclass(frozen=True)
 class PluginMetadata:
@@ -18,6 +21,7 @@ class PluginMetadata:
     version: str
     api_version: str = PLUGIN_API_VERSION
     capabilities: frozenset[str] = frozenset()
+    extension_points: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -26,21 +30,39 @@ class PluginMetadata:
             raise ValueError("plugin version must be non-empty")
         if self.api_version != PLUGIN_API_VERSION:
             raise ValueError(f"unsupported plugin API version: {self.api_version}")
-        if any(not capability.strip() for capability in self.capabilities):
+        if any(not value.strip() for value in self.capabilities):
             raise ValueError("plugin capabilities must be non-empty strings")
+        if any(not value.strip() for value in self.extension_points):
+            raise ValueError("plugin extension points must be non-empty strings")
+
 
 class PluginContext(Protocol):
+    """Host-owned context; implementations must expose only approved APIs."""
+
     def has_capability(self, capability: str) -> bool: ...
+
+    def get_extension(self, extension_point: str) -> Any: ...
+
 
 class Plugin(Protocol):
     metadata: PluginMetadata
+
     def initialize(self, context: PluginContext) -> None: ...
+
     def shutdown(self) -> None: ...
 
+
 class PluginHost:
-    """Lifecycle manager enforcing declared and allowed capabilities."""
-    def __init__(self, *, allowed_capabilities: frozenset[str] = frozenset()) -> None:
+    """Lifecycle manager enforcing declared/allowed capabilities and extensions."""
+
+    def __init__(
+        self,
+        *,
+        allowed_capabilities: frozenset[str] = frozenset(),
+        extensions: dict[str, Any] | None = None,
+    ) -> None:
         self._allowed_capabilities = frozenset(allowed_capabilities)
+        self._extensions = dict(extensions or {})
         self._plugins: dict[str, Plugin] = {}
         self._initialized: set[str] = set()
 
@@ -60,6 +82,12 @@ class PluginHost:
                 f"plugin '{metadata.name}' requests denied capabilities: "
                 + ", ".join(sorted(denied))
             )
+        missing_extensions = metadata.extension_points - self._extensions.keys()
+        if missing_extensions:
+            raise PluginError(
+                f"plugin '{metadata.name}' requests unavailable extension points: "
+                + ", ".join(sorted(missing_extensions))
+            )
         self._plugins[metadata.name] = plugin
 
     def initialize(self, name: str, context: PluginContext) -> None:
@@ -72,6 +100,11 @@ class PluginHost:
             if not context.has_capability(capability):
                 raise PermissionError(
                     f"plugin '{name}' capability not granted by context: {capability}"
+                )
+        for extension_point in plugin.metadata.extension_points:
+            if context.get_extension(extension_point) is not self._extensions[extension_point]:
+                raise PermissionError(
+                    f"plugin '{name}' extension point not provided by host context: {extension_point}"
                 )
         plugin.initialize(context)
         self._initialized.add(name)
