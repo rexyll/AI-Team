@@ -2,6 +2,7 @@ import pytest
 
 from runtime.plugin_api import (
     PLUGIN_API_VERSION,
+    PluginError,
     PluginHost,
     PluginLifecycleError,
     PluginMetadata,
@@ -88,7 +89,7 @@ def test_extension_point_must_be_hosted_and_context_bound():
     plugin = ExtensionPlugin()
     plugin.metadata = metadata
 
-    with pytest.raises(Exception, match="unavailable extension points"):
+    with pytest.raises(PluginError, match="unavailable extension points"):
         PluginHost().register(plugin)
 
     host = PluginHost(extensions={"dashboard": extension})
@@ -108,7 +109,7 @@ def test_tools_extension_rejects_raw_tool_registry():
     plugin = _Plugin()
     plugin.metadata = metadata
 
-    with pytest.raises(Exception, match="tools extension must be a PluginToolInvocationAdapter"):
+    with pytest.raises(PluginError, match="tools extension must be a PluginToolInvocationAdapter"):
         PluginHost(extensions={TOOL_EXTENSION_POINT: ToolRegistry()}).register(plugin)
 
 
