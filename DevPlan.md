@@ -92,7 +92,6 @@ Implemented in this increment:
 - [x] Provider-independent metrics registry
 - [x] Counters, gauges, histograms
 - [x] Thread-safe aggregation
-- [x] Low-cardinality labels
 - [x] Workflow event metrics
 - [x] LLM / tool / reviewer metrics coverage
 - [x] Regression coverage
@@ -153,7 +152,6 @@ Implemented in this increment:
 - [x] Delivery retry / failure semantics
 - [x] Alert delivery observability
 - [x] Alert delivery regression tests
-- [x] Full Phase 16.6 regression verification
 
 # Phase 17 — Developer Experience
 
@@ -181,7 +179,6 @@ Implemented in this increment:
 - [x] Capability/security boundary for plugins
 - [x] Plugin regression tests
 - [x] Documentation
-- [x] Full Phase 17.3 regression verification
 
 ### 17.4 Documentation — completed
 - [x] Align README/user guide/version references with current runtime
@@ -230,7 +227,7 @@ The local full-suite verification for this phase passed after the recovery/proje
 ### 18.3 Performance / Tool-loop Efficiency — in progress
 - [x] Establish deterministic performance baselines from existing telemetry
 - [x] Identify remaining duplicate tool execution and unnecessary LLM turns
-- [ ] Improve only evidence-backed bottlenecks
+- [x] Improve only evidence-backed bottlenecks
 - [ ] Preserve correctness and security boundaries while optimizing
 - [x] Add regression thresholds
 
@@ -242,11 +239,13 @@ Exact-duplicate analysis is separated from failure-recovery retry analysis. Only
 
 A cache-probe diagnostic distinguishes a genuine duplicate tool call from repeated cache inspection. When per-call category telemetry is available, `cache_probe_excess = max(0, cache_hits - exact_duplicate_tool_calls)` identifies possible duplicate cache probing without changing runtime behavior.
 
-A side-effect-free `ToolResultCache.contains()` probe is now available for preflight decisions. It does not change hit/miss counters, LRU recency, or cached values. The Developer loop has been switched to use this probe for safe-batch preflight after real benchmark telemetry demonstrated redundant cache probing; the next step is to validate net latency/cost impact with a valid A/B sample.
+A side-effect-free `ToolResultCache.contains()` probe is now available for preflight decisions. It does not change hit/miss counters, LRU recency, or cached values. The Developer loop has been switched to use this probe for safe-batch preflight after real benchmark telemetry demonstrated redundant cache probing; controlled A/B validation remains required because earlier live samples were invalid.
 
 The real-Developer benchmark now preserves Developer decision traces through Executor → task metrics → aggregate benchmark results. A/B comparison reports include LLM-call, duration, token, exact-duplicate, cache-probe, and decision-trace deltas plus decision-reason counts. This provides the evidence surface required before changing the Developer loop for performance.
 
 The live benchmark fixture was corrected to create isolated temporary workspaces under the authorized `projects/` sandbox root rather than the operating-system temp directory. This keeps filesystem isolation intact while allowing the terminal workspace policy to execute real verification commands. A failed live sample with `sample_valid=False` must not be used as performance evidence.
+
+Live benchmark runs subsequently exposed a provider compatibility failure independent of the cache candidate: both baseline and candidate received an upstream `No user query found in messages` error during multi-turn tool continuation. AI-Team message construction retains the original user task, but some OpenAI-compatible/Qwen-style chat templates reject a tool-result tail without a fresh user continuation. A narrow Agnes-only compatibility adapter now appends a deterministic continuation user message after a tool-result tail; non-Agnes providers retain the standard message shape. Focused provider regression coverage protects both behaviors.citeturn484992search0turn484992search1
 
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
