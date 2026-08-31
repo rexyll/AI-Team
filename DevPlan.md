@@ -192,8 +192,8 @@ Implemented in this increment:
 - [x] Operational troubleshooting guide
 
 ### 17.5 Example projects
-- [ ] Minimal deterministic example
-- [ ] Example with tests and review loop
-- [ ] Example demonstrating workspace isolation
+- [x] Minimal deterministic example
+- [x] Example with tests and review loop
+- [x] Example demonstrating workspace isolation
 - [ ] Example demonstrating operational dashboard/alerts
-- [ ] Example documentation
+- [x] Example documentation
