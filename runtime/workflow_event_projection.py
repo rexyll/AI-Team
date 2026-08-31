@@ -228,8 +228,10 @@ class WorkflowEventProjector:
             state["lifecycle_status"] = TaskStatus.READY.value
             state["retry_attempt"] = event.payload["retry_attempt"]
             state["max_retries"] = event.payload["max_retries"]
-            # Retry reason is a control-flow diagnostic, not a task error.
-            # Preserve any error already captured from the preceding failure.
+            # Retry reason is a control-flow diagnostic, not the active task error.
+            # TaskManager.retry_task() clears the authoritative task error when
+            # transitioning FAILED -> READY, so replay must clear it as well.
+            state["error"] = None
         elif event_type == "task_completed":
             state["lifecycle_status"] = TaskStatus.COMPLETED.value
 
