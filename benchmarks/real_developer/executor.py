@@ -55,6 +55,7 @@ class DeveloperAgentExecutor:
         cache_hits = cache_misses = cache_invalidations = 0
         tool_loop_telemetry: tuple[dict, ...] = ()
         developer_decision_trace: tuple[dict, ...] = ()
+        failure_reason: str | None = None
         try:
             result = binding.agent.run(task)
             validation = result.data.get("validation", {}) if isinstance(result.data, dict) else {}
@@ -77,15 +78,18 @@ class DeveloperAgentExecutor:
                 self.manager.mark_developer_completed(task.id, result.data)
                 failed = False
             else:
-                self.manager.mark_failed(task.id, result.message)
+                failure_reason = str(result.message or "Developer returned failed status")
+                self.manager.mark_failed(task.id, failure_reason)
                 failed = True
         except Exception as exc:
-            self.manager.mark_failed(task.id, str(exc))
+            failure_reason = f"{type(exc).__name__}: {exc}"
+            self.manager.mark_failed(task.id, failure_reason)
             failed = True
             tool_calls = test_commands = unique_tool_calls = duplicate_tool_calls = retry_tool_calls = 0
             tool_result_chars = largest_tool_result_chars = 0
             tool_loop_telemetry = ()
             developer_decision_trace = ()
+
         events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
             task_id=task.id, developer_id=developer_id, duration_seconds=perf_counter() - started,
@@ -94,7 +98,8 @@ class DeveloperAgentExecutor:
             tool_calls=tool_calls, test_commands=test_commands, unique_tool_calls=unique_tool_calls,
             duplicate_tool_calls=duplicate_tool_calls, retry_tool_calls=retry_tool_calls, tool_result_chars=tool_result_chars,
             largest_tool_result_chars=largest_tool_result_chars, cache_hits=cache_hits, cache_misses=cache_misses,
-            cache_invalidations=cache_invalidations, failed=failed, llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
+            cache_invalidations=cache_invalidations, failed=failed, failure_reason=failure_reason,
+            llm_profiles=tuple(binding.llm.stats.profiles[before_profiles:]),
             tool_loop_telemetry=tool_loop_telemetry,
             developer_decision_trace=developer_decision_trace,
             compaction_count=sum(1 for event in events if event["compacted"]),
