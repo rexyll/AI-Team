@@ -45,14 +45,38 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"scenario={args.scenario} developers={developer_count} "
                 f"sample_valid={comparison.sample_valid} "
+                f"correctness_preserved={comparison.correctness_preserved}"
+            )
+            print(
+                f"baseline_llm_calls={baseline.llm_calls} candidate_llm_calls={candidate.llm_calls} "
+                f"llm_calls_delta={comparison.llm_calls_delta} "
+                f"llm_call_change_ratio={comparison.llm_call_change_ratio:.4f}"
+            )
+            print(
+                f"baseline_duration_seconds={baseline.duration_seconds:.3f} "
+                f"candidate_duration_seconds={candidate.duration_seconds:.3f} "
+                f"duration_delta={comparison.duration_delta:.3f} "
+                f"duration_change_ratio={comparison.duration_change_ratio:.4f}"
+            )
+            print(
                 f"baseline_input_tokens={baseline.input_tokens} candidate_input_tokens={candidate.input_tokens} "
                 f"input_token_delta={comparison.input_token_delta} "
                 f"input_token_change_ratio={comparison.input_token_change_ratio:.4f}"
             )
             print(
-                f"baseline_context_growth={baseline.max_context_growth_ratio:.3f} "
-                f"candidate_context_growth={candidate.max_context_growth_ratio:.3f} "
-                f"context_growth_delta={comparison.max_context_growth_delta:.3f}"
+                f"baseline_exact_duplicate_tool_calls={baseline.tool_call_category_counts.get('exact_duplicate', 0)} "
+                f"candidate_exact_duplicate_tool_calls={candidate.tool_call_category_counts.get('exact_duplicate', 0)} "
+                f"exact_duplicate_tool_calls_delta={comparison.exact_duplicate_tool_calls_delta}"
+            )
+            print(
+                f"baseline_cache_probe_excess={comparison._cache_probe_excess(baseline)} "
+                f"candidate_cache_probe_excess={comparison._cache_probe_excess(candidate)} "
+                f"cache_probe_excess_delta={comparison.cache_probe_excess_delta}"
+            )
+            print(
+                f"baseline_decision_traces={baseline.decision_trace_count} "
+                f"candidate_decision_traces={candidate.decision_trace_count} "
+                f"decision_trace_delta={comparison.decision_trace_delta}"
             )
             print(
                 f"baseline_tool_result_chars={baseline.tool_result_chars} "
@@ -63,11 +87,6 @@ def main(argv: list[str] | None = None) -> int:
                 f"baseline_duplicate_tool_calls={baseline.duplicate_tool_calls} "
                 f"candidate_duplicate_tool_calls={candidate.duplicate_tool_calls} "
                 f"duplicate_tool_calls_delta={comparison.duplicate_tool_calls_delta}"
-            )
-            print(
-                f"baseline_completed={baseline.completed} candidate_completed={candidate.completed} "
-                f"baseline_failed={baseline.failed} candidate_failed={candidate.failed} "
-                f"correctness_preserved={comparison.correctness_preserved}"
             )
     return 0
 
