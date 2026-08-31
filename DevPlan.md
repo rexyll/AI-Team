@@ -168,12 +168,13 @@ Implemented in this increment:
 - [x] Add CLI parser and JSON-output regression coverage
 - [x] Full Phase 17.1 regression verification
 
-### 17.2 Configuration
-- [ ] Define a stable configuration contract
-- [ ] Provider/model configuration validation
-- [ ] CLI/environment precedence rules
-- [ ] Configuration regression tests
+### 17.2 Configuration — in progress
+- [x] Define a stable configuration contract
+- [x] Provider/model configuration validation
+- [x] CLI/environment precedence rules
+- [x] Configuration regression tests
 - [ ] Documentation
+- [ ] Full Phase 17.2 regression verification
 
 ### 17.3 Plugin API
 - [ ] Define extension points and lifecycle
