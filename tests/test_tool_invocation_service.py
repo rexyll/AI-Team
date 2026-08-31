@@ -37,6 +37,22 @@ def _registry(calls: list[dict[str, Any]]) -> ToolRegistry:
     return registry
 
 
+def _record_shape(service: ToolInvocationService) -> list[dict[str, Any]]:
+    return [
+        {
+            "execution_id": record.execution_id,
+            "task_id": record.task_id,
+            "agent_role": record.agent_role,
+            "tool_name": record.tool_name,
+            "status": record.status,
+            "arguments": record.arguments,
+            "output": record.output,
+            "error": record.error,
+        }
+        for record in service.audit.records()
+    ]
+
+
 def test_authorized_invocation_executes_and_audits() -> None:
     calls: list[dict[str, Any]] = []
     service = ToolInvocationService(registry=_registry(calls))
@@ -189,3 +205,68 @@ def test_invoke_many_rejects_duplicate_execution_ids_before_execution() -> None:
             {"execution_id": "DUP", "tool_name": "read_file", "arguments": {"path": "b.py"}},
         ])
     assert calls == []
+
+
+def test_single_batch_and_concurrent_paths_are_contract_equivalent() -> None:
+    invocations = [
+        {"execution_id": "EQ-A", "tool_name": "read_file", "arguments": {"path": "a.py"}},
+        {"execution_id": "EQ-B", "tool_name": "read_file", "arguments": {"path": "b.py"}},
+        {"execution_id": "EQ-C", "tool_name": "read_file", "arguments": {"path": "c.py"}},
+    ]
+
+    single_calls: list[dict[str, Any]] = []
+    single = ToolInvocationService(registry=_registry(single_calls))
+    single_results = [
+        single.invoke(
+            role="developer",
+            task_id="TASK-EQ",
+            execution_id=item["execution_id"],
+            tool_name=item["tool_name"],
+            arguments=item["arguments"],
+        )
+        for item in invocations
+    ]
+
+    batch_calls: list[dict[str, Any]] = []
+    batch = ToolInvocationService(registry=_registry(batch_calls))
+    batch_results = batch.invoke_many(role="developer", task_id="TASK-EQ", invocations=invocations)
+
+    concurrent_calls: list[dict[str, Any]] = []
+    concurrent = ToolInvocationService(registry=_registry(concurrent_calls))
+    concurrent_results = concurrent.invoke_many_concurrent(
+        role="developer", task_id="TASK-EQ", invocations=invocations, max_workers=3
+    )
+
+    assert [result.output for result in single_results] == ["content:a.py", "content:b.py", "content:c.py"]
+    assert [result.output for result in batch_results] == [result.output for result in single_results]
+    assert [result.output for result in concurrent_results] == [result.output for result in single_results]
+    assert single_calls == batch_calls == concurrent_calls == [
+        {"path": "a.py"}, {"path": "b.py"}, {"path": "c.py"}
+    ]
+    assert _record_shape(single) == _record_shape(batch) == _record_shape(concurrent)
+
+
+def test_single_batch_and_concurrent_paths_share_rejection_contract() -> None:
+    malformed = {"execution_id": "EQ-BAD", "tool_name": "read_file", "arguments": {"path": 123}}
+
+    services = [
+        ToolInvocationService(registry=_registry([])),
+        ToolInvocationService(registry=_registry([])),
+        ToolInvocationService(registry=_registry([])),
+    ]
+    single, batch, concurrent = services
+
+    single_result = single.invoke(
+        role="developer", task_id="TASK-EQ", execution_id="EQ-BAD",
+        tool_name="read_file", arguments={"path": 123},
+    )
+    batch_result = batch.invoke_many(role="developer", task_id="TASK-EQ", invocations=[malformed])[0]
+    concurrent_result = concurrent.invoke_many_concurrent(
+        role="developer", task_id="TASK-EQ", invocations=[malformed], max_workers=1
+    )[0]
+
+    assert [result.success for result in (single_result, batch_result, concurrent_result)] == [False, False, False]
+    assert [result.error.category for result in (single_result, batch_result, concurrent_result)] == [
+        "argument_validation", "argument_validation", "argument_validation"
+    ]
+    assert _record_shape(single) == _record_shape(batch) == _record_shape(concurrent)
