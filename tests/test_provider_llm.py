@@ -142,7 +142,8 @@ def test_non_agnes_provider_preserves_standard_tool_continuation_shape(monkeypat
     assert messages[-1] == {"role": "tool", "tool_call_id": "call-1", "content": "content"}
 
 
-def test_agnes_request_diagnostics_are_disabled_by_default(capsys):
+def test_agnes_request_diagnostics_are_disabled_by_default(monkeypatch, capsys):
+    monkeypatch.delenv("AGNES_REQUEST_DIAGNOSTICS", raising=False)
     llm = ProviderLLM(model="agnes-2.5-flash", provider_profile="agnes", client_instance=FakeClient())
     llm._log_request_diagnostic(
         {"model": llm.model, "messages": [{"role": "user", "content": "secret"}]},
