@@ -60,6 +60,7 @@ class DeveloperAgentExecutor:
             item.setdefault("duplicate_of", None)
             item.setdefault("retry_of", None)
             item.setdefault("category", "other")
+            item.setdefault("cache_reused", False)
             telemetry.append(item)
         return tuple(telemetry)
 
@@ -91,6 +92,9 @@ class DeveloperAgentExecutor:
         developer_id: str,
         failure_reason: str | None,
         tool_loop_telemetry: tuple[dict[str, Any], ...],
+        cache_hits: int = 0,
+        cache_misses: int = 0,
+        cache_invalidations: int = 0,
     ) -> None:
         if not cls._diagnostics_enabled():
             return
@@ -102,6 +106,8 @@ class DeveloperAgentExecutor:
         print(f"tool_result_chars={[int(item.get('result_chars', 0) or 0) for item in tool_loop_telemetry[-5:]]}")
         print(f"duplicate_flags={[bool(item.get('duplicate_of')) for item in tool_loop_telemetry[-5:]]}")
         print(f"retry_flags={[bool(item.get('retry_of')) for item in tool_loop_telemetry[-5:]]}")
+        print(f"cache_reused_flags={[bool(item.get('cache_reused')) for item in tool_loop_telemetry[-5:]]}")
+        print(f"cache_hits={cache_hits} cache_misses={cache_misses} cache_invalidations={cache_invalidations}")
 
     def run_task(self, task: Task, developer_id: str) -> RealDeveloperTaskMetrics:
         binding = next((item for item in self._bindings if item.developer_id == developer_id), None)
@@ -165,6 +171,9 @@ class DeveloperAgentExecutor:
                     developer_id=developer_id,
                     failure_reason=failure_reason,
                     tool_loop_telemetry=tool_loop_telemetry,
+                    cache_hits=cache_hits,
+                    cache_misses=cache_misses,
+                    cache_invalidations=cache_invalidations,
                 )
         except Exception as exc:
             failure_reason = f"{type(exc).__name__}: {exc}"
@@ -191,6 +200,9 @@ class DeveloperAgentExecutor:
                     developer_id=developer_id,
                     failure_reason=failure_reason,
                     tool_loop_telemetry=tool_loop_telemetry,
+                    cache_hits=cache_hits,
+                    cache_misses=cache_misses,
+                    cache_invalidations=cache_invalidations,
                 )
 
         events = compacting_llm.compaction_events[before_events:]
