@@ -24,8 +24,8 @@ class CachedToolResult:
 
         The full result remains available through ``result`` for audit/result
         handling. A duplicate tool call does not need to inject that full result
-        into the next LLM prompt again because the original tool evidence is
-        already present in the conversation/checkpoint.
+        into the next LLM prompt again because the original tool evidence
+        is already present in the conversation/checkpoint.
         """
         return (
             "TOOL RESULT REUSED: exact read-only request was already executed; "
@@ -65,6 +65,18 @@ class ToolResultCache:
     @property
     def invalidations(self) -> int:
         return self._invalidations
+
+    def contains(self, tool_name: str, arguments: dict[str, Any]) -> bool:
+        """Return whether an exact cache entry exists without recording a lookup.
+
+        This probe is intentionally side-effect-free: it does not change hit/miss
+        counters, recency, or the cached value. It is suitable for preflight
+        decisions such as safe-batch eligibility.
+        """
+        if tool_name not in CACHEABLE_TOOLS:
+            return False
+        key = (tool_name, stable_hash(arguments))
+        return key in self._entries
 
     def lookup(self, tool_name: str, arguments: dict[str, Any]) -> CachedToolResult | None:
         if tool_name not in CACHEABLE_TOOLS:
