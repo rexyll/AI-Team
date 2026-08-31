@@ -56,6 +56,10 @@ def test_summary_uses_only_valid_trials_for_medians() -> None:
     assert summary.candidate_success_rate == 1.0
     assert summary.median_duration_change_ratio == 0.1
     assert summary.to_dict()["valid_sample_rate"] == 2 / 3
+    assert summary.duration_improved_trials == 1
+    assert summary.llm_calls_nonworse_trials == 2
+    assert summary.input_tokens_nonworse_trials == 2
+    assert summary.duplicate_execution_nonworse_trials == 2
 
 
 def test_summary_has_none_for_performance_medians_when_all_trials_invalid() -> None:
@@ -67,6 +71,10 @@ def test_summary_has_none_for_performance_medians_when_all_trials_invalid() -> N
     assert summary.median_duration_change_ratio is None
     assert summary.to_dict()["median"]["duration_change_ratio"] is None
     assert summary.verdict == "insufficient_valid_samples"
+    assert summary.duration_improved_trials == 0
+    assert summary.llm_calls_nonworse_trials == 0
+    assert summary.input_tokens_nonworse_trials == 0
+    assert summary.duplicate_execution_nonworse_trials == 0
 
 
 def test_summary_rejects_reliability_regression_before_efficiency_claim() -> None:
@@ -101,6 +109,10 @@ def test_summary_marks_unambiguous_efficiency_improvement() -> None:
     assert summary.efficiency_improved is True
     assert summary.verdict == "efficiency_improved"
     assert summary.cache_effect_observed is False
+    assert summary.duration_improved_trials == 4
+    assert summary.llm_calls_nonworse_trials == 4
+    assert summary.input_tokens_nonworse_trials == 4
+    assert summary.duplicate_execution_nonworse_trials == 4
 
 
 def test_summary_defaults_to_no_clear_gain_when_duration_improves_but_cost_rises() -> None:
@@ -115,6 +127,9 @@ def test_summary_defaults_to_no_clear_gain_when_duration_improves_but_cost_rises
     assert summary.reliability_preserved is True
     assert summary.efficiency_improved is False
     assert summary.verdict == "no_clear_efficiency_gain"
+    assert summary.duration_improved_trials == 4
+    assert summary.llm_calls_nonworse_trials == 0
+    assert summary.input_tokens_nonworse_trials == 0
 
 
 def test_cache_effect_is_observed_when_any_valid_trial_has_a_cache_hit() -> None:
@@ -130,6 +145,26 @@ def test_cache_effect_is_observed_when_any_valid_trial_has_a_cache_hit() -> None
     assert summary.median_cache_hits_delta == 0.0
     assert summary.cache_hit_observations == 1
     assert summary.cache_effect_observed is True
+
+
+def test_to_dict_exposes_valid_trial_distribution_counts() -> None:
+    summary = BenchmarkABTrialSummary.from_comparisons(
+        (
+            _comparison(valid=True, duration_delta=-1.0, llm_delta=-1, input_delta=-1),
+            _comparison(valid=True, duration_delta=1.0, llm_delta=1, input_delta=1),
+            _comparison(valid=True, duration_delta=-1.0, llm_delta=0, input_delta=0),
+            _comparison(valid=True, duration_delta=-1.0, llm_delta=0, input_delta=0),
+        )
+    )
+
+    payload = summary.to_dict()
+    assert payload["valid_trial_counts"] == {
+        "duration_improved": 3,
+        "llm_calls_nonworse": 3,
+        "input_tokens_nonworse": 3,
+        "duplicate_execution_nonworse": 4,
+        "cache_hit_observations": 0,
+    }
 
 
 def test_trials_cli_rejects_non_positive_trials() -> None:
