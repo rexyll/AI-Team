@@ -5,7 +5,11 @@ from runtime.plugin_api import (
     PluginHost,
     PluginLifecycleError,
     PluginMetadata,
+    TOOL_EXTENSION_POINT,
 )
+from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
+from runtime.tool_invocation_service import ToolInvocationService
+from tools.registry import ToolRegistry
 
 
 class _Context:
@@ -93,3 +97,68 @@ def test_extension_point_must_be_hosted_and_context_bound():
         host.initialize("extension-demo", _Context())
     host.initialize("extension-demo", _Context(extensions={"dashboard": extension}))
     assert plugin.calls == ["initialize"]
+
+
+def test_tools_extension_rejects_raw_tool_registry():
+    metadata = PluginMetadata(
+        "raw-tools",
+        "1.0",
+        extension_points=frozenset({TOOL_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+
+    with pytest.raises(Exception, match="tools extension must be a PluginToolInvocationAdapter"):
+        PluginHost(extensions={TOOL_EXTENSION_POINT: ToolRegistry()}).register(plugin)
+
+
+def test_tools_extension_requires_canonical_invocation_adapter():
+    metadata = PluginMetadata(
+        "safe-tools",
+        "1.0",
+        extension_points=frozenset({TOOL_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+    service = ToolInvocationService()
+    adapter = PluginToolInvocationAdapter(service, role="developer")
+    host = PluginHost(extensions={TOOL_EXTENSION_POINT: adapter})
+
+    host.register(plugin)
+    host.initialize("safe-tools", _Context(extensions={TOOL_EXTENSION_POINT: adapter}))
+    assert plugin.calls == ["initialize"]
+    assert adapter.role == "developer"
+
+
+def test_plugin_tool_adapter_binds_role_and_preserves_runtime_result_boundary():
+    service = ToolInvocationService()
+    adapter = PluginToolInvocationAdapter(service, role="reviewer")
+
+    result = adapter.invoke(
+        task_id="TASK-PLUGIN-001",
+        execution_id="EXEC-PLUGIN-001",
+        tool_name="read_file",
+        arguments={"path": "README.md"},
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "TOOL_PERMISSION_DENIED"
+    assert service.audit.count() == 1
+    record = service.audit.records()[0]
+    assert record.agent_role == "reviewer"
+    assert record.tool_name == "read_file"
+
+
+def test_plugin_tool_adapter_cannot_override_host_assigned_role():
+    service = ToolInvocationService()
+    adapter = PluginToolInvocationAdapter(service, role="architect")
+
+    with pytest.raises(TypeError):
+        adapter.invoke(
+            role="developer",
+            task_id="TASK-PLUGIN-002",
+            execution_id="EXEC-PLUGIN-002",
+            tool_name="read_file",
+            arguments={"path": "README.md"},
+        )
