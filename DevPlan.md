@@ -201,5 +201,49 @@ Implemented in this increment:
 ## Phase 17 acceptance
 All Phase 17 developer-experience contracts and examples are implemented and covered by the full regression suite. The current development branch is the accepted working branch for these changes.
 
-## Next planning gate
-Phase 17.5 is the final node currently defined in this development plan. Any Phase 18 work should be planned from a fresh repository-state review rather than inferred or silently added to this plan.
+# Phase 18 — Production Architecture Consolidation
+
+Phase 18 is a fresh repository-state-driven hardening phase. It must not introduce parallel runtime implementations merely to satisfy examples or tests. New abstractions must consolidate existing production boundaries and preserve backward compatibility unless a contract explicitly requires a breaking change.
+
+### 18.1 Canonical Tool Invocation Boundary — in progress
+- [x] Review existing `ToolInvocationService` as the current authorization/execution boundary
+- [x] Confirm `DeveloperToolInvocationAdapter` remains a thin compatibility adapter
+- [ ] Introduce a canonical immutable tool invocation request contract
+- [ ] Make single and batch invocation share the same request validation path
+- [ ] Preserve capability, permission, argument-validation, audit, and tracing boundaries
+- [ ] Add contract tests for single/batch/concurrent equivalence
+- [ ] Remove duplicated invocation-shape semantics from agent-facing code
+- [ ] Keep mutation/read-only cache decisions outside the authorization boundary
+- [ ] Full 18.1 regression verification
+
+### 18.2 Runtime State / Persistence Consistency
+- [ ] Audit authoritative state owners and compatibility wrappers
+- [ ] Verify recovery/replay semantics against current event projection
+- [ ] Verify lease/recovery state transitions against task lifecycle
+- [ ] Add cross-boundary consistency contracts
+- [ ] Full regression verification
+
+### 18.3 Performance / Tool-loop Efficiency
+- [ ] Establish deterministic performance baselines from existing telemetry
+- [ ] Identify remaining duplicate tool execution and unnecessary LLM turns
+- [ ] Improve only evidence-backed bottlenecks
+- [ ] Preserve correctness and security boundaries while optimizing
+- [ ] Add regression thresholds
+
+### 18.4 Extension Architecture
+- [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
+- [ ] Define stable integration contracts
+- [ ] Prevent plugin APIs from bypassing security boundaries
+- [ ] Add extension compatibility tests
+
+### 18.5 Production Readiness Gate
+- [ ] Full architecture review
+- [ ] Full security regression
+- [ ] Full observability regression
+- [ ] Full persistence/recovery regression
+- [ ] Full test-suite verification
+- [ ] Update operational documentation
+- [ ] Phase 18 acceptance decision
+
+## Phase 18 working rule
+Every Phase 18 increment must follow: repository-state review → smallest contract-preserving change → focused tests → full regression → DevPlan update. Do not infer missing runtime modules from filenames alone; consolidate the actual existing implementation first.
