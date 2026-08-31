@@ -3,14 +3,22 @@ from __future__ import annotations
 from dataclasses import replace
 from unittest.mock import patch
 
+from benchmarks.real_developer import ab_trials_cli
 from benchmarks.real_developer.ab import BenchmarkABComparison
 from benchmarks.real_developer.ab_trials import BenchmarkABTrialSummary
-from benchmarks.real_developer import ab_trials_cli
-from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult
+from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult, RealDeveloperTaskMetrics
 
 
 def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int = 0, blocked: int = 0) -> RealDeveloperBenchmarkResult:
-    return RealDeveloperBenchmarkResult.from_task_metrics(
+    task = RealDeveloperTaskMetrics(
+        task_id="TASK-TRIAL",
+        developer_id="developer-1",
+        duration_seconds=duration,
+        llm_calls=llm_calls,
+        failed=failed > 0,
+        failure_reason="failure" if failed > 0 else None,
+    )
+    return RealDeveloperBenchmarkResult(
         scenario="serial",
         developer_count=1,
         task_count=1,
@@ -18,8 +26,7 @@ def _result(*, duration: float, llm_calls: int, completed: int = 1, failed: int 
         failed=failed,
         blocked=blocked,
         duration_seconds=duration,
-        task_metrics=(),
-        llm_calls=llm_calls,
+        task_metrics=(task,),
     )
 
 
