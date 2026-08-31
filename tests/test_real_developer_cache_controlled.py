@@ -52,7 +52,7 @@ def _run(*, disable_cache: bool):
         manager,
         1,
         llm_factory=lambda: replay,
-        config_factory=lambda _: AgentConfig(),
+        config_factory=lambda _: AgentConfig(role="developer", model="controlled-replay"),
     )
 
     if not disable_cache:
@@ -81,8 +81,8 @@ def _run(*, disable_cache: bool):
 def test_controlled_cache_comparison_is_causal_and_deterministic() -> None:
     with isolated_benchmark_workspace():
         baseline = _run(disable_cache=True)
-        with isolated_benchmark_workspace():
-            candidate = _run(disable_cache=False)
+    with isolated_benchmark_workspace():
+        candidate = _run(disable_cache=False)
 
     assert baseline.failed is False
     assert candidate.failed is False
