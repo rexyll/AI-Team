@@ -89,6 +89,21 @@ class RealDeveloperTaskMetrics:
         return dict(sorted(counts.items()))
 
     @property
+    def duplicate_execution_tool_calls(self) -> int:
+        """Count exact-duplicate requests that actually executed the tool.
+
+        A cache-served repeated request remains an ``exact_duplicate`` telemetry
+        event, but it is not a duplicate execution and must not be reported as
+        one. Legacy telemetry without the ``cache_reused`` marker is treated as
+        actually executed for backward compatibility.
+        """
+        return sum(
+            1
+            for item in self.tool_loop_telemetry
+            if item.get("category") == "exact_duplicate" and not item.get("cache_reused", False)
+        )
+
+    @property
     def decision_trace_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in self.developer_decision_trace:
@@ -195,6 +210,9 @@ class RealDeveloperBenchmarkResult:
     @property
     def avg_tool_result_chars(self) -> float: return self.tool_result_chars / self.tool_calls if self.tool_calls else 0.0
     @property
+    def duplicate_execution_tool_calls(self) -> int:
+        return sum(item.duplicate_execution_tool_calls for item in self.task_metrics)
+    @property
     def tool_call_category_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in self.task_metrics:
@@ -283,6 +301,7 @@ class RealDeveloperBenchmarkResult:
             "duplicate_tool_call_ratio": self.duplicate_tool_call_ratio, "retry_tool_call_ratio": self.retry_tool_call_ratio,
             "unique_tool_call_ratio": self.unique_tool_call_ratio, "avg_tool_result_chars": self.avg_tool_result_chars,
             "tool_call_category_counts": self.tool_call_category_counts,
+            "duplicate_execution_tool_calls": self.duplicate_execution_tool_calls,
             "decision_trace_count": self.decision_trace_count,
             "decision_trace_reason_counts": self.decision_trace_reason_counts,
             "failure_reasons": self.failure_reasons,
