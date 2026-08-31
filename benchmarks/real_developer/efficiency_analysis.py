@@ -19,8 +19,8 @@ def _exact_duplicate_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
 
 
 def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
-    """Return exact duplicates that actually executed, excluding cache-served repeats."""
-    return max(0, _exact_duplicate_tool_calls(result) - result.cache_hits)
+    """Return exact-duplicate calls that actually executed the tool."""
+    return result.duplicate_execution_tool_calls
 
 
 def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]:
@@ -30,8 +30,12 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
     category_counts = result.tool_call_category_counts
     exact_duplicate_tool_calls = category_counts.get("exact_duplicate", 0)
     duplicate_execution_tool_calls = _duplicate_execution_tool_calls(result)
-    cache_reused_tool_calls = min(result.cache_hits, exact_duplicate_tool_calls)
-    cache_probe_excess = max(0, result.cache_hits - exact_duplicate_tool_calls)
+    cache_reused_tool_calls = sum(
+        1
+        for item in (entry for task in result.task_metrics for entry in task.tool_loop_telemetry)
+        if item.get("cache_reused", False)
+    )
+    cache_probe_excess = max(0, result.cache_hits - cache_reused_tool_calls)
     return {
         "scenario": result.scenario,
         "developer_count": result.developer_count,
@@ -90,7 +94,13 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
         duplicate_count = _duplicate_execution_tool_calls(result)
         duplicate_requests = category_counts.get("exact_duplicate", 0)
         duplicate_message_suffix = " Cache-served repeated requests are excluded from this finding. Failure-recovery retries are excluded from this finding."
-        cache_probe_excess = max(0, result.cache_hits - duplicate_requests)
+        cache_reused_tool_calls = sum(
+            1
+            for task in result.task_metrics
+            for item in task.tool_loop_telemetry
+            if item.get("cache_reused", False)
+        )
+        cache_probe_excess = max(0, result.cache_hits - cache_reused_tool_calls)
     else:
         duplicate_count = result.duplicate_tool_calls
         duplicate_requests = duplicate_count
@@ -117,8 +127,8 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
                 kind="redundant_cache_probe",
                 observed=float(cache_probe_excess),
                 message=(
-                    f"{cache_probe_excess} cache hits exceeded exact-duplicate tool-call telemetry; "
-                    "inspect batch preflight or other paths that probe the cache more than once."
+                    f"{cache_probe_excess} cache hits were not represented by cache-reuse telemetry; "
+                    "inspect cache accounting or duplicate-request classification."
                 ),
             )
         )
