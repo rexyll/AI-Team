@@ -10,12 +10,26 @@ from .workflow_event_persistence import WorkflowEventPersistenceAdapter
 from .workflow_event_projection import WorkflowEventProjector, WorkflowProjectProjection, WorkflowTaskProjection
 
 
+_HISTORICAL_ERROR_EVENTS = {
+    "developer_failed",
+    "developer_invalid_result",
+    "tester_failed",
+    "tester_invalid_result",
+    "tester_invalid_evidence",
+    "reviewer_failed",
+    "reviewer_invalid_result",
+    "reviewer_invalid_evidence",
+    "task_failed",
+}
+
+
 @dataclass(frozen=True)
 class WorkflowEventQueryService:
     """Read-only operational query boundary over a workflow event stream."""
 
     projection: WorkflowProjectProjection
     _reviewer_metrics: ReviewerReliabilityMetrics = ReviewerReliabilityMetrics()
+    _historical_errors: tuple[tuple[str, str], ...] = ()
 
     @staticmethod
     def _require_non_empty_string(value: str, name: str) -> str:
@@ -23,18 +37,28 @@ class WorkflowEventQueryService:
             raise ValueError(f"{name} must be a non-empty string")
         return value
 
+    @staticmethod
+    def _collect_historical_errors(events: list) -> tuple[tuple[str, str], ...]:
+        """Capture the latest failure diagnostic per task without changing live state."""
+        latest: dict[str, str] = {}
+        for event in events:
+            if event.task_id is None or event.event_type not in _HISTORICAL_ERROR_EVENTS:
+                continue
+            value = event.payload.get("error") or event.payload.get("message")
+            if isinstance(value, str) and value:
+                latest[event.task_id] = value
+        return tuple(sorted(latest.items()))
+
     @classmethod
     def from_log(cls, event_log: WorkflowEventLog, *, project_id: str) -> "WorkflowEventQueryService":
         if not isinstance(event_log, WorkflowEventLog):
             raise TypeError("event_log must be a WorkflowEventLog")
         project_id = cls._require_non_empty_string(project_id, "project_id")
-        # Take one stable project-scoped snapshot and share it with all read-only
-        # projections. Previously projection and reviewer metrics each scanned
-        # and sorted the same event log independently.
         selected = event_log.list_for_project(project_id)
         return cls(
             WorkflowEventProjector.project(selected, project_id=project_id, ordered=True),
             project_reviewer_reliability(selected, project_id=project_id, ordered=True),
+            cls._collect_historical_errors(selected),
         )
 
     @classmethod
@@ -57,16 +81,15 @@ class WorkflowEventQueryService:
         if not isinstance(event_persistence, WorkflowEventPersistenceAdapter):
             raise TypeError("event_persistence must be a WorkflowEventPersistenceAdapter")
         project_id = cls._require_non_empty_string(project_id, "project_id")
-
         project_persistence.load(project_id)
         event_log = event_persistence.load_log()
         selected = event_log.list_for_project(project_id)
         if len(event_log) > 0 and not selected:
             raise ValueError(f"no events for project: {project_id}")
-
         return cls(
             WorkflowEventProjector.project(selected, project_id=project_id, ordered=True),
             project_reviewer_reliability(selected, project_id=project_id, ordered=True),
+            cls._collect_historical_errors(selected),
         )
 
     @property
@@ -102,7 +125,10 @@ class WorkflowEventQueryService:
         return {"retry_attempt": state.retry_attempt, "max_retries": state.max_retries}
 
     def error(self, task_id: str) -> str | None:
-        return self.task(task_id).error
+        """Return the latest recorded failure diagnostic, including retried failures."""
+        task_id = self._require_non_empty_string(task_id, "task_id")
+        self.task(task_id)
+        return dict(self._historical_errors).get(task_id)
 
     def review_status(self, task_id: str) -> str | None:
         return self.task(task_id).review_status
