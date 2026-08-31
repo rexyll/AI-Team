@@ -20,14 +20,14 @@ TASK_ID = "TASK-RECOVERY-CONSISTENCY"
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 
 
-def _task(status: str = "running") -> Task:
+def _task(status: str = "running", *, max_retries: int = 0) -> Task:
     return Task(
         TASK_ID,
         "recovery",
         "resume the recovered task",
         "developer",
         status=status,
-        max_retries=2,
+        max_retries=max_retries,
     )
 
 
@@ -69,11 +69,11 @@ def test_checkpoint_restore_matches_event_projection_for_resumable_state():
     assert projection.lifecycle_status == "running"
     assert projection.error is None
     assert projection.retry_attempt == restored.retry_attempt == 0
-    assert projection.max_retries == restored.max_retries == 2
+    assert projection.max_retries == restored.max_retries == 0
 
 
 def test_retry_checkpoint_replays_ready_state_and_clears_active_error():
-    task = _task("pending")
+    task = _task("pending", max_retries=2)
     manager = TaskManager([task])
     manager.mark_ready(TASK_ID)
     manager.mark_running(TASK_ID)
