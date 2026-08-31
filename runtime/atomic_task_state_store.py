@@ -5,10 +5,11 @@ from threading import RLock
 from typing import Any
 
 from runtime.task import Task
+from runtime.task_state_store import TaskStateStore
 
 
-class AtomicTaskStateStore:
-    """In-memory state store with atomic multi-task checkpoint commits."""
+class AtomicTaskStateStore(TaskStateStore):
+    """Atomic in-memory implementation of the canonical TaskStateStore."""
 
     def __init__(self) -> None:
         self._states: dict[str, dict[str, Any]] = {}
