@@ -9,6 +9,7 @@ from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+AGNES_TOOL_CONTINUATION_PROMPT = "Continue the current task using the tool results above."
 
 
 def _status_code_of(exc: BaseException) -> int | None:
@@ -20,6 +21,10 @@ def _status_code_of(exc: BaseException) -> int | None:
         if f"Error code: {code}" in message:
             return code
     return None
+
+
+def _message_role(message: Any) -> Any:
+    return message.get("role") if isinstance(message, dict) else None
 
 
 class ProviderLLM(BaseLLM):
@@ -174,6 +179,24 @@ class ProviderLLM(BaseLLM):
                 )
                 time.sleep(wait)
 
+    @staticmethod
+    def _needs_user_continuation(messages: list[dict[str, Any]]) -> bool:
+        """Return True when tool results are the current conversation tail."""
+        return bool(messages) and _message_role(messages[-1]) == "tool"
+
+    def _prepare_tool_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply provider-specific message compatibility without changing callers.
+
+        Agnes' OpenAI-compatible gateway can reject multi-turn tool continuations
+        when the conversation tail ends in tool results with no fresh user turn.
+        Keep the normal OpenAI message shape for every other provider and only
+        add a minimal continuation prompt for Agnes.
+        """
+        prepared = [dict(message) for message in messages]
+        if self.provider_profile == "agnes" and self._needs_user_continuation(prepared):
+            prepared.append({"role": "user", "content": AGNES_TOOL_CONTINUATION_PROMPT})
+        return prepared
+
     def generate(
         self,
         prompt: str,
@@ -210,9 +233,10 @@ class ProviderLLM(BaseLLM):
         if not isinstance(messages, list) or not messages:
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
+        prepared_messages = self._prepare_tool_messages(messages)
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": prepared_messages,
         }
         if tools:
             kwargs["tools"] = list(tools)
