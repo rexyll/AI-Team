@@ -56,7 +56,7 @@ def test_ab_comparison_exposes_efficiency_deltas_and_decision_reasons() -> None:
     payload = comparison.to_dict()
     assert payload["delta"]["exact_duplicate_tool_calls"] == 2
     assert payload["delta"]["decision_trace_count"] == -1
-    assert payload["decision_reason_counts"]["candidate"]["new_evidence_requires_reasoning"] == 3
+    assert payload["delta"]["decision_reason_counts"]["candidate"]["new_evidence_requires_reasoning"] == 3
 
 
 def test_ab_comparison_detects_cache_probe_excess_from_candidate_telemetry() -> None:
