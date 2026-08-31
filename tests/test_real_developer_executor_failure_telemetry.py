@@ -174,6 +174,8 @@ def test_agent_result_failure_diagnostic_is_emitted_without_result_content(capsy
     assert "developer_id=developer-1" in output
     assert "tool_names=['run_command']" in output
     assert "tool_result_chars=[42]" in output
-    assert "repeat" not in output.lower()
+    assert "tool_result_content" not in output
+    assert "def paginate" not in output
+    assert "api_key" not in output.lower()
     assert "result_chars" in output
     assert manager.get_task(task.id).status == "failed"
