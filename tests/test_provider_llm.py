@@ -82,7 +82,7 @@ def test_provider_llm_rejects_invalid_prompt_types():
         llm.generate("prompt", system_prompt=123)  # type: ignore[arg-type]
 
 
-def test_agnes_tool_continuation_reuses_original_user_query_after_tool_result():
+def test_agnes_tool_continuation_preserves_standard_message_shape():
     client = FakeClient()
     llm = ProviderLLM(model="agnes-2.5-flash", provider_profile="agnes", client_instance=client)
 
@@ -107,13 +107,11 @@ def test_agnes_tool_continuation_reuses_original_user_query_after_tool_result():
 
     messages = client.chat.completions.calls[0]["messages"]
     assert messages[-1] == {
-        "role": "user",
-        "content": "Complete the task.",
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "content",
     }
-    assert messages[-1] != {
-        "role": "user",
-        "content": "Continue the current task using the tool results above.",
-    }
+    assert messages.count({"role": "user", "content": "Complete the task."}) == 1
 
 
 def test_non_agnes_provider_preserves_standard_tool_continuation_shape(monkeypatch):
