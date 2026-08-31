@@ -208,12 +208,12 @@ Phase 18 is a fresh repository-state-driven hardening phase. It must not introdu
 ### 18.1 Canonical Tool Invocation Boundary — in progress
 - [x] Review existing `ToolInvocationService` as the current authorization/execution boundary
 - [x] Confirm `DeveloperToolInvocationAdapter` remains a thin compatibility adapter
-- [ ] Introduce a canonical immutable tool invocation request contract
-- [ ] Make single and batch invocation share the same request validation path
-- [ ] Preserve capability, permission, argument-validation, audit, and tracing boundaries
+- [x] Introduce a canonical immutable tool invocation request contract
+- [x] Make single and batch invocation share the same request validation path
+- [x] Preserve capability, permission, argument-validation, audit, and tracing boundaries
 - [ ] Add contract tests for single/batch/concurrent equivalence
 - [ ] Remove duplicated invocation-shape semantics from agent-facing code
-- [ ] Keep mutation/read-only cache decisions outside the authorization boundary
+- [x] Keep mutation/read-only cache decisions outside the authorization boundary
 - [ ] Full 18.1 regression verification
 
 ### 18.2 Runtime State / Persistence Consistency
