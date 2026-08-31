@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 
 from .ab import RealDeveloperABBenchmark
 from .ab_trials import BenchmarkABTrialSummary
@@ -81,11 +80,18 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"scenario={args.scenario} developers={developer_count} trials={summary.trials} "
                 f"valid_trials={summary.valid_trials} invalid_trials={summary.invalid_trials} "
-                f"valid_sample_rate={summary.valid_trials / summary.trials:.4f}"
+                f"valid_sample_rate={summary.valid_sample_rate:.4f}"
             )
             print(
                 f"baseline_success_rate={summary.baseline_success_rate:.4f} "
                 f"candidate_success_rate={summary.candidate_success_rate:.4f}"
+            )
+            print(
+                f"statistically_ready={summary.statistically_ready} "
+                f"reliability_preserved={summary.reliability_preserved} "
+                f"efficiency_improved={summary.efficiency_improved} "
+                f"cache_effect_observed={summary.cache_effect_observed} "
+                f"verdict={summary.verdict}"
             )
             print(
                 f"median_duration_change_ratio={summary.median_duration_change_ratio} "
