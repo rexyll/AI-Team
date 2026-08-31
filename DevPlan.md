@@ -252,10 +252,19 @@ The benchmark scenario was also corrected so the reference document is optional 
 The latest 10-trial serial / 4-developer live A/B sample contains 8 valid and 2 invalid trials. Baseline success was 0.8000 and candidate success was 1.0000; reliability was preserved and cache effects were observed, but the aggregate verdict remains `no_clear_efficiency_gain`. Valid-trial medians were +1.74% duration, -5.41% LLM calls, -4.08% input tokens, -1 exact-duplicate tool call, -1 duplicate-execution tool call, and 0 median cache-hit change. The two invalid trials independently tripped the progress guard in baseline (`read_file` / `run_command`), so they must not be used as performance evidence. The next optimization conclusion should therefore remain correctness-first rather than claiming a performance win.
 
 ### 18.4 Extension Architecture
-- [x] Audit Plugin / Tool / Agent / Workflow extension boundaries
-- [x] Define stable integration contracts
-- [x] Prevent plugin APIs from bypassing security boundaries
+- [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
+- [ ] Define stable integration contracts
+- [ ] Prevent plugin APIs from bypassing security boundaries
 - [ ] Add extension compatibility tests
+
+#### 18.4 Tool extension slice — implemented
+- [x] Audit existing PluginHost ↔ ToolRegistry / ToolInvocationService boundary
+- [x] Define reserved `tools` extension point
+- [x] Introduce host-owned `PluginToolInvocationAdapter`
+- [x] Bind a trusted role at adapter construction time
+- [x] Prevent raw `ToolRegistry` / raw callable / workspace / `ToolInvocationService` exposure through the `tools` extension
+- [x] Preserve canonical capability, permission, argument-validation, audit, and tracing boundaries
+- [x] Add focused regression coverage for raw-registry rejection, adapter acceptance, fixed-role behavior, and audit preservation
 
 The first extension slice is now implemented around the existing production invocation boundary. The reserved `tools` plugin extension point requires a host-owned `PluginToolInvocationAdapter`; raw `ToolRegistry`, raw callable, workspace, or `ToolInvocationService` exposure is not accepted as the plugin tool extension. The adapter binds a host-selected role and forwards calls through `ToolInvocationService`, preserving capability authorization, permission checks, argument validation, execution audit, and tracing. Focused plugin regression coverage now verifies raw-registry rejection, adapter acceptance, fixed-role behavior, and audit preservation. Full extension compatibility remains open until Agent and Workflow extension boundaries are covered.
 
