@@ -174,6 +174,11 @@ class RealDeveloperABBenchmark:
             from agents import developer as developer_module
 
             class NoReadOnlyCache(developer_module.ToolResultCache):
+                def contains(self, tool_name, arguments):
+                    if tool_name in getattr(developer_module, "CACHEABLE_TOOLS", ()):
+                        return False
+                    return super().contains(tool_name, arguments)
+
                 def lookup(self, tool_name, arguments):
                     if tool_name in getattr(developer_module, "CACHEABLE_TOOLS", ()):
                         return None
