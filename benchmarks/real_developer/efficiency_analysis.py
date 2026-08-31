@@ -49,6 +49,11 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
     }
 
 
+def _tool_loop_category_telemetry_available(result: RealDeveloperBenchmarkResult) -> bool:
+    """Return whether any task carries per-call category telemetry."""
+    return any(task.tool_loop_telemetry for task in result.task_metrics)
+
+
 def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tuple[EfficiencyFinding, ...]:
     """Identify measurable hotspots without claiming causality.
 
@@ -63,7 +68,7 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
 
     findings: list[EfficiencyFinding] = []
     category_counts = result.tool_call_category_counts
-    has_category_telemetry = bool(result.tool_loop_telemetry)
+    has_category_telemetry = _tool_loop_category_telemetry_available(result)
     if has_category_telemetry:
         duplicate_count = category_counts.get("exact_duplicate", 0)
         duplicate_message_suffix = " Failure-recovery retries are excluded from this finding."
