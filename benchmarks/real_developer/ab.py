@@ -118,10 +118,10 @@ class BenchmarkABComparison:
                 "exact_duplicate_tool_calls": self.exact_duplicate_tool_calls_delta,
                 "cache_probe_excess": self.cache_probe_excess_delta,
                 "decision_trace_count": self.decision_trace_delta,
-            },
-            "decision_reason_counts": {
-                "baseline": self.baseline.decision_trace_reason_counts,
-                "candidate": self.candidate.decision_trace_reason_counts,
+                "decision_reason_counts": {
+                    "baseline": self.baseline.decision_trace_reason_counts,
+                    "candidate": self.candidate.decision_trace_reason_counts,
+                },
             },
             "correctness_preserved": self.correctness_preserved,
             "sample_valid": self.sample_valid,
