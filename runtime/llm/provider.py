@@ -139,6 +139,51 @@ class ProviderLLM(BaseLLM):
             "total_tokens": total_tokens,
         }
 
+    @staticmethod
+    def _message_diagnostic(message: Any) -> dict[str, Any]:
+        if not isinstance(message, dict):
+            return {"role": None, "content_chars": 0, "tool_call_ids": ()}
+        raw_content = message.get("content")
+        content_chars = len(str(raw_content)) if raw_content is not None else 0
+        tool_calls = message.get("tool_calls") or ()
+        tool_call_ids: list[str] = []
+        tool_names: list[str] = []
+        if isinstance(tool_calls, (list, tuple)):
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                call_id = call.get("id")
+                if isinstance(call_id, str):
+                    tool_call_ids.append(call_id)
+                function = call.get("function")
+                if isinstance(function, dict) and isinstance(function.get("name"), str):
+                    tool_names.append(function["name"])
+        return {
+            "role": message.get("role"),
+            "content_chars": content_chars,
+            "tool_call_ids": tuple(tool_call_ids),
+            "tool_names": tuple(tool_names),
+            "tool_call_id": message.get("tool_call_id"),
+        }
+
+    def _log_request_diagnostic(self, kwargs: dict[str, Any], exc: BaseException) -> None:
+        if os.getenv("AGNES_REQUEST_DIAGNOSTICS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return
+        if self.provider_profile != "agnes":
+            return
+        messages = kwargs.get("messages")
+        safe_messages = [self._message_diagnostic(message) for message in messages] if isinstance(messages, list) else []
+        print(
+            "[LLM DIAGNOSTIC] "
+            f"provider={self.provider_profile} model={self.model} "
+            f"message_count={len(safe_messages)} "
+            f"roles={[item['role'] for item in safe_messages]} "
+            f"last_messages={safe_messages[-5:]} "
+            f"tools_count={len(kwargs.get('tools') or ())} "
+            f"tool_choice={kwargs.get('tool_choice')} "
+            f"error={type(exc).__name__}: {exc}"
+        )
+
     def _post_chat(self, **kwargs: Any):
         max_attempts = self._max_attempts()
         http_attempt = 0
@@ -163,6 +208,7 @@ class ProviderLLM(BaseLLM):
                 return response
 
             except Exception as exc:
+                self._log_request_diagnostic(kwargs, exc)
                 code = _status_code_of(exc)
                 http_attempt += 1
                 if code not in RETRYABLE_STATUS_CODES or http_attempt >= max_attempts:
