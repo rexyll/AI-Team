@@ -2,9 +2,12 @@ from benchmarks.real_developer.ab import BenchmarkABComparison
 from benchmarks.real_developer.metrics import RealDeveloperBenchmarkResult, RealDeveloperTaskMetrics
 
 
-def _result(*, tool_calls: int, exact_duplicates: int, cache_hits: int, llm_calls: int, duration: float) -> RealDeveloperBenchmarkResult:
+def _result(*, tool_calls: int, exact_duplicates: int, cache_hits: int, llm_calls: int, duration: float, cached_duplicate_count: int = 0) -> RealDeveloperBenchmarkResult:
     telemetry = tuple(
-        {"category": "exact_duplicate" if index < exact_duplicates else "exploration"}
+        {
+            "category": "exact_duplicate" if index < exact_duplicates else "exploration",
+            "cache_reused": index < cached_duplicate_count,
+        }
         for index in range(tool_calls)
     )
     task = RealDeveloperTaskMetrics(
@@ -41,7 +44,7 @@ def _result(*, tool_calls: int, exact_duplicates: int, cache_hits: int, llm_call
 
 def test_ab_comparison_exposes_efficiency_deltas_and_decision_reasons() -> None:
     baseline = _result(tool_calls=5, exact_duplicates=0, cache_hits=0, llm_calls=4, duration=10.0)
-    candidate = _result(tool_calls=5, exact_duplicates=2, cache_hits=2, llm_calls=3, duration=8.0)
+    candidate = _result(tool_calls=5, exact_duplicates=2, cache_hits=2, llm_calls=3, duration=8.0, cached_duplicate_count=2)
 
     comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
 
@@ -63,7 +66,7 @@ def test_ab_comparison_exposes_efficiency_deltas_and_decision_reasons() -> None:
 
 def test_ab_comparison_detects_cache_probe_excess_from_candidate_telemetry() -> None:
     baseline = _result(tool_calls=4, exact_duplicates=0, cache_hits=0, llm_calls=2, duration=5.0)
-    candidate = _result(tool_calls=4, exact_duplicates=1, cache_hits=3, llm_calls=2, duration=5.0)
+    candidate = _result(tool_calls=4, exact_duplicates=1, cache_hits=3, llm_calls=2, duration=5.0, cached_duplicate_count=1)
 
     comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
 
@@ -72,8 +75,8 @@ def test_ab_comparison_detects_cache_probe_excess_from_candidate_telemetry() -> 
 
 
 def test_ab_comparison_distinguishes_duplicate_requests_from_actual_duplicate_execution() -> None:
-    baseline = _result(tool_calls=5, exact_duplicates=1, cache_hits=0, llm_calls=2, duration=5.0)
-    candidate = _result(tool_calls=8, exact_duplicates=5, cache_hits=4, llm_calls=2, duration=5.0)
+    baseline = _result(tool_calls=5, exact_duplicates=1, cache_hits=0, llm_calls=2, duration=5.0, cached_duplicate_count=0)
+    candidate = _result(tool_calls=8, exact_duplicates=5, cache_hits=4, llm_calls=2, duration=5.0, cached_duplicate_count=2)
 
     comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
 
