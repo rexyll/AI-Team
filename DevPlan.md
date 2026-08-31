@@ -241,7 +241,7 @@ The benchmark layer now exposes deterministic snapshot fields and evidence-based
 
 Exact-duplicate analysis is now separated from failure-recovery retry analysis. Only calls classified as `exact_duplicate` are treated as direct duplicate-execution optimization candidates; required failure-recovery retries remain correctness-sensitive and are not counted as wasted exploration.
 
-For compatibility with metric-only historical benchmark results, efficiency analysis falls back to the existing aggregate `duplicate_tool_calls` signal when per-call category telemetry is absent. When category telemetry is present, the analysis uses `exact_duplicate` exclusively so failure-recovery retries cannot be mislabeled as wasted execution.
+A cache-probe diagnostic was added to distinguish a genuine duplicate tool call from repeated cache inspection. When per-call category telemetry is available, `cache_probe_excess = max(0, cache_hits - exact_duplicate_tool_calls)` identifies possible duplicate cache probing without changing runtime behavior. The next optimization decision should use real benchmark telemetry to confirm this signal before changing the Developer loop.
 
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
