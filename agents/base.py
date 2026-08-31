@@ -29,18 +29,10 @@ class BaseAgent(ABC):
 
         @wraps(run)
         def traced_run(self, task: Task):
-            # Validate the public runtime contract before tracing touches task
-            # attributes. Invalid callers must receive the documented TypeError,
-            # not an incidental AttributeError from task.id below.
+            # Validate the public runtime contract before tracing touches task attributes. Invalid callers must receive the documented TypeError, not an incidental AttributeError from task.id below.
             if not isinstance(task, Task):
-                raise TypeError(
-                    f"{self.__class__.__name__}.run() expects Task, got {type(task).__name__}"
-                )
-
-            with DEFAULT_TRACER.span(
-                f"workflow.stage.{self.role}",
-                attributes={"task_id": task.id, "agent_role": self.role, "stage": self.role},
-            ) as span:
+                raise TypeError(f"{self.__class__.__name__}.run() expects Task, got {type(task).__name__}")
+            with DEFAULT_TRACER.span(f"workflow.stage.{self.role}", attributes={"task_id": task.id, "agent_role": self.role, "stage": self.role}) as span:
                 result = run(self, task)
                 if isinstance(result, AgentResult):
                     span.set_attribute("result.status", result.status)
@@ -149,7 +141,11 @@ class BaseAgent(ABC):
         collapse_tool_loop_checkpoints(messages)
         self._prepare_tool_loop_decision_budget(messages)
         security_prompt = self._secured_system_prompt("")
-        secured_messages = ([{"role": "system", "content": security_prompt}] if security_prompt else []) + self._secure_model_messages(messages)
+        secured_messages = self._secure_model_messages(messages)
+        if secured_messages and secured_messages[0].get("role") == "system":
+            secured_messages[0] = {"role": "system", "content": security_prompt}
+        elif security_prompt:
+            secured_messages.insert(0, {"role": "system", "content": security_prompt})
         authorized_tools = self._authorized_tool_schemas(tools)
         with DEFAULT_TRACER.span("llm.generate_with_tools", attributes={"agent_role": self.role, "operation": "generate_with_tools"}) as span:
             if isinstance(self.llm, ContextCompactingLLM):
@@ -175,5 +171,5 @@ class BaseAgent(ABC):
         return self.llm_metrics.snapshot()
 
     @abstractmethod
-    def run(self, task: Task) -> AgentResult:
+    def run(self, task: Task):
         pass
