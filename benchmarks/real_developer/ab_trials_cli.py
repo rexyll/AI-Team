@@ -91,8 +91,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"reliability_preserved={summary.reliability_preserved} "
                 f"efficiency_improved={summary.efficiency_improved} "
                 f"cache_effect_observed={summary.cache_effect_observed} "
-                f"cache_hit_observations={summary.cache_hit_observations} "
                 f"verdict={summary.verdict}"
+            )
+            print(
+                f"valid_trial_counts="
+                f"duration_improved:{summary.duration_improved_trials}/{summary.valid_trials} "
+                f"llm_calls_nonworse:{summary.llm_calls_nonworse_trials}/{summary.valid_trials} "
+                f"input_tokens_nonworse:{summary.input_tokens_nonworse_trials}/{summary.valid_trials} "
+                f"duplicate_execution_nonworse:{summary.duplicate_execution_nonworse_trials}/{summary.valid_trials} "
+                f"cache_hit_observations:{summary.cache_hit_observations}/{summary.valid_trials}"
             )
             print(
                 f"median_duration_change_ratio={summary.median_duration_change_ratio} "
