@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from time import perf_counter
 from typing import Any, Callable
 
@@ -78,6 +79,30 @@ class DeveloperAgentExecutor:
         largest_tool_result_chars = max((int(item.get("result_chars", 0) or 0) for item in telemetry), default=0)
         return tool_calls, test_commands, unique_tool_calls, duplicate_tool_calls, retry_tool_calls, tool_result_chars, telemetry
 
+    @staticmethod
+    def _diagnostics_enabled() -> bool:
+        return os.getenv("AGNES_REQUEST_DIAGNOSTICS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _print_agent_result_diagnostic(
+        cls,
+        *,
+        task: Task,
+        developer_id: str,
+        failure_reason: str | None,
+        tool_loop_telemetry: tuple[dict[str, Any], ...],
+    ) -> None:
+        if not cls._diagnostics_enabled():
+            return
+        print("[LLM DIAGNOSTIC]")
+        print(f"stage=agent_result task_id={task.id} developer_id={developer_id}")
+        print(f"failure_reason={failure_reason or ''}")
+        print(f"tool_call_count={len(tool_loop_telemetry)}")
+        print(f"tool_names={[str(item.get('tool_name', '')) for item in tool_loop_telemetry[-5:]]}")
+        print(f"tool_result_chars={[int(item.get('result_chars', 0) or 0) for item in tool_loop_telemetry[-5:]]}")
+        print(f"duplicate_flags={[bool(item.get('duplicate_of')) for item in tool_loop_telemetry[-5:]]}")
+        print(f"retry_flags={[bool(item.get('retry_of')) for item in tool_loop_telemetry[-5:]]}")
+
     def run_task(self, task: Task, developer_id: str) -> RealDeveloperTaskMetrics:
         binding = next((item for item in self._bindings if item.developer_id == developer_id), None)
         if binding is None:
@@ -135,6 +160,12 @@ class DeveloperAgentExecutor:
                 failure_stage = "agent_result"
                 self.manager.mark_failed(task.id, failure_reason)
                 failed = True
+                self._print_agent_result_diagnostic(
+                    task=task,
+                    developer_id=developer_id,
+                    failure_reason=failure_reason,
+                    tool_loop_telemetry=tool_loop_telemetry,
+                )
         except Exception as exc:
             failure_reason = f"{type(exc).__name__}: {exc}"
             failure_stage = "agent_run" if result is None else "task_manager_transition"
@@ -154,6 +185,13 @@ class DeveloperAgentExecutor:
                 self.manager.mark_failed(task.id, failure_reason)
             except Exception:
                 pass
+            if failure_stage == "agent_run":
+                self._print_agent_result_diagnostic(
+                    task=task,
+                    developer_id=developer_id,
+                    failure_reason=failure_reason,
+                    tool_loop_telemetry=tool_loop_telemetry,
+                )
 
         events = compacting_llm.compaction_events[before_events:]
         return RealDeveloperTaskMetrics(
