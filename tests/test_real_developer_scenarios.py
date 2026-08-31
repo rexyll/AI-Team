@@ -5,16 +5,7 @@ from benchmarks.real_developer.scenarios import (
 )
 
 
-UNSAFE_INLINE_MARKERS = (
-    "python -c",
-    "powershell inline",
-    "temporary scripts",
-    "shell chaining",
-    "redirection",
-)
-
-
-def test_real_developer_scenarios_use_terminal_policy_compatible_commands() -> None:
+def test_real_developer_scenarios_require_terminal_policy_compatible_verification() -> None:
     tasks = [
         *independent_implementation_tasks(),
         *partial_implementation_tasks(),
@@ -24,10 +15,12 @@ def test_real_developer_scenarios_use_terminal_policy_compatible_commands() -> N
     for task in tasks:
         description = task.description.lower()
         assert "python -m pytest" in description
-        assert all(marker not in description for marker in UNSAFE_INLINE_MARKERS)
+        assert "do not use `python -c`" in description or "do not use python -c" in description
+        assert "shell chaining" in description
+        assert "redirection" in description
 
 
 def test_serial_scenario_is_explicit_about_final_verification_command() -> None:
     final_task = serial_implementation_tasks()[-1]
     assert "python -m pytest tests/test_helpers.py -q" in final_task.description
-    assert "python -c" in final_task.description.lower()
+    assert "do not use python -c" in final_task.description.lower()
