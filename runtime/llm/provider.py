@@ -9,7 +9,6 @@ from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
 
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
-AGNES_TOOL_CONTINUATION_PROMPT = "Continue the current task using the tool results above."
 
 
 def _status_code_of(exc: BaseException) -> int | None:
@@ -181,20 +180,24 @@ class ProviderLLM(BaseLLM):
 
     @staticmethod
     def _needs_user_continuation(messages: list[dict[str, Any]]) -> bool:
-        """Return True when tool results are the current conversation tail."""
         return bool(messages) and _message_role(messages[-1]) == "tool"
 
     def _prepare_tool_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Apply provider-specific message compatibility without changing callers.
+        """Keep Agnes tool continuation compatible without introducing a new instruction.
 
-        Agnes' OpenAI-compatible gateway can reject multi-turn tool continuations
-        when the conversation tail ends in tool results with no fresh user turn.
-        Keep the normal OpenAI message shape for every other provider and only
-        add a minimal continuation prompt for Agnes.
+        The Agnes-compatible gateway requires a user message after tool results.
+        Reuse the original user query rather than inventing a fresh control
+        instruction, so the model sees the same task intent and only gains the
+        message role needed by the provider's chat template.
         """
         prepared = [dict(message) for message in messages]
         if self.provider_profile == "agnes" and self._needs_user_continuation(prepared):
-            prepared.append({"role": "user", "content": AGNES_TOOL_CONTINUATION_PROMPT})
+            original_user = next(
+                (message for message in prepared if _message_role(message) == "user"),
+                None,
+            )
+            if original_user is not None:
+                prepared.append({"role": "user", "content": original_user.get("content", "")})
         return prepared
 
     def generate(
