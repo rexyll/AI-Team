@@ -118,13 +118,36 @@ When custom configurations are supplied, `architect`, `developer`, `tester`, and
 
 Do not register two agents for the same role. `AgentRouter` rejects duplicate roles and validates role consistency when the agent exposes a `role` attribute.
 
-## 7. LLM provider and mock execution
+## 7. LLM provider and configuration contract
+
+The canonical environment-based provider configuration is documented in `docs/production_configuration.md`. The validated, side-effect-free configuration snapshot is exposed by `config.configuration.load_configuration()`.
+
+```python
+from config.configuration import load_configuration
+
+configuration = load_configuration()
+print(configuration.role("developer"))
+print(configuration.provider("agnes"))
+```
+
+`load_configuration()` resolves and validates the complete effective configuration without creating live clients or making network requests. It returns an immutable `LLMConfiguration` containing provider profiles, role bindings, and the configured Developer count. Invalid or incomplete effective configuration raises `ConfigurationError` before client creation.
+
+Resolution follows these rules:
+
+1. `{ROLE}_PROVIDER` overrides `DEFAULT_PROVIDER`.
+2. `{ROLE}_MODEL` overrides the bound provider's default model.
+3. `DEFAULT_MODEL` is the final model fallback.
+4. Developer instance configuration uses `DEVELOPER_N_*` before shared `DEVELOPER_*`, then shared defaults.
+
+Use `configuration_precedence()` when tooling needs the documented precedence contract programmatically. Configuration loading remains network-free; actual provider clients continue to be created lazily by `config.model` when a completion is requested.
+
+## 8. LLM provider and mock execution
 
 LLM integration is intentionally behind the agent/LLM abstraction. Production integrations should inject the provider through the existing runtime contracts rather than making network calls directly from workflow orchestration code.
 
 The contract suite includes deterministic mock LLM/agent integration tests. Use those mocks for local tests and regression work so tests remain network-independent and repeatable.
 
-## 8. Tools, permissions, and workspace sandbox
+## 9. Tools, permissions, and workspace sandbox
 
 Tool execution is subject to the existing tool contract, permission policy, and workspace sandbox boundaries. A tool must not be treated as an unrestricted shell or filesystem API.
 
@@ -138,7 +161,7 @@ When adding a tool:
 
 Security behavior is part of the production contract; do not bypass these layers in examples.
 
-## 9. Persistence and recovery
+## 10. Persistence and recovery
 
 Workflow events are represented by immutable `WorkflowEvent` values and can be kept in a `WorkflowEventLog` with an optional durable persistence sink.
 
@@ -180,7 +203,7 @@ query = WorkflowEventQueryService.from_persisted_project(
 
 Query and projection are read-only. They must not write to the event store or mutate runtime state.
 
-## 10. Canonical runtime lifecycle
+## 11. Canonical runtime lifecycle
 
 The current canonical workflow lifecycle is event-driven and must not be inferred from older examples. A simple Developer task whose Reviewer approves on the first review can produce:
 
@@ -196,7 +219,7 @@ Performance contracts count events produced by this real lifecycle rather than a
 
 Retry, revision, approval, persistence, projection, and recovery semantics are covered by the contract tests described in `DevPlan.md`.
 
-## 11. Development workflow
+## 12. Development workflow
 
 For each DevPlan node:
 
