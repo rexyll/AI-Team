@@ -112,7 +112,8 @@ def test_agnes_tool_continuation_adds_user_message_after_tool_result():
     }
 
 
-def test_non_agnes_provider_preserves_standard_tool_continuation_shape():
+def test_non_agnes_provider_preserves_standard_tool_continuation_shape(monkeypatch):
+    monkeypatch.setenv("CUSTOM_BASE_URL", "https://example.invalid/v1")
     client = FakeClient()
     llm = ProviderLLM(model="test-model", provider_profile="custom", client_instance=client)
 
