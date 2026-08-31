@@ -68,8 +68,6 @@ def test_provider_llm_omits_empty_system_prompt():
 def test_provider_llm_rejects_invalid_configuration():
     client = FakeClient()
 
-    # 纯环境语义下空串 model 在构造期合法（调用时才校验），
-    # 但非字符串类型仍须在构造期拒绝。
     with pytest.raises(TypeError):
         ProviderLLM(model=123, client_instance=client)  # type: ignore[arg-type]
 
@@ -82,3 +80,60 @@ def test_provider_llm_rejects_invalid_prompt_types():
 
     with pytest.raises(TypeError):
         llm.generate("prompt", system_prompt=123)  # type: ignore[arg-type]
+
+
+def test_agnes_tool_continuation_adds_user_message_after_tool_result():
+    client = FakeClient()
+    llm = ProviderLLM(model="agnes-2.5-flash", provider_profile="agnes", client_instance=client)
+
+    llm.generate_with_tools(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "Complete the task."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{\"path\": \"x.py\"}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "content"},
+        ]
+    )
+
+    messages = client.chat.completions.calls[0]["messages"]
+    assert messages[-1] == {
+        "role": "user",
+        "content": "Continue the current task using the tool results above.",
+    }
+
+
+def test_non_agnes_provider_preserves_standard_tool_continuation_shape():
+    client = FakeClient()
+    llm = ProviderLLM(model="test-model", provider_profile="custom", client_instance=client)
+
+    llm.generate_with_tools(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "Complete the task."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{\"path\": \"x.py\"}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "content"},
+        ]
+    )
+
+    messages = client.chat.completions.calls[0]["messages"]
+    assert messages[-1] == {"role": "tool", "tool_call_id": "call-1", "content": "content"}
