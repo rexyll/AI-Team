@@ -221,9 +221,9 @@ Phase 18 is a fresh repository-state-driven hardening phase. It must not introdu
 - [x] Define a canonical `TaskStateStore` snapshot contract
 - [x] Make in-memory task-state persistence support atomic batch snapshots
 - [x] Align `AtomicTaskStateStore` with the canonical task-state contract
-- [ ] Verify recovery/replay semantics against current event projection
-- [ ] Verify lease/recovery state transitions against task lifecycle
-- [ ] Add cross-boundary consistency contracts to the full regression suite
+- [x] Verify recovery/replay semantics against current event projection
+- [x] Verify lease/recovery state transitions against task lifecycle
+- [x] Add cross-boundary consistency contracts to the full regression suite
 - [ ] Full regression verification
 
 ### 18.3 Performance / Tool-loop Efficiency
