@@ -9,11 +9,15 @@ from runtime.plugin_api import (
 
 
 class _Context:
-    def __init__(self, *capabilities):
+    def __init__(self, *capabilities, extensions=None):
         self.capabilities = set(capabilities)
+        self.extensions = dict(extensions or {})
 
     def has_capability(self, capability):
         return capability in self.capabilities
+
+    def get_extension(self, extension_point):
+        return self.extensions.get(extension_point)
 
 
 class _Plugin:
@@ -64,3 +68,28 @@ def test_list_plugins_returns_metadata_only():
     host = PluginHost(allowed_capabilities=frozenset({"observe"}))
     host.register(plugin)
     assert host.list_plugins() == (plugin.metadata,)
+
+
+def test_extension_point_must_be_hosted_and_context_bound():
+    extension = object()
+    metadata = PluginMetadata(
+        "extension-demo",
+        "1.0",
+        extension_points=frozenset({"dashboard"}),
+    )
+
+    class ExtensionPlugin(_Plugin):
+        pass
+
+    plugin = ExtensionPlugin()
+    plugin.metadata = metadata
+
+    with pytest.raises(Exception, match="unavailable extension points"):
+        PluginHost().register(plugin)
+
+    host = PluginHost(extensions={"dashboard": extension})
+    host.register(plugin)
+    with pytest.raises(PermissionError, match="not provided by host context"):
+        host.initialize("extension-demo", _Context())
+    host.initialize("extension-demo", _Context(extensions={"dashboard": extension}))
+    assert plugin.calls == ["initialize"]
