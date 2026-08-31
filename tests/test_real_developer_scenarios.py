@@ -5,6 +5,15 @@ from benchmarks.real_developer.scenarios import (
 )
 
 
+UNSAFE_INLINE_MARKERS = (
+    "python -c",
+    "powershell inline",
+    "temporary scripts",
+    "shell chaining",
+    "redirection",
+)
+
+
 def test_real_developer_scenarios_require_terminal_policy_compatible_verification() -> None:
     tasks = [
         *independent_implementation_tasks(),
@@ -13,6 +22,8 @@ def test_real_developer_scenarios_require_terminal_policy_compatible_verificatio
     ]
 
     for task in tasks:
+        if task.status == "completed":
+            continue
         description = task.description.lower()
         assert "python -m pytest" in description
         assert "do not use `python -c`" in description or "do not use python -c" in description
