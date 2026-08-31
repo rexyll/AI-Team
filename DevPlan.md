@@ -176,13 +176,13 @@ Implemented in this increment:
 - [x] Documentation
 - [x] Full Phase 17.2 regression verification
 
-### 17.3 Plugin API — in progress
+### 17.3 Plugin API — completed
 - [x] Define extension points and lifecycle
 - [x] Versioned plugin contract
 - [x] Capability/security boundary for plugins
 - [x] Plugin regression tests
 - [x] Documentation
-- [ ] Full Phase 17.3 regression verification
+- [x] Full Phase 17.3 regression verification
 
 ### 17.4 Documentation
 - [ ] Align README/user guide/version references with current runtime
