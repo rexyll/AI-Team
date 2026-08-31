@@ -30,6 +30,7 @@ class RealDeveloperTaskMetrics:
     failed: bool = False
     llm_profiles: tuple[LLMCallProfile, ...] = ()
     tool_loop_telemetry: tuple[dict[str, Any], ...] = ()
+    developer_decision_trace: tuple[dict[str, Any], ...] = ()
     compaction_count: int = 0
     max_prompt_chars_before_compaction: int = 0
     max_prompt_chars_after_compaction: int = 0
@@ -85,6 +86,14 @@ class RealDeveloperTaskMetrics:
         for item in self.tool_loop_telemetry:
             category = str(item.get("category") or "other")
             counts[category] = counts.get(category, 0) + 1
+        return dict(sorted(counts.items()))
+
+    @property
+    def decision_trace_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.developer_decision_trace:
+            reason = str(item.get("convergence_reason") or "none")
+            counts[reason] = counts.get(reason, 0) + 1
         return dict(sorted(counts.items()))
 
     @property
@@ -183,6 +192,16 @@ class RealDeveloperBenchmarkResult:
                 counts[category] = counts.get(category, 0) + count
         return dict(sorted(counts.items()))
     @property
+    def decision_trace_count(self) -> int:
+        return sum(len(item.developer_decision_trace) for item in self.task_metrics)
+    @property
+    def decision_trace_reason_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.task_metrics:
+            for reason, count in item.decision_trace_counts.items():
+                counts[reason] = counts.get(reason, 0) + count
+        return dict(sorted(counts.items()))
+    @property
     def avg_llm_latency_seconds(self) -> float: return self.llm_latency_seconds / self.llm_calls if self.llm_calls else 0.0
     @property
     def developer_utilization(self) -> float:
@@ -238,6 +257,8 @@ class RealDeveloperBenchmarkResult:
             "duplicate_tool_call_ratio": self.duplicate_tool_call_ratio, "retry_tool_call_ratio": self.retry_tool_call_ratio,
             "unique_tool_call_ratio": self.unique_tool_call_ratio, "avg_tool_result_chars": self.avg_tool_result_chars,
             "tool_call_category_counts": self.tool_call_category_counts,
+            "decision_trace_count": self.decision_trace_count,
+            "decision_trace_reason_counts": self.decision_trace_reason_counts,
             "developer_utilization": self.developer_utilization, "avg_llm_calls_per_task": self.avg_llm_calls_per_task,
             "avg_input_tokens_per_task": self.avg_input_tokens_per_task, "avg_tool_calls_per_task": self.avg_tool_calls_per_task,
             "max_llm_calls_per_task": self.max_llm_calls_per_task, "max_prompt_chars_per_task": self.max_prompt_chars_per_task,
