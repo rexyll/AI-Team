@@ -158,8 +158,40 @@ Implemented in this increment:
 
 # Phase 17 — Developer Experience
 
-`[ ] 17.1` CLI
-`[ ] 17.2` Configuration
-`[ ] 17.3` Plugin API
-`[ ] 17.4` Documentation
-`[ ] 17.5` Example projects
+### 17.1 CLI — in progress
+- [x] Preserve the existing human-readable CLI execution flow
+- [x] Preserve `--projects-base` workspace selection
+- [x] Preserve `--dashboard` HTML export integration
+- [x] Define stable machine-readable `--output json` mode
+- [x] Serialize project result through the canonical `ProjectResult.to_dict()` contract
+- [x] Include stable task identity/status/role/title/error fields in JSON output
+- [x] Add CLI parser and JSON-output regression coverage
+- [ ] Full Phase 17.1 regression verification
+
+### 17.2 Configuration
+- [ ] Define a stable configuration contract
+- [ ] Provider/model configuration validation
+- [ ] CLI/environment precedence rules
+- [ ] Configuration regression tests
+- [ ] Documentation
+
+### 17.3 Plugin API
+- [ ] Define extension points and lifecycle
+- [ ] Versioned plugin contract
+- [ ] Capability/security boundary for plugins
+- [ ] Plugin regression tests
+- [ ] Documentation
+
+### 17.4 Documentation
+- [ ] Align README/user guide/version references with current runtime
+- [ ] CLI reference
+- [ ] Configuration reference
+- [ ] Extension/plugin guide
+- [ ] Operational troubleshooting guide
+
+### 17.5 Example projects
+- [ ] Minimal deterministic example
+- [ ] Example with tests and review loop
+- [ ] Example demonstrating workspace isolation
+- [ ] Example demonstrating operational dashboard/alerts
+- [ ] Example documentation
