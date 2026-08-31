@@ -216,7 +216,7 @@ Phase 18 is a fresh repository-state-driven hardening phase. It must not introdu
 - [x] Keep mutation/read-only cache decisions outside the authorization boundary
 - [x] Full 18.1 regression verification
 
-### 18.2 Runtime State / Persistence Consistency — in progress
+### 18.2 Runtime State / Persistence Consistency — completed
 - [x] Audit authoritative state owners and compatibility wrappers
 - [x] Define a canonical `TaskStateStore` snapshot contract
 - [x] Make in-memory task-state persistence support atomic batch snapshots
@@ -224,14 +224,20 @@ Phase 18 is a fresh repository-state-driven hardening phase. It must not introdu
 - [x] Verify recovery/replay semantics against current event projection
 - [x] Verify lease/recovery state transitions against task lifecycle
 - [x] Add cross-boundary consistency contracts to the full regression suite
-- [ ] Full regression verification
+- [x] Full regression verification
 
-### 18.3 Performance / Tool-loop Efficiency
-- [ ] Establish deterministic performance baselines from existing telemetry
-- [ ] Identify remaining duplicate tool execution and unnecessary LLM turns
+The local full-suite verification for this phase passed after the recovery/projection consistency corrections; subsequent focused recovery contracts were added and are required to remain green in future regressions.
+
+### 18.3 Performance / Tool-loop Efficiency — in progress
+- [x] Establish deterministic performance baselines from existing telemetry
+- [x] Identify remaining duplicate tool execution and unnecessary LLM turns
 - [ ] Improve only evidence-backed bottlenecks
 - [ ] Preserve correctness and security boundaries while optimizing
-- [ ] Add regression thresholds
+- [x] Add regression thresholds
+
+Current evidence baseline from the existing real-Developer telemetry includes a serial 1-developer / 4-task sample with 14 LLM calls, 31 tool calls, 28 unique tool calls, 3 duplicate tool calls, 0 retry tool calls, 51,599 input tokens, 1,636 output tokens, 45,908 tool-result characters, and approximately 99.2% LLM-time ratio. This identifies duplicate tool execution and LLM-dominant latency as optimization candidates; it does not by itself prove that any specific LLM turn is unnecessary.
+
+The benchmark layer now exposes deterministic snapshot fields and evidence-based efficiency findings, while regression gates accept an explicit relative cost tolerance without weakening the default zero-increase policy.
 
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
