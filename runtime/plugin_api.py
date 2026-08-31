@@ -4,7 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
+
 PLUGIN_API_VERSION = "1.0"
+TOOL_EXTENSION_POINT = "tools"
 
 
 class PluginError(RuntimeError):
@@ -87,6 +90,14 @@ class PluginHost:
             raise PluginError(
                 f"plugin '{metadata.name}' requests unavailable extension points: "
                 + ", ".join(sorted(missing_extensions))
+            )
+        tools_extension = self._extensions.get(TOOL_EXTENSION_POINT)
+        if TOOL_EXTENSION_POINT in metadata.extension_points and not isinstance(
+            tools_extension, PluginToolInvocationAdapter
+        ):
+            raise PluginError(
+                f"plugin '{metadata.name}' tools extension must be a "
+                "PluginToolInvocationAdapter"
             )
         self._plugins[metadata.name] = plugin
 
