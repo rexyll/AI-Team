@@ -130,3 +130,50 @@ def test_task_manager_failure_preserves_agent_result_telemetry() -> None:
     assert metrics.tool_result_chars == 17
     assert metrics.cache_hits == 1
     assert metrics.developer_decision_trace[0]["convergence_reason"] == "new_evidence_requires_reasoning"
+
+
+def test_agent_result_failure_diagnostic_is_emitted_without_result_content(capsys, monkeypatch) -> None:
+    monkeypatch.setenv("AGNES_REQUEST_DIAGNOSTICS", "1")
+    task = Task("TASK-EXEC-FAIL-003", "diagnostic", "exercise diagnostics", "developer", status="ready")
+    executor, manager = _executor(task)
+    binding = executor._bindings[0]
+    telemetry = {
+        "tool_name": "run_command",
+        "result_chars": 42,
+        "duplicate_of": "call-0",
+        "retry_of": None,
+    }
+    binding.agent.run = lambda current_task: AgentResult(
+        status="failed",
+        agent="developer",
+        task_id=current_task.id,
+        message="tool_loop_progress_guard: repeated exact tool call",
+        data={
+            "validation": {
+                "tool_call_count": 1,
+                "test_command_count": 1,
+                "unique_tool_calls": 0,
+                "duplicate_tool_calls": 1,
+                "retry_tool_calls": 0,
+                "tool_result_chars": 42,
+                "largest_tool_result_chars": 42,
+            },
+            "tool_loop_telemetry": (telemetry,),
+        },
+    )
+
+    metrics = executor.run_task(task, "developer-1")
+
+    assert metrics.failed is True
+    assert metrics.failure_stage == "agent_result"
+    assert metrics.failure_reason == "tool_loop_progress_guard: repeated exact tool call"
+    output = capsys.readouterr().out
+    assert "[LLM DIAGNOSTIC]" in output
+    assert "stage=agent_result" in output
+    assert "task_id=TASK-EXEC-FAIL-003" in output
+    assert "developer_id=developer-1" in output
+    assert "tool_names=['run_command']" in output
+    assert "tool_result_chars=[42]" in output
+    assert "repeat" not in output.lower()
+    assert "result_chars" in output
+    assert manager.get_task(task.id).status == "failed"
