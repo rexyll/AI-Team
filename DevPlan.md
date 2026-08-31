@@ -158,7 +158,7 @@ Implemented in this increment:
 
 # Phase 17 — Developer Experience
 
-### 17.1 CLI — in progress
+### 17.1 CLI — completed
 - [x] Preserve the existing human-readable CLI execution flow
 - [x] Preserve `--projects-base` workspace selection
 - [x] Preserve `--dashboard` HTML export integration
@@ -166,7 +166,7 @@ Implemented in this increment:
 - [x] Serialize project result through the canonical `ProjectResult.to_dict()` contract
 - [x] Include stable task identity/status/role/title/error fields in JSON output
 - [x] Add CLI parser and JSON-output regression coverage
-- [ ] Full Phase 17.1 regression verification
+- [x] Full Phase 17.1 regression verification
 
 ### 17.2 Configuration
 - [ ] Define a stable configuration contract
