@@ -80,13 +80,15 @@ def test_ab_comparison_distinguishes_duplicate_requests_from_actual_duplicate_ex
 
     comparison = BenchmarkABComparison(baseline=baseline, candidate=candidate)
 
+    assert comparison.baseline.duplicate_execution_tool_calls == 1
+    assert comparison.candidate.duplicate_execution_tool_calls == 3
     assert comparison.exact_duplicate_tool_calls_delta == 4
-    assert comparison.duplicate_execution_tool_calls_delta == 3
+    assert comparison.duplicate_execution_tool_calls_delta == 2
     assert comparison.sample_valid is True
 
     payload = comparison.to_dict()
     assert payload["delta"]["exact_duplicate_tool_calls"] == 4
-    assert payload["delta"]["duplicate_execution_tool_calls"] == 3
+    assert payload["delta"]["duplicate_execution_tool_calls"] == 2
 
 
 def test_ab_comparison_does_not_call_failed_retry_a_correctness_improvement() -> None:
