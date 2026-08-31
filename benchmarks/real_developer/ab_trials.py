@@ -27,6 +27,10 @@ class BenchmarkABTrialSummary:
     median_duplicate_execution_tool_calls_delta: float | None
     median_cache_hits_delta: float | None
     median_decision_trace_delta: float | None
+    duration_improved_trials: int
+    llm_calls_nonworse_trials: int
+    input_tokens_nonworse_trials: int
+    duplicate_execution_nonworse_trials: int
     cache_hit_observations: int
 
     @classmethod
@@ -68,6 +72,10 @@ class BenchmarkABTrialSummary:
             median_duplicate_execution_tool_calls_delta=med(float(item.duplicate_execution_tool_calls_delta) for item in valid),
             median_cache_hits_delta=med(cache_hit_deltas),
             median_decision_trace_delta=med(float(item.decision_trace_delta) for item in valid),
+            duration_improved_trials=sum(item.duration_change_ratio < 0 for item in valid),
+            llm_calls_nonworse_trials=sum(item.llm_call_change_ratio <= 0 for item in valid),
+            input_tokens_nonworse_trials=sum(item.input_token_change_ratio <= 0 for item in valid),
+            duplicate_execution_nonworse_trials=sum(item.duplicate_execution_tool_calls_delta <= 0 for item in valid),
             cache_hit_observations=sum(1 for delta in cache_hit_deltas if delta > 0),
         )
 
@@ -131,6 +139,13 @@ class BenchmarkABTrialSummary:
             "cache_effect_observed": self.cache_effect_observed,
             "cache_hit_observations": self.cache_hit_observations,
             "verdict": self.verdict,
+            "valid_trial_counts": {
+                "duration_improved": self.duration_improved_trials,
+                "llm_calls_nonworse": self.llm_calls_nonworse_trials,
+                "input_tokens_nonworse": self.input_tokens_nonworse_trials,
+                "duplicate_execution_nonworse": self.duplicate_execution_nonworse_trials,
+                "cache_hit_observations": self.cache_hit_observations,
+            },
             "median": {
                 "duration_change_ratio": self.median_duration_change_ratio,
                 "llm_call_change_ratio": self.median_llm_call_change_ratio,
