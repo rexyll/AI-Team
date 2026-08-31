@@ -27,6 +27,25 @@ The host must register the extension object with `PluginHost(extensions={...})`,
 
 For example, a host may expose a narrow `dashboard` adapter rather than the internal dashboard implementation, or an `observe` adapter rather than the complete metrics registry.
 
+### Tool extension boundary
+
+The reserved `tools` extension point is stricter than a generic extension point. Its value must be a `PluginToolInvocationAdapter` constructed by the host around the canonical `ToolInvocationService`.
+
+The adapter exposes only:
+
+```python
+invoke(
+    task_id=...,
+    execution_id=...,
+    tool_name=...,
+    arguments=...,
+)
+```
+
+The authorization role is fixed when the host constructs the adapter and is never supplied by the plugin. Tool calls therefore continue through the canonical runtime capability, permission, argument-validation, audit, and tracing boundaries.
+
+A raw `ToolRegistry`, raw tool callable, workspace object, or `ToolInvocationService` must not be exposed as the plugin `tools` extension. `PluginHost` rejects a non-adapter value for that reserved extension point during registration.
+
 ## Capability security
 
 Capability declarations are requests, not grants. A plugin must pass both checks:
