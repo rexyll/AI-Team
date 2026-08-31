@@ -220,6 +220,7 @@ EXECUTION REQUIREMENT
                 error: Any = None
                 record_arguments: dict[str, Any] = {}
                 verification_reused = False
+                cache_reused = False
                 print(f"\n[Tool] {tool_name}")
                 try:
                     arguments = json.loads(tool_call.arguments)
@@ -228,7 +229,7 @@ EXECUTION REQUIREMENT
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: invalid JSON arguments: " f"{type(exc).__name__}: {exc}"
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
-                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=False)
                     loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
@@ -244,7 +245,7 @@ EXECUTION REQUIREMENT
                     error = {"type": "TypeError", "message": "tool arguments must be a JSON object"}
                     result = "Tool error: arguments must be a JSON object"
                     telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
-                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                    telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=False)
                     loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
@@ -274,6 +275,7 @@ EXECUTION REQUIREMENT
                     else:
                         cached = cache.lookup(tool_name, validated_arguments) if tool_name in CACHEABLE_TOOLS else None
                         if cached is not None:
+                            cache_reused = True
                             result = cached.result
                             context_result = cached.context_evidence()
                             print("[Cache] exact read-only tool result reused")
@@ -310,7 +312,7 @@ EXECUTION REQUIREMENT
                     result = "Tool error: " f"{type(exc).__name__}: {exc}"
                     context_result = result
                 telemetry = classify_tool_call(tool_name=tool_name, arguments=record_arguments, result=result, prior=prior_signatures)
-                telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry)
+                telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=cache_reused)
                 loop_telemetry.append(telemetry_dict)
                 print(f"[Result]\n{result}")
                 messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, context_result)})
@@ -372,8 +374,8 @@ EXECUTION REQUIREMENT
         self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error, metadata=metadata or {}))
 
     @staticmethod
-    def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any) -> dict[str, Any]:
-        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "retained_result_chars": telemetry.retained_result_chars, "result_truncated": telemetry.result_truncated, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category}
+    def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any, *, cache_reused: bool = False) -> dict[str, Any]:
+        return {"execution_id": execution_id, "tool_name": tool_name, "arguments_hash": telemetry.arguments_hash, "result_hash": telemetry.result_hash, "result_chars": telemetry.result_chars, "retained_result_chars": telemetry.retained_result_chars, "result_truncated": telemetry.result_truncated, "duplicate_of": telemetry.duplicate_of, "retry_of": telemetry.retry_of, "category": telemetry.category, "cache_reused": cache_reused}
 
     @staticmethod
     def _build_tool_message(tool_name: str, result: Any) -> str:
