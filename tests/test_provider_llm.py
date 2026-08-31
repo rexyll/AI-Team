@@ -140,3 +140,39 @@ def test_non_agnes_provider_preserves_standard_tool_continuation_shape(monkeypat
 
     messages = client.chat.completions.calls[0]["messages"]
     assert messages[-1] == {"role": "tool", "tool_call_id": "call-1", "content": "content"}
+
+
+def test_agnes_request_diagnostics_are_disabled_by_default(capsys):
+    llm = ProviderLLM(model="agnes-2.5-flash", provider_profile="agnes", client_instance=FakeClient())
+    llm._log_request_diagnostic(
+        {"model": llm.model, "messages": [{"role": "user", "content": "secret"}]},
+        RuntimeError("boom"),
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_agnes_request_diagnostics_redact_message_content(monkeypatch, capsys):
+    monkeypatch.setenv("AGNES_REQUEST_DIAGNOSTICS", "1")
+    llm = ProviderLLM(model="agnes-2.5-flash", provider_profile="agnes", client_instance=FakeClient())
+    llm._log_request_diagnostic(
+        {
+            "model": llm.model,
+            "messages": [
+                {"role": "system", "content": "secret-system"},
+                {"role": "user", "content": "secret-user"},
+                {"role": "tool", "tool_call_id": "call-1", "content": "secret-tool-result"},
+            ],
+            "tools": [{"function": {"name": "read_file"}}],
+            "tool_choice": "auto",
+        },
+        RuntimeError("boom"),
+    )
+    output = capsys.readouterr().out
+    assert "provider=agnes" in output
+    assert "model=agnes-2.5-flash" in output
+    assert "roles=['system', 'user', 'tool']" in output
+    assert "secret-system" not in output
+    assert "secret-user" not in output
+    assert "secret-tool-result" not in output
+    assert "tools_count=1" in output
+    assert "tool_choice=auto" in output
