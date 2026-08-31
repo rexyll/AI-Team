@@ -34,6 +34,22 @@ def test_cached_result_exposes_compact_context_evidence() -> None:
     assert "very large source content" not in marker
 
 
+def test_cache_presence_probe_does_not_mutate_lookup_counters_or_recency() -> None:
+    cache = ToolResultCache(max_entries=2)
+    cache.store(tool_name="read_file", arguments={"path": "a.py"}, result="a", execution_id="CALL-1")
+    cache.store(tool_name="read_file", arguments={"path": "b.py"}, result="b", execution_id="CALL-2")
+
+    assert cache.contains("read_file", {"path": "a.py"}) is True
+    assert cache.contains("read_file", {"path": "missing.py"}) is False
+    assert cache.hits == 0
+    assert cache.misses == 0
+
+    cache.store(tool_name="read_file", arguments={"path": "c.py"}, result="c", execution_id="CALL-3")
+    assert cache.lookup("read_file", {"path": "a.py"}) is None
+    assert cache.lookup("read_file", {"path": "b.py"}) is not None
+    assert cache.lookup("read_file", {"path": "c.py"}) is not None
+
+
 def test_canonical_arguments_are_order_independent() -> None:
     cache = ToolResultCache()
     cache.store(
