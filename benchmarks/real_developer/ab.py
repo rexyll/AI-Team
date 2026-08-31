@@ -61,12 +61,23 @@ class BenchmarkABComparison:
     def duplicate_tool_calls_delta(self) -> int:
         return self.candidate.duplicate_tool_calls - self.baseline.duplicate_tool_calls
 
+    @staticmethod
+    def _exact_duplicate_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+        return result.tool_call_category_counts.get("exact_duplicate", 0)
+
+    @staticmethod
+    def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+        """Return exact duplicates that were actually executed, excluding cache-served repeats."""
+        exact_duplicates = BenchmarkABComparison._exact_duplicate_tool_calls(result)
+        return max(0, exact_duplicates - result.cache_hits)
+
     @property
     def exact_duplicate_tool_calls_delta(self) -> int:
-        return (
-            self.candidate.tool_call_category_counts.get("exact_duplicate", 0)
-            - self.baseline.tool_call_category_counts.get("exact_duplicate", 0)
-        )
+        return self._exact_duplicate_tool_calls(self.candidate) - self._exact_duplicate_tool_calls(self.baseline)
+
+    @property
+    def duplicate_execution_tool_calls_delta(self) -> int:
+        return self._duplicate_execution_tool_calls(self.candidate) - self._duplicate_execution_tool_calls(self.baseline)
 
     @staticmethod
     def _cache_probe_excess(result: RealDeveloperBenchmarkResult) -> int:
@@ -116,6 +127,7 @@ class BenchmarkABComparison:
                 "tool_result_chars": self.tool_result_chars_delta,
                 "duplicate_tool_calls": self.duplicate_tool_calls_delta,
                 "exact_duplicate_tool_calls": self.exact_duplicate_tool_calls_delta,
+                "duplicate_execution_tool_calls": self.duplicate_execution_tool_calls_delta,
                 "cache_probe_excess": self.cache_probe_excess_delta,
                 "decision_trace_count": self.decision_trace_delta,
                 "decision_reason_counts": {
@@ -129,7 +141,7 @@ class BenchmarkABComparison:
 
 
 class RealDeveloperABBenchmark:
-    """Run a fair baseline/candidate comparison on isolated workspaces.
+    """Run a fair baseline/candidate comparison on isolated scenarios.
 
     The baseline disables only the read-only result cache lookup. All other
     DeveloperAgent behavior, including context compaction and instrumentation,
