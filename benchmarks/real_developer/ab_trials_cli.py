@@ -91,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"reliability_preserved={summary.reliability_preserved} "
                 f"efficiency_improved={summary.efficiency_improved} "
                 f"cache_effect_observed={summary.cache_effect_observed} "
+                f"cache_hit_observations={summary.cache_hit_observations} "
                 f"verdict={summary.verdict}"
             )
             print(
