@@ -20,6 +20,7 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         raise TypeError("result must be a RealDeveloperBenchmarkResult")
     category_counts = result.tool_call_category_counts
     exact_duplicate_tool_calls = category_counts.get("exact_duplicate", 0)
+    cache_probe_excess = max(0, result.cache_hits - exact_duplicate_tool_calls)
     return {
         "scenario": result.scenario,
         "developer_count": result.developer_count,
@@ -40,6 +41,7 @@ def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]
         "cache_hits": result.cache_hits,
         "cache_misses": result.cache_misses,
         "cache_invalidations": result.cache_invalidations,
+        "cache_probe_excess": cache_probe_excess,
         "duplicate_tool_call_ratio": result.duplicate_tool_call_ratio,
         "retry_tool_call_ratio": result.retry_tool_call_ratio,
         "llm_time_ratio": result.llm_time_ratio,
@@ -72,9 +74,11 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
     if has_category_telemetry:
         duplicate_count = category_counts.get("exact_duplicate", 0)
         duplicate_message_suffix = " Failure-recovery retries are excluded from this finding."
+        cache_probe_excess = max(0, result.cache_hits - duplicate_count)
     else:
         duplicate_count = result.duplicate_tool_calls
         duplicate_message_suffix = " Per-call categories were unavailable, so this is a coarse legacy signal and may include retries."
+        cache_probe_excess = 0
 
     if duplicate_count:
         ratio = duplicate_count / result.tool_calls if result.tool_calls else 0.0
@@ -86,6 +90,17 @@ def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tupl
                     f"{duplicate_count} of {result.tool_calls} tool calls were classified as "
                     "duplicates; inspect whether cacheable/read-only evidence could be reused earlier."
                     + duplicate_message_suffix
+                ),
+            )
+        )
+    if cache_probe_excess:
+        findings.append(
+            EfficiencyFinding(
+                kind="redundant_cache_probe",
+                observed=float(cache_probe_excess),
+                message=(
+                    f"{cache_probe_excess} cache hits exceeded exact-duplicate tool-call telemetry; "
+                    "inspect batch preflight or other paths that probe the cache more than once."
                 ),
             )
         )
