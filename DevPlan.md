@@ -39,46 +39,6 @@ A generic Python callback cannot by itself provide globally exactly-once effects
 `[x] 15.4` Prompt injection resistance
 `[x] 15.5` Security regression suite
 
-## 15.1 Dependency policy
-Runtime dependencies must be explicitly declared in `requirements.txt`, use exact `==` version pins, and be declared only once. The policy is enforced by `security.dependency_policy` and its regression tests.
-
-## 15.2 Network egress policy
-Network access is deny-by-default and requires HTTPS plus an explicitly authorized hostname. Network operations must pass through the enforcement boundary before execution; rejected destinations must never invoke the underlying operation.
-
-## 15.3 Secret isolation
-Secrets are redacted at agent context, tool execution record, durable result, and delivery audit boundaries. End-to-end regression coverage verifies that common API keys, tokens, passwords, authorization values, and credentials cannot cross these observable/persistent boundaries.
-
-## 15.4 Prompt injection resistance — completed
-The model must treat task descriptions, dependency outputs, tool results, repository files, test output, and agent feedback as **untrusted data**, not as instructions that can override the system policy or tool permissions.
-
-Completed in previous increments:
-- [x] Define the reusable untrusted-content boundary helper in `security.prompt_injection`.
-- [x] Add canonical `<untrusted-data source="...">` fencing with application-controlled provenance labels.
-- [x] Add regression coverage for hostile text, structured tool results, invalid labels, fence-breaking labels, and authoritative system trust policy.
-
-Completed in this increment:
-- [x] Fence Architect task, dependency, result, history, and metadata fields at the model-facing prompt boundary.
-- [x] Fence Tester task and Developer-result fields at the model-facing prompt boundary.
-- [x] Fence Reviewer task, Developer result, Tester feedback, Reviewer feedback, dependency context, history, metadata, and review-round fields at the model-facing prompt boundary.
-- [x] Fence tool-produced content centrally in `BaseAgent` before it is sent back to the model, without mutating runtime/audit messages.
-- [x] Fence Developer task/dependency/feedback/result/history/metadata/review-round fields at the Developer tool-loop model boundary.
-- [x] Fence Developer tool-loop checkpoints before they are returned to the model.
-- [x] Keep runtime capability authorization independent from model-provided or untrusted content.
-- [x] Add adversarial Developer regression coverage for hostile task data, dependency context, tester/reviewer feedback, tool results, and checkpoint content.
-- [x] Verify legitimate Developer execution requirements remain outside the untrusted-data fencing.
-- [x] Make prompt-injection attempts observable in workflow execution/audit events using rule/source/count metadata only; never persist inspected raw content.
-- [x] Add end-to-end evidence that injection attempts cannot alter actual workspace scope or tool-guard decisions.
-- [x] Consolidate prompt-injection defenses into the Phase 15.5 security regression suite runner.
-
-## 15.5 Security regression suite
-Current completed coverage includes strict evidence-gate provenance validation and workflow evidence-lineage regression coverage. In particular, gate validation remains fail-closed when explicit provenance is missing; isolated workflow transition-contract compatibility must not synthesize provenance inside the generic evidence validator.
-
-Implemented in this increment:
-- [x] Add a deterministic security regression runner covering dependency, egress, secret-isolation, prompt-injection, workspace/tool-security, and evidence-gate tests.
-- [x] Document the security regression command and boundary expectations in `SECURITY.md`.
-- [x] Expand cross-boundary regression coverage for security-policy bypass attempts introduced by observability boundaries.
-- [x] Full security regression verification.
-
 # Phase 16 — Observability / Operations
 
 ### 16.1 Structured logging — completed
@@ -226,7 +186,7 @@ Phase 18 is a fresh repository-state-driven hardening phase. It must not introdu
 - [x] Add cross-boundary consistency contracts to the full regression suite
 - [x] Full regression verification
 
-The local full-suite verification for this phase passed after the recovery/projection consistency corrections; subsequent focused recovery contracts were added and are required to remain green in future regressions.
+The local full-suite verification for this phase passed after the recovery/projection consistency corrections; subsequent focused recovery contracts are required to remain green in future regressions.
 
 ### 18.3 Performance / Tool-loop Efficiency — in progress
 - [x] Establish deterministic performance baselines from existing telemetry
@@ -239,9 +199,11 @@ Current evidence baseline from the existing real-Developer telemetry includes a 
 
 The benchmark layer now exposes deterministic snapshot fields and evidence-based efficiency findings, while regression gates accept an explicit relative cost tolerance without weakening the default zero-increase policy.
 
-Exact-duplicate analysis is now separated from failure-recovery retry analysis. Only calls classified as `exact_duplicate` are treated as direct duplicate-execution optimization candidates; required failure-recovery retries remain correctness-sensitive and are not counted as wasted exploration.
+Exact-duplicate analysis is separated from failure-recovery retry analysis. Only calls classified as `exact_duplicate` are treated as direct duplicate-execution optimization candidates; required failure-recovery retries remain correctness-sensitive and are not counted as wasted exploration. Legacy metric-only benchmark results continue to support the older aggregate duplicate counter as a coarse compatibility signal.
 
-A cache-probe diagnostic was added to distinguish a genuine duplicate tool call from repeated cache inspection. When per-call category telemetry is available, `cache_probe_excess = max(0, cache_hits - exact_duplicate_tool_calls)` identifies possible duplicate cache probing without changing runtime behavior. The next optimization decision should use real benchmark telemetry to confirm this signal before changing the Developer loop.
+A cache-probe diagnostic distinguishes a genuine duplicate tool call from repeated cache inspection. When per-call category telemetry is available, `cache_probe_excess = max(0, cache_hits - exact_duplicate_tool_calls)` identifies possible duplicate cache probing without changing runtime behavior.
+
+A side-effect-free `ToolResultCache.contains()` probe is now available for preflight decisions. It does not change hit/miss counters, LRU recency, or cached values. The Developer loop has not yet been changed to use it because real benchmark evidence must first show that the preflight probe is materially redundant; this preserves the evidence-backed optimization rule.
 
 ### 18.4 Extension Architecture
 - [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
