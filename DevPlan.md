@@ -249,13 +249,15 @@ Live benchmark runs then exposed an upstream OpenAI-compatible tool-continuation
 
 The benchmark scenario was also corrected so the reference document is optional repeated evidence rather than a mandatory duplicate read. The workload must not intentionally force consecutive duplicate tool calls, because that conflicts with the runtime progress-guard safety boundary. Natural duplicate calls remain observable through telemetry and efficiency analysis.
 
-The latest live A/B sample still has `sample_valid=False` because both baseline and candidate independently tripped the progress guard after repeated exact tool calls (`list_files` / `read_file`). Therefore its duration/token/tool-call deltas are invalid performance evidence. The next valid benchmark must first demonstrate that the workload completes without violating the progress-guard safety boundary.
+The latest 10-trial serial / 4-developer live A/B sample contains 8 valid and 2 invalid trials. Baseline success was 0.8000 and candidate success was 1.0000; reliability was preserved and cache effects were observed, but the aggregate verdict remains `no_clear_efficiency_gain`. Valid-trial medians were +1.74% duration, -5.41% LLM calls, -4.08% input tokens, -1 exact-duplicate tool call, -1 duplicate-execution tool call, and 0 median cache-hit change. The two invalid trials independently tripped the progress guard in baseline (`read_file` / `run_command`), so they must not be used as performance evidence. The next optimization conclusion should therefore remain correctness-first rather than claiming a performance win.
 
 ### 18.4 Extension Architecture
-- [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
-- [ ] Define stable integration contracts
-- [ ] Prevent plugin APIs from bypassing security boundaries
+- [x] Audit Plugin / Tool / Agent / Workflow extension boundaries
+- [x] Define stable integration contracts
+- [x] Prevent plugin APIs from bypassing security boundaries
 - [ ] Add extension compatibility tests
+
+The first extension slice is now implemented around the existing production invocation boundary. The reserved `tools` plugin extension point requires a host-owned `PluginToolInvocationAdapter`; raw `ToolRegistry`, raw callable, workspace, or `ToolInvocationService` exposure is not accepted as the plugin tool extension. The adapter binds a host-selected role and forwards calls through `ToolInvocationService`, preserving capability authorization, permission checks, argument validation, execution audit, and tracing. Focused plugin regression coverage now verifies raw-registry rejection, adapter acceptance, fixed-role behavior, and audit preservation. Full extension compatibility remains open until Agent and Workflow extension boundaries are covered.
 
 ### 18.5 Production Readiness Gate
 - [ ] Full architecture review
