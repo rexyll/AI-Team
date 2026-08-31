@@ -22,10 +22,6 @@ def _status_code_of(exc: BaseException) -> int | None:
     return None
 
 
-def _message_role(message: Any) -> Any:
-    return message.get("role") if isinstance(message, dict) else None
-
-
 class ProviderLLM(BaseLLM):
     """BaseLLM adapter for OpenAI-compatible provider clients.
 
@@ -178,28 +174,6 @@ class ProviderLLM(BaseLLM):
                 )
                 time.sleep(wait)
 
-    @staticmethod
-    def _needs_user_continuation(messages: list[dict[str, Any]]) -> bool:
-        return bool(messages) and _message_role(messages[-1]) == "tool"
-
-    def _prepare_tool_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep Agnes tool continuation compatible without introducing a new instruction.
-
-        The Agnes-compatible gateway requires a user message after tool results.
-        Reuse the original user query rather than inventing a fresh control
-        instruction, so the model sees the same task intent and only gains the
-        message role needed by the provider's chat template.
-        """
-        prepared = [dict(message) for message in messages]
-        if self.provider_profile == "agnes" and self._needs_user_continuation(prepared):
-            original_user = next(
-                (message for message in prepared if _message_role(message) == "user"),
-                None,
-            )
-            if original_user is not None:
-                prepared.append({"role": "user", "content": original_user.get("content", "")})
-        return prepared
-
     def generate(
         self,
         prompt: str,
@@ -236,10 +210,9 @@ class ProviderLLM(BaseLLM):
         if not isinstance(messages, list) or not messages:
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
-        prepared_messages = self._prepare_tool_messages(messages)
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": prepared_messages,
+            "messages": [dict(message) for message in messages],
         }
         if tools:
             kwargs["tools"] = list(tools)
