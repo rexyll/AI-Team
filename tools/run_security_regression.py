@@ -18,6 +18,8 @@ def _security_tests() -> list[str]:
         "test_*secret*.py",
         "test_*prompt_injection*.py",
         "test_*evidence*.py",
+        "test_*plugin_api*.py",
+        "test_*plugin_extension*.py",
     )
     paths = {
         path
