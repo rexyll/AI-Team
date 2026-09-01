@@ -128,13 +128,15 @@ The contract suite includes deterministic mock LLM/agent integration tests. Use 
 
 Tool execution is subject to the existing tool contract, permission policy, and workspace sandbox boundaries. A tool must not be treated as an unrestricted shell or filesystem API.
 
-When adding a tool:
+When adding an Agent-visible tool:
 
 1. Define its schema and argument validation.
-2. Register it through the existing tool registry contract.
+2. Register it through the existing Agent tool registry contract.
 3. Apply the required permission policy.
 4. Keep workspace access inside the configured sandbox boundary.
 5. Add contract tests for invalid arguments and denied access.
+
+The `git_command` primitive is intentionally **host-owned**. It remains part of the complete tool contract for compatibility and schema validation, but it is not exposed through `TOOL_REGISTRY` to Agents. Host Git operations must go through `runtime.host_git.HostGitOperationService`, which validates the authorized workspace, repository root, operation vocabulary, paths, revisions, and commit message before invoking the underlying Git primitive.
 
 Security behavior is part of the production contract; do not bypass these layers in examples.
 
