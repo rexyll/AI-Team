@@ -96,27 +96,6 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "git_command",
-            "description": "Execute a Git command inside a repository.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Git command without the 'git' prefix.",
-                    },
-                    "cwd": {
-                        "type": "string",
-                        "description": "Git repository directory.",
-                    },
-                },
-                "required": ["command", "cwd"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "move_file",
             "description": (
                 "Move a file inside the authorized workspace. "
