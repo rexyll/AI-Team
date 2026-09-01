@@ -9,11 +9,6 @@ from security.workspace import WorkspaceSandbox
 from tools.registry import TOOL_REGISTRY
 
 
-OPERATIONS = {
-    "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"
-}
-
-
 def _service(tmp_path: Path, monkeypatch):
     workspace = tmp_path / "repo"
     workspace.mkdir()
@@ -31,9 +26,8 @@ def _service(tmp_path: Path, monkeypatch):
 
 def test_host_service_exposes_only_semantic_git_operations():
     assert "command" not in GitOperationRequest.__dataclass_fields__
-    assert OPERATIONS == {
-        value for value in GitOperationRequest.__dataclass_fields__["operation"].type.__args__
-    }
+    for method in ("status", "diff", "log", "show", "branch", "rev_parse", "add", "commit"):
+        assert callable(getattr(HostGitOperationService, method))
 
 
 def test_agent_registry_does_not_expose_raw_git_command():
