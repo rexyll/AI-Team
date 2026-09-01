@@ -257,7 +257,7 @@ The latest 10-trial serial / 4-developer live A/B sample contains 8 valid and 2 
 - [ ] Prevent plugin APIs from bypassing security boundaries
 - [ ] Add extension compatibility tests
 
-#### 18.4 Tool extension slice — implemented
+#### 18.4 Tool extension slice — completed
 - [x] Audit existing PluginHost ↔ ToolRegistry / ToolInvocationService boundary
 - [x] Define reserved `tools` extension point
 - [x] Introduce host-owned `PluginToolInvocationAdapter`
@@ -266,7 +266,31 @@ The latest 10-trial serial / 4-developer live A/B sample contains 8 valid and 2 
 - [x] Preserve canonical capability, permission, argument-validation, audit, and tracing boundaries
 - [x] Add focused regression coverage for raw-registry rejection, adapter acceptance, fixed-role behavior, and audit preservation
 
-The first extension slice is now implemented around the existing production invocation boundary. The reserved `tools` plugin extension point requires a host-owned `PluginToolInvocationAdapter`; raw `ToolRegistry`, raw callable, workspace, or `ToolInvocationService` exposure is not accepted as the plugin tool extension. The adapter binds a host-selected role and forwards calls through `ToolInvocationService`, preserving capability authorization, permission checks, argument validation, execution audit, and tracing. Focused plugin regression coverage now verifies raw-registry rejection, adapter acceptance, fixed-role behavior, and audit preservation. Full extension compatibility remains open until Agent and Workflow extension boundaries are covered.
+The first extension slice is implemented around the existing production invocation boundary. The reserved `tools` plugin extension point requires a host-owned `PluginToolInvocationAdapter`; raw internal tool services are rejected.
+
+#### 18.4 Agent extension slice — completed
+- [x] Audit existing `AgentRouter` / `BaseAgent` / `AgentResult` boundary
+- [x] Define reserved `agents` extension point
+- [x] Introduce host-owned `PluginAgentInvocationAdapter`
+- [x] Bind a trusted Agent role at adapter construction time
+- [x] Preserve existing singleton-role and Developer-pool routing semantics
+- [x] Prevent raw `AgentRouter` / `BaseAgent` / LLM / tool-loop state exposure through the `agents` extension
+- [x] Isolate mutable `Task` input from plugin-visible Agent execution
+- [x] Isolate mutable `AgentResult` output from host runtime state
+- [x] Add focused regression coverage for adapter-only registration, fixed-role behavior, task/result isolation, and Developer-pool routing
+- [x] Document the Agent extension boundary
+
+The Agent extension slice reuses the production `AgentRouter` and canonical `AgentResult` contracts. Plugins receive only `invoke(task) -> AgentResult`; host runtime objects remain inaccessible through the extension.
+
+#### 18.4 Workflow extension slice — pending
+- [ ] Audit existing workflow execution / event / task-manager boundary
+- [ ] Define reserved `workflow` extension point
+- [ ] Introduce host-owned workflow invocation/read adapter
+- [ ] Prevent direct mutation of workflow state or event persistence by plugins
+- [ ] Preserve workflow authorization, lifecycle, event, persistence, and tracing boundaries
+- [ ] Add focused workflow-extension regression coverage
+
+Full 18.4 compatibility remains open until the Workflow extension slice and cross-extension compatibility suite are completed.
 
 ### 18.5 Production Readiness Gate
 - [ ] Full architecture review
