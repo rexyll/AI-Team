@@ -10,6 +10,7 @@ def test_readiness_gates_are_ordered_and_use_real_regression_contracts() -> None
     assert names == [
         "security",
         "extension-boundary",
+        "observability",
         "persistence-recovery",
         "full-regression",
     ]
@@ -22,6 +23,9 @@ def test_readiness_gates_are_ordered_and_use_real_regression_contracts() -> None
         "tests/test_extension_examples_contract.py",
         "-q",
     )
+    assert commands["observability"][:3] == (readiness.sys.executable, "-m", "pytest")
+    assert "tests/test_tracing.py" in commands["observability"]
+    assert "tests/test_workflow_event_metrics.py" in commands["observability"]
     assert "tests/test_workflow_recovery_state_consistency.py" in commands["persistence-recovery"]
     assert commands["full-regression"][-2:] == ("pytest", "-q")
 
