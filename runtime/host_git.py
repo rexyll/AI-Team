@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Sequence
 
 from security.workspace import WorkspaceSandbox
@@ -120,7 +121,7 @@ class HostGitOperationService:
     def commit(self, workspace: str, message: str) -> str:
         return self.execute(GitOperationRequest("commit", workspace, message=message))
 
-    def _require_repository(self, workspace) -> None:
+    def _require_repository(self, workspace: Path) -> None:
         result = git_tool.git_command("rev-parse --show-toplevel", str(workspace))
         if not result.startswith("exit_code=0\n"):
             raise ValueError("workspace is not a Git repository")
@@ -131,7 +132,7 @@ class HostGitOperationService:
         root = self._sandbox.resolve(root_line)
         workspace.relative_to(root)
 
-    def _add(self, request: GitOperationRequest, workspace) -> str:
+    def _add(self, request: GitOperationRequest, workspace: Path) -> str:
         if not request.paths:
             raise ValueError("add requires at least one path")
         safe_paths: list[str] = []
@@ -145,7 +146,7 @@ class HostGitOperationService:
         quoted = " ".join(self._quote(path) for path in safe_paths)
         return git_tool.git_command(f"add {quoted}", str(workspace))
 
-    def _commit(self, request: GitOperationRequest, workspace) -> str:
+    def _commit(self, request: GitOperationRequest, workspace: Path) -> str:
         message = request.message.strip()
         if not message:
             raise ValueError("commit message must be non-empty")
