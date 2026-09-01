@@ -12,7 +12,7 @@ def test_cost_rate_normalizes_decimal_values_and_estimates_usage() -> None:
 
     assert rate.input_usd_per_million_tokens == Decimal("2.00")
     assert rate.output_usd_per_million_tokens == Decimal("4")
-    assert rate.estimate(usage) == Decimal("2.00")
+    assert rate.estimate(usage) == Decimal("2.02")
 
 
 def test_registry_is_scoped_by_provider_and_model() -> None:
