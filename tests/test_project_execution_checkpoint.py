@@ -11,18 +11,18 @@ from runtime.task_status import TaskStatus
 from runtime.workflow_checkpoint import WorkflowCheckpoint
 
 
-def _checkpoint(*, status: str = "started", reservation_id: str = "RES-001") -> ProjectExecutionCheckpoint:
+def _checkpoint(*, status: str = "started", reservation_id: str = "RES-001", project_id: str = "P1") -> ProjectExecutionCheckpoint:
     task = Task(
         "TASK-001",
         "task",
         "description",
         "developer",
         status=TaskStatus.RUNNING.value,
-        context={"project_id": "P1"},
+        context={"project_id": project_id},
     )
     return ProjectExecutionCheckpoint(
         reservation_id=reservation_id,
-        scope=ProjectExecutionScope("P1"),
+        scope=ProjectExecutionScope(project_id),
         task_id=task.id,
         status=status,
         task_checkpoint=WorkflowCheckpoint.capture(task),
@@ -55,6 +55,11 @@ def test_checkpoint_rejects_identity_status_and_task_mismatches():
 
     with pytest.raises(ProjectExecutionCheckpointError):
         ProjectExecutionCheckpoint.from_dict({**checkpoint.to_dict(), "project_id": ""})
+
+    mismatched = checkpoint.to_dict()
+    mismatched["project_id"] = "P2"
+    with pytest.raises(ProjectExecutionCheckpointError, match="project scope"):
+        ProjectExecutionCheckpoint.from_dict(mismatched)
 
 
 def test_store_persists_and_filters_recoverable_checkpoints(tmp_path):
