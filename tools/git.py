@@ -44,20 +44,29 @@ def _parse_git_command(command: str) -> list[str]:
     if not args:
         raise ValueError("git command must not be empty")
 
-    subcommand = args[0].lower()
+    # posix=False intentionally matches Windows command-line parsing more
+    # closely, but it retains surrounding quotes. Remove only a balanced
+    # outer quote pair; inner quotes remain untouched and are rejected by the
+    # host-owned semantic boundary where appropriate.
+    normalized_args: list[str] = []
+    for token in args:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            token = token[1:-1]
+        normalized_args.append(token)
+
+    subcommand = normalized_args[0].lower()
     if subcommand not in ALLOWED_GIT_COMMANDS:
         raise PermissionError(
             f"Git subcommand is not allowed: {subcommand}"
         )
 
-    for token in args:
-        normalized = token.strip('"').lower()
-        if normalized in BLOCKED_TOKENS:
+    for token in normalized_args:
+        if token.lower() in BLOCKED_TOKENS:
             raise PermissionError(
-                f"Git option is not allowed: {normalized}"
+                f"Git option is not allowed: {token.lower()}"
             )
 
-    return args
+    return normalized_args
 
 
 def git_command(command: str, cwd: str) -> str:
