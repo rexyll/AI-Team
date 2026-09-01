@@ -1,6 +1,11 @@
 import pytest
 
+from runtime.agent_config import AgentConfig
+from runtime.agent_result import AgentResult
+from runtime.agent_router import AgentRouter
+from runtime.plugin_agent_adapter import PluginAgentInvocationAdapter
 from runtime.plugin_api import (
+    AGENT_EXTENSION_POINT,
     PLUGIN_API_VERSION,
     PluginError,
     PluginHost,
@@ -9,8 +14,10 @@ from runtime.plugin_api import (
     TOOL_EXTENSION_POINT,
 )
 from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
+from runtime.task import Task
 from runtime.tool_invocation_service import ToolInvocationService
 from tools.registry import ToolRegistry
+from agents.base import BaseAgent
 
 
 class _Context:
@@ -36,6 +43,32 @@ class _Plugin:
 
     def shutdown(self):
         self.calls.append("shutdown")
+
+
+class _Agent(BaseAgent):
+    def __init__(self, role: str, result_data: dict | None = None):
+        super().__init__(AgentConfig(role=role, model=""), llm=_NoOpLLM())
+        self._role = role
+        self.result_data = result_data or {}
+        self.received_tasks = []
+
+    @property
+    def role(self):
+        return self._role
+
+    def run(self, task: Task) -> AgentResult:
+        self.received_tasks.append(task)
+        task.context["mutated_by_agent"] = True
+        return AgentResult(
+            status="completed",
+            agent=self.role,
+            task_id=task.id,
+            data=self.result_data,
+        )
+
+
+class _NoOpLLM:
+    pass
 
 
 def test_plugin_metadata_has_versioned_contract():
@@ -163,3 +196,83 @@ def test_plugin_tool_adapter_cannot_override_host_assigned_role():
             tool_name="read_file",
             arguments={"path": "README.md"},
         )
+
+
+def test_agents_extension_rejects_raw_router():
+    metadata = PluginMetadata(
+        "raw-agents",
+        "1.0",
+        extension_points=frozenset({AGENT_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+    router = AgentRouter()
+    router.register(_Agent("architect"))
+
+    with pytest.raises(PluginError, match="agents extension must be a PluginAgentInvocationAdapter"):
+        PluginHost(extensions={AGENT_EXTENSION_POINT: router}).register(plugin)
+
+
+def test_agents_extension_requires_canonical_invocation_adapter():
+    metadata = PluginMetadata(
+        "safe-agents",
+        "1.0",
+        extension_points=frozenset({AGENT_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+    router = AgentRouter()
+    agent = _Agent("architect", {"answer": "ok"})
+    router.register(agent)
+    adapter = PluginAgentInvocationAdapter(router, role="architect")
+    host = PluginHost(extensions={AGENT_EXTENSION_POINT: adapter})
+
+    host.register(plugin)
+    host.initialize("safe-agents", _Context(extensions={AGENT_EXTENSION_POINT: adapter}))
+    assert plugin.calls == ["initialize"]
+    assert adapter.role == "architect"
+
+
+def test_plugin_agent_adapter_isolates_task_and_result_boundaries():
+    router = AgentRouter()
+    agent = _Agent("architect", {"nested": {"value": 1}})
+    router.register(agent)
+    adapter = PluginAgentInvocationAdapter(router, role="architect")
+    task = Task("TASK-AGENT-001", "title", "description", "developer", context={"original": True})
+
+    result = adapter.invoke(task)
+
+    assert isinstance(result, AgentResult)
+    assert result.status == "completed"
+    assert result.agent == "architect"
+    assert result.task_id == task.id
+    assert "mutated_by_agent" not in task.context
+
+    result.data["nested"]["value"] = 99
+    assert agent.result_data["nested"]["value"] == 1
+
+
+def test_plugin_agent_adapter_does_not_expose_router_or_agent_internals():
+    router = AgentRouter()
+    router.register(_Agent("architect"))
+    adapter = PluginAgentInvocationAdapter(router, role="architect")
+
+    assert not hasattr(adapter, "router")
+    assert not hasattr(adapter, "agent")
+    assert not hasattr(adapter, "llm")
+    assert adapter.role == "architect"
+
+
+def test_plugin_agent_adapter_routes_developer_pool_by_task_id():
+    router = AgentRouter()
+    agents = [_Agent("developer"), _Agent("developer")]
+    router.register_developer_pool(agents)
+    adapter = PluginAgentInvocationAdapter(router, role="developer")
+    task = Task("TASK-AGENT-POOL-001", "title", "description", "developer")
+
+    result = adapter.invoke(task)
+
+    selected = router.get_developer_for_task(task.id)
+    assert result.agent == "developer"
+    assert selected.received_tasks
+    assert selected.received_tasks[-1].id == task.id
