@@ -33,7 +33,7 @@ The remaining architectural gap is that these capabilities are not yet consolida
 - [x] Add concurrency and cross-project isolation regression coverage.
 - [x] Integrate project-level scheduling with existing observability metrics and tracing.
 
-The 19.1 execution handoff is now implemented through `ProjectExecutionHandoff`. It keeps reservation accounting transient and project-scoped while delegating actual task lifecycle execution to the existing `TaskWorkflow.execute(task_id)` boundary. Focused and full local verification reported by the development workflow must remain green before the slice is treated as accepted.
+The 19.1 execution handoff is implemented through `ProjectExecutionHandoff`. It keeps reservation accounting transient and project-scoped while delegating actual task lifecycle execution to the existing `TaskWorkflow.execute(task_id)` boundary. Focused and full local verification must remain green before the slice is treated as accepted.
 
 ### Non-goals for 19.1
 
@@ -45,7 +45,7 @@ The 19.1 execution handoff is now implemented through `ProjectExecutionHandoff`.
 
 ## 19.2 Long-lived execution and recovery
 
-### 19.2.1 Durable project execution checkpoint contract — in progress
+### 19.2.1 Durable project execution checkpoint contract — implementation complete; local validation pending
 
 - [x] Define immutable project execution checkpoint identity and scope.
 - [x] Reuse the canonical `WorkflowCheckpoint` for task state rather than duplicating Task serialization.
@@ -53,12 +53,12 @@ The 19.1 execution handoff is now implemented through `ProjectExecutionHandoff`.
 - [x] Provide filesystem-backed atomic checkpoint persistence.
 - [x] Provide project-scoped recoverable checkpoint enumeration.
 - [x] Reject task/project scope mismatches at the checkpoint boundary.
-- [ ] Integrate checkpoint publication into `ProjectExecutionHandoff` lifecycle transitions.
-- [ ] Reconstruct active reservations from durable checkpoints on process restart.
-- [ ] Define authoritative reconciliation before retrying an ambiguous `started` execution.
+- [x] Integrate checkpoint publication into `ProjectExecutionHandoff` lifecycle transitions.
+- [x] Reconstruct active reservations from durable checkpoints on process restart.
+- [x] Define authoritative reconciliation before retrying an ambiguous `started` execution.
 - [ ] Add crash/restart integration coverage across checkpoint, TaskManager, and TaskWorkflow.
 
-The first 19.2 increment intentionally establishes the durable contract without changing live execution semantics. The checkpoint store is not a second task-state owner: it contains execution identity and embeds the existing `WorkflowCheckpoint`. Recovery must reconcile against authoritative TaskManager/persistent task state before deciding whether an execution is safe to retry.
+The checkpoint store remains a control-plane durability boundary rather than a second task-state owner. `ProjectExecutionHandoff` mirrors reservation lifecycle transitions to durable checkpoints and can reconstruct recoverable reservations after restart. Recovery returns candidates only; `reconcile()` requires an explicit authoritative durable outcome before a recovered execution is finalized or left eligible for retry.
 
 ## 19.3 Cost / model governance
 
