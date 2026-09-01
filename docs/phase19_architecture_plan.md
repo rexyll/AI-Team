@@ -22,16 +22,18 @@ The remaining architectural gap is that these capabilities are not yet consolida
 
 ### Contract goals
 
-- [ ] Define an immutable project execution scope identity.
-- [ ] Define project-level resource limits and effective limits without duplicating `ResourceGovernor` semantics.
-- [ ] Define admission decisions separately from task lifecycle mutation.
-- [ ] Make scheduler decisions deterministic for the same task graph, state snapshot, and resource snapshot.
-- [ ] Prevent one project from consuming another project's resource budget.
-- [ ] Preserve dependency blocking semantics and task cancellation semantics.
-- [ ] Preserve canonical `TaskManager` ownership of mutable task lifecycle state.
-- [ ] Emit auditable scheduling/admission decisions without persisting model prompts or secrets.
-- [ ] Add concurrency and cross-project isolation regression coverage.
-- [ ] Integrate project-level scheduling with existing observability metrics and tracing.
+- [x] Define an immutable project execution scope identity.
+- [x] Define project-level resource limits and effective limits without duplicating `ResourceGovernor` semantics.
+- [x] Define admission decisions separately from task lifecycle mutation.
+- [x] Make scheduler decisions deterministic for the same task graph, state snapshot, and resource snapshot.
+- [x] Prevent one project from consuming another project's resource budget.
+- [x] Preserve dependency blocking semantics and task cancellation semantics.
+- [x] Preserve canonical `TaskManager` ownership of mutable task lifecycle state.
+- [x] Emit auditable scheduling/admission decisions without persisting model prompts or secrets.
+- [x] Add concurrency and cross-project isolation regression coverage.
+- [x] Integrate project-level scheduling with existing observability metrics and tracing.
+
+The 19.1 execution handoff is now implemented through `ProjectExecutionHandoff`. It keeps reservation accounting transient and project-scoped while delegating actual task lifecycle execution to the existing `TaskWorkflow.execute(task_id)` boundary. Focused and full local verification reported by the development workflow must remain green before the slice is treated as accepted.
 
 ### Non-goals for 19.1
 
@@ -43,11 +45,20 @@ The remaining architectural gap is that these capabilities are not yet consolida
 
 ## 19.2 Long-lived execution and recovery
 
-- [ ] Durable project execution checkpoints.
-- [ ] Restart-safe scheduler state reconstruction.
-- [ ] Lease-aware task admission and takeover.
-- [ ] Explicit worker-loss recovery semantics.
-- [ ] Cross-process and cross-project recovery tests.
+### 19.2.1 Durable project execution checkpoint contract — in progress
+
+- [x] Define immutable project execution checkpoint identity and scope.
+- [x] Reuse the canonical `WorkflowCheckpoint` for task state rather than duplicating Task serialization.
+- [x] Define recoverable (`admitted` / `started`) versus terminal checkpoint states.
+- [x] Provide filesystem-backed atomic checkpoint persistence.
+- [x] Provide project-scoped recoverable checkpoint enumeration.
+- [x] Reject task/project scope mismatches at the checkpoint boundary.
+- [ ] Integrate checkpoint publication into `ProjectExecutionHandoff` lifecycle transitions.
+- [ ] Reconstruct active reservations from durable checkpoints on process restart.
+- [ ] Define authoritative reconciliation before retrying an ambiguous `started` execution.
+- [ ] Add crash/restart integration coverage across checkpoint, TaskManager, and TaskWorkflow.
+
+The first 19.2 increment intentionally establishes the durable contract without changing live execution semantics. The checkpoint store is not a second task-state owner: it contains execution identity and embeds the existing `WorkflowCheckpoint`. Recovery must reconcile against authoritative TaskManager/persistent task state before deciding whether an execution is safe to retry.
 
 ## 19.3 Cost / model governance
 
