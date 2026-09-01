@@ -13,8 +13,14 @@ TOOL_CAPABILITIES: dict[str, frozenset[str]] = {
     "move_file": frozenset({WRITE}),
     "delete_file": frozenset({WRITE}),
     "run_command": frozenset({EXECUTE}),
+    # Kept as an explicit policy marker for the legacy low-level helper.
+    # It is deliberately excluded from agent-visible filtering below.
     "git_command": frozenset({EXECUTE, WRITE}),
 }
+
+# Raw Git command execution is a host-owned primitive. Agents/plugins must
+# use semantic host APIs rather than receiving an arbitrary command surface.
+HOST_ONLY_TOOLS = frozenset({"git_command"})
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     "architect": frozenset({READ}),
@@ -42,18 +48,30 @@ class RuntimeCapabilityPolicy:
         return TOOL_CAPABILITIES[tool_name]
 
     def allows(self, role: str, tool_name: str) -> bool:
+        if tool_name in HOST_ONLY_TOOLS:
+            return False
         required = self.required_capabilities(tool_name)
         granted = self.role_capabilities.get(role, frozenset())
         return required.issubset(granted)
 
     def require(self, role: str, tool_name: str) -> None:
+        if tool_name in HOST_ONLY_TOOLS:
+            raise ToolPermissionError(
+                f"Tool {tool_name!r} is host-only and cannot be invoked by agent role {role!r}"
+            )
         if not self.allows(role, tool_name):
             raise ToolPermissionError(
                 f"Agent role {role!r} is not authorized to use tool {tool_name!r}"
             )
 
     def filter_tool_names(self, role: str, tool_names: Iterable[str]) -> list[str]:
-        return [name for name in tool_names if name in TOOL_CAPABILITIES and self.allows(role, name)]
+        return [
+            name
+            for name in tool_names
+            if name not in HOST_ONLY_TOOLS
+            and name in TOOL_CAPABILITIES
+            and self.allows(role, name)
+        ]
 
 
 DEFAULT_RUNTIME_CAPABILITY_POLICY = RuntimeCapabilityPolicy()
