@@ -66,12 +66,7 @@ class ProjectScheduler:
 
     def task_for(self, task_id: str) -> Task:
         """Return the canonical scheduler task snapshot for checkpoint capture."""
-        if not isinstance(task_id, str) or not task_id.strip():
-            raise ValueError("task_id must be a non-empty string")
-        task = self._scheduler._tasks.get(task_id.strip())
-        if task is None:
-            raise KeyError(f"Unknown task id: {task_id}")
-        return task
+        return self._scheduler.task_for(task_id)
 
     def admissible_tasks(self) -> tuple[Task, ...]:
         return tuple(self._scheduler.get_admissible_tasks(self._governor))
