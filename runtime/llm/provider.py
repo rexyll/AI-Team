@@ -6,6 +6,8 @@ from typing import Any
 
 from config.model import get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
+from runtime.model_governance import ModelUsage
+from runtime.model_usage import ModelUsageLedger
 
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
@@ -28,6 +30,11 @@ class ProviderLLM(BaseLLM):
     Provider and model selection is environment-driven. Tests and callers
     may inject a client directly; in that case no provider configuration is
     required because the client is already supplied by the caller.
+
+    When ``project_id`` and a ``usage_ledger`` are supplied, every provider
+    response is attributed to that project at this canonical invocation
+    boundary. Attribution is telemetry only; admission and budget enforcement
+    remain in ModelGovernance.
     """
 
     def __init__(
@@ -36,6 +43,8 @@ class ProviderLLM(BaseLLM):
         model: str | None = None,
         provider_profile: str | None = None,
         client_instance: Any = None,
+        project_id: str | None = None,
+        usage_ledger: ModelUsageLedger | None = None,
     ) -> None:
         if client_instance is not None and provider_profile is None:
             resolved_profile = "injected"
@@ -57,9 +66,17 @@ class ProviderLLM(BaseLLM):
 
         if not isinstance(resolved_model, str) or not resolved_model.strip():
             raise TypeError("ProviderLLM model must be a non-empty string")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be a non-empty string")
+        if usage_ledger is not None and not isinstance(usage_ledger, ModelUsageLedger):
+            raise TypeError("usage_ledger must be a ModelUsageLedger")
+        if project_id is None and usage_ledger is not None:
+            raise ValueError("project_id is required when usage_ledger is supplied")
 
         self.provider_profile = resolved_profile
         self.model = resolved_model
+        self.project_id = project_id.strip() if project_id is not None else None
+        self.usage_ledger = usage_ledger
         self._client: Any = client_instance
 
     @property
@@ -139,6 +156,19 @@ class ProviderLLM(BaseLLM):
             "total_tokens": total_tokens,
         }
 
+    def _attribute_usage(self, response: Any) -> None:
+        if self.project_id is None or self.usage_ledger is None:
+            return
+        usage = self._usage_of(response)
+        self.usage_ledger.record(
+            self.project_id,
+            ModelUsage(
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                llm_calls=1,
+            ),
+        )
+
     @staticmethod
     def _message_diagnostic(message: Any) -> dict[str, Any]:
         if not isinstance(message, dict):
@@ -196,6 +226,7 @@ class ProviderLLM(BaseLLM):
                 if not self._has_content_or_tool_calls(response):
                     empty_attempt += 1
                     if empty_attempt >= max_attempts:
+                        self._attribute_usage(response)
                         return response
                     wait = self._backoff_seconds(empty_attempt, None)
                     print(
@@ -205,6 +236,7 @@ class ProviderLLM(BaseLLM):
                     time.sleep(wait)
                     continue
 
+                self._attribute_usage(response)
                 return response
 
             except Exception as exc:
