@@ -53,6 +53,13 @@ class ModelUsage:
                 raise ModelGovernanceError(f"{name} must be a non-negative integer")
 
     def add(self, *, input_tokens: int = 0, output_tokens: int = 0, llm_calls: int = 0) -> "ModelUsage":
+        for name, value in (
+            ("input_tokens", input_tokens),
+            ("output_tokens", output_tokens),
+            ("llm_calls", llm_calls),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ModelGovernanceError(f"{name} increment must be a non-negative integer")
         return replace(
             self,
             input_tokens=self.input_tokens + input_tokens,
