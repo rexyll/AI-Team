@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from config.model import get_provider_profile
@@ -24,6 +25,24 @@ def _status_code_of(exc: BaseException) -> int | None:
     return None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    """Provider compatibility facts that affect protocol use, not task semantics."""
+
+    supports_standard_tool_continuation: bool = True
+
+
 class ProviderLLM(BaseLLM):
     """BaseLLM adapter for OpenAI-compatible provider clients.
 
@@ -35,6 +54,12 @@ class ProviderLLM(BaseLLM):
     response is attributed to that project at this canonical invocation
     boundary. Attribution is telemetry only; admission and budget enforcement
     remain in ModelGovernance.
+
+    Provider compatibility is explicit. A provider that cannot consume the
+    standard ``assistant(tool_calls) -> tool -> assistant`` continuation may
+    declare ``<PROVIDER>_SUPPORTS_TOOL_CONTINUATION=false``. AI-Team then
+    rejects the continuation before the provider call instead of mutating the
+    conversation with synthetic user messages.
     """
 
     def __init__(
@@ -78,6 +103,10 @@ class ProviderLLM(BaseLLM):
         self.project_id = project_id.strip() if project_id is not None else None
         self.usage_ledger = usage_ledger
         self._client: Any = client_instance
+        capability_env = f"{self.provider_profile.upper()}_SUPPORTS_TOOL_CONTINUATION"
+        self.capabilities = ProviderCapabilities(
+            supports_standard_tool_continuation=_env_bool(capability_env, True)
+        )
 
     @property
     def client(self) -> Any:
@@ -215,6 +244,23 @@ class ProviderLLM(BaseLLM):
             f"error={type(exc).__name__}: {exc}"
         )
 
+    @staticmethod
+    def _is_tool_continuation(messages: list[dict[str, Any]]) -> bool:
+        return any(
+            isinstance(message, dict) and message.get("role") == "tool"
+            for message in messages
+        )
+
+    def _require_tool_continuation_support(self, messages: list[dict[str, Any]]) -> None:
+        if not self._is_tool_continuation(messages):
+            return
+        if self.capabilities.supports_standard_tool_continuation:
+            return
+        raise RuntimeError(
+            f"Provider '{self.provider_profile}' is configured without standard tool "
+            "continuation support; refusing to alter conversation semantics"
+        )
+
     def _post_chat(self, **kwargs: Any):
         max_attempts = self._max_attempts()
         http_attempt = 0
@@ -289,9 +335,12 @@ class ProviderLLM(BaseLLM):
         if not isinstance(messages, list) or not messages:
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
+        wire_messages = [dict(message) for message in messages]
+        self._require_tool_continuation_support(wire_messages)
+
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": [dict(message) for message in messages],
+            "messages": wire_messages,
         }
         if tools:
             kwargs["tools"] = list(tools)
