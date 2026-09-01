@@ -104,6 +104,18 @@ class ModelGovernedLLM(BaseLLM):
             if isinstance(message, dict)
         )
 
+    def _estimated_output_for(self, max_tokens: int | None = None) -> int:
+        """Return the bounded output estimate used only for admission.
+
+        ``max_tokens`` is a provider-side generation ceiling, not proof that the
+        request will consume that many output tokens. Governance therefore uses
+        the configured estimate as its normal reservation signal while honoring
+        any explicitly smaller per-call ceiling.
+        """
+        if max_tokens is None:
+            return self.estimated_output_tokens
+        return min(max_tokens, self.estimated_output_tokens)
+
     def generate(
         self,
         prompt: str,
@@ -121,7 +133,7 @@ class ModelGovernedLLM(BaseLLM):
         llm = self._admit(
             ModelUsage(
                 input_tokens=estimate_tokens(system_prompt) + estimate_tokens(prompt),
-                output_tokens=max_tokens,
+                output_tokens=self._estimated_output_for(max_tokens),
                 llm_calls=1,
             )
         )
@@ -147,7 +159,7 @@ class ModelGovernedLLM(BaseLLM):
         llm = self._admit(
             ModelUsage(
                 input_tokens=input_tokens,
-                output_tokens=self.estimated_output_tokens,
+                output_tokens=self._estimated_output_for(),
                 llm_calls=1,
             )
         )
