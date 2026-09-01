@@ -252,10 +252,10 @@ The benchmark scenario was also corrected so the reference document is optional 
 The latest 10-trial serial / 4-developer live A/B sample contains 8 valid and 2 invalid trials. Baseline success was 0.8000 and candidate success was 1.0000; reliability was preserved and cache effects were observed, but the aggregate verdict remains `no_clear_efficiency_gain`. Valid-trial medians were +1.74% duration, -5.41% LLM calls, -4.08% input tokens, -1 exact-duplicate tool call, -1 duplicate-execution tool call, and 0 median cache-hit change. The two invalid trials independently tripped the progress guard in baseline (`read_file` / `run_command`), so they must not be used as performance evidence. The next optimization conclusion should therefore remain correctness-first rather than claiming a performance win.
 
 ### 18.4 Extension Architecture
-- [ ] Audit Plugin / Tool / Agent / Workflow extension boundaries
-- [ ] Define stable integration contracts
-- [ ] Prevent plugin APIs from bypassing security boundaries
-- [ ] Add extension compatibility tests
+- [x] Audit Plugin / Tool / Agent / Workflow extension boundaries
+- [x] Define stable integration contracts
+- [x] Prevent plugin APIs from bypassing security boundaries
+- [x] Add extension compatibility tests
 
 #### 18.4 Tool extension slice — completed
 - [x] Audit existing PluginHost ↔ ToolRegistry / ToolInvocationService boundary
@@ -282,15 +282,25 @@ The first extension slice is implemented around the existing production invocati
 
 The Agent extension slice reuses the production `AgentRouter` and canonical `AgentResult` contracts. Plugins receive only `invoke(task) -> AgentResult`; host runtime objects remain inaccessible through the extension.
 
-#### 18.4 Workflow extension slice — pending
-- [ ] Audit existing workflow execution / event / task-manager boundary
-- [ ] Define reserved `workflow` extension point
-- [ ] Introduce host-owned workflow invocation/read adapter
-- [ ] Prevent direct mutation of workflow state or event persistence by plugins
-- [ ] Preserve workflow authorization, lifecycle, event, persistence, and tracing boundaries
-- [ ] Add focused workflow-extension regression coverage
+#### 18.4 Workflow extension slice — completed
+- [x] Audit existing workflow execution / event / task-manager boundary
+- [x] Define reserved `workflow` extension point
+- [x] Introduce host-owned workflow invocation/read adapter
+- [x] Prevent direct mutation of workflow state or event persistence by plugins
+- [x] Preserve workflow authorization, lifecycle, event, persistence, and tracing boundaries
+- [x] Add focused workflow-extension regression coverage
 
-Full 18.4 compatibility remains open until the Workflow extension slice and cross-extension compatibility suite are completed.
+The Workflow extension slice reuses the production `TaskWorkflow` entry point. Plugins receive only `execute(task_id) -> detached task snapshot`; workflow state transitions, Agent sequencing, evidence gates, persistence checkpoints, and event emission remain host-owned. Raw `TaskWorkflow`, `TaskManager`, `AgentRouter`, event log, and persistence objects are rejected as reserved workflow extensions.
+
+#### 18.4 Cross-extension compatibility suite — completed
+- [x] Verify `tools`, `agents`, and `workflow` adapters can coexist in one plugin contract
+- [x] Verify each reserved extension independently rejects its raw internal service
+- [x] Verify runtime context cannot substitute a host-approved reserved extension
+- [x] Verify reserved extension contracts remain identity-bound at initialization
+
+The cross-extension suite establishes that the three reserved extension points are independently type-gated and remain bound to the exact host-provided adapter instances during plugin initialization.
+
+Full 18.4 extension compatibility is now implemented. Final local full-suite verification remains the acceptance gate before marking Phase 18.4 as fully closed.
 
 ### 18.5 Production Readiness Gate
 - [ ] Full architecture review
