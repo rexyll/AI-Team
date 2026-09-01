@@ -67,7 +67,7 @@ The remaining architectural gap is that these capabilities are not yet consolida
 ## 19.5 Plugin ecosystem maturity
 
 - [ ] Extension version compatibility policy.
-- [ ] Plugin capability negotiation.
+- [ ] Capability negotiation.
 - [ ] Plugin lifecycle health and isolation.
 - [ ] Extension compatibility matrix.
 
