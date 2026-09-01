@@ -2,6 +2,7 @@ from copy import deepcopy
 from typing import Any, Callable
 
 from config.tools_schema import TOOLS_SCHEMA
+from security.runtime_capability import HOST_ONLY_TOOLS
 from tools.filesystem import (
     list_files,
     read_file,
@@ -17,7 +18,7 @@ ToolFunction = Callable[..., Any]
 
 
 class ToolRegistry:
-    """Provider-independent registry for executable tools and their schemas."""
+    """Provider-independent registry for agent-visible executable tools."""
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolFunction] = {}
@@ -29,7 +30,9 @@ class ToolRegistry:
         implementation: ToolFunction,
         schema: dict[str, Any],
     ) -> None:
-        """Register one tool and its function-call schema."""
+        """Register one agent-visible tool and its function-call schema."""
+        if name in HOST_ONLY_TOOLS:
+            raise ValueError(f"Tool {name!r} is host-only and cannot be agent-registered")
         if not isinstance(name, str):
             raise TypeError("Tool name must be a string")
         if not name.strip():
@@ -56,7 +59,7 @@ class ToolRegistry:
         self._schemas[name] = deepcopy(schema)
 
     def get(self, name: str) -> ToolFunction:
-        """Return a registered tool implementation."""
+        """Return an agent-visible registered tool implementation."""
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
@@ -68,11 +71,11 @@ class ToolRegistry:
         return deepcopy(self._schemas[name])
 
     def list(self) -> list[str]:
-        """Return registered tool names in registration order."""
+        """Return agent-visible tool names in registration order."""
         return list(self._tools)
 
     def schemas(self):
-        """Return independent function-call schemas in registration order."""
+        """Return independent agent-visible schemas in registration order."""
         return [self.schema(name) for name in self._tools]
 
 
@@ -96,6 +99,8 @@ for _schema in TOOLS_SCHEMA:
         raise ValueError(
             f"Tool schema has no registered implementation: {_name!r}"
         )
+    if _name in HOST_ONLY_TOOLS:
+        continue
     TOOL_REGISTRY.register(
         _name,
         _DEFAULT_IMPLEMENTATIONS[_name],
@@ -103,8 +108,10 @@ for _schema in TOOLS_SCHEMA:
     )
 
 
-# Legacy compatibility: existing callers can continue to use TOOLS[name].
+# Compatibility surface: the complete tool contract includes host-owned
+# primitives, while TOOL_REGISTRY remains strictly agent-visible.
 TOOLS = {
-    name: TOOL_REGISTRY.get(name)
-    for name in TOOL_REGISTRY.list()
+    _schema["function"]["name"]: _DEFAULT_IMPLEMENTATIONS[_schema["function"]["name"]]
+    for _schema in TOOLS_SCHEMA
+    if _schema.get("function", {}).get("name") in _DEFAULT_IMPLEMENTATIONS
 }
