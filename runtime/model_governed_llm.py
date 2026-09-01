@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from runtime.llm.base import BaseLLM, LLMResponse
+from runtime.metrics import MetricsRegistry
 from runtime.model_governance import (
     ModelAdmissionDecision,
     ModelGovernance,
@@ -41,6 +42,7 @@ class ModelGovernedLLM(BaseLLM):
         routes: Mapping[ModelRoute, BaseLLM],
         primary_healthy: bool | Callable[[], bool] = True,
         estimated_output_tokens: int = 4096,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
@@ -63,6 +65,8 @@ class ModelGovernedLLM(BaseLLM):
             raise ValueError("estimated_output_tokens must be >= 0")
         if not isinstance(primary_healthy, (bool, Callable)):
             raise TypeError("primary_healthy must be a bool or callable")
+        if metrics is not None and not isinstance(metrics, MetricsRegistry):
+            raise TypeError("metrics must be a MetricsRegistry or None")
 
         self.project_id = project_id.strip()
         self.governance = governance
@@ -70,11 +74,16 @@ class ModelGovernedLLM(BaseLLM):
         self.routes = dict(normalized)
         self.primary_healthy = primary_healthy
         self.estimated_output_tokens = estimated_output_tokens
+        self.metrics = metrics
 
     def _primary_health(self) -> bool:
         if callable(self.primary_healthy):
             return bool(self.primary_healthy())
         return self.primary_healthy
+
+    def _record_metric(self, name: str) -> None:
+        if self.metrics is not None:
+            self.metrics.inc(name)
 
     def _admit(self, request: ModelUsage) -> BaseLLM:
         decision = self.governance.decide(
@@ -84,10 +93,14 @@ class ModelGovernedLLM(BaseLLM):
             primary_healthy=self._primary_health(),
         )
         if not decision.admitted or decision.route is None:
+            self._record_metric("model_governance_admission_rejected_total")
             raise ModelAdmissionError(decision)
+        if decision.reason == "primary route unhealthy; fallback selected":
+            self._record_metric("model_governance_fallback_selected_total")
         try:
             return self.routes[decision.route]
         except KeyError as exc:
+            self._record_metric("model_governance_admission_rejected_total")
             raise ModelAdmissionError(
                 ModelAdmissionDecision(
                     admitted=False,
@@ -167,7 +180,7 @@ class ModelGovernedLLM(BaseLLM):
 
     def __getattr__(self, name: str) -> Any:
         """Preserve compatibility for provider-specific read-only attributes."""
-        if name in {"project_id", "governance", "usage_ledger", "routes"}:
+        if name in {"project_id", "governance", "usage_ledger", "routes", "metrics"}:
             raise AttributeError(name)
         routes = object.__getattribute__(self, "routes")
         for llm in routes.values():
