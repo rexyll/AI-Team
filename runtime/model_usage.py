@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import RLock
 
-from runtime.model_governance import ModelUsage
+from runtime.model_governance import ModelRoute, ModelUsage
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,7 @@ class ModelUsageRecord:
 
     project_id: str
     usage: ModelUsage
+    route: ModelRoute | None = None
 
 
 class ModelUsageLedger:
@@ -27,13 +28,21 @@ class ModelUsageLedger:
         self._records: list[ModelUsageRecord] = []
         self._lock = RLock()
 
-    def record(self, project_id: str, usage: ModelUsage) -> ModelUsageRecord:
+    def record(
+        self,
+        project_id: str,
+        usage: ModelUsage,
+        *,
+        route: ModelRoute | None = None,
+    ) -> ModelUsageRecord:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
         if not isinstance(usage, ModelUsage):
             raise TypeError("usage must be a ModelUsage")
+        if route is not None and not isinstance(route, ModelRoute):
+            raise TypeError("route must be a ModelRoute or None")
         project_id = project_id.strip()
-        record = ModelUsageRecord(project_id=project_id, usage=usage)
+        record = ModelUsageRecord(project_id=project_id, usage=usage, route=route)
         with self._lock:
             self._usage[project_id] = self._usage.get(project_id, ModelUsage()).add(
                 input_tokens=usage.input_tokens,
