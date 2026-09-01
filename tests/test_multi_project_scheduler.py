@@ -44,7 +44,9 @@ def test_projects_keep_independent_resource_budgets() -> None:
     assert first_request is not None
     first_decision = coordinator.decide(first_request)
     assert first_decision.admitted is True
-    assert second.decide(ProjectSchedulingRequest(ProjectExecutionScope("P2"), "B")).admitted is True
+    assert coordinator.decide(
+        ProjectSchedulingRequest(ProjectExecutionScope("P2"), "B")
+    ).admitted is True
 
 
 def test_unknown_project_is_rejected_without_mutating_registered_schedulers() -> None:
