@@ -102,7 +102,20 @@
 - [x] Publish checkpoint through `ProjectExecutionHandoff`
 - [x] Reconstruct active reservations after restart
 - [x] Require authoritative reconciliation before retry/finalization
-- [ ] Crash/restart integration across checkpoint, TaskManager, and TaskWorkflow
+- [x] Crash/restart integration across checkpoint, TaskManager, and TaskWorkflow
+
+### 19.3 Cost / model governance
+#### 19.3.1 Project model governance policy — first slice
+- [x] Immutable provider/model route contract
+- [x] Per-project token/call budget contract
+- [x] Deterministic model admission decision contract
+- [x] Primary-route health and explicit fallback semantics
+- [x] Cross-project budget isolation regression coverage
+- [ ] Runtime token/call attribution
+- [ ] Canonical LLM invocation integration
+- [ ] Provider/model cost-rate configuration
+- [ ] Budget-aware scheduler admission
+- [ ] Degradation/fallback observability
 
 ### Current next step
-Complete the **19.2.1 crash/restart integration contract**. Validate that a process restart can recover an `admitted` or ambiguous `started` project execution, reconstruct only the transient project reservation, and require the authoritative TaskManager/result persistence boundary to reconcile before any retry or commit decision. After focused recovery tests pass, run the full regression suite and then advance to 19.3 Cost / model governance.
+Validate the **19.3.1 project model governance policy** with focused tests and full regression. Then integrate usage attribution into the existing LLM invocation boundary without introducing a second runtime or bypassing existing observability/security controls.
