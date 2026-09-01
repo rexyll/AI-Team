@@ -1,8 +1,10 @@
 import pytest
 
+from agents.base import BaseAgent
 from runtime.agent_config import AgentConfig
 from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
+from runtime.llm.base import BaseLLM
 from runtime.plugin_agent_adapter import PluginAgentInvocationAdapter
 from runtime.plugin_api import (
     AGENT_EXTENSION_POINT,
@@ -17,7 +19,6 @@ from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
 from runtime.task import Task
 from runtime.tool_invocation_service import ToolInvocationService
 from tools.registry import ToolRegistry
-from agents.base import BaseAgent
 
 
 class _Context:
@@ -45,6 +46,11 @@ class _Plugin:
         self.calls.append("shutdown")
 
 
+class _NoOpLLM(BaseLLM):
+    def generate(self, prompt: str, *, system_prompt: str = "", temperature: float = 0.2, max_tokens: int = 4096) -> str:
+        return "ok"
+
+
 class _Agent(BaseAgent):
     def __init__(self, role: str, result_data: dict | None = None):
         super().__init__(AgentConfig(role=role, model=""), llm=_NoOpLLM())
@@ -65,10 +71,6 @@ class _Agent(BaseAgent):
             task_id=task.id,
             data=self.result_data,
         )
-
-
-class _NoOpLLM:
-    pass
 
 
 def test_plugin_metadata_has_versioned_contract():
