@@ -18,12 +18,15 @@ For the complete production-readiness gate, use:
 python tools/run_production_readiness.py
 ```
 
-The readiness gate runs four stages in order and fails fast:
+The readiness gate runs five stages in order and fails fast:
 
 1. security regression
 2. plugin extension-boundary regression
-3. persistence/recovery regression
-4. complete `pytest -q` regression
+3. observability regression
+4. persistence/recovery regression
+5. complete `pytest -q` regression
+
+The observability stage covers tracing, metrics, dashboard, and alerting regression modules. This stage is intentionally separate from security and persistence/recovery so a green security suite cannot be mistaken for complete production readiness.
 
 For the complete regression suite alone, continue to use:
 
