@@ -54,12 +54,7 @@ class GitOperationRequest:
 
 
 class HostGitOperationService:
-    """Host-owned Git boundary for controlled repository collaboration.
-
-    The service exposes semantic Git operations instead of arbitrary Git
-    commands. Repository/workspace validation stays on the host side and the
-    low-level subprocess helper is not placed in the agent/plugin registry.
-    """
+    """Host-owned Git boundary for controlled repository collaboration."""
 
     def __init__(self, sandbox: WorkspaceSandbox | None = None) -> None:
         self._sandbox = sandbox or WorkspaceSandbox()
@@ -130,7 +125,10 @@ class HostGitOperationService:
         if not root_line:
             raise ValueError("Git repository root could not be determined")
         root = self._sandbox.resolve(root_line)
-        workspace.relative_to(root)
+        try:
+            workspace.relative_to(root)
+        except ValueError as exc:
+            raise PermissionError("workspace is outside the Git repository root") from exc
 
     def _add(self, request: GitOperationRequest, workspace: Path) -> str:
         if not request.paths:
@@ -141,8 +139,11 @@ class HostGitOperationService:
             if not candidate.is_absolute():
                 candidate = workspace / candidate
             resolved = self._sandbox.resolve(candidate)
-            resolved.relative_to(workspace)
-            safe_paths.append(str(resolved.relative_to(workspace)))
+            try:
+                relative = resolved.relative_to(workspace)
+            except ValueError as exc:
+                raise PermissionError("Git path is outside the authorized workspace") from exc
+            safe_paths.append(str(relative))
         quoted = " ".join(self._quote(path) for path in safe_paths)
         return git_tool.git_command(f"add {quoted}", str(workspace))
 
