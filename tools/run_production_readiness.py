@@ -6,6 +6,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_ROOT = ROOT / "tests"
+
+
+def _tests_for_patterns(*patterns: str) -> tuple[str, ...]:
+    paths = {
+        path
+        for pattern in patterns
+        for path in TEST_ROOT.glob(pattern)
+        if path.is_file()
+    }
+    return tuple(str(path.relative_to(ROOT)) for path in sorted(paths))
+
+
+def _pytest_gate(*patterns: str) -> tuple[str, ...]:
+    tests = _tests_for_patterns(*patterns)
+    if not tests:
+        raise RuntimeError(f"no regression tests found for patterns: {patterns!r}")
+    return (sys.executable, "-m", "pytest", *tests, "-q")
 
 
 GATES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -23,6 +41,15 @@ GATES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "tests/test_plugin_extension_compatibility.py",
             "tests/test_extension_examples_contract.py",
             "-q",
+        ),
+    ),
+    (
+        "observability",
+        _pytest_gate(
+            "test_*tracing*.py",
+            "test_*metrics*.py",
+            "test_*dashboard*.py",
+            "test_*alert*.py",
         ),
     ),
     (
