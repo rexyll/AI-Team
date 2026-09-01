@@ -56,6 +56,15 @@ class DependencyScheduler:
             return []
         return self.get_ready_tasks()[:available]
 
+    def task_for(self, task_id: str) -> Task:
+        """Return the scheduler-owned task object without changing its state."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must be a non-empty string")
+        try:
+            return self._tasks[task_id.strip()]
+        except KeyError as exc:
+            raise KeyError(f"Unknown task id: {task_id}") from exc
+
     def get_blocked_decisions(self) -> list[SchedulerDecision]:
         decisions: list[SchedulerDecision] = []
         for task in self._tasks.values():
@@ -82,9 +91,7 @@ class DependencyScheduler:
         return get_execution_layers(self._graph)
 
     def decision_for(self, task_id: str) -> SchedulerDecision:
-        if task_id not in self._tasks:
-            raise KeyError(f"Unknown task id: {task_id}")
-        task = self._tasks[task_id]
+        task = self.task_for(task_id)
         if task.status == TaskStatus.CANCELLED.value:
             return SchedulerDecision(task_id, False, False, "Task is cancelled")
         if task.status in {
@@ -104,6 +111,11 @@ class DependencyScheduler:
             if self._tasks[d].status
             in {TaskStatus.FAILED.value, TaskStatus.BLOCKED.value}
         ]
+        if all(
+            self._tasks[d].status == TaskStatus.COMPLETED.value
+            for d in task.dependencies
+        ):
+            return SchedulerDecision(task_id, True, False)
         if failed:
             return SchedulerDecision(
                 task_id,
@@ -111,11 +123,6 @@ class DependencyScheduler:
                 True,
                 "Blocked by dependencies: " + ", ".join(failed),
             )
-        if all(
-            self._tasks[d].status == TaskStatus.COMPLETED.value
-            for d in task.dependencies
-        ):
-            return SchedulerDecision(task_id, True, False)
         return SchedulerDecision(
             task_id,
             False,
