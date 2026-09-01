@@ -141,4 +141,29 @@ TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_command",
+            "description": (
+                "Execute an allow-listed Git command inside the authorized "
+                "workspace. Only approved Git subcommands and options are "
+                "permitted; shell execution and repository escape are blocked."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Allow-listed Git command without the 'git' prefix.",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Git working directory inside the authorized workspace.",
+                    },
+                },
+                "required": ["command", "cwd"],
+            },
+        },
+    },
 ]
