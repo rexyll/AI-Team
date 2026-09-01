@@ -303,13 +303,17 @@ The cross-extension suite establishes that the three reserved extension points a
 Full 18.4 extension compatibility is now implemented. Final local full-suite verification remains the acceptance gate before marking Phase 18.4 as fully closed.
 
 ### 18.5 Production Readiness Gate
-- [ ] Full architecture review
-- [ ] Full security regression
-- [ ] Full observability regression
-- [ ] Full persistence/recovery regression
-- [ ] Full test-suite verification
-- [ ] Update operational documentation
+- [x] Full architecture review
+- [x] Full security regression
+- [x] Full observability regression
+- [x] Full persistence/recovery regression
+- [x] Full test-suite verification
+- [x] Update operational documentation
 - [ ] Phase 18 acceptance decision
+
+Production readiness evidence recorded in `docs/production_readiness_evidence.md`: security 207 passed, extension-boundary 28 passed, observability 78 passed, persistence/recovery 17 passed, and full regression 1909 passed. The gate command returned `production_readiness=passed`.
+
+The Phase 18 acceptance decision remains open because 18.3 still has an unresolved provider tool-continuation compatibility finding and therefore Phase 18 as a whole must not yet be declared complete.
 
 ## Phase 18 working rule
 Every Phase 18 increment must follow: repository-state review → smallest contract-preserving change → focused tests → full regression → DevPlan update. Do not infer missing runtime modules from filenames alone; consolidate the actual existing implementation first.
