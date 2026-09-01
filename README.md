@@ -4,11 +4,17 @@ AI-powered software development team.
 
 ## Current status
 
-**Phase 17 — Developer Experience** is completed on the current development branch. Phases 0–16 have completed their planned acceptance gates, including reliability, security, observability, dashboard, alerting, and alert-delivery verification. Phase 17 adds the stable CLI/configuration/plugin contracts, documentation, and deterministic reference examples.
+**Phase 18 — Production Architecture Consolidation** is the current development phase on the `feature/reviewer-reliability-fallback` branch. Phases 0–17 have completed their planned acceptance work. Phase 18 consolidates the canonical Tool Invocation boundary, runtime state/persistence semantics, measured Developer tool-loop efficiency work, and host-controlled Tool / Agent / Workflow plugin extension boundaries.
 
 The current development branch is:
 
 `feature/reviewer-reliability-fallback`
+
+The Phase 18 production-readiness gate is:
+
+```powershell
+python tools/run_production_readiness.py
+```
 
 See [`DevPlan.md`](DevPlan.md) for the complete implementation and acceptance history.
 
@@ -25,6 +31,12 @@ Run the test suite:
 
 ```powershell
 pytest -q
+```
+
+Run the production-readiness gate:
+
+```powershell
+python tools/run_production_readiness.py
 ```
 
 Run the CLI with a project requirement:
@@ -46,6 +58,8 @@ For the CLI contract, see [`docs/cli_reference.md`](docs/cli_reference.md).
 For configuration rules, see [`docs/configuration_reference.md`](docs/configuration_reference.md) and [`docs/production_configuration.md`](docs/production_configuration.md).
 
 For plugin extensions, see [`docs/plugin_api.md`](docs/plugin_api.md).
+
+For operational readiness criteria, see [`docs/production_readiness.md`](docs/production_readiness.md).
 
 For operational diagnosis, see [`docs/operational_troubleshooting.md`](docs/operational_troubleshooting.md).
 
@@ -72,8 +86,8 @@ Important production contracts include:
 - `WorkflowEventLog` for immutable in-memory workflow events.
 - `WorkflowEventPersistenceAdapter` for filesystem-backed durable events.
 - `WorkflowEventQueryService` for read-only operational diagnostics.
-- Project persistence and event persistence are independently recoverable and are checked for semantic parity by contract tests.
 - `PluginHost` for versioned, capability-scoped plugin lifecycle management.
+- Host-owned plugin adapters for `tools`, `agents`, and `workflow` extension points.
 
 A simple Developer task with first-review approval follows the canonical event lifecycle:
 
