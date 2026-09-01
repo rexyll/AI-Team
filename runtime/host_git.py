@@ -21,12 +21,7 @@ GitOperation = Literal[
 
 @dataclass(frozen=True)
 class GitOperationRequest:
-    """Host-owned Git request with an explicit operation vocabulary.
-
-    This contract intentionally has no arbitrary command field. Agent/plugin
-    code must not be able to turn this boundary into a general-purpose Git
-    subprocess interface.
-    """
+    """Host-owned Git request with an explicit operation vocabulary."""
 
     operation: GitOperation
     workspace: str
@@ -38,14 +33,7 @@ class GitOperationRequest:
 
     def __post_init__(self) -> None:
         if self.operation not in {
-            "status",
-            "diff",
-            "log",
-            "show",
-            "branch",
-            "rev-parse",
-            "add",
-            "commit",
+            "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"
         }:
             raise ValueError(f"Unsupported Git operation: {self.operation!r}")
         if not isinstance(self.workspace, str) or not self.workspace.strip():
@@ -69,13 +57,8 @@ class HostGitOperationService:
 
     The service exposes semantic Git operations instead of arbitrary Git
     commands. Repository/workspace validation stays on the host side and the
-    underlying subprocess helper is never placed in the agent/plugin tool
-    registry.
+    low-level subprocess helper is not placed in the agent/plugin registry.
     """
-
-    _OPERATIONS = frozenset(
-        {"status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"}
-    )
 
     def __init__(self, sandbox: WorkspaceSandbox | None = None) -> None:
         self._sandbox = sandbox or WorkspaceSandbox()
@@ -90,7 +73,9 @@ class HostGitOperationService:
         if request.operation == "status":
             return git_tool.git_command("status --short", str(workspace))
         if request.operation == "diff":
-            return self._diff(request, workspace)
+            return git_tool.git_command(
+                "diff --cached" if request.staged else "diff", str(workspace)
+            )
         if request.operation == "log":
             return git_tool.git_command(
                 f"log --max-count={request.max_count}", str(workspace)
@@ -118,53 +103,43 @@ class HostGitOperationService:
         return self.execute(GitOperationRequest("diff", workspace, staged=staged))
 
     def log(self, workspace: str, *, max_count: int = 20) -> str:
-        return self.execute(
-            GitOperationRequest("log", workspace, max_count=max_count)
-        )
+        return self.execute(GitOperationRequest("log", workspace, max_count=max_count))
 
     def show(self, workspace: str, *, revision: str = "HEAD") -> str:
-        return self.execute(
-            GitOperationRequest("show", workspace, revision=revision)
-        )
+        return self.execute(GitOperationRequest("show", workspace, revision=revision))
 
     def branch(self, workspace: str) -> str:
         return self.execute(GitOperationRequest("branch", workspace))
 
     def rev_parse(self, workspace: str, *, revision: str = "HEAD") -> str:
-        return self.execute(
-            GitOperationRequest("rev-parse", workspace, revision=revision)
-        )
+        return self.execute(GitOperationRequest("rev-parse", workspace, revision=revision))
 
     def add(self, workspace: str, paths: Sequence[str]) -> str:
-        return self.execute(
-            GitOperationRequest("add", workspace, paths=tuple(paths))
-        )
+        return self.execute(GitOperationRequest("add", workspace, paths=tuple(paths)))
 
     def commit(self, workspace: str, message: str) -> str:
-        return self.execute(
-            GitOperationRequest("commit", workspace, message=message)
-        )
+        return self.execute(GitOperationRequest("commit", workspace, message=message))
 
     def _require_repository(self, workspace) -> None:
         result = git_tool.git_command("rev-parse --show-toplevel", str(workspace))
         if not result.startswith("exit_code=0\n"):
             raise ValueError("workspace is not a Git repository")
-        root_line = result.splitlines()[1].strip() if len(result.splitlines()) > 1 else ""
+        lines = result.splitlines()
+        root_line = lines[1].strip() if len(lines) > 1 else ""
         if not root_line:
             raise ValueError("Git repository root could not be determined")
         root = self._sandbox.resolve(root_line)
         workspace.relative_to(root)
-
-    def _diff(self, request: GitOperationRequest, workspace) -> str:
-        command = "diff --cached" if request.staged else "diff"
-        return git_tool.git_command(command, str(workspace))
 
     def _add(self, request: GitOperationRequest, workspace) -> str:
         if not request.paths:
             raise ValueError("add requires at least one path")
         safe_paths: list[str] = []
         for path in request.paths:
-            resolved = self._sandbox.resolve(path if path else workspace)
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = workspace / candidate
+            resolved = self._sandbox.resolve(candidate)
             resolved.relative_to(workspace)
             safe_paths.append(str(resolved.relative_to(workspace)))
         quoted = " ".join(self._quote(path) for path in safe_paths)
@@ -176,9 +151,7 @@ class HostGitOperationService:
             raise ValueError("commit message must be non-empty")
         if "\n" in message or "\r" in message:
             raise ValueError("commit message must be single-line")
-        return git_tool.git_command(
-            f"commit -m {self._quote(message)}", str(workspace)
-        )
+        return git_tool.git_command(f"commit -m {self._quote(message)}", str(workspace))
 
     @staticmethod
     def _revision(revision: str) -> str:
