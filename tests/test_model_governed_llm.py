@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from runtime.llm.base import BaseLLM, LLMResponse
+from runtime.metrics import MetricsRegistry
 from runtime.model_governance import (
     ModelGovernance,
     ModelGovernancePolicy,
@@ -29,7 +30,7 @@ class _LLM(BaseLLM):
         return LLMResponse(content=f"{self.name}:ok")
 
 
-def _setup(*, budget: ProjectModelBudget | None = None, fallback: bool = True):
+def _setup(*, budget: ProjectModelBudget | None = None, fallback: bool = True, metrics: MetricsRegistry | None = None):
     primary = ModelRoute("agnes", "primary")
     backup = ModelRoute("backup", "fallback")
     policy = ModelGovernancePolicy(
@@ -48,6 +49,7 @@ def _setup(*, budget: ProjectModelBudget | None = None, fallback: bool = True):
         usage_ledger=ledger,
         routes={primary: primary_llm, backup: backup_llm},
         estimated_output_tokens=100,
+        metrics=metrics,
     )
     return governed, ledger, primary_llm, backup_llm
 
@@ -137,3 +139,30 @@ def test_invalid_route_mapping_is_rejected():
             usage_ledger=ModelUsageLedger(),
             routes={"not-a-route": _LLM("bad")},
         )
+
+
+def test_fallback_selection_is_observable_without_project_labels():
+    metrics = MetricsRegistry()
+    governed, _, _, backup = _setup(metrics=metrics)
+    governed.primary_healthy = False
+
+    assert governed.generate("hello") == "fallback:ok"
+    assert backup.generate_calls == 1
+    snapshot = metrics.snapshot()
+    assert snapshot["counters"]["model_governance_fallback_selected_total"][0]["value"] == 1.0
+
+
+def test_admission_rejection_is_observable_and_provider_is_not_called():
+    metrics = MetricsRegistry()
+    governed, ledger, primary, _ = _setup(
+        budget=ProjectModelBudget(1000, 1000, 1),
+        metrics=metrics,
+    )
+    ledger.record("P1", ModelUsage(llm_calls=1), route=ModelRoute("agnes", "primary"))
+
+    with pytest.raises(ModelAdmissionError):
+        governed.generate("hello")
+
+    assert primary.generate_calls == 0
+    snapshot = metrics.snapshot()
+    assert snapshot["counters"]["model_governance_admission_rejected_total"][0]["value"] == 1.0
