@@ -4,10 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from runtime.plugin_agent_adapter import PluginAgentInvocationAdapter
 from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
 
 PLUGIN_API_VERSION = "1.0"
 TOOL_EXTENSION_POINT = "tools"
+AGENT_EXTENSION_POINT = "agents"
 
 
 class PluginError(RuntimeError):
@@ -98,6 +100,14 @@ class PluginHost:
             raise PluginError(
                 f"plugin '{metadata.name}' tools extension must be a "
                 "PluginToolInvocationAdapter"
+            )
+        agents_extension = self._extensions.get(AGENT_EXTENSION_POINT)
+        if AGENT_EXTENSION_POINT in metadata.extension_points and not isinstance(
+            agents_extension, PluginAgentInvocationAdapter
+        ):
+            raise PluginError(
+                f"plugin '{metadata.name}' agents extension must be a "
+                "PluginAgentInvocationAdapter"
             )
         self._plugins[metadata.name] = plugin
 
