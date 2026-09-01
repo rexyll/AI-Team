@@ -1,11 +1,10 @@
-from runtime.multi_project_scheduler import MultiProjectScheduler
+from runtime.multi_project_scheduler import MultiProjectScheduler, ProjectSchedulingRequest
 from runtime.project_execution_checkpoint import ProjectExecutionCheckpoint, ProjectExecutionCheckpointStore
 from runtime.project_execution_handoff import ProjectExecutionHandoff
 from runtime.project_scheduler import ProjectExecutionScope, ProjectScheduler
 from runtime.resource_governor import ResourceGovernor, ResourceLimits
 from runtime.task import Task
 from runtime.task_status import TaskStatus
-from runtime.workflow_checkpoint import WorkflowCheckpoint
 
 
 def _scheduler(project_id: str = "P1", task_id: str = "A") -> ProjectScheduler:
@@ -28,11 +27,15 @@ def _handoff(store: ProjectExecutionCheckpointStore) -> ProjectExecutionHandoff:
     return ProjectExecutionHandoff(MultiProjectScheduler([_scheduler()]), checkpoint_store=store)
 
 
+def _request() -> ProjectSchedulingRequest:
+    return ProjectSchedulingRequest(ProjectExecutionScope("P1"), "A")
+
+
 def test_admission_and_release_are_durably_mirrored(tmp_path):
     store = ProjectExecutionCheckpointStore(tmp_path / "checkpoints")
     handoff = _handoff(store)
 
-    reservation = handoff.admit(__import__("runtime.multi_project_scheduler", fromlist=["ProjectSchedulingRequest"]).ProjectSchedulingRequest(ProjectExecutionScope("P1"), "A"))
+    reservation = handoff.admit(_request())
     assert reservation is not None
     assert store.load(reservation.reservation_id).status == "admitted"
 
@@ -44,9 +47,8 @@ def test_admission_and_release_are_durably_mirrored(tmp_path):
 def test_restart_reconstructs_recoverable_reservation_without_executing(tmp_path):
     store = ProjectExecutionCheckpointStore(tmp_path / "checkpoints")
     first = _handoff(store)
-    from runtime.multi_project_scheduler import ProjectSchedulingRequest
 
-    reservation = first.admit(ProjectSchedulingRequest(ProjectExecutionScope("P1"), "A"))
+    reservation = first.admit(_request())
     assert reservation is not None
     checkpoint = store.load(reservation.reservation_id)
     store.save(
@@ -59,7 +61,6 @@ def test_restart_reconstructs_recoverable_reservation_without_executing(tmp_path
         )
     )
     first.release(reservation)
-    # Re-create the durable state after the first process has gone away.
     store.save(
         ProjectExecutionCheckpoint(
             reservation_id=checkpoint.reservation_id,
@@ -82,9 +83,8 @@ def test_restart_reconstructs_recoverable_reservation_without_executing(tmp_path
 def test_recovered_execution_requires_authoritative_reconciliation(tmp_path):
     store = ProjectExecutionCheckpointStore(tmp_path / "checkpoints")
     handoff = _handoff(store)
-    from runtime.multi_project_scheduler import ProjectSchedulingRequest
 
-    reservation = handoff.admit(ProjectSchedulingRequest(ProjectExecutionScope("P1"), "A"))
+    reservation = handoff.admit(_request())
     assert reservation is not None
     checkpoint = store.load(reservation.reservation_id)
     store.save(
@@ -93,7 +93,7 @@ def test_recovered_execution_requires_authoritative_reconciliation(tmp_path):
             scope=checkpoint.scope,
             task_id=checkpoint.task_id,
             status="started",
-            task_checkpoint=WorkflowCheckpoint.capture(checkpoint.task_checkpoint.restore()),
+            task_checkpoint=checkpoint.task_checkpoint,
         )
     )
 
