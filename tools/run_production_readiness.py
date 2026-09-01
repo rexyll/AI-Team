@@ -16,7 +16,7 @@ def _tests_for_patterns(*patterns: str) -> tuple[str, ...]:
         for path in TEST_ROOT.glob(pattern)
         if path.is_file()
     }
-    return tuple(str(path.relative_to(ROOT)) for path in sorted(paths))
+    return tuple(path.relative_to(ROOT).as_posix() for path in sorted(paths))
 
 
 def _pytest_gate(*patterns: str) -> tuple[str, ...]:
