@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -52,6 +51,9 @@ class ProjectExecutionCheckpoint:
             raise ProjectExecutionCheckpointError("task_checkpoint must be a WorkflowCheckpoint")
         if self.task_checkpoint.task_id != self.task_id:
             raise ProjectExecutionCheckpointError("task checkpoint task_id does not match execution task_id")
+        task_project_id = self.task_checkpoint.task.get("context", {}).get("project_id")
+        if task_project_id is not None and task_project_id != self.project_id:
+            raise ProjectExecutionCheckpointError("task checkpoint project scope does not match execution scope")
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version != CHECKPOINT_VERSION:
             raise ProjectExecutionCheckpointError("unsupported checkpoint version")
 
@@ -121,8 +123,7 @@ class ProjectExecutionCheckpointStore:
         if not isinstance(checkpoint, ProjectExecutionCheckpoint):
             raise TypeError("checkpoint must be a ProjectExecutionCheckpoint")
         with self._lock:
-            path = self._path(checkpoint.reservation_id)
-            self._atomic_replace(path, checkpoint.to_dict())
+            self._atomic_replace(self._path(checkpoint.reservation_id), checkpoint.to_dict())
 
     def load(self, reservation_id: str) -> ProjectExecutionCheckpoint:
         path = self._path(reservation_id)
@@ -141,14 +142,15 @@ class ProjectExecutionCheckpointStore:
 
     def list_all(self) -> tuple[ProjectExecutionCheckpoint, ...]:
         with self._lock:
-            checkpoints = [self.load(path.stem) for path in sorted(self.root.glob("*.json")) if path.is_file()]
+            checkpoints = [
+                self.load(path.stem)
+                for path in sorted(self.root.glob("*.json"))
+                if path.is_file()
+            ]
         return tuple(checkpoints)
 
     def list_recoverable(self, project_id: str | None = None) -> tuple[ProjectExecutionCheckpoint, ...]:
-        if project_id is not None:
-            scope = ProjectExecutionScope(project_id)
-        else:
-            scope = None
+        scope = ProjectExecutionScope(project_id) if project_id is not None else None
         checkpoints = [checkpoint for checkpoint in self.list_all() if checkpoint.recoverable]
         if scope is not None:
             checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.scope == scope]
