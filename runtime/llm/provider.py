@@ -6,7 +6,7 @@ from typing import Any
 
 from config.model import get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
-from runtime.model_governance import ModelUsage
+from runtime.model_governance import ModelRoute, ModelUsage
 from runtime.model_usage import ModelUsageLedger
 
 
@@ -167,6 +167,7 @@ class ProviderLLM(BaseLLM):
                 output_tokens=usage.get("completion_tokens", 0),
                 llm_calls=1,
             ),
+            route=ModelRoute(self.provider_profile, self.model),
         )
 
     @staticmethod
