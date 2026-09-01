@@ -1,6 +1,10 @@
 import pytest
 
+from agents.base import BaseAgent
+from runtime.agent_config import AgentConfig
+from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
+from runtime.llm.base import BaseLLM
 from runtime.plugin_agent_adapter import PluginAgentInvocationAdapter
 from runtime.plugin_api import (
     AGENT_EXTENSION_POINT,
@@ -13,7 +17,38 @@ from runtime.plugin_api import (
 from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
 from runtime.plugin_workflow_adapter import PluginWorkflowInvocationAdapter
 from runtime.tool_invocation_service import ToolInvocationService
+from runtime.task import Task
 from runtime.workflow import TaskWorkflow
+
+
+class _NoOpLLM(BaseLLM):
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str = "",
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+    ) -> str:
+        return "ok"
+
+
+class _Agent(BaseAgent):
+    def __init__(self, role: str):
+        super().__init__(AgentConfig(role=role, model=""), llm=_NoOpLLM())
+        self._role = role
+
+    @property
+    def role(self):
+        return self._role
+
+    def run(self, task: Task) -> AgentResult:
+        return AgentResult(
+            status="completed",
+            agent=self.role,
+            task_id=task.id,
+            data={},
+        )
 
 
 class _Context:
@@ -48,9 +83,11 @@ class _Plugin:
 
 
 def _canonical_extensions():
+    router = AgentRouter()
+    router.register(_Agent("architect"))
     return {
         TOOL_EXTENSION_POINT: PluginToolInvocationAdapter(ToolInvocationService(), role="developer"),
-        AGENT_EXTENSION_POINT: PluginAgentInvocationAdapter(AgentRouter(), role="architect"),
+        AGENT_EXTENSION_POINT: PluginAgentInvocationAdapter(router, role="architect"),
         WORKFLOW_EXTENSION_POINT: PluginWorkflowInvocationAdapter(TaskWorkflow.__new__(TaskWorkflow)),
     }
 
