@@ -6,10 +6,12 @@ from typing import Any, Protocol
 
 from runtime.plugin_agent_adapter import PluginAgentInvocationAdapter
 from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
+from runtime.plugin_workflow_adapter import PluginWorkflowInvocationAdapter
 
 PLUGIN_API_VERSION = "1.0"
 TOOL_EXTENSION_POINT = "tools"
 AGENT_EXTENSION_POINT = "agents"
+WORKFLOW_EXTENSION_POINT = "workflow"
 
 
 class PluginError(RuntimeError):
@@ -108,6 +110,14 @@ class PluginHost:
             raise PluginError(
                 f"plugin '{metadata.name}' agents extension must be a "
                 "PluginAgentInvocationAdapter"
+            )
+        workflow_extension = self._extensions.get(WORKFLOW_EXTENSION_POINT)
+        if WORKFLOW_EXTENSION_POINT in metadata.extension_points and not isinstance(
+            workflow_extension, PluginWorkflowInvocationAdapter
+        ):
+            raise PluginError(
+                f"plugin '{metadata.name}' workflow extension must be a "
+                "PluginWorkflowInvocationAdapter"
             )
         self._plugins[metadata.name] = plugin
 
