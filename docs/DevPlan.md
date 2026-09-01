@@ -79,5 +79,30 @@
 - [ ] Concurrency regression
 - [ ] Full test suite
 
+## Phase 19 — Production Scale / v0.2 Architecture
+
+### 19.1 Multi-project scheduling and resource governance
+- [x] Project execution scope identity
+- [x] Project-local resource admission
+- [x] Deterministic multi-project scheduling
+- [x] Cross-project resource isolation
+- [x] Project execution handoff
+- [x] Scheduling/admission observability
+- [x] Focused and full regression coverage
+
+### 19.2 Long-lived execution and recovery
+
+#### 19.2.1 Durable project execution checkpoint contract
+- [x] Immutable project execution checkpoint identity and scope
+- [x] Reuse canonical `WorkflowCheckpoint`
+- [x] Recoverable vs terminal checkpoint states
+- [x] Atomic filesystem checkpoint store
+- [x] Project-scoped recoverable enumeration
+- [x] Task/project scope validation
+- [x] Publish checkpoint through `ProjectExecutionHandoff`
+- [x] Reconstruct active reservations after restart
+- [x] Require authoritative reconciliation before retry/finalization
+- [ ] Crash/restart integration across checkpoint, TaskManager, and TaskWorkflow
+
 ### Current next step
-Begin **17.5 Stuck Task Detection** with the heartbeat / liveness contract. The runtime now has state persistence, crash-consistent recovery, resumable execution, lease expiry, fencing, and canonical workflow duplicate-worker protection; the next boundary is detecting workers/tasks that remain active in state but have stopped making progress.
+Complete the **19.2.1 crash/restart integration contract**. Validate that a process restart can recover an `admitted` or ambiguous `started` project execution, reconstruct only the transient project reservation, and require the authoritative TaskManager/result persistence boundary to reconcile before any retry or commit decision. After focused recovery tests pass, run the full regression suite and then advance to 19.3 Cost / model governance.
