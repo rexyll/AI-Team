@@ -120,7 +120,7 @@ def test_reserved_extensions_reject_non_canonical_values_independently():
 def test_context_cannot_substitute_host_approved_reserved_extension():
     extensions = _canonical_extensions()
     plugin = _Plugin()
-    host = PluginHost(extensions=extensions)
+    host = PluginHost(allowed_capabilities=frozenset({"observe"}), extensions=extensions)
     host.register(plugin)
     substituted = dict(extensions)
     substituted[AGENT_EXTENSION_POINT] = object()
