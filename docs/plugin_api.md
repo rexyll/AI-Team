@@ -46,6 +46,22 @@ The authorization role is fixed when the host constructs the adapter and is neve
 
 A raw `ToolRegistry`, raw tool callable, workspace object, or `ToolInvocationService` must not be exposed as the plugin `tools` extension. `PluginHost` rejects a non-adapter value for that reserved extension point during registration.
 
+### Agent extension boundary
+
+The reserved `agents` extension point is host-owned. Its value must be a `PluginAgentInvocationAdapter` constructed around the host `AgentRouter`.
+
+The adapter exposes only:
+
+```python
+invoke(task) -> AgentResult
+```
+
+The Agent role is fixed when the host constructs the adapter and cannot be overridden by the plugin. Singleton roles are resolved through the existing router, while the `developer` role continues to use the router's deterministic Developer-pool selection by task ID.
+
+The adapter executes against an isolated copy of the `Task` and returns an isolated copy of the canonical `AgentResult`. This prevents plugins from mutating host runtime state through object aliases. The raw router, Agent instance, LLM, tool-loop state, and mutable runtime Task are not exposed through the adapter.
+
+A raw `AgentRouter`, raw `BaseAgent`, LLM instance, workspace object, or internal Agent state must not be exposed as the plugin `agents` extension. `PluginHost` rejects a non-adapter value for that reserved extension point during registration.
+
 ## Capability security
 
 Capability declarations are requests, not grants. A plugin must pass both checks:
@@ -57,6 +73,8 @@ Extension points have an additional two-sided check:
 
 1. The host must provide the named extension point.
 2. The runtime context must provide the exact host-approved object for that name.
+
+Reserved `tools` and `agents` extension points add a third check: the value must be the corresponding host-owned adapter rather than a raw internal runtime object.
 
 A plugin with an undelegated capability is rejected during registration. A plugin whose runtime context lacks a declared capability or extension point is rejected during initialization.
 
@@ -93,7 +111,7 @@ host.initialize("metrics-exporter", context)
 
 ## Lifecycle rules
 
-Registration rejects duplicate names, denied capabilities, and unavailable extension points. Initialization is guarded against repeated calls and verifies runtime capability/extension grants before invoking the plugin. Shutdown is safe to call for a registered but uninitialized plugin and always clears the host's initialized state even if plugin shutdown raises.
+Registration rejects duplicate names, denied capabilities, unavailable extension points, raw values for reserved `tools` / `agents` extension points, and incorrect host-owned adapter types. Initialization is guarded against repeated calls and verifies runtime capability/extension grants before invoking the plugin. Shutdown is safe to call for a registered but uninitialized plugin and always clears the host's initialized state even if plugin shutdown raises.
 
 ## Compatibility
 
