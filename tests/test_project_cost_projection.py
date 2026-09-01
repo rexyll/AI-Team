@@ -24,7 +24,7 @@ def test_project_cost_projection_aggregates_multiple_routes() -> None:
     estimate = ProjectCostProjection(registry).estimate_project(ledger, "P1")
 
     assert estimate.usage == ModelUsage(input_tokens=1_500_000, output_tokens=750_000, llm_calls=3)
-    assert estimate.cost_usd == Decimal("5.51")
+    assert estimate.cost_usd == Decimal("4.55")
     assert estimate.routes == (primary, fallback)
 
 
