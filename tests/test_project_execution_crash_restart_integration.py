@@ -85,7 +85,7 @@ def test_real_task_workflow_execution_closes_project_checkpoint(tmp_path):
 
     assert result is task
     assert manager.get_task("A").status == TaskStatus.COMPLETED.value
-    checkpoints = list(store._records.values())
+    checkpoints = store.list_all()
     assert len(checkpoints) == 1
     assert checkpoints[0].status == "released"
     assert handoff.active_reservations == ()
