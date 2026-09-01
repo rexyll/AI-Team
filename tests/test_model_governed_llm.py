@@ -61,6 +61,22 @@ def test_admitted_generate_uses_primary_route_without_mutating_ledger():
     assert ledger.usage_for("P1") == ModelUsage()
 
 
+def test_generate_admission_uses_bounded_output_estimate_not_provider_ceiling():
+    governed, _, primary, _ = _setup(budget=ProjectModelBudget(1000, 100, 2))
+
+    assert governed.generate("hello") == "primary:ok"
+    assert primary.generate_calls == 1
+
+
+def test_explicit_smaller_max_tokens_tightens_output_estimate():
+    governed, ledger, primary, _ = _setup(budget=ProjectModelBudget(1000, 49, 2))
+
+    with pytest.raises(ModelAdmissionError, match="project output-token budget exceeded"):
+        governed.generate("hello", max_tokens=50)
+    assert primary.generate_calls == 0
+    assert ledger.usage_for("P1") == ModelUsage()
+
+
 def test_call_budget_is_enforced_before_provider_invocation():
     governed, ledger, primary, _ = _setup(budget=ProjectModelBudget(1000, 1000, 1))
     ledger.record("P1", ModelUsage(llm_calls=1), route=ModelRoute("agnes", "primary"))
