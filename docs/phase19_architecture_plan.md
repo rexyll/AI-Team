@@ -45,7 +45,7 @@ The 19.1 execution handoff is implemented through `ProjectExecutionHandoff`. It 
 
 ## 19.2 Long-lived execution and recovery
 
-### 19.2.1 Durable project execution checkpoint contract — implementation complete; local validation pending
+### 19.2.1 Durable project execution checkpoint contract — implementation complete
 
 - [x] Define immutable project execution checkpoint identity and scope.
 - [x] Reuse the canonical `WorkflowCheckpoint` for task state rather than duplicating Task serialization.
@@ -56,17 +56,24 @@ The 19.1 execution handoff is implemented through `ProjectExecutionHandoff`. It 
 - [x] Integrate checkpoint publication into `ProjectExecutionHandoff` lifecycle transitions.
 - [x] Reconstruct active reservations from durable checkpoints on process restart.
 - [x] Define authoritative reconciliation before retrying an ambiguous `started` execution.
-- [ ] Add crash/restart integration coverage across checkpoint, TaskManager, and TaskWorkflow.
+- [x] Add crash/restart integration coverage across checkpoint, TaskManager, and TaskWorkflow.
 
 The checkpoint store remains a control-plane durability boundary rather than a second task-state owner. `ProjectExecutionHandoff` mirrors reservation lifecycle transitions to durable checkpoints and can reconstruct recoverable reservations after restart. Recovery returns candidates only; `reconcile()` requires an explicit authoritative durable outcome before a recovered execution is finalized or left eligible for retry.
 
-## 19.3 Cost / model governance
+## 19.3 Cost / model governance — first slice
 
-- [ ] Provider/model routing policy.
-- [ ] Per-project token/call budgets.
-- [ ] Runtime cost attribution.
-- [ ] Fallback/degradation policy.
-- [ ] Budget-aware scheduling decisions.
+- [x] Define immutable provider/model route contract.
+- [x] Define per-project token/call budget contract.
+- [x] Define deterministic model admission decisions without mutating usage state.
+- [x] Define explicit primary-route health and fallback selection semantics.
+- [x] Add cross-project budget-isolation and fallback regression coverage.
+- [ ] Attribute actual runtime token/call usage to projects.
+- [ ] Integrate governance admission with the canonical LLM invocation boundary.
+- [ ] Add provider/model cost-rate configuration.
+- [ ] Add budget-aware scheduler integration.
+- [ ] Add bounded degradation and fallback observability.
+
+The first 19.3 slice is intentionally policy-only: `ModelGovernance` does not execute LLM calls and does not become a second runtime owner. Runtime usage attribution and invocation integration follow only after the policy contract is validated by focused and full regression.
 
 ## 19.4 Git / CI / PR collaboration
 
