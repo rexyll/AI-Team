@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from runtime.model_governance import ModelRoute, ModelUsage
+from runtime.model_usage import ModelUsageLedger
 
 
 class ModelCostError(ValueError):
@@ -76,3 +77,56 @@ class ModelCostRateRegistry:
 
     def routes(self) -> tuple[ModelRoute, ...]:
         return tuple(self._rates)
+
+
+@dataclass(frozen=True)
+class ProjectCostEstimate:
+    """Deterministic cost projection for one project's observed usage."""
+
+    project_id: str
+    usage: ModelUsage
+    cost_usd: Decimal
+    routes: tuple[ModelRoute, ...]
+
+
+class ProjectCostProjection:
+    """Calculate project cost from route-attributed ledger records.
+
+    This component is observational only: it reads the usage ledger and cost
+    registry and never changes admission, budgets, routing, or ledger state.
+    """
+
+    def __init__(self, registry: ModelCostRateRegistry) -> None:
+        if not isinstance(registry, ModelCostRateRegistry):
+            raise TypeError("registry must be a ModelCostRateRegistry")
+        self._registry = registry
+
+    def estimate_project(self, ledger: ModelUsageLedger, project_id: str) -> ProjectCostEstimate:
+        if not isinstance(ledger, ModelUsageLedger):
+            raise TypeError("ledger must be a ModelUsageLedger")
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise ValueError("project_id must be a non-empty string")
+        project_id = project_id.strip()
+        records = ledger.records(project_id)
+        total_usage = ModelUsage()
+        total_cost = Decimal("0")
+        routes: list[ModelRoute] = []
+        for record in records:
+            total_usage = total_usage.add(
+                input_tokens=record.usage.input_tokens,
+                output_tokens=record.usage.output_tokens,
+                llm_calls=record.usage.llm_calls,
+            )
+            if record.route is None:
+                raise ModelCostError(
+                    f"Usage record for project '{project_id}' has no model route"
+                )
+            total_cost += self._registry.estimate(record.route, record.usage)
+            if record.route not in routes:
+                routes.append(record.route)
+        return ProjectCostEstimate(
+            project_id=project_id,
+            usage=total_usage,
+            cost_usd=total_cost,
+            routes=tuple(routes),
+        )
