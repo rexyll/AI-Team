@@ -4,8 +4,14 @@ import pytest
 
 from runtime.host_git import GitOperationRequest, HostGitOperationService
 from security.runtime_capability import HOST_ONLY_TOOLS, RuntimeCapabilityPolicy
+from security.tool_permission import ToolPermissionError
 from security.workspace import WorkspaceSandbox
 from tools.registry import TOOL_REGISTRY
+
+
+OPERATIONS = {
+    "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"
+}
 
 
 def _service(tmp_path: Path, monkeypatch):
@@ -23,11 +29,11 @@ def _service(tmp_path: Path, monkeypatch):
     return HostGitOperationService(WorkspaceSandbox(tmp_path)), workspace, calls
 
 
-def test_host_service_exposes_semantic_operations_not_arbitrary_commands():
+def test_host_service_exposes_only_semantic_git_operations():
     assert "command" not in GitOperationRequest.__dataclass_fields__
-    assert {
-        "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"
-    } == HostGitOperationService.__dict__["execute"].__annotations__.get("request", GitOperationRequest) and True
+    assert OPERATIONS == {
+        value for value in GitOperationRequest.__dataclass_fields__["operation"].type.__args__
+    }
 
 
 def test_agent_registry_does_not_expose_raw_git_command():
@@ -39,7 +45,7 @@ def test_raw_git_is_host_only_for_every_agent_role():
     assert HOST_ONLY_TOOLS == {"git_command"}
     for role in ("architect", "developer", "tester", "reviewer", "planner"):
         assert not policy.allows(role, "git_command")
-        with pytest.raises(Exception, match="host-only"):
+        with pytest.raises(ToolPermissionError, match="host-only"):
             policy.require(role, "git_command")
         assert "git_command" not in policy.filter_tool_names(role, ["git_command"])
 
@@ -61,7 +67,8 @@ def test_add_anchors_relative_paths_to_repository_workspace(tmp_path, monkeypatc
 
     service.add(str(workspace), ["src/app.py"])
 
-    assert calls[-1] == ('add "src\\app.py"', str(workspace))
+    expected = str(Path("src") / "app.py")
+    assert calls[-1] == (f'add "{expected}"', str(workspace))
 
 
 def test_add_rejects_workspace_escape(tmp_path, monkeypatch):
