@@ -14,10 +14,13 @@ from runtime.plugin_api import (
     PluginLifecycleError,
     PluginMetadata,
     TOOL_EXTENSION_POINT,
+    WORKFLOW_EXTENSION_POINT,
 )
 from runtime.plugin_tool_adapter import PluginToolInvocationAdapter
+from runtime.plugin_workflow_adapter import PluginWorkflowInvocationAdapter
 from runtime.task import Task
 from runtime.tool_invocation_service import ToolInvocationService
+from runtime.workflow import TaskWorkflow
 from tools.registry import ToolRegistry
 
 
@@ -278,3 +281,81 @@ def test_plugin_agent_adapter_routes_developer_pool_by_task_id():
     assert result.agent == "developer"
     assert selected.received_tasks
     assert selected.received_tasks[-1].id == task.id
+
+
+def test_workflow_extension_rejects_raw_workflow():
+    metadata = PluginMetadata(
+        "raw-workflow",
+        "1.0",
+        extension_points=frozenset({WORKFLOW_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+    workflow = TaskWorkflow.__new__(TaskWorkflow)
+
+    with pytest.raises(PluginError, match="workflow extension must be a PluginWorkflowInvocationAdapter"):
+        PluginHost(extensions={WORKFLOW_EXTENSION_POINT: workflow}).register(plugin)
+
+
+def test_workflow_extension_requires_canonical_invocation_adapter():
+    metadata = PluginMetadata(
+        "safe-workflow",
+        "1.0",
+        extension_points=frozenset({WORKFLOW_EXTENSION_POINT}),
+    )
+    plugin = _Plugin()
+    plugin.metadata = metadata
+    workflow = TaskWorkflow.__new__(TaskWorkflow)
+    adapter = PluginWorkflowInvocationAdapter(workflow)
+    host = PluginHost(extensions={WORKFLOW_EXTENSION_POINT: adapter})
+
+    host.register(plugin)
+    host.initialize("safe-workflow", _Context(extensions={WORKFLOW_EXTENSION_POINT: adapter}))
+    assert plugin.calls == ["initialize"]
+
+
+def test_plugin_workflow_adapter_returns_detached_task_snapshot():
+    workflow = TaskWorkflow.__new__(TaskWorkflow)
+    live_task = Task(
+        "TASK-WORKFLOW-001",
+        "title",
+        "description",
+        "developer",
+        status="completed",
+        result={"nested": {"value": 1}},
+    )
+
+    def execute(task_id: str):
+        assert task_id == live_task.id
+        return live_task
+
+    workflow.execute = execute
+    adapter = PluginWorkflowInvocationAdapter(workflow)
+
+    snapshot = adapter.execute(task_id=live_task.id)
+
+    assert snapshot["id"] == live_task.id
+    assert snapshot["status"] == "completed"
+    snapshot["result"]["nested"]["value"] = 99
+    assert live_task.result["nested"]["value"] == 1
+
+
+def test_plugin_workflow_adapter_validates_task_id_and_return_contract():
+    workflow = TaskWorkflow.__new__(TaskWorkflow)
+    adapter = PluginWorkflowInvocationAdapter(workflow)
+
+    with pytest.raises(ValueError):
+        adapter.execute(task_id="   ")
+
+    workflow.execute = lambda task_id: {"id": task_id}
+    with pytest.raises(TypeError, match="host Workflow must return Task"):
+        adapter.execute(task_id="TASK-WORKFLOW-002")
+
+
+def test_plugin_workflow_adapter_does_not_expose_workflow_internals():
+    workflow = TaskWorkflow.__new__(TaskWorkflow)
+    adapter = PluginWorkflowInvocationAdapter(workflow)
+
+    assert not hasattr(adapter, "workflow")
+    assert not hasattr(adapter, "task_manager")
+    assert not hasattr(adapter, "agent_router")
