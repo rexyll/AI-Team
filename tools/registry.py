@@ -9,6 +9,7 @@ from tools.filesystem import (
     move_file,
     delete_file,
 )
+from tools.git import git_command
 from tools.terminal import run_command
 
 
@@ -82,6 +83,7 @@ _DEFAULT_IMPLEMENTATIONS: dict[str, ToolFunction] = {
     "move_file": move_file,
     "delete_file": delete_file,
     "run_command": run_command,
+    "git_command": git_command,
 }
 
 
