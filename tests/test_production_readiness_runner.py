@@ -16,7 +16,9 @@ def test_readiness_gates_are_ordered_and_use_real_regression_contracts() -> None
 
     commands = dict(readiness.GATES)
     assert commands["security"][-1] == "tools/run_security_regression.py"
-    assert commands["extension-boundary"][-4:] == (
+    assert commands["extension-boundary"][-5:] == (
+        "tests/test_plugin_api.py",
+        "tests/test_plugin_extension_compatibility.py",
         "tests/test_extension_examples_contract.py",
         "-q",
     )
