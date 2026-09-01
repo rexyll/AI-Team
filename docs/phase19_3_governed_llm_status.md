@@ -1,6 +1,6 @@
 # Phase 19.3 — Governed LLM invocation boundary
 
-Status: implemented; local validation pending.
+Status: implementation complete; local focused and full regression validation is the acceptance gate.
 
 ## Implemented
 
@@ -12,7 +12,9 @@ Status: implemented; local validation pending.
 - Governance-selected fallback routes are resolved to explicitly configured `BaseLLM` instances.
 - A governance-selected but unconfigured route fails closed before provider execution.
 - Admission rejection raises `ModelAdmissionError` carrying the immutable `ModelAdmissionDecision`.
-- Provider execution and actual usage attribution remain owned by the wrapped LLM; the governance adapter does not double-record usage.
+- `ProviderLLM` owns authoritative provider-response usage attribution to the canonical `ModelUsageLedger` when configured with a project scope.
+- `ModelCostRate` / `ModelCostRateRegistry` provide immutable provider/model pricing and `ProjectCostProjection` derives observational project cost from route-attributed usage.
+- `ModelGovernedLLM` optionally emits bounded, provider-independent fallback-selection and admission-rejection counters through `MetricsRegistry` without project-id labels.
 
 ## Architectural boundary
 
@@ -22,14 +24,16 @@ ModelGovernedLLM
     -> ModelUsageLedger.usage_for(project)
     -> selected BaseLLM route
         -> provider execution
-        -> actual usage attribution (when configured)
+        -> authoritative usage attribution (ProviderLLM when configured)
 
 ModelGovernance remains pure policy.
 ModelUsageLedger remains observational accounting.
+ModelCostRateRegistry / ProjectCostProjection remain observational cost accounting.
+MetricsRegistry remains provider-independent operational telemetry.
 BaseLLM / ProviderLLM remain the execution boundary.
 ```
 
-This slice intentionally does not add reservation mutation or a second LLM runtime. Budget admission is fail-closed before provider execution, while actual provider usage remains authoritative telemetry.
+This slice does not add reservation mutation or a second LLM runtime. Budget admission is fail-closed before provider execution. Actual usage and cost are derived from provider responses, while fallback and rejection events are observable through low-cardinality metrics.
 
 ## Focused regression coverage
 
@@ -37,11 +41,16 @@ This slice intentionally does not add reservation mutation or a second LLM runti
 
 - primary-route admission;
 - pre-invocation call-budget rejection;
+- bounded output admission estimates;
 - fallback selection;
 - fail-closed missing route configuration;
 - per-invocation health callback evaluation;
 - tool-call admission;
-- route mapping validation.
+- route mapping validation;
+- fallback-selection telemetry;
+- admission-rejection telemetry.
+
+The existing model governance, usage attribution, and cost regression suites remain authoritative for their respective contracts.
 
 ## Validation
 
