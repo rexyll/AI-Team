@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from runtime.project_scheduler import ProjectAdmissionDecision, ProjectExecutionScope, ProjectScheduler
-from runtime.resource_governor import ResourceGovernor
-from runtime.task import Task
 
 
 @dataclass(frozen=True)
@@ -55,10 +53,27 @@ class MultiProjectScheduler:
             return None
         return min(candidates, key=lambda item: (item.scope.project_id, item.task_id))
 
+    def _scheduler_for_task(self, task_id: str) -> ProjectScheduler | None:
+        for project_id in self.project_ids:
+            scheduler = self._schedulers[project_id]
+            try:
+                scheduler.decide(task_id)
+            except KeyError:
+                continue
+            return scheduler
+        return None
+
     def decide(self, request: ProjectSchedulingRequest) -> ProjectAdmissionDecision:
         if not isinstance(request, ProjectSchedulingRequest):
             raise TypeError("request must be a ProjectSchedulingRequest")
-        scheduler = self.scheduler_for(request.scope.project_id)
-        if request.scope != scheduler.scope:
-            raise ValueError("request scope does not match registered project scope")
-        return scheduler.decide(request.task_id)
+
+        scheduler = self._scheduler_for_task(request.task_id)
+        if scheduler is not None:
+            if request.scope != scheduler.scope:
+                raise ValueError("request scope does not match registered project scope")
+            return scheduler.decide(request.task_id)
+
+        # Preserve a distinct error for an unknown project when the task itself
+        # is not known to any registered project.
+        self.scheduler_for(request.scope.project_id)
+        raise KeyError(f"Unknown task id: {request.task_id}")
