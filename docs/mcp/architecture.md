@@ -148,6 +148,44 @@ the existing exception/result behavior of the underlying MCP tools. This
 avoids creating a second incompatible error envelope at the protocol adapter
 layer.
 
+## Secret and environment isolation
+
+MCP must not become an indirect environment-variable reader. Terminal and Git
+child processes therefore receive a derived environment with credential-like
+variables removed. Normal execution variables such as `PATH`, `TEMP`,
+`SystemRoot`, and locale settings remain available so the existing developer
+toolchain continues to work.
+
+The environment filter blocks variables whose names indicate API keys,
+tokens, authentication/authorization material, credentials, passwords,
+secrets, private keys, or client/session/refresh secrets. MCP callers cannot
+supply an arbitrary child-process environment through the public terminal or
+Git capability APIs.
+
+Tool output is also passed through the MCP redaction boundary. Known inherited
+host secret values and common credential-bearing string patterns are redacted
+before terminal/Git results are returned. Operation telemetry sanitizes
+metadata and identity fields, and normalized MCP errors sanitize exception
+messages. This is a defense-in-depth boundary; it does not claim that arbitrary
+secrets stored in workspace files can be perfectly detected.
+
+```text
+MCP request
+    |
+    +--> policy/config validation
+    |
+    +--> operation tracker (sanitized telemetry)
+    |
+    +--> terminal/Git child process
+    |       |
+    |       +--> sanitized environment
+    |
+    +--> bounded + redacted result
+    |
+    v
+MCP response
+```
+
 ## Public MCP surface
 
 The capability surface is policy-derived. Read tools remain available across
@@ -218,5 +256,5 @@ and the existing execution context. This preserves retry/replan compatibility.
 
 The MCP bridge writes protocol traffic to stdout only through the MCP SDK;
 operational logs remain on stderr. No direct `.git` metadata interface is
-provided, and Git/terminal outputs are bounded before being returned to MCP
-clients.
+provided, and Git/terminal outputs are bounded and sanitized before being
+returned to MCP clients.
