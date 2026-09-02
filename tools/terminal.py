@@ -2,6 +2,7 @@ import locale
 import re
 import subprocess
 from pathlib import Path
+from collections.abc import Mapping
 
 from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
@@ -102,6 +103,7 @@ def run_command(
     *,
     sandbox: WorkspaceSandbox | None = None,
     timeout: float | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """Execute an allow-listed development command inside the workspace."""
     working_directory = (
@@ -117,6 +119,7 @@ def run_command(
             capture_output=True,
             text=False,
             timeout=timeout,
+            env=dict(env) if env is not None else None,
         )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(f"Command timed out after {timeout} seconds") from exc
