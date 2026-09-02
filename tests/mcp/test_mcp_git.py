@@ -51,6 +51,13 @@ def test_boundary_rejects_workspace_outside_git_repository(tmp_path):
         boundary.status(str(outside))
 
 
+def test_boundary_rejects_direct_git_metadata_path(tmp_path):
+    repo = _repo(tmp_path)
+    boundary = MCPGitCapabilityBoundary(repo)
+    with pytest.raises(PermissionError, match="Git metadata"):
+        boundary.status(".git")
+
+
 @pytest.mark.anyio
 async def test_server_exposes_phase_5_git_tools(tmp_path):
     repo = _repo(tmp_path)
