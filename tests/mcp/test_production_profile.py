@@ -22,6 +22,7 @@ async def test_production_profile_exposes_only_read_capabilities(tmp_path):
 
     assert names == {
         "bridge_health",
+        "bridge_readiness",
         "workspace_validate_path",
         "workspace_list_files",
         "workspace_read_file",
