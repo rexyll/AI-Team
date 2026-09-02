@@ -59,7 +59,7 @@ async def test_write_requires_explicit_overwrite_for_existing_file(tmp_path):
 
     assert rejected.is_error is True
     assert updated.structured_content == {
-        "result": {"path": "example.txt", "operation": "update", "bytes_written": 3}
+        "path": "example.txt", "operation": "update", "bytes_written": 3
     }
     assert source.read_text(encoding="utf-8") == "new"
 
@@ -76,7 +76,7 @@ async def test_write_creates_nested_file_and_returns_relative_path(tmp_path):
 
     assert result.is_error is False
     assert result.structured_content == {
-        "result": {"path": "generated/example.txt", "operation": "create", "bytes_written": 5}
+        "path": "generated/example.txt", "operation": "create", "bytes_written": 5
     }
     assert (tmp_path / "generated/example.txt").read_text(encoding="utf-8") == "hello"
     assert str(tmp_path.resolve()) not in str(result.structured_content)
@@ -92,7 +92,7 @@ async def test_delete_file_is_bounded_and_returns_relative_path(tmp_path):
         result = await client.call_tool("workspace_delete_file", {"path": "delete-me.txt"})
 
     assert result.structured_content == {
-        "result": {"path": "delete-me.txt", "operation": "delete"}
+        "path": "delete-me.txt", "operation": "delete"
     }
     assert not source.exists()
 
