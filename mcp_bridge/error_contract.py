@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .sanitization import redact_secrets
+
 
 _ERROR_CATEGORIES = {
     "configuration": "configuration_error",
@@ -30,5 +32,5 @@ def normalize_error(exc: BaseException) -> dict[str, Any]:
     return {
         "category": category,
         "type": type(exc).__name__,
-        "message": str(exc),
+        "message": redact_secrets(str(exc)),
     }
