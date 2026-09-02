@@ -204,27 +204,34 @@ Retry, revision, approval, persistence, projection, and recovery semantics are c
 
 ## 11. Local MCP bridge service
 
-The MCP bridge is an optional local service boundary over the existing AI-Team workspace, Git, terminal, and host-composed orchestration capabilities. It does not replace the canonical runtime or create a second orchestration engine.
+The MCP bridge is an optional local service boundary over the existing AI-Team workspace, Git, terminal, and host-composed orchestration capabilities. It does not replace the canonical runtime or create a second orchestration engine. The service lives in its own `mcp/web_host_bridge/` package, separate from the AI-Team core tree.
 
 Install the MCP dependency set separately:
 
 ```powershell
-pip install -r requirements-mcp.txt
+pip install -r mcp/web_host_bridge/requirements-mcp.txt
 ```
 
 The standalone service accepts only stdio transport and requires `AI_TEAM_WORKSPACE` to point to an existing absolute workspace directory. When no policy profile is explicitly configured, standalone startup uses the fail-safe `readonly` policy and does not enable terminal execution.
 
-Start the standalone MCP service from the repository root:
+Start the standalone MCP service from the repository root (the bridge package is imported from the `mcp/` directory):
 
 ```powershell
-python -m mcp_bridge
+$env:PYTHONPATH = "$PWD\mcp;$PWD"
+python -m web_host_bridge
+```
+
+The bundled launch scripts set this automatically:
+
+```powershell
+mcp\web_host_bridge\scripts\run_mcp_bridge.ps1
 ```
 
 The standalone service is therefore suitable for MCP hosts that need read-only local workspace/Git inspection by default. Mutation or workflow execution requires an explicitly configured policy and the corresponding host-owned capability boundary; terminal access additionally requires explicit host opt-in.
 
-The service boundary is covered at two levels: in-process MCP client tests validate the tool contract without a transport, while `tests/mcp/test_mcp_stdio_service.py` launches `python -m mcp_bridge` as a real child process and validates initialization, tool discovery, health, and standalone policy enforcement over stdio.
+The service boundary is covered at two levels: in-process MCP client tests validate the tool contract without a transport, while `mcp/web_host_bridge/tests/test_mcp_stdio_service.py` launches `python -m web_host_bridge` as a real child process and validates initialization, tool discovery, health, and standalone policy enforcement over stdio.
 
-For the complete MCP capability, policy, transport, orchestration, lifecycle, and secret-isolation contract, see `docs/mcp/architecture.md`.
+For the complete MCP capability, policy, transport, orchestration, lifecycle, and secret-isolation contract, see `mcp/web_host_bridge/docs/architecture.md`.
 
 ## 12. Development workflow
 
