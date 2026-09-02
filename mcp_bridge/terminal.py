@@ -67,6 +67,11 @@ class MCPTerminalCapabilityBoundary:
         return max_output_chars
 
     @staticmethod
+    def _validate_command_shape(command: str) -> None:
+        if "\n" in command or "\r" in command:
+            raise PermissionError("Multi-line terminal commands are not allowed")
+
+    @staticmethod
     def _parse_output(raw: str) -> tuple[int, str]:
         first_line, separator, remainder = raw.partition("\n")
         if not separator or not first_line.startswith("exit_code="):
@@ -87,6 +92,7 @@ class MCPTerminalCapabilityBoundary:
     ) -> dict[str, object]:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command must be a non-empty string")
+        self._validate_command_shape(command)
         normalized_timeout = self._validate_timeout(timeout)
         output_limit = self._validate_output_limit(max_output_chars)
         resolved = self._sandbox.resolve(cwd or ".")
