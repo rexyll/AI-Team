@@ -9,6 +9,7 @@ from agents.mock_agents import MockAgent
 from runtime.agent_router import AgentRouter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.workflow_event_log import WorkflowEventLog
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 
 
@@ -150,7 +151,7 @@ def test_idempotency_key_cannot_be_reused_for_another_task() -> None:
         Task(id="TASK-001", title="First", description="first", role="developer"),
         Task(id="TASK-002", title="Second", description="second", role="developer"),
     ])
-    event_log = __import__("runtime.workflow_event_log", fromlist=["WorkflowEventLog"]).WorkflowEventLog()
+    event_log = WorkflowEventLog()
 
     class Workflow:
         def execute(self, task_id: str, *, execution_id: str):
@@ -180,3 +181,61 @@ def test_execution_status_rejects_unknown_execution() -> None:
     boundary, _ = _boundary()
     with pytest.raises(KeyError, match="Unknown execution id"):
         boundary.execution_status("missing")
+
+
+def test_failed_execution_emits_failure_event_and_status() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    event_log = WorkflowEventLog()
+
+    class FailingWorkflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            raise ValueError("workflow exploded")
+
+    boundary = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _: FailingWorkflow(),
+        workflow_event_log=event_log,
+        project_id="PROJECT-001",
+    )
+    with pytest.raises(ValueError, match="workflow exploded"):
+        boundary.execute_task("TASK-001", idempotency_key="request-failed")
+
+    history = boundary.execution_history("TASK-001")
+    assert [item["event_type"] for item in history] == [
+        "mcp_task_execution_requested",
+        "mcp_task_execution_failed",
+    ]
+    execution_id = history[0]["execution_id"]
+    status = boundary.execution_status(execution_id)
+    assert status["status"] == "failed"
+    assert status["error_type"] == "ValueError"
+    assert history[0]["execution_id"] == execution_id
+
+
+def test_idempotency_recovers_from_persisted_execution_events() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    event_log = WorkflowEventLog()
+
+    class Workflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            task = manager.get_task(task_id)
+            task.status = "completed"
+            return task
+
+    first = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _: Workflow(),
+        workflow_event_log=event_log,
+        project_id="PROJECT-001",
+    )
+    original = first.execute_task("TASK-001", idempotency_key="request-001")
+
+    recovered = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _: (_ for _ in ()).throw(AssertionError("workflow must not execute again")),
+        workflow_event_log=WorkflowEventLog.from_dict(event_log.to_dict()),
+        project_id="PROJECT-001",
+    )
+    result = recovered.execute_task("TASK-001", idempotency_key="request-001")
+    assert result["execution_id"] == original["execution_id"]
+    assert result["status"] == "completed"
