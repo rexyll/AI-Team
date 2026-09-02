@@ -74,9 +74,14 @@ Supported profiles are:
   available only when the host explicitly passes `terminal=True`.
 - `readonly` — read-only workspace/Git/task inspection; workspace mutation,
   Git writes, terminal execution, and workflow execution are not registered.
+- `production` — fail-closed read-only deployment profile; workspace mutation,
+  Git writes, terminal execution, and workflow execution are disabled even if a
+  host explicitly requests terminal access.
 
 The profile is configured with `AI_TEAM_MCP_POLICY_PROFILE` and defaults to
-`developer` for compatibility with the existing bridge.
+`developer` for compatibility with existing development deployments. A
+production deployment should explicitly select `production` rather than rely
+on the compatibility default.
 
 ```text
 policy profile
