@@ -57,7 +57,7 @@ is unavailable.
 
 Terminal access is an **optional host capability**, unlike the read/write/Git
 surface which remains available in the normal bridge. A host must explicitly
-create the server with `terminal=True` before `terminal_execute` is registered.
+create the server with `terminal=True` before terminal tools are registered.
 The standalone entrypoint keeps terminal access disabled by default.
 
 ```python
@@ -72,7 +72,7 @@ controls:
 - the existing executable allowlist;
 - the existing shell-chaining, redirection, expansion, and code-evaluation
   argument restrictions;
-- workspace-local `.venv\Scripts` executable resolution;
+- workspace-local `.venv\\Scripts` executable resolution;
 - a mandatory positive timeout bounded to 120 seconds;
 - a bounded response output of at most 512 KiB;
 - relative workspace paths only in returned metadata;
@@ -80,7 +80,32 @@ controls:
 - successful and non-zero-exit results sent to an optional audit sink;
 - timeout exceptions are propagated rather than converted into a false success.
 
-The underlying terminal runner now accepts an injected `WorkspaceSandbox` and a
+### Terminal execution control plane
+
+Each accepted terminal execution is assigned an opaque `execution_id` and
+immediately enters the ephemeral `active` control state. The boundary exposes:
+
+- `terminal_execution_status(execution_id)` for point-in-time lifecycle state;
+- `terminal_execution_history(limit?)` for a bounded recent execution view;
+- `execution_id` in the MCP `terminal_execute` response so clients can correlate
+  the command with subsequent status queries;
+- `active`, `completed`, and `failed` lifecycle states;
+- `exit_code`, `timed_out`, and `truncated` only when execution reached the
+  corresponding completion path;
+- `error_type` for exceptions without fabricating an exit code.
+
+The control-plane registry is deliberately in-memory and bounded per query;
+it is **not** a second durable audit store. When `WorkflowEventLog` and
+`project_id` are configured, the canonical log remains the durable lifecycle
+record and carries the same execution ID. Concurrent terminal executions get
+independent IDs and state records.
+
+For compatibility, the low-level `MCPTerminalCapabilityBoundary.execute()`
+keeps its historical result shape by default. The MCP server requests the
+extended response containing `execution_id`; direct callers can opt into the
+same field with `include_execution_id=True`.
+
+The underlying terminal runner accepts an injected `WorkspaceSandbox` and a
 subprocess timeout. Existing callers retain the legacy behavior when those
 optional arguments are omitted, so this hardening does not change the existing
 DeveloperAgent terminal contract.
@@ -133,9 +158,11 @@ Orchestration tools (only when a boundary is injected):
 - `task_execution_status`
 - `task_execute(task_id, idempotency_key?)`
 
-Terminal tool (only when `terminal=True`):
+Terminal tools (only when `terminal=True`):
 
 - `terminal_execute(command, cwd?, timeout?, max_output_chars?)`
+- `terminal_execution_status(execution_id)`
+- `terminal_execution_history(limit?)`
 
 `bridge_health` reports Phase 7 and whether terminal execution is actually
 enabled. Terminal remains disabled by default, preventing an accidental
@@ -144,7 +171,7 @@ privilege expansion for existing MCP deployments.
 ## Security and compatibility rules
 
 All workspace reads, mutations, Git operations, and terminal working
- directories continue to cross the canonical `security.workspace.WorkspaceSandbox`.
+directories continue to cross the canonical `security.workspace.WorkspaceSandbox`.
 Git operations continue through `HostGitOperationService` and the allow-listed
 `tools.git.git_command` path. Terminal operations continue through the
 allow-listed `tools.terminal` path. No MCP tool exposes a generic filesystem,
