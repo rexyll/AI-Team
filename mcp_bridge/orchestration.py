@@ -170,7 +170,10 @@ class MCPOrchestrationBoundary:
                     existing_task_id, existing_execution_id = existing
                     if existing_task_id != normalized_id:
                         raise ValueError("idempotency_key is already bound to a different task")
-                    status = self.execution_status(existing_execution_id)
+                    try:
+                        status = self.execution_status(existing_execution_id)
+                    except KeyError:
+                        raise RuntimeError(f"Idempotent execution {existing_execution_id} is already active") from None
                     if status["status"] == "completed":
                         return {**self._snapshot(self._task_manager.get_task(normalized_id)).as_dict(), "execution_id": existing_execution_id}
                     if status["status"] == "failed":
