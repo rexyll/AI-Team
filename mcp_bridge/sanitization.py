@@ -6,24 +6,25 @@ from collections.abc import Mapping
 from typing import Any
 
 _REDACTED = "[REDACTED]"
-_REDACTION_SENTINEL = "\x00MCP_REDACTED\x00"
 
+# Credential-bearing expressions are matched as complete units. In particular,
+# an Authorization header containing a Bearer token must be consumed in one
+# pass; otherwise a later authorization rule can redact the already-redacted
+# Bearer prefix a second time.
 _SECRET_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*[:=]\s*)bearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(authorization\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
     re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(access[_-]?token\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(secret\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
-    re.compile(r"(?i)(authorization\s*[:=]\s*)[^\s,;]+"),
 )
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(?i)(?:key|token|secret|password|authorization|credential)"
 )
 
-# MCP child processes inherit only the host environment minus variables whose
-# names strongly indicate credentials. Normal process/tooling variables such
-# as PATH, TEMP, SystemRoot, and locale settings remain available.
 _SENSITIVE_ENV_KEY_RE = re.compile(
     r"(?i)(?:^|_)(?:api[_-]?key|access[_-]?token|auth(?:entication|orization)?|"
     r"credential|password|passwd|secret|private[_-]?key|client[_-]?secret|"
@@ -34,12 +35,10 @@ _SENSITIVE_ENV_KEY_RE = re.compile(
 def redact_secrets(value: Any) -> Any:
     """Return a recursively sanitized value safe for MCP telemetry/responses."""
     if isinstance(value, str):
-        # Protect placeholders produced by earlier patterns so a later pattern
-        # cannot redact the placeholder itself (e.g. authorization=Bearer ...).
         result = value
         for pattern in _SECRET_PATTERNS:
-            result = pattern.sub(lambda match: match.group(1) + _REDACTION_SENTINEL, result)
-        return result.replace(_REDACTION_SENTINEL, _REDACTED)
+            result = pattern.sub(lambda match: match.group(1) + _REDACTED, result)
+        return result
     if isinstance(value, Mapping):
         return {
             str(key): _REDACTED if _SENSITIVE_KEY_RE.search(str(key)) else redact_secrets(item)
