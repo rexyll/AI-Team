@@ -1,5 +1,6 @@
 import shlex
 import subprocess
+from collections.abc import Mapping
 
 from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
@@ -44,10 +45,6 @@ def _parse_git_command(command: str) -> list[str]:
     if not args:
         raise ValueError("git command must not be empty")
 
-    # posix=False intentionally matches Windows command-line parsing more
-    # closely, but it retains surrounding quotes. Remove only a balanced
-    # outer quote pair; inner quotes remain untouched and are rejected by the
-    # host-owned semantic boundary where appropriate.
     normalized_args: list[str] = []
     for token in args:
         if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
@@ -74,13 +71,9 @@ def git_command(
     cwd: str,
     *,
     sandbox: WorkspaceSandbox | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
-    """Run an allow-listed Git command inside an authorized workspace.
-
-    When a caller owns a narrower workspace sandbox, it may pass that sandbox
-    explicitly. The default preserves the existing process-wide workspace
-    boundary used by legacy callers.
-    """
+    """Run an allow-listed Git command inside an authorized workspace."""
     working_directory = (
         sandbox.resolve(cwd) if sandbox is not None else resolve_workspace_path(cwd)
     )
@@ -94,6 +87,7 @@ def git_command(
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=dict(env) if env is not None else None,
     )
 
     output = result.stdout
