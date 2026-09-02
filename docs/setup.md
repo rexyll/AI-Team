@@ -222,6 +222,8 @@ python -m mcp_bridge
 
 The standalone service is therefore suitable for MCP hosts that need read-only local workspace/Git inspection by default. Mutation or workflow execution requires an explicitly configured policy and the corresponding host-owned capability boundary; terminal access additionally requires explicit host opt-in.
 
+The service boundary is covered at two levels: in-process MCP client tests validate the tool contract without a transport, while `tests/mcp/test_mcp_stdio_service.py` launches `python -m mcp_bridge` as a real child process and validates initialization, tool discovery, health, and standalone policy enforcement over stdio.
+
 For the complete MCP capability, policy, transport, orchestration, lifecycle, and secret-isolation contract, see `docs/mcp/architecture.md`.
 
 ## 12. Development workflow
