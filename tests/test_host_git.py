@@ -14,8 +14,8 @@ def _service(tmp_path: Path, monkeypatch):
     workspace.mkdir()
     calls = []
 
-    def fake_git(command: str, cwd: str) -> str:
-        calls.append((command, cwd))
+    def fake_git(command: str, cwd: str, *, sandbox=None) -> str:
+        calls.append((command, cwd, sandbox))
         if command == "rev-parse --show-toplevel":
             return f"exit_code=0\n{workspace}\n"
         return "exit_code=0\nok\n"
@@ -47,10 +47,11 @@ def test_raw_git_is_host_only_for_every_agent_role():
 def test_status_is_host_owned_and_validates_repository(tmp_path, monkeypatch):
     service, workspace, calls = _service(tmp_path, monkeypatch)
     assert service.status(str(workspace)) == "exit_code=0\nok\n"
-    assert calls == [
+    assert [(command, cwd) for command, cwd, _ in calls] == [
         ("rev-parse --show-toplevel", str(workspace)),
         ("status --short", str(workspace)),
     ]
+    assert all(sandbox is not None for _, _, sandbox in calls)
 
 
 def test_add_anchors_relative_paths_to_repository_workspace(tmp_path, monkeypatch):
@@ -62,7 +63,7 @@ def test_add_anchors_relative_paths_to_repository_workspace(tmp_path, monkeypatc
     service.add(str(workspace), ["src/app.py"])
 
     expected = str(Path("src") / "app.py")
-    assert calls[-1] == (f'add "{expected}"', str(workspace))
+    assert calls[-1][0:2] == (f'add "{expected}"', str(workspace))
 
 
 def test_add_rejects_workspace_escape(tmp_path, monkeypatch):
