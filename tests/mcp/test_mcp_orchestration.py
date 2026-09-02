@@ -50,7 +50,7 @@ def test_agent_projection_does_not_expose_agent_objects() -> None:
 
 def test_workflow_execution_is_explicitly_disabled_without_host_factory() -> None:
     boundary, _ = _boundary()
-    assert boundary.workflow_capabilities() == {"task_read": True, "agent_read": True, "workflow_execute": False, "workflow_cancel": False, "execution_observability": False}
+    assert boundary.workflow_capabilities() == {"task_read": True, "agent_read": True, "workflow_execute": False, "workflow_cancel": False, "execution_observability": False, "execution_status": False, "execution_idempotency": False}
     with pytest.raises(RuntimeError, match="workflow execution is not configured"):
         boundary.execute_task("TASK-001")
 
