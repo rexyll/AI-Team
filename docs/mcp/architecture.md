@@ -1,4 +1,4 @@
-# AI-Team Local MCP Bridge Architecture — Phase 6.3
+# AI-Team Local MCP Bridge Architecture — Phase 6.4
 
 ## Purpose
 
@@ -15,7 +15,7 @@ mcp_bridge
    +-- mutation policy
    +-- Git capability policy
    +-- orchestration capability policy
-   +-- execution observability
+   +-- execution control plane
    |
    +------------------------------+
    |                              |
@@ -41,14 +41,17 @@ workspace / Git adapters    MCPOrchestrationBoundary
 runtime. It does not expose `Task`, agent, or workflow objects directly. MCP
 receives stable projections only.
 
-The surface is split into inspection, execution, and execution observability:
+The surface is split into inspection, execution, and execution control:
 
 - task inspection: list tasks, fetch one task, list ready tasks;
 - agent inspection: list registered roles without exposing agent instances;
 - capability discovery: report whether task/agent inspection, workflow
   execution, and execution observability are configured;
 - workflow execution: available only when a host explicitly injects execution;
-- execution history: return bounded MCP execution lifecycle records for one task.
+- execution history: return bounded MCP execution lifecycle records for one task;
+- execution status: query one MCP execution by its opaque execution ID;
+- idempotent execution: optionally bind a caller-supplied idempotency key to one
+  task execution so retries cannot start the same MCP request twice.
 
 Task projections contain identity, title, role, lifecycle status,
 dependencies, error state, review/retry counters, and cancellation state.
@@ -70,9 +73,9 @@ its public `execute_task()` entrypoint. MCP therefore cannot accidentally
 create a parallel workflow runtime or bypass retry/recovery/resource/checkpoint
 semantics.
 
-`Orchestrator.execute_task(task_id, execution_id=...)` is now the supported
-external execution entrypoint. Internal scheduler execution continues to use
-the same `_execute_task()` implementation, so there is only one task execution
+`Orchestrator.execute_task(task_id, execution_id=...)` is the supported external
+execution entrypoint. Internal scheduler execution continues to use the same
+`_execute_task()` implementation, so there is only one task execution
 implementation.
 
 Execution is guarded in two layers:
@@ -100,10 +103,45 @@ Each event carries `source=mcp` and the same `execution_id`. No second audit
 store is created by MCP. `task_execution_history` is a read-only projection of
 these existing workflow events, bounded to at most 200 records per request.
 
-This gives the control plane a traceable chain:
+## Phase 6.4 execution control plane
+
+Execution status is derived from the canonical `WorkflowEventLog`, rather than
+from a separate MCP execution database. Given an `execution_id`, the boundary
+projects only:
+
+- `execution_id`;
+- `task_id`;
+- `status`: `active`, `completed`, or `failed`;
+- start/completion timestamps;
+- terminal task status or error type when available.
+
+Unknown execution IDs are rejected. Project identity and `source=mcp` are
+required for the projection, preventing cross-project event leakage.
+
+`task_execute` accepts an optional `idempotency_key`. When execution
+observability is configured, the key is atomically bound to the first MCP
+execution for that task. A repeated request with the same key:
+
+- returns the original completed execution projection without invoking the
+  workflow again;
+- reports the original active execution as already in progress; or
+- reports that the original execution already failed.
+
+A key cannot be rebound to a different task. Idempotency is intentionally not
+available when canonical execution observability is absent; the boundary fails
+closed instead of pretending that an in-memory request can be durably
+identified.
+
+The idempotency map is only a concurrency/request index. Canonical execution
+state remains in `WorkflowEventLog`; MCP does not create a second audit store.
+The existing per-task execution lock also prevents a normal MCP request from
+starting a second execution of the same task concurrently. Existing retry and
+recovery semantics remain owned by the host Orchestrator and TaskManager.
+
+The control-plane trace is:
 
 ```text
-MCP task_execute
+MCP task_execute(task_id, idempotency_key?)
       |
       +-- execution_id
       |
@@ -116,14 +154,17 @@ MCP task_execute
       +--> mcp_task_execution_completed|failed
       |
       +--> task_execute response {execution_id, task projection}
-```
 
-The MCP layer does not copy arbitrary task context or workflow payloads into
-its audit response. Only bounded lifecycle metadata is projected.
+MCP task_execution_status(execution_id)
+      |
+      +--> WorkflowEventLog projection
+      |
+      +--> active | completed | failed
+```
 
 ## Public MCP surface
 
-Workspace and Git tools remain unchanged. Phase 6 adds:
+Workspace and Git tools remain unchanged. Phase 6 exposes:
 
 - `task_list`
 - `task_get`
@@ -131,18 +172,24 @@ Workspace and Git tools remain unchanged. Phase 6 adds:
 - `agent_list`
 - `workflow_capabilities`
 - `task_execution_history`
-- `task_execute`
+- `task_execution_status`
+- `task_execute(task_id, idempotency_key?)`
 
 Terminal, network, cancellation, and other control-plane mutations remain
 disabled. The standalone MCP server still does **not** construct an
 Orchestrator or agents implicitly; host composition must be explicit.
 
-## Security rules
+## Security and compatibility rules
 
 Orchestration must use existing host-owned lifecycle and routing semantics.
 The MCP layer must not mutate `Task.status`, task context, retry counters, or
 agent registries directly. Execution crosses the host `Orchestrator` and its
 canonical `TaskManager`/`TaskWorkflow` semantics.
+
+Existing workflow event payload contracts must not be changed merely to add
+MCP correlation. MCP-specific correlation is carried by its own adapter events
+and the existing `execution_id` execution context. This keeps retry/replan
+compatibility stable while still allowing MCP executions to be traced.
 
 No orchestration tool may provide a generic method name, Python object,
 filesystem handle, subprocess handle, environment variable, or network client
