@@ -75,4 +75,4 @@ async def test_developer_profile_exposes_host_orchestration_execution(tmp_path) 
     assert "task_execute" in names
     assert capabilities.structured_content["workflow_execute"] is True
     assert execution.is_error is False
-    assert execution.structured_content["result"]["execution_id"]
+    assert execution.structured_content["execution_id"]
