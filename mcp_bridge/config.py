@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .errors import MCPBridgeConfigurationError
+from .policy import DEFAULT_POLICY_PROFILE, MCPPolicy, POLICY_PROFILE_ENV
 
 
 WORKSPACE_ENV = "AI_TEAM_WORKSPACE"
@@ -20,6 +21,11 @@ class MCPBridgeConfig:
 
     workspace_root: Path
     log_level: str = DEFAULT_LOG_LEVEL
+    policy_profile: str = DEFAULT_POLICY_PROFILE
+
+    @property
+    def policy(self) -> MCPPolicy:
+        return MCPPolicy.from_profile(self.policy_profile)
 
     @classmethod
     def from_env(
@@ -57,7 +63,14 @@ class MCPBridgeConfig:
                 + ", ".join(sorted(_ALLOWED_LOG_LEVELS))
             )
 
+        policy_profile = env.get(POLICY_PROFILE_ENV, DEFAULT_POLICY_PROFILE).strip().lower()
+        try:
+            MCPPolicy.from_profile(policy_profile)
+        except ValueError as exc:
+            raise MCPBridgeConfigurationError(str(exc)) from exc
+
         return cls(
             workspace_root=workspace_root,
             log_level=log_level,
+            policy_profile=policy_profile,
         )
