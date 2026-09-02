@@ -24,11 +24,7 @@ def _configure_logging(level: str) -> None:
     LOGGER.propagate = False
 
 
-def create_server(
-    config: MCPBridgeConfig | None = None,
-    *,
-    orchestration: MCPOrchestrationBoundary | None = None,
-) -> Any:
+def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOrchestrationBoundary | None = None) -> Any:
     """Create the secure MCP server with optional host-owned orchestration."""
     try:
         from mcp.server import MCPServer
@@ -43,26 +39,22 @@ def create_server(
     mutation_boundary = MCPWorkspaceMutationBoundary(effective_config.workspace_root, audit_sink=mutation_events.append)
     git_boundary = MCPGitCapabilityBoundary(effective_config.workspace_root)
 
-    server = MCPServer(
-        "AI-Team Local MCP Bridge",
-        instructions=(
-            "Local bridge for the authorized AI-Team workspace. Phase 6 exposes bounded workspace, mutation, "
-            "allow-listed Git, and optional host-owned task/agent/workflow capabilities. Terminal, network, "
-            "and direct Git metadata access remain disabled."
-        ),
-    )
+    server = MCPServer("AI-Team Local MCP Bridge", instructions=(
+        "Local bridge for the authorized AI-Team workspace. Phase 6 exposes bounded workspace, mutation, "
+        "allow-listed Git, and optional host-owned task/agent/workflow capabilities. Terminal, network, "
+        "and direct Git metadata access remain disabled."
+    ))
 
     @server.tool(name="bridge_health", title="AI-Team MCP Bridge Health", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def bridge_health() -> dict[str, object]:
         capabilities = orchestration.workflow_capabilities() if orchestration is not None else {
-            "task_read": False, "agent_read": False, "workflow_execute": False, "workflow_cancel": False,
+            "task_read": False, "agent_read": False, "workflow_execute": False,
+            "workflow_cancel": False, "execution_observability": False,
         }
-        return {
-            "status": "ok", "bridge": "ai-team-local-mcp", "phase": "6-task-agent-workflow-boundary",
-            "workspace_configured": True, "read_enabled": True, "write_enabled": True,
-            "terminal_enabled": False, "git_enabled": True, "git_write_enabled": True,
-            "orchestration_enabled": orchestration is not None, "orchestration": capabilities,
-        }
+        return {"status": "ok", "bridge": "ai-team-local-mcp", "phase": "6-task-agent-workflow-boundary",
+                "workspace_configured": True, "read_enabled": True, "write_enabled": True,
+                "terminal_enabled": False, "git_enabled": True, "git_write_enabled": True,
+                "orchestration_enabled": orchestration is not None, "orchestration": capabilities}
 
     @server.tool(name="workspace_validate_path", title="Validate AI-Team Workspace Path", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def workspace_validate_path(path: str = ".", expected_kind: str | None = None) -> dict[str, object]:
@@ -70,16 +62,13 @@ def create_server(
         return {"authorized": True, "path": resolved.relative_path, "kind": resolved.kind}
 
     @server.tool(name="workspace_list_files", title="List AI-Team Workspace Files", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
-    def workspace_list_files(path: str = ".", limit: int = 500) -> list[str]:
-        return boundary.list_files(path, limit=limit)
+    def workspace_list_files(path: str = ".", limit: int = 500) -> list[str]: return boundary.list_files(path, limit=limit)
 
     @server.tool(name="workspace_read_file", title="Read AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
-    def workspace_read_file(path: str, max_bytes: int = 512 * 1024) -> str:
-        return boundary.read_file(path, max_bytes=max_bytes)
+    def workspace_read_file(path: str, max_bytes: int = 512 * 1024) -> str: return boundary.read_file(path, max_bytes=max_bytes)
 
     @server.tool(name="workspace_search_text", title="Search AI-Team Workspace Text", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
-    def workspace_search_text(query: str, path: str = ".", max_results: int = 100, case_sensitive: bool = False) -> list[dict[str, object]]:
-        return boundary.search_text(query, path, max_results=max_results, case_sensitive=case_sensitive)
+    def workspace_search_text(query: str, path: str = ".", max_results: int = 100, case_sensitive: bool = False) -> list[dict[str, object]]: return boundary.search_text(query, path, max_results=max_results, case_sensitive=case_sensitive)
 
     @server.tool(name="workspace_write_file", title="Write AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
     def workspace_write_file(path: str, content: str, max_bytes: int = 512 * 1024, overwrite: bool = False) -> dict[str, object]:
@@ -95,37 +84,28 @@ def create_server(
 
     @server.tool(name="git_status", title="Git Status", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_status(path: str = ".") -> dict[str, object]: return git_boundary.status(path)
-
     @server.tool(name="git_diff", title="Git Diff", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_diff(path: str = ".", staged: bool = False) -> dict[str, object]: return git_boundary.diff(path, staged=staged)
-
     @server.tool(name="git_log", title="Git Log", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_log(path: str = ".", max_count: int = 20) -> dict[str, object]: return git_boundary.log(path, max_count=max_count)
-
     @server.tool(name="git_show", title="Git Show", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_show(path: str = ".", revision: str = "HEAD") -> dict[str, object]: return git_boundary.show(path, revision=revision)
-
     @server.tool(name="git_branch", title="Git Branch", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_branch(path: str = ".") -> dict[str, object]: return git_boundary.branch(path)
-
     @server.tool(name="git_rev_parse", title="Git Rev Parse", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def git_rev_parse(path: str = ".", revision: str = "HEAD") -> dict[str, object]: return git_boundary.rev_parse(path, revision=revision)
-
     @server.tool(name="git_add", title="Git Add", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
     def git_add(path: str, paths: list[str]) -> dict[str, object]: return git_boundary.add(path, paths)
-
     @server.tool(name="git_commit", title="Git Commit", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
     def git_commit(path: str, message: str) -> dict[str, object]: return git_boundary.commit(path, message)
 
     if orchestration is not None:
         register_orchestration_tools(server, orchestration)
-
     return server
 
 
 def main() -> None:
-    server = create_server(MCPBridgeConfig.from_env())
-    server.run()
+    create_server(MCPBridgeConfig.from_env()).run()
 
 
 if __name__ == "__main__":
