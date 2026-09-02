@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import functools
 import logging
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from mcp_bridge.config import MCPBridgeConfig
+from mcp_bridge.error_contract import normalize_error
 from mcp_bridge.errors import MCPBridgePolicyError
 from mcp_bridge.git import MCPGitCapabilityBoundary
+from mcp_bridge.observability import MCPOperationTracker
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 from mcp_bridge.orchestration_tools import register_orchestration_tools
 from mcp_bridge.terminal import MCPTerminalCapabilityBoundary, MCPTerminalResult
@@ -26,11 +29,23 @@ def _configure_logging(level: str) -> None:
     LOGGER.propagate = False
 
 
+def _extract_execution_id(value: Any) -> str | None:
+    if isinstance(value, dict):
+        execution_id = value.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            return execution_id
+        nested = value.get("result")
+        if nested is not value:
+            return _extract_execution_id(nested)
+    return None
+
+
 def create_server(
     config: MCPBridgeConfig | None = None,
     *,
     orchestration: MCPOrchestrationBoundary | None = None,
     terminal: bool = False,
+    operation_tracker: MCPOperationTracker | None = None,
 ) -> Any:
     """Create the secure MCP server with host-owned capability policy."""
     try:
@@ -42,13 +57,64 @@ def create_server(
     effective_config = config or MCPBridgeConfig.from_env()
     policy = effective_config.policy
     _configure_logging(effective_config.log_level)
+    tracker = operation_tracker or MCPOperationTracker()
+
+    def tracked_tool(capability: str, func: Callable[..., Any]) -> Callable[..., Any]:
+        """Add correlation/metrics without changing the public tool result contract."""
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            project_id = kwargs.get("project_id")
+            project_id = project_id if isinstance(project_id, str) else None
+            record = tracker.start(
+                capability,
+                policy_profile=policy.profile,
+                policy_allowed=True,
+                project_id=project_id,
+            )
+            try:
+                result = func(*args, **kwargs)
+                execution_id = _extract_execution_id(result)
+                tracker.finish(
+                    record.operation_id,
+                    outcome="success",
+                    execution_id=execution_id,
+                )
+                LOGGER.info(
+                    "mcp operation_id=%s request_id=%s capability=%s outcome=success duration_ms=%.3f",
+                    record.operation_id,
+                    record.request_id,
+                    capability,
+                    tracker.get(record.operation_id).duration_ms or 0.0,
+                )
+                return result
+            except Exception as exc:
+                normalized = normalize_error(exc)
+                tracker.finish(
+                    record.operation_id,
+                    outcome="error",
+                    error_type=normalized["category"],
+                    metadata={"error_type": normalized["type"]},
+                )
+                LOGGER.warning(
+                    "mcp operation_id=%s request_id=%s capability=%s outcome=error error_type=%s",
+                    record.operation_id,
+                    record.request_id,
+                    capability,
+                    normalized["category"],
+                )
+                raise
+
+        return wrapper
+
     boundary = MCPWorkspaceBoundary(effective_config.workspace_root)
     mutation_events: list[WorkspaceMutationEvent] = []
     mutation_boundary = MCPWorkspaceMutationBoundary(effective_config.workspace_root, audit_sink=mutation_events.append)
     git_boundary = MCPGitCapabilityBoundary(effective_config.workspace_root)
     terminal_enabled = terminal and policy.allows("terminal")
     terminal_events: list[MCPTerminalResult] = []
-    terminal_boundary = MCPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append) if terminal_enabled else None
+    terminal_boundary = MCPPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append) if False else None
+    if terminal_enabled:
+        terminal_boundary = MCPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append)
 
     if terminal and not policy.allows("terminal"):
         LOGGER.warning("terminal capability requested but denied by policy profile=%s", policy.profile)
@@ -60,6 +126,7 @@ def create_server(
     ))
 
     @server.tool(name="bridge_health", title="AI-Team MCP Bridge Health", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("bridge_health")
     def bridge_health() -> dict[str, object]:
         capabilities = orchestration.workflow_capabilities() if orchestration is not None else {
             "task_read": False, "agent_read": False, "workflow_execute": False,
@@ -85,80 +152,97 @@ def create_server(
         }
 
     @server.tool(name="workspace_validate_path", title="Validate AI-Team Workspace Path", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("workspace_validate_path")
     def workspace_validate_path(path: str = ".", expected_kind: str | None = None) -> dict[str, object]:
         resolved = boundary.resolve(path, require_exists=expected_kind is not None, expected_kind=expected_kind)
         return {"authorized": True, "path": resolved.relative_path, "kind": resolved.kind}
 
     @server.tool(name="workspace_list_files", title="List AI-Team Workspace Files", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("workspace_list_files")
     def workspace_list_files(path: str = ".", limit: int = 500) -> list[str]:
         return boundary.list_files(path, limit=limit)
 
     @server.tool(name="workspace_read_file", title="Read AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("workspace_read_file")
     def workspace_read_file(path: str, max_bytes: int = 512 * 1024) -> str:
         return boundary.read_file(path, max_bytes=max_bytes)
 
     @server.tool(name="workspace_search_text", title="Search AI-Team Workspace Text", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("workspace_search_text")
     def workspace_search_text(query: str, path: str = ".", max_results: int = 100, case_sensitive: bool = False) -> list[dict[str, object]]:
         return boundary.search_text(query, path, max_results=max_results, case_sensitive=case_sensitive)
 
     if policy.workspace_write:
         @server.tool(name="workspace_write_file", title="Write AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        @tracked_tool("workspace_write_file")
         def workspace_write_file(path: str, content: str, max_bytes: int = 512 * 1024, overwrite: bool = False) -> dict[str, object]:
             result = mutation_boundary.write_file(path, content, max_bytes=max_bytes, overwrite=overwrite)
             LOGGER.info("workspace mutation operation=%s path=%s bytes=%s", result["operation"], result["path"], result["bytes_written"])
             return result
 
         @server.tool(name="workspace_delete_file", title="Delete AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        @tracked_tool("workspace_delete_file")
         def workspace_delete_file(path: str) -> dict[str, object]:
             result = mutation_boundary.delete_file(path)
             LOGGER.info("workspace mutation operation=delete path=%s", result["path"])
             return result
 
     @server.tool(name="git_status", title="Git Status", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_status")
     def git_status(path: str = ".") -> dict[str, object]:
         return git_boundary.status(path)
 
     @server.tool(name="git_diff", title="Git Diff", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_diff")
     def git_diff(path: str = ".", staged: bool = False) -> dict[str, object]:
         return git_boundary.diff(path, staged=staged)
 
     @server.tool(name="git_log", title="Git Log", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_log")
     def git_log(path: str = ".", max_count: int = 20) -> dict[str, object]:
         return git_boundary.log(path, max_count=max_count)
 
     @server.tool(name="git_show", title="Git Show", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_show")
     def git_show(path: str = ".", revision: str = "HEAD") -> dict[str, object]:
         return git_boundary.show(path, revision=revision)
 
     @server.tool(name="git_branch", title="Git Branch", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_branch")
     def git_branch(path: str = ".") -> dict[str, object]:
         return git_boundary.branch(path)
 
     @server.tool(name="git_rev_parse", title="Git Rev Parse", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("git_rev_parse")
     def git_rev_parse(path: str = ".", revision: str = "HEAD") -> dict[str, object]:
         return git_boundary.rev_parse(path, revision=revision)
 
     if policy.git_write:
         @server.tool(name="git_add", title="Git Add", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        @tracked_tool("git_add")
         def git_add(path: str, paths: list[str]) -> dict[str, object]:
             return git_boundary.add(path, paths)
 
         @server.tool(name="git_commit", title="Git Commit", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        @tracked_tool("git_commit")
         def git_commit(path: str, message: str) -> dict[str, object]:
             return git_boundary.commit(path, message)
 
     if terminal_boundary is not None:
         @server.tool(name="terminal_execute", title="Execute Controlled Development Command", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        @tracked_tool("terminal_execute")
         def terminal_execute(command: str, cwd: str = ".", timeout: float = 30.0, max_output_chars: int = 64 * 1024) -> dict[str, object]:
             result = terminal_boundary.execute(command, cwd, timeout=timeout, max_output_chars=max_output_chars, include_execution_id=True)
             LOGGER.info("terminal execution id=%s cwd=%s exit_code=%s timed_out=%s truncated=%s", result["execution_id"], result["cwd"], result["exit_code"], result["timed_out"], result["truncated"])
             return {"result": result}
 
         @server.tool(name="terminal_execution_status", title="Terminal Execution Status", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        @tracked_tool("terminal_execution_status")
         def terminal_execution_status(execution_id: str) -> dict[str, object]:
             return {"result": terminal_boundary.execution_status(execution_id)}
 
         @server.tool(name="terminal_execution_history", title="Terminal Execution History", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        @tracked_tool("terminal_execution_history")
         def terminal_execution_history(limit: int = 50) -> dict[str, object]:
             return {"result": terminal_boundary.execution_history(limit=limit)}
 
