@@ -14,7 +14,7 @@ async def test_server_lists_phase_7_tools_when_terminal_enabled(tmp_path):
     async with Client(server, raise_exceptions=True) as client:
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
-    assert names == {"bridge_health", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute", "terminal_execution_status", "terminal_execution_history"}
+    assert names == {"bridge_health", "bridge_readiness", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute", "terminal_execution_status", "terminal_execution_history"}
 
 
 @pytest.mark.anyio
@@ -43,6 +43,38 @@ async def test_health_reports_phase_7_capability_phase(tmp_path):
     assert result.structured_content["git_write_enabled"] is True
     assert result.structured_content["orchestration_enabled"] is False
     assert result.structured_content["orchestration"] == {"task_read": False, "agent_read": False, "workflow_execute": False, "workflow_cancel": False, "execution_observability": False, "execution_status": False, "execution_idempotency": False}
+
+
+@pytest.mark.anyio
+async def test_readiness_reports_ready_with_validated_configuration(tmp_path):
+    server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
+    async with Client(server, raise_exceptions=True) as client:
+        result = await client.call_tool("bridge_readiness", {})
+    assert result.is_error is False
+    assert result.structured_content == {
+        "status": "ready",
+        "ready": True,
+        "checks": {"workspace": True, "policy": True, "transport": True},
+        "policy_profile": "developer",
+        "transport": "stdio",
+    }
+
+
+@pytest.mark.anyio
+async def test_readiness_is_available_in_production_without_write_capabilities(tmp_path):
+    config = MCPBridgeConfig(workspace_root=tmp_path, policy_profile="production")
+    server = create_server(config)
+    async with Client(server, raise_exceptions=True) as client:
+        result = await client.call_tool("bridge_readiness", {})
+        tools = await client.list_tools()
+        names = {tool.name for tool in tools.tools}
+    assert result.is_error is False
+    assert result.structured_content["status"] == "ready"
+    assert result.structured_content["ready"] is True
+    assert result.structured_content["policy_profile"] == "production"
+    assert "workspace_write_file" not in names
+    assert "git_commit" not in names
+    assert "terminal_execute" not in names
 
 
 @pytest.mark.anyio
@@ -127,4 +159,5 @@ async def test_read_tools_reject_paths_outside_workspace(tmp_path):
     async with Client(server, raise_exceptions=True) as client:
         result = await client.call_tool("workspace_read_file", {"path": "../outside.txt"})
     assert result.is_error is True
+    assert str(result.content) == "[TextContent(type='text', text='Error executing tool workspace_read_file', annotations=None, meta=None)"
     outside.unlink()
