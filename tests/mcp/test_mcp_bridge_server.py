@@ -11,37 +11,17 @@ from mcp_bridge.server import create_server
 @pytest.mark.anyio
 async def test_server_lists_phase_5_tools(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
-
-    assert names == {
-        "bridge_health",
-        "workspace_validate_path",
-        "workspace_list_files",
-        "workspace_read_file",
-        "workspace_search_text",
-        "workspace_write_file",
-        "workspace_delete_file",
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_show",
-        "git_branch",
-        "git_rev_parse",
-        "git_add",
-        "git_commit",
-    }
+    assert names == {"bridge_health", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit"}
 
 
 @pytest.mark.anyio
 async def test_health_reports_phase_6_capability_phase(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
         result = await client.call_tool("bridge_health", {})
-
     assert result.is_error is False
     assert result.structured_content["status"] == "ok"
     assert result.structured_content["phase"] == "6-task-agent-workflow-boundary"
@@ -51,12 +31,7 @@ async def test_health_reports_phase_6_capability_phase(tmp_path):
     assert result.structured_content["git_enabled"] is True
     assert result.structured_content["git_write_enabled"] is True
     assert result.structured_content["orchestration_enabled"] is False
-    assert result.structured_content["orchestration"] == {
-        "task_read": False,
-        "agent_read": False,
-        "workflow_execute": False,
-        "workflow_cancel": False,
-    }
+    assert result.structured_content["orchestration"] == {"task_read": False, "agent_read": False, "workflow_execute": False, "workflow_cancel": False, "execution_observability": False}
 
 
 @pytest.mark.anyio
@@ -65,11 +40,9 @@ async def test_read_file_and_list_files_use_relative_paths(tmp_path):
     source.mkdir()
     (source / "example.py").write_text("VALUE = 42\n", encoding="utf-8")
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
         listed = await client.call_tool("workspace_list_files", {"path": "runtime"})
         content = await client.call_tool("workspace_read_file", {"path": "runtime/example.py"})
-
     assert listed.structured_content == {"result": ["runtime/example.py"]}
     assert content.structured_content == {"result": "VALUE = 42\n"}
     assert str(tmp_path.resolve()) not in str(listed.structured_content)
@@ -80,21 +53,12 @@ async def test_read_file_and_list_files_use_relative_paths(tmp_path):
 async def test_search_text_returns_bounded_relative_matches(tmp_path):
     source = tmp_path / "src"
     source.mkdir()
-    (source / "example.py").write_text(
-        "first = 1\nTARGET = 42\nlast = 3\n", encoding="utf-8"
-    )
+    (source / "example.py").write_text("first = 1\nTARGET = 42\nlast = 3\n", encoding="utf-8")
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
-        result = await client.call_tool(
-            "workspace_search_text",
-            {"query": "target", "path": "src"},
-        )
-
+        result = await client.call_tool("workspace_search_text", {"query": "target", "path": "src"})
     assert result.is_error is False
-    assert result.structured_content == {
-        "result": [{"path": "src/example.py", "line": 2, "text": "TARGET = 42"}]
-    }
+    assert result.structured_content == {"result": [{"path": "src/example.py", "line": 2, "text": "TARGET = 42"}]}
 
 
 @pytest.mark.anyio
@@ -103,15 +67,8 @@ async def test_read_tools_reject_git_metadata(tmp_path):
     git_dir.mkdir()
     (git_dir / "config").write_text("secret", encoding="utf-8")
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
-        result = await client.call_tool(
-            "workspace_read_file", {"path": ".git/config"}
-        )
-
-    # The MCP SDK intentionally normalizes unexpected tool exceptions to a
-    # generic protocol error. The underlying boundary still rejects Git data;
-    # its exact PermissionError is covered by the boundary-level tests.
+        result = await client.call_tool("workspace_read_file", {"path": ".git/config"})
     assert result.is_error is True
     assert str(result.content) == "[TextContent(type='text', text='Error executing tool workspace_read_file', annotations=None, meta=None)]"
 
@@ -121,16 +78,8 @@ async def test_read_file_enforces_size_limit(tmp_path):
     source = tmp_path / "large.txt"
     source.write_bytes(b"x" * 32)
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
-        result = await client.call_tool(
-            "workspace_read_file",
-            {"path": "large.txt", "max_bytes": 16},
-        )
-
-    # The MCP SDK intentionally normalizes unexpected tool exceptions to a
-    # generic protocol error. The size-limit ValueError is covered at the
-    # workspace-boundary layer.
+        result = await client.call_tool("workspace_read_file", {"path": "large.txt", "max_bytes": 16})
     assert result.is_error is True
     assert str(result.content) == "[TextContent(type='text', text='Error executing tool workspace_read_file', annotations=None, meta=None)]"
 
@@ -140,11 +89,7 @@ async def test_read_tools_reject_paths_outside_workspace(tmp_path):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("outside", encoding="utf-8")
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
-
     async with Client(server, raise_exceptions=True) as client:
-        result = await client.call_tool(
-            "workspace_read_file", {"path": "../outside.txt"}
-        )
-
+        result = await client.call_tool("workspace_read_file", {"path": "../outside.txt"})
     assert result.is_error is True
     outside.unlink()
