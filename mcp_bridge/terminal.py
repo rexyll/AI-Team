@@ -96,7 +96,7 @@ class MCPTerminalCapabilityBoundary:
         normalized_timeout = self._validate_timeout(timeout)
         output_limit = self._validate_output_limit(max_output_chars)
         resolved = self._sandbox.resolve(cwd or ".")
-        if resolved.kind != "directory":
+        if not resolved.is_dir():
             raise NotADirectoryError(f"Terminal cwd must be a directory: {resolved.relative_path}")
 
         raw = run_command(
