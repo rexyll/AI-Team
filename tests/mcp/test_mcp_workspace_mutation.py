@@ -10,7 +10,7 @@ from mcp_bridge.workspace_mutation import MCPWorkspaceMutationBoundary, Workspac
 
 
 @pytest.mark.anyio
-async def test_server_lists_phase_4_mutation_tools(tmp_path):
+async def test_server_lists_phase_5_mutation_and_git_tools(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
 
     async with Client(server, raise_exceptions=True) as client:
@@ -25,20 +25,29 @@ async def test_server_lists_phase_4_mutation_tools(tmp_path):
         "workspace_search_text",
         "workspace_write_file",
         "workspace_delete_file",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_show",
+        "git_branch",
+        "git_rev_parse",
+        "git_add",
+        "git_commit",
     }
 
 
 @pytest.mark.anyio
-async def test_health_reports_secure_mutation_phase(tmp_path):
+async def test_health_reports_git_capability_phase(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
 
     async with Client(server, raise_exceptions=True) as client:
         result = await client.call_tool("bridge_health", {})
 
-    assert result.structured_content["phase"] == "4-secure-workspace-mutation"
+    assert result.structured_content["phase"] == "5-git-capability-boundary"
     assert result.structured_content["write_enabled"] is True
     assert result.structured_content["terminal_enabled"] is False
-    assert result.structured_content["git_write_enabled"] is False
+    assert result.structured_content["git_enabled"] is True
+    assert result.structured_content["git_write_enabled"] is True
 
 
 @pytest.mark.anyio
