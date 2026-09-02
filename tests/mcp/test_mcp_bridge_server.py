@@ -14,7 +14,7 @@ async def test_server_lists_phase_7_tools_when_terminal_enabled(tmp_path):
     async with Client(server, raise_exceptions=True) as client:
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
-    assert names == {"bridge_health", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute"}
+    assert names == {"bridge_health", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute", "terminal_execution_status", "terminal_execution_history"}
 
 
 @pytest.mark.anyio
@@ -24,6 +24,8 @@ async def test_standalone_server_keeps_terminal_disabled_by_default(tmp_path):
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
     assert "terminal_execute" not in names
+    assert "terminal_execution_status" not in names
+    assert "terminal_execution_history" not in names
 
 
 @pytest.mark.anyio
@@ -41,6 +43,30 @@ async def test_health_reports_phase_7_capability_phase(tmp_path):
     assert result.structured_content["git_write_enabled"] is True
     assert result.structured_content["orchestration_enabled"] is False
     assert result.structured_content["orchestration"] == {"task_read": False, "agent_read": False, "workflow_execute": False, "workflow_cancel": False, "execution_observability": False, "execution_status": False, "execution_idempotency": False}
+
+
+@pytest.mark.anyio
+async def test_terminal_control_tools_execute_and_query_status(tmp_path, monkeypatch):
+    server = create_server(MCPBridgeConfig(workspace_root=tmp_path), terminal=True)
+    monkeypatch.setattr("mcp_bridge.terminal.run_command", lambda *args, **kwargs: "exit_code=0\nhello")
+    async with Client(server, raise_exceptions=True) as client:
+        executed = await client.call_tool("terminal_execute", {"command": "python --version"})
+        execution_id = executed.structured_content["result"]["execution_id"]
+        status = await client.call_tool("terminal_execution_status", {"execution_id": execution_id})
+        history = await client.call_tool("terminal_execution_history", {"limit": 1})
+    assert executed.is_error is False
+    assert status.is_error is False
+    assert status.structured_content["result"]["execution_id"] == execution_id
+    assert status.structured_content["result"]["status"] == "completed"
+    assert history.structured_content["result"][0]["execution_id"] == execution_id
+
+
+@pytest.mark.anyio
+async def test_terminal_control_status_unknown_execution_is_error(tmp_path):
+    server = create_server(MCPBridgeConfig(workspace_root=tmp_path), terminal=True)
+    async with Client(server, raise_exceptions=True) as client:
+        result = await client.call_tool("terminal_execution_status", {"execution_id": "missing"})
+    assert result.is_error is True
 
 
 @pytest.mark.anyio
