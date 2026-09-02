@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 from security.workspace import WorkspaceSandbox
 from tools import git as git_tool
@@ -59,60 +59,60 @@ class HostGitOperationService:
     def __init__(self, sandbox: WorkspaceSandbox | None = None) -> None:
         self._sandbox = sandbox or WorkspaceSandbox()
 
-    def execute(self, request: GitOperationRequest) -> str:
+    def execute(self, request: GitOperationRequest, *, env: Mapping[str, str] | None = None) -> str:
         if not isinstance(request, GitOperationRequest):
             raise TypeError("request must be a GitOperationRequest")
 
         workspace = self._sandbox.require_directory(request.workspace)
-        self._require_repository(workspace)
+        self._require_repository(workspace, env=env)
 
         if request.operation == "status":
-            return self._git("status --short", workspace)
+            return self._git("status --short", workspace, env=env)
         if request.operation == "diff":
-            return self._git("diff --cached" if request.staged else "diff", workspace)
+            return self._git("diff --cached" if request.staged else "diff", workspace, env=env)
         if request.operation == "log":
-            return self._git(f"log --max-count={request.max_count}", workspace)
+            return self._git(f"log --max-count={request.max_count}", workspace, env=env)
         if request.operation == "show":
-            return self._git(f"show {self._revision(request.revision)}", workspace)
+            return self._git(f"show {self._revision(request.revision)}", workspace, env=env)
         if request.operation == "branch":
-            return self._git("branch --list", workspace)
+            return self._git("branch --list", workspace, env=env)
         if request.operation == "rev-parse":
-            return self._git(f"rev-parse {self._revision(request.revision)}", workspace)
+            return self._git(f"rev-parse {self._revision(request.revision)}", workspace, env=env)
         if request.operation == "add":
-            return self._add(request, workspace)
+            return self._add(request, workspace, env=env)
         if request.operation == "commit":
-            return self._commit(request, workspace)
+            return self._commit(request, workspace, env=env)
         raise AssertionError(f"unhandled Git operation: {request.operation}")
 
-    def status(self, workspace: str) -> str:
-        return self.execute(GitOperationRequest("status", workspace))
+    def status(self, workspace: str, *, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("status", workspace), env=env)
 
-    def diff(self, workspace: str, *, staged: bool = False) -> str:
-        return self.execute(GitOperationRequest("diff", workspace, staged=staged))
+    def diff(self, workspace: str, *, staged: bool = False, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("diff", workspace, staged=staged), env=env)
 
-    def log(self, workspace: str, *, max_count: int = 20) -> str:
-        return self.execute(GitOperationRequest("log", workspace, max_count=max_count))
+    def log(self, workspace: str, *, max_count: int = 20, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("log", workspace, max_count=max_count), env=env)
 
-    def show(self, workspace: str, *, revision: str = "HEAD") -> str:
-        return self.execute(GitOperationRequest("show", workspace, revision=revision))
+    def show(self, workspace: str, *, revision: str = "HEAD", env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("show", workspace, revision=revision), env=env)
 
-    def branch(self, workspace: str) -> str:
-        return self.execute(GitOperationRequest("branch", workspace))
+    def branch(self, workspace: str, *, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("branch", workspace), env=env)
 
-    def rev_parse(self, workspace: str, *, revision: str = "HEAD") -> str:
-        return self.execute(GitOperationRequest("rev-parse", workspace, revision=revision))
+    def rev_parse(self, workspace: str, *, revision: str = "HEAD", env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("rev-parse", workspace, revision=revision), env=env)
 
-    def add(self, workspace: str, paths: Sequence[str]) -> str:
-        return self.execute(GitOperationRequest("add", workspace, paths=tuple(paths)))
+    def add(self, workspace: str, paths: Sequence[str], *, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("add", workspace, paths=tuple(paths)), env=env)
 
-    def commit(self, workspace: str, message: str) -> str:
-        return self.execute(GitOperationRequest("commit", workspace, message=message))
+    def commit(self, workspace: str, message: str, *, env: Mapping[str, str] | None = None) -> str:
+        return self.execute(GitOperationRequest("commit", workspace, message=message), env=env)
 
-    def _git(self, command: str, workspace: Path) -> str:
-        return git_tool.git_command(command, str(workspace), sandbox=self._sandbox)
+    def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
+        return git_tool.git_command(command, str(workspace), sandbox=self._sandbox, env=env)
 
-    def _require_repository(self, workspace: Path) -> None:
-        result = self._git("rev-parse --show-toplevel", workspace)
+    def _require_repository(self, workspace: Path, *, env: Mapping[str, str] | None = None) -> None:
+        result = self._git("rev-parse --show-toplevel", workspace, env=env)
         if not result.startswith("exit_code=0\n"):
             raise ValueError("workspace is not a Git repository")
         lines = result.splitlines()
@@ -125,7 +125,7 @@ class HostGitOperationService:
         except ValueError as exc:
             raise PermissionError("workspace is outside the Git repository root") from exc
 
-    def _add(self, request: GitOperationRequest, workspace: Path) -> str:
+    def _add(self, request: GitOperationRequest, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         if not request.paths:
             raise ValueError("add requires at least one path")
         safe_paths: list[str] = []
@@ -140,15 +140,15 @@ class HostGitOperationService:
                 raise PermissionError("Git path is outside the authorized workspace") from exc
             safe_paths.append(str(relative))
         quoted = " ".join(self._quote(path) for path in safe_paths)
-        return self._git(f"add {quoted}", workspace)
+        return self._git(f"add {quoted}", workspace, env=env)
 
-    def _commit(self, request: GitOperationRequest, workspace: Path) -> str:
+    def _commit(self, request: GitOperationRequest, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         message = request.message.strip()
         if not message:
             raise ValueError("commit message must be non-empty")
         if "\n" in message or "\r" in message:
             raise ValueError("commit message must be single-line")
-        return self._git(f"commit -m {self._quote(message)}", workspace)
+        return self._git(f"commit -m {self._quote(message)}", workspace, env=env)
 
     @staticmethod
     def _revision(revision: str) -> str:
