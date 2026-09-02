@@ -66,14 +66,11 @@ class MCPOrchestrationBoundary:
             raise TypeError("orchestrator must expose an AgentRouter")
         if not callable(execute_task):
             raise TypeError("orchestrator must expose its public task execution entrypoint")
-
         class _HostWorkflow:
             def __init__(self, host: Any) -> None:
                 self._host = host
-
             def execute(self, task_id: str, *, execution_id: str):
                 return self._host.execute_task(task_id, execution_id=execution_id)
-
         return cls(task_manager, agent_router=agent_router, workflow_factory=lambda _task_id: _HostWorkflow(orchestrator), workflow_event_log=getattr(orchestrator, "workflow_event_log", None), project_id=getattr(orchestrator, "project_id", None))
 
     @staticmethod
@@ -99,6 +96,21 @@ class MCPOrchestrationBoundary:
 
     def workflow_capabilities(self) -> dict[str, bool]:
         return {"task_read": True, "agent_read": self._agent_router is not None, "workflow_execute": self._workflow_factory is not None, "workflow_cancel": False, "execution_observability": self._workflow_event_log is not None and bool(self._project_id)}
+
+    def execution_history(self, task_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must be a non-empty string")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 200:
+            raise ValueError("limit must be between 1 and 200")
+        if self._workflow_event_log is None or not self._project_id:
+            return []
+        events = self._workflow_event_log.list_for_task(task_id.strip())
+        result: list[dict[str, Any]] = []
+        for event in events:
+            if event.project_id != self._project_id or event.payload.get("source") != "mcp":
+                continue
+            result.append({"event_type": event.event_type, "occurred_at": event.occurred_at, "execution_id": event.payload.get("execution_id"), "status": event.payload.get("status"), "error_type": event.payload.get("error_type")})
+        return result[-limit:]
 
     def _execution_lock(self, task_id: str) -> Lock:
         with self._execution_locks_guard:
