@@ -6,6 +6,7 @@ from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
+from .sanitization import redact_secrets
 
 MAX_OPERATION_HISTORY = 1000
 
@@ -46,7 +47,7 @@ class MCPOperationRecord:
             "duration_ms": self.duration_ms,
             "outcome": self.outcome,
             "error_type": self.error_type,
-            "metadata": dict(self.metadata),
+            "metadata": redact_secrets(self.metadata),
         }
 
 
@@ -117,7 +118,7 @@ class MCPOperationTracker:
             if execution_id is not None:
                 record.execution_id = execution_id
             if metadata:
-                record.metadata.update(metadata)
+                record.metadata.update(redact_secrets(metadata))
             return record
 
     def get(self, operation_id: str) -> MCPOperationRecord | None:
