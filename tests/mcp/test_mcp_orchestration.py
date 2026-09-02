@@ -166,7 +166,8 @@ def test_execution_status_projects_active_and_completed_state() -> None:
     thread.start()
     assert entered.wait(timeout=2)
     execution_id = next(iter(event.payload["execution_id"] for event in event_log.list_for_project("PROJECT-001") if event.event_type == "mcp_task_execution_requested"))
-    assert boundary.execution_status(execution_id) == {"execution_id": execution_id, "task_id": "TASK-001", "status": "active", "started_at": event_log.list_for_project("PROJECT-001")[0].occurred_at}
+    requested = next(event for event in event_log.list_for_project("PROJECT-001") if event.event_type == "mcp_task_execution_requested")
+    assert boundary.execution_status(execution_id) == {"execution_id": execution_id, "task_id": "TASK-001", "status": "active", "started_at": requested.occurred_at}
     release.set()
     thread.join(timeout=2)
     assert boundary.execution_status(execution_id)["status"] == "completed"
@@ -199,6 +200,7 @@ def test_idempotency_key_cannot_be_reused_for_another_task() -> None:
         Task(id="TASK-001", title="First", description="first", role="developer"),
         Task(id="TASK-002", title="Second", description="second", role="developer"),
     ])
+    event_log = WorkflowEventLog()
 
     class Workflow:
         def execute(self, task_id: str, *, execution_id: str):
@@ -206,10 +208,16 @@ def test_idempotency_key_cannot_be_reused_for_another_task() -> None:
             task.status = "completed"
             return task
 
-    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: Workflow())
+    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: Workflow(), workflow_event_log=event_log, project_id="PROJECT-001")
     boundary.execute_task("TASK-001", idempotency_key="request-001")
     with pytest.raises(ValueError, match="different task"):
         boundary.execute_task("TASK-002", idempotency_key="request-001")
+
+
+def test_idempotency_requires_execution_observability() -> None:
+    boundary, _ = _boundary()
+    with pytest.raises(RuntimeError, match="execution observability"):
+        boundary.execute_task("TASK-001", idempotency_key="request-001")
 
 
 def test_execution_status_rejects_unknown_execution() -> None:
