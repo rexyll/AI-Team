@@ -40,12 +40,12 @@ async def test_mcp_executes_through_real_orchestrator_and_recovers_idempotency(t
             "task_execute",
             {"task_id": "TASK-001", "idempotency_key": "mcp-real-host-001"},
         )
+        execution_id = result.structured_content["execution_id"]
         status = await client.call_tool(
-            "terminal_execution_status" if False else "task_execution_status",
-            {"execution_id": result.structured_content["execution_id"]},
+            "task_execution_status",
+            {"execution_id": execution_id},
         )
 
-    execution_id = result.structured_content["execution_id"]
     assert result.structured_content["id"] == "TASK-001"
     assert result.structured_content["status"] == "completed"
     assert manager.get_task("TASK-001").context["execution_id"] == execution_id
