@@ -14,12 +14,13 @@ def create_task_workflow(
     workflow_event_log: WorkflowEventLog | None = None,
     project_id: str | None = None,
     developer=None,
+    execution_id: str | None = None,
 ) -> TaskWorkflow:
     """Build the canonical Developer -> Tester -> Reviewer workflow.
 
     ``developer`` can be supplied by the project orchestrator to select a
-    specific member of the configured Developer pool. When omitted, the
-    router's legacy singleton Developer is used.
+    specific member of the configured Developer pool. ``execution_id``
+    correlates every workflow event with the host-owned execution identity.
     """
     selected_developer = (
         developer
@@ -39,4 +40,5 @@ def create_task_workflow(
         state_change_hook=state_change_hook,
         workflow_event_log=workflow_event_log,
         project_id=project_id,
+        execution_id=execution_id,
     )
