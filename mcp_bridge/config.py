@@ -85,7 +85,7 @@ class MCPBridgeConfig:
         raw_transport = env.get(TRANSPORT_ENV, DEFAULT_TRANSPORT).strip().lower()
         if raw_transport not in _ALLOWED_TRANSPORTS:
             raise MCPBridgeConfigurationError(
-                f"{TRANSPORT_ENV} must be one of: "
+                f"transport ({TRANSPORT_ENV}) must be one of: "
                 + ", ".join(sorted(_ALLOWED_TRANSPORTS))
             )
 
