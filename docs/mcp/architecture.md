@@ -11,6 +11,12 @@ MCP Host
    v
 mcp_bridge
    |
+   +-- MCPPolicy
+   |     +-- workspace write
+   |     +-- Git write
+   |     +-- workflow execute
+   |     +-- terminal capability
+   |
    +-- workspace policy
    +-- mutation policy
    +-- Git capability policy
@@ -60,9 +66,39 @@ surface which remains available in the normal bridge. A host must explicitly
 create the server with `terminal=True` before terminal tools are registered.
 The standalone entrypoint keeps terminal access disabled by default.
 
-```python
-server = create_server(config, terminal=True)
+The Phase 7.4 policy layer now adds a second, process-level gate: terminal
+registration requires both explicit host opt-in (`terminal=True`) and a policy
+profile that allows terminal execution. The same policy gates workspace
+mutation, Git write operations, and workflow execution, so a deployment can
+reduce the MCP surface without changing the underlying canonical boundaries.
+
+Supported profiles are:
+
+- `developer` — preserves the existing Phase 7 capability set; terminal is
+  available only when the host explicitly passes `terminal=True`.
+- `readonly` — read-only workspace/Git/task inspection; workspace mutation,
+  Git writes, terminal execution, and workflow execution are not registered.
+
+The profile is configured with `AI_TEAM_MCP_POLICY_PROFILE` and defaults to
+`developer` for compatibility with the existing bridge behavior.
+
+```text
+policy profile
+      |
+      +--> workspace mutation registration
+      +--> Git write registration
+      +--> workflow execution registration
+      +--> terminal capability gate
+      |
+      v
+canonical domain boundary
 ```
+
+This is intentionally a capability exposure gate, not a replacement for the
+canonical security models. Workspace operations still cross
+`WorkspaceSandbox`, Git still uses `HostGitOperationService`, terminal still
+uses the allow-listed `tools.terminal` path, and orchestration remains owned by
+the host runtime.
 
 The terminal boundary does not expose a generic shell or subprocess API. It
 reuses the existing `tools.terminal` command policy and adds MCP-specific
@@ -133,8 +169,8 @@ Workspace tools:
 - `workspace_list_files`
 - `workspace_read_file`
 - `workspace_search_text`
-- `workspace_write_file`
-- `workspace_delete_file`
+- `workspace_write_file` (developer policy)
+- `workspace_delete_file` (developer policy)
 
 Git tools:
 
@@ -144,8 +180,8 @@ Git tools:
 - `git_show`
 - `git_branch`
 - `git_rev_parse`
-- `git_add`
-- `git_commit`
+- `git_add` (developer policy)
+- `git_commit` (developer policy)
 
 Orchestration tools (only when a boundary is injected):
 
@@ -156,17 +192,18 @@ Orchestration tools (only when a boundary is injected):
 - `workflow_capabilities`
 - `task_execution_history`
 - `task_execution_status`
-- `task_execute(task_id, idempotency_key?)`
+- `task_execute(task_id, idempotency_key?)` (developer policy)
 
-Terminal tools (only when `terminal=True`):
+Terminal tools (only when `terminal=True` **and** policy allows terminal):
 
 - `terminal_execute(command, cwd?, timeout?, max_output_chars?)`
 - `terminal_execution_status(execution_id)`
 - `terminal_execution_history(limit?)`
 
-`bridge_health` reports Phase 7 and whether terminal execution is actually
-enabled. Terminal remains disabled by default, preventing an accidental
-privilege expansion for existing MCP deployments.
+`bridge_health` reports the active policy profile and whether terminal
+execution is actually enabled. Terminal remains disabled by default in the
+standalone entrypoint, preventing an accidental privilege expansion for
+existing MCP deployments.
 
 ## Security and compatibility rules
 
@@ -176,6 +213,10 @@ Git operations continue through `HostGitOperationService` and the allow-listed
 `tools.git.git_command` path. Terminal operations continue through the
 allow-listed `tools.terminal` path. No MCP tool exposes a generic filesystem,
 subprocess, Python object, environment variable, or network client.
+
+The policy layer only decides whether a capability is exposed. It does not
+weaken or replace domain-level authorization, path containment, command
+allowlisting, Git restrictions, or workflow lifecycle ownership.
 
 Orchestration must use existing host-owned lifecycle and routing semantics.
 The MCP layer must not mutate `Task.status`, task context, retry counters, or
