@@ -4,12 +4,16 @@
 
 The bridge exposes a deliberately narrow MCP surface over an authorized local
 AI-Team repository. It is an adapter, not a second runtime or audit store.
+The service is an independent deliverable and lives in its own
+`mcp/web_host_bridge/` package (Python import name `web_host_bridge`,
+resolved through the repository's namespace-only `mcp/` directory so the
+installed `mcp` SDK package is never shadowed).
 
 ```text
 MCP Host
    |
    v
-mcp_bridge
+web_host_bridge
    |
    +-- MCPPolicy
    |     +-- workspace write
@@ -234,8 +238,11 @@ Workspace tools:
 - `workspace_validate_path`
 - `workspace_list_files`
 - `workspace_read_file`
+- `workspace_stat_path` (reports bounded relative-path metadata and, for files
+  at or below the write ceiling, the on-disk sha256)
 - `workspace_search_text`
-- `workspace_write_file` (developer policy)
+- `workspace_write_file` (developer policy; optional `expected_sha256`
+  rejects stale writes when the file changed since it was last observed)
 - `workspace_delete_file` (developer policy)
 
 Git tools:

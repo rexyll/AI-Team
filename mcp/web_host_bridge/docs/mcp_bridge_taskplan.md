@@ -14,9 +14,11 @@
 > 7. 每个阶段都必须有明确的验收标准和回归测试。
 > 8. Windows 11 是首要运行环境，同时尽量保持跨平台实现。
 >
-> 当前计划版本：v1.0
-> 当前状态：未开始
+> 当前计划版本：v1.1
+> 当前状态：Read-only MVP 与写入/执行能力已落地（Phase 0–12 基本完成，详见第 3 节状态表与第 33 节）
 > 推荐开发方式：按 Phase 顺序推进；每完成一个 Phase，运行对应测试并记录 Git commit。
+> 文件位置：本服务与 ai-dev-team 主工程相互独立，全部相关文件位于 `mcp/web_host_bridge/`
+> （Python 导入名 `web_host_bridge`，经仓库根 `mcp/` 目录解析，避免遮蔽已安装的 `mcp` SDK）。
 
 ---
 
@@ -132,23 +134,38 @@ ai-dev-team/
 
 | Phase | 内容 | 优先级 | 状态 |
 |---|---|---:|---|
-| 0 | 需求、架构与边界冻结 | P0 | ⬜ |
-| 1 | MCP 基础运行框架 | P0 | ⬜ |
-| 2 | Workspace Root 与路径安全 | P0 | ⬜ |
-| 3 | 只读 Workspace API | P0 | ⬜ |
-| 4 | Search API | P0 | ⬜ |
-| 5 | Git Read API | P0 | ⬜ |
-| 6 | Audit / Trace | P0 | ⬜ |
-| 7 | AI-Team Inspect | P1 | ⬜ |
-| 8 | 安全 Patch 写入 | P0 | ⬜ |
-| 9 | Python / Project Test | P1 | ⬜ |
-| 10 | Terminal Policy | P1 | ⬜ |
-| 11 | Git Write / Commit | P1 | ⬜ |
-| 12 | MCP Client 配置 | P1 | ⬜ |
-| 13 | 全面安全回归 | P0 | ⬜ |
+| 0 | 需求、架构与边界冻结 | P0 | ✅ |
+| 1 | MCP 基础运行框架 | P0 | ✅ |
+| 2 | Workspace Root 与路径安全 | P0 | ✅ |
+| 3 | 只读 Workspace API | P0 | ✅ |
+| 4 | Search API | P0 | ✅ |
+| 5 | Git Read API | P0 | ✅ |
+| 6 | Audit / Trace | P0 | ✅ |
+| 7 | AI-Team Inspect | P1 | ◐ |
+| 8 | 安全 Patch 写入 | P0 | ◐ |
+| 9 | Python / Project Test | P1 | ◐ |
+| 10 | Terminal Policy | P1 | ✅ |
+| 11 | Git Write / Commit | P1 | ✅ |
+| 12 | MCP Client 配置 | P1 | ✅ |
+| 13 | 全面安全回归 | P0 | ◐ |
 | 14 | 性能与稳定性 | P1 | ⬜ |
-| 15 | 文档与运维 | P1 | ⬜ |
+| 15 | 文档与运维 | P1 | ◐ |
 | 16 | V1 Production Readiness | P0 | ⬜ |
+
+状态说明（2026-09-02 复核）：
+
+- Phase 7：以编排边界工具（`task_list` / `task_get` / `task_ready` / `agent_list` /
+  `workflow_capabilities` / `task_execution_*`）实现了等价的项目状态检查能力；
+  单一聚合式 `ai_team.inspect` 工具未注册。
+- Phase 8：以带审计事件、payload 上限与 `expected_sha256` 乐观并发保护的
+  `workspace_write_file` / `workspace_delete_file` 实现安全写入面；
+  计划中的 diff-patch 形态（`workspace.apply_patch`）未实现。
+- Phase 9：`terminal_execute`（允许列表）已覆盖 python/pytest/git 执行需求；
+  专用 `python.run` / `project.test` 工具未注册。
+- Phase 13：安全测试覆盖面广（path escape、startup security、secret isolation、
+  capability matrix、policy profile、stdio 集成），尚未整理为统一的回归记录。
+- Phase 15：architecture / security / client-setup 文档已就绪；故障排查章节
+  与运维手册仍需补充。
 
 ---
 
@@ -1625,23 +1642,90 @@ Phase 7
 Project: AI-Team Local MCP Bridge
 
 Plan:
-mcp_bridge_taskplan.md
+mcp/web_host_bridge/docs/mcp_bridge_taskplan.md
+
+Service location:
+mcp/web_host_bridge/（与 ai-dev-team 主工程分离；导入名 web_host_bridge）
 
 Current Phase:
-Phase 0 — 未开始
+Phase 13 — 全面安全回归（收尾）；Phase 14–16 待启动
 
 Completed:
-None
+Phase 0–6、10–12 完成；Phase 7/8/9 部分完成（详见第 3 节）
 
 Next Action:
-完成 Phase 0 架构与边界审查
+Phase 13 — 汇总安全回归记录；随后按序进入 Phase 14（性能基准）、
+Phase 15（故障排查与运维文档）、Phase 16（V1 gate）
 
 MVP:
-未开始
+已完成（workspace list/read/stat/search + git status/diff/log + 路径边界 +
+stdio 独立入口；MVP 验收项全部满足）
 
 V1:
-未开始
+进行中
 
 Production Readiness:
-未开始
+readonly/production profile 与 readiness 面已实现；
+run_production_readiness 的 mcp-security 门禁已接入；
+尚未运行完整 V1 gate 并记录。
 ```
+
+---
+
+# 34. 进度记录
+
+### Phase 0–2（基础框架 + 路径安全）
+
+- 状态：完成
+- 日期：2026-09-02（回溯记录）
+- 证据：`MCP_BRIDGE_PHASE0_2_MANIFEST.json`；`docs/architecture.md`、
+  `docs/security.md`、`docs/client-setup-phase0-2.md`
+- 测试：`pytest mcp/web_host_bridge/tests -q`（config / server / workspace 契约）
+- 安全：workspace root 强制绝对路径；全部路径经 canonical `WorkspaceSandbox`；
+  `..` / 绝对路径 / UNC / symlink / junction / `.git` 逃逸测试覆盖
+
+### Phase 3–7（Read-only MVP → 编排与终端边界）
+
+- 状态：完成（Phase 7 部分完成）
+- 日期：2026-09-02（回溯记录）
+- 证据：`MCP_BRIDGE_PHASE3_MANIFEST.json`（phase 4-secure-workspace-mutation）；
+  `architecture.md` Phase 6/7 章节
+- 测试：search / git / terminal / observability / orchestration 契约测试
+- 已知缺口：聚合式 `ai_team.inspect` 未注册（由编排工具组合替代）
+
+### Phase 8（安全写入 + 乐观并发保护）
+
+- 状态：部分完成（写入面与并发保护完成，diff-patch 形态未实现）
+- 日期：2026-09-02
+- Commit：`268733f feat: add optimistic concurrency guard to mcp workspace writes`
+- 内容：`workspace_stat_path` 返回 ≤8MB 文件的磁盘 sha256；
+  `workspace_write_file(expected_sha256=...)` 在文件被第三方修改后拒绝写入
+  （`WorkspaceWriteConflictError`），目标文件保持不变
+- 测试：`pytest mcp/web_host_bridge/tests -q` → 145 passed
+
+### 服务独立化（本次结构调整）
+
+- 状态：完成
+- 日期：2026-09-02
+- Commit：`c53ad80 chore: relocate mcp bridge service to mcp/web_host_bridge`
+- 内容：全部 MCP 服务文件（代码、测试、文档、启动脚本、清单、requirements、
+  任务计划）迁移至 `mcp/web_host_bridge/`；导入名改为 `web_host_bridge`；
+  仓库根 `mcp/` 保持 namespace-only 以免遮蔽 `mcp` SDK；pytest `testpaths`/
+  `pythonpath`、启动脚本、`docs/setup.md`、生产就绪 `mcp-security` 门禁同步更新
+- 测试：`pytest -q` → 2053 passed（含 135 个 MCP 契约测试，迁移后 139/145）
+
+### Phase 3 补齐（workspace stat）
+
+- 状态：完成
+- 日期：2026-09-02
+- Commit：`509553b feat: add workspace stat tool to mcp bridge`
+- 内容：`workspace_stat_path` 返回 path/kind/size/modified_at（UTC ISO-8601），
+  不暴露宿主绝对路径
+- 测试：boundary 级 + MCP 工具级契约测试
+
+### 下一步
+
+- [ ] Phase 13：汇总统一安全回归记录（path/command/protocol/audit 矩阵）
+- [ ] Phase 14：search/read/git 延迟与 1000 请求稳定性基准
+- [ ] Phase 15：troubleshooting 与运维文档
+- [ ] Phase 16：运行完整 V1 gate 并记录 `mcp_bridge_v1=passed`

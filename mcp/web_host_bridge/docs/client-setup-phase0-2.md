@@ -6,7 +6,7 @@ From the AI-Team repository root:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-mcp.txt
+python -m pip install -r mcp/web_host_bridge/requirements-mcp.txt
 ```
 
 ## 2. Configure
@@ -21,25 +21,29 @@ $env:AI_TEAM_MCP_LOG_LEVEL = "INFO"
 ## 3. Test
 
 ```powershell
-pytest tests/mcp -q
+pytest mcp/web_host_bridge/tests -q
 pytest -q
 ```
 
-The first command validates the new bridge contract. The second is the required
-AI-Team full regression before accepting the phase.
+The first command validates the bridge contract. The second is the required
+AI-Team full regression before accepting a phase.
 
 ## 4. Run with MCP Inspector
 
 The MCP Inspector requires `npx` on PATH:
 
 ```powershell
-mcp dev mcp_bridge/server.py
+mcp dev mcp/web_host_bridge/server.py
 ```
 
 ## 5. Run as a stdio MCP server
 
+The bridge package is imported from the repository's `mcp/` directory, so
+`PYTHONPATH` must include it (the bundled launch scripts set this):
+
 ```powershell
-python -m mcp_bridge.server
+$env:PYTHONPATH = "$PWD\mcp;$PWD"
+python -m web_host_bridge.server
 ```
 
 A stdio MCP server normally appears to do nothing when launched manually: it is
@@ -52,11 +56,12 @@ Use the absolute path to the venv Python executable and repository root.
 ```json
 {
   "command": "F:\\workspace\\_coding_workspace\\AI-Team\\ai-dev-team\\.venv\\Scripts\\python.exe",
-  "args": ["-m", "mcp_bridge.server"],
+  "args": ["-m", "web_host_bridge.server"],
   "cwd": "F:\\workspace\\_coding_workspace\\AI-Team\\ai-dev-team",
   "env": {
     "AI_TEAM_WORKSPACE": "F:\\workspace\\_coding_workspace\\AI-Team\\ai-dev-team",
-    "AI_TEAM_MCP_LOG_LEVEL": "INFO"
+    "AI_TEAM_MCP_LOG_LEVEL": "INFO",
+    "PYTHONPATH": "F:\\workspace\\_coding_workspace\\AI-Team\\ai-dev-team\\mcp;F:\\workspace\\_coding_workspace\\AI-Team\\ai-dev-team"
   }
 }
 ```
