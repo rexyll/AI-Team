@@ -106,7 +106,7 @@ def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOr
     if terminal_boundary is not None:
         @server.tool(name="terminal_execute", title="Execute Controlled Development Command", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
         def terminal_execute(command: str, cwd: str = ".", timeout: float = 30.0, max_output_chars: int = 64 * 1024) -> dict[str, object]:
-            result = terminal_boundary.execute(command, cwd, timeout=timeout, max_output_chars=max_output_chars)
+            result = terminal_boundary.execute(command, cwd, timeout=timeout, max_output_chars=max_output_chars, include_execution_id=True)
             LOGGER.info("terminal execution id=%s cwd=%s exit_code=%s timed_out=%s truncated=%s", result["execution_id"], result["cwd"], result["exit_code"], result["timed_out"], result["truncated"])
             return result
 
