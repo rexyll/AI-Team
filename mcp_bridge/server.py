@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp_bridge.config import MCPBridgeConfig
 from mcp_bridge.workspace import MCPWorkspaceBoundary
+from mcp_bridge.workspace_mutation import MCPWorkspaceMutationBoundary, WorkspaceMutationEvent
 
 
 LOGGER = logging.getLogger("ai_team.mcp_bridge")
@@ -23,7 +24,7 @@ def _configure_logging(level: str) -> None:
 
 
 def create_server(config: MCPBridgeConfig | None = None) -> Any:
-    """Create the Phase 3 read-only MCP server."""
+    """Create the Phase 4 secure workspace mutation MCP server."""
     try:
         from mcp.server import MCPServer
         from mcp.types import ToolAnnotations
@@ -35,13 +36,18 @@ def create_server(config: MCPBridgeConfig | None = None) -> Any:
     effective_config = config or MCPBridgeConfig.from_env()
     _configure_logging(effective_config.log_level)
     boundary = MCPWorkspaceBoundary(effective_config.workspace_root)
+    mutation_events: list[WorkspaceMutationEvent] = []
+    mutation_boundary = MCPWorkspaceMutationBoundary(
+        effective_config.workspace_root,
+        audit_sink=mutation_events.append,
+    )
 
     server = MCPServer(
         "AI-Team Local MCP Bridge",
         instructions=(
             "Local bridge for the authorized AI-Team workspace. "
-            "Phase 3 exposes bounded read-only workspace tools. "
-            "Write, terminal, network, and direct Git metadata access remain disabled."
+            "Phase 4 exposes bounded workspace read and mutation tools. "
+            "Terminal, network, and direct Git metadata access remain disabled."
         ),
     )
 
@@ -55,10 +61,10 @@ def create_server(config: MCPBridgeConfig | None = None) -> Any:
         return {
             "status": "ok",
             "bridge": "ai-team-local-mcp",
-            "phase": "3-read-only-workspace",
+            "phase": "4-secure-workspace-mutation",
             "workspace_configured": True,
             "read_enabled": True,
-            "write_enabled": False,
+            "write_enabled": True,
             "terminal_enabled": False,
             "git_write_enabled": False,
         }
@@ -116,6 +122,43 @@ def create_server(config: MCPBridgeConfig | None = None) -> Any:
             max_results=max_results,
             case_sensitive=case_sensitive,
         )
+
+    @server.tool(
+        name="workspace_write_file",
+        title="Write AI-Team Workspace File",
+        annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False),
+    )
+    def workspace_write_file(
+        path: str,
+        content: str,
+        max_bytes: int = 512 * 1024,
+        overwrite: bool = False,
+    ) -> dict[str, object]:
+        """Create or explicitly overwrite one bounded workspace text file."""
+        result = mutation_boundary.write_file(
+            path,
+            content,
+            max_bytes=max_bytes,
+            overwrite=overwrite,
+        )
+        LOGGER.info(
+            "workspace mutation operation=%s path=%s bytes=%s",
+            result["operation"],
+            result["path"],
+            result["bytes_written"],
+        )
+        return result
+
+    @server.tool(
+        name="workspace_delete_file",
+        title="Delete AI-Team Workspace File",
+        annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False),
+    )
+    def workspace_delete_file(path: str) -> dict[str, object]:
+        """Delete one regular file from the authorized workspace."""
+        result = mutation_boundary.delete_file(path)
+        LOGGER.info("workspace mutation operation=delete path=%s", result["path"])
+        return result
 
     return server
 
