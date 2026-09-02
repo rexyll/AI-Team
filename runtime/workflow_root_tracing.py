@@ -17,14 +17,19 @@ def install_workflow_root_tracing() -> None:
     execute = TaskWorkflow.execute
     if not getattr(execute, _INSTALL_MARKER, False):
         @wraps(execute)
-        def traced_execute(self: Any, task_id: str):
+        def traced_execute(
+            self: Any,
+            task_id: str,
+            *,
+            execution_id: str | None = None,
+        ):
             attributes = {"task_id": task_id}
             project_id = getattr(self, "_project_id", None)
             if isinstance(project_id, str) and project_id.strip():
                 attributes["project_id"] = project_id
 
             with DEFAULT_TRACER.span("workflow.task", attributes=attributes) as span:
-                result = execute(self, task_id)
+                result = execute(self, task_id, execution_id=execution_id)
                 status = getattr(result, "status", None)
                 if isinstance(status, str) and status.strip():
                     span.set_attribute("result.status", status)
@@ -48,11 +53,23 @@ def _install_execution_lease_boundary(TaskWorkflow) -> None:
         return
 
     @wraps(execute)
-    def leased_execute(self: Any, task_id: str):
+    def leased_execute(
+        self: Any,
+        task_id: str,
+        *,
+        execution_id: str | None = None,
+    ):
         lease = getattr(self, "_execution_lease", None)
         if lease is None:
-            return execute(self, task_id)
-        return lease.run(task_id, lambda _execution_lease: execute(self, task_id))
+            return execute(self, task_id, execution_id=execution_id)
+        return lease.run(
+            task_id,
+            lambda _execution_lease: execute(
+                self,
+                task_id,
+                execution_id=execution_id,
+            ),
+        )
 
     setattr(leased_execute, _LEASE_MARKER, True)
     TaskWorkflow.execute = leased_execute
