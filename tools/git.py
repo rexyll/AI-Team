@@ -1,7 +1,7 @@
 import shlex
 import subprocess
 
-from security.workspace import resolve_workspace_path
+from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
 
 ALLOWED_GIT_COMMANDS = {
@@ -69,9 +69,21 @@ def _parse_git_command(command: str) -> list[str]:
     return normalized_args
 
 
-def git_command(command: str, cwd: str) -> str:
-    """Run an allow-listed Git command inside the authorized workspace."""
-    working_directory = resolve_workspace_path(cwd)
+def git_command(
+    command: str,
+    cwd: str,
+    *,
+    sandbox: WorkspaceSandbox | None = None,
+) -> str:
+    """Run an allow-listed Git command inside an authorized workspace.
+
+    When a caller owns a narrower workspace sandbox, it may pass that sandbox
+    explicitly. The default preserves the existing process-wide workspace
+    boundary used by legacy callers.
+    """
+    working_directory = (
+        sandbox.resolve(cwd) if sandbox is not None else resolve_workspace_path(cwd)
+    )
     args = _parse_git_command(command)
 
     result = subprocess.run(
