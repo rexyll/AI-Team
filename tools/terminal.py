@@ -3,7 +3,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from security.workspace import resolve_workspace_path
+from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
 
 ALLOWED_EXECUTABLES = {
@@ -99,18 +99,27 @@ def _resolve_workspace_executable(command: str, workspace: Path) -> str:
 def run_command(
     command: str,
     cwd: str | None = ".",
+    *,
+    sandbox: WorkspaceSandbox | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Execute an allow-listed development command inside the workspace."""
-    working_directory = resolve_workspace_path(cwd or ".")
+    working_directory = (
+        sandbox.resolve(cwd or ".") if sandbox is not None else resolve_workspace_path(cwd or ".")
+    )
     _validate_command(command)
     command = _resolve_workspace_executable(command, working_directory)
 
-    result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
-        cwd=str(working_directory),
-        capture_output=True,
-        text=False,
-    )
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=str(working_directory),
+            capture_output=True,
+            text=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"Command timed out after {timeout} seconds") from exc
 
     encoding = locale.getpreferredencoding(False)
     stdout = result.stdout.decode(encoding, errors="replace")
