@@ -190,8 +190,11 @@ def create_server(
     if policy.workspace_write:
         @server.tool(name="workspace_write_file", title="Write AI-Team Workspace File", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
         @tracked_tool("workspace_write_file")
-        def workspace_write_file(path: str, content: str, max_bytes: int = 512 * 1024, overwrite: bool = False) -> dict[str, object]:
-            result = mutation_boundary.write_file(path, content, max_bytes=max_bytes, overwrite=overwrite)
+        def workspace_write_file(path: str, content: str, max_bytes: int = 512 * 1024, overwrite: bool = False, expected_sha256: str | None = None) -> dict[str, object]:
+            result = mutation_boundary.write_file(
+                path, content, max_bytes=max_bytes, overwrite=overwrite,
+                expected_sha256=expected_sha256,
+            )
             LOGGER.info("workspace mutation operation=%s path=%s bytes=%s", result["operation"], result["path"], result["bytes_written"])
             return result
 

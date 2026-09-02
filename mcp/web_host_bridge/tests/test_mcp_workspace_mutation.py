@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 mcp_sdk = pytest.importorskip("mcp")
@@ -6,7 +8,11 @@ from mcp import Client
 
 from web_host_bridge.config import MCPBridgeConfig
 from web_host_bridge.server import create_server
-from web_host_bridge.workspace_mutation import MCPWorkspaceMutationBoundary, WorkspaceMutationEvent
+from web_host_bridge.workspace_mutation import (
+    MCPWorkspaceMutationBoundary,
+    WorkspaceMutationEvent,
+    WorkspaceWriteConflictError,
+)
 
 
 @pytest.mark.anyio
@@ -175,3 +181,79 @@ def test_mutation_boundary_emits_audit_event_only_after_success(tmp_path):
         WorkspaceMutationEvent("update", "created.txt", 7),
         WorkspaceMutationEvent("delete", "created.txt", 0),
     ]
+
+
+def test_guarded_write_updates_when_observed_hash_matches(tmp_path):
+    target = tmp_path / "guarded.txt"
+    target.write_bytes(b"old")
+    boundary = MCPWorkspaceMutationBoundary(tmp_path)
+    observed = hashlib.sha256(b"old").hexdigest()
+
+    result = boundary.write_file("guarded.txt", "new", expected_sha256=observed)
+
+    assert result == {"path": "guarded.txt", "operation": "update", "bytes_written": 3}
+    assert target.read_bytes() == b"new"
+
+
+def test_guarded_write_rejects_stale_observation_without_modification(tmp_path):
+    target = tmp_path / "guarded.txt"
+    target.write_bytes(b"old")
+    boundary = MCPWorkspaceMutationBoundary(tmp_path)
+    stale = hashlib.sha256(b"older-still").hexdigest()
+
+    with pytest.raises(WorkspaceWriteConflictError):
+        boundary.write_file("guarded.txt", "new", expected_sha256=stale)
+
+    assert target.read_bytes() == b"old"
+
+
+def test_guarded_write_requires_existing_target_and_valid_digest(tmp_path):
+    boundary = MCPWorkspaceMutationBoundary(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        boundary.write_file("absent.txt", "new", expected_sha256="0" * 64)
+    with pytest.raises(ValueError):
+        boundary.write_file("absent.txt", "new", expected_sha256="not-a-digest")
+    assert not (tmp_path / "absent.txt").exists()
+
+
+def test_guarded_write_still_rejects_ignored_directories(tmp_path):
+    ignored = tmp_path / ".venv"
+    ignored.mkdir()
+    (ignored / "x.txt").write_bytes(b"old")
+    boundary = MCPWorkspaceMutationBoundary(tmp_path)
+    observed = hashlib.sha256(b"old").hexdigest()
+
+    with pytest.raises(PermissionError):
+        boundary.write_file(".venv/x.txt", "new", expected_sha256=observed)
+
+    assert (ignored / "x.txt").read_bytes() == b"old"
+
+
+@pytest.mark.anyio
+async def test_guarded_write_rejects_stale_content_over_mcp(tmp_path):
+    target = tmp_path / "guarded.txt"
+    target.write_bytes(b"old")
+    server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
+
+    async with Client(server, raise_exceptions=True) as client:
+        observed = (await client.call_tool("workspace_stat_path", {"path": "guarded.txt"})).structured_content["sha256"]
+        target.write_bytes(b"changed-by-someone-else")
+        stale = await client.call_tool(
+            "workspace_write_file",
+            {"path": "guarded.txt", "content": "new", "expected_sha256": observed},
+        )
+        stale_outcome = (stale.is_error, target.read_bytes())
+        current = (await client.call_tool("workspace_stat_path", {"path": "guarded.txt"})).structured_content["sha256"]
+        updated = await client.call_tool(
+            "workspace_write_file",
+            {"path": "guarded.txt", "content": "new", "expected_sha256": current},
+        )
+
+    assert stale_outcome[0] is True
+    assert stale_outcome[1] == b"changed-by-someone-else"
+    assert updated.is_error is False
+    assert updated.structured_content == {
+        "path": "guarded.txt", "operation": "update", "bytes_written": 3
+    }
+    assert target.read_bytes() == b"new"

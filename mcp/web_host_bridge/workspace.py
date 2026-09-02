@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from security.workspace import WorkspaceSandbox
+
+
+# Files above the write ceiling cannot be produced by the mutation boundary,
+# so optimistic-concurrency hashing is only meaningful at or below it.
+MAX_STAT_HASH_BYTES = 8 * 1024 * 1024
 
 
 IGNORED_DIRECTORIES = frozenset({
@@ -98,17 +104,28 @@ class MCPWorkspaceBoundary:
         return resolved.absolute_path.read_text(encoding="utf-8", errors="replace")
 
     def stat_path(self, path: str = ".") -> dict[str, object]:
-        """Return bounded metadata for one authorized workspace path."""
+        """Return bounded metadata for one authorized workspace path.
+
+        For regular files at or below the write ceiling the payload includes
+        the on-disk sha256 so callers can drive the optimistic-concurrency
+        write flow without re-deriving hashes from text-mode reads.
+        """
         resolved = self.resolve(path, require_exists=True)
         stat = resolved.absolute_path.stat()
-        return {
+        payload: dict[str, object] = {
             "path": resolved.relative_path,
             "kind": resolved.kind,
             "size": stat.st_size if resolved.kind == "file" else 0,
             "modified_at": datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
             ).isoformat(),
+            "sha256": None,
         }
+        if resolved.kind == "file" and stat.st_size <= MAX_STAT_HASH_BYTES:
+            payload["sha256"] = hashlib.sha256(
+                resolved.absolute_path.read_bytes()
+            ).hexdigest()
+        return payload
 
     def search_text(
         self,

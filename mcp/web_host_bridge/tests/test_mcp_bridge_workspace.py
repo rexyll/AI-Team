@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 
 import pytest
 
@@ -95,6 +96,7 @@ def test_stat_path_reports_bounded_file_metadata(tmp_path):
     assert result["kind"] == "file"
     assert result["size"] == 6
     assert isinstance(result["modified_at"], str)
+    assert result["sha256"] == hashlib.sha256(b"x = 1\n").hexdigest()
     assert str(tmp_path.resolve()) not in str(result)
 
 
@@ -108,6 +110,18 @@ def test_stat_path_reports_directories_without_file_size(tmp_path):
     assert result["path"] == "runtime"
     assert result["kind"] == "directory"
     assert result["size"] == 0
+    assert result["sha256"] is None
+
+
+def test_stat_path_skips_hashing_for_files_above_the_write_ceiling(tmp_path):
+    source = tmp_path / "large.bin"
+    source.write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+
+    boundary = MCPWorkspaceBoundary(tmp_path)
+    result = boundary.stat_path("large.bin")
+
+    assert result["size"] == 8 * 1024 * 1024 + 1
+    assert result["sha256"] is None
 
 
 def test_stat_path_requires_an_existing_authorized_path(tmp_path):
