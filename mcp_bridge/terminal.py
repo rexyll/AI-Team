@@ -11,6 +11,8 @@ from runtime.workflow_event_log import WorkflowEventLog
 from security.workspace import WorkspaceSandbox
 from tools.terminal import run_command
 
+from .sanitization import redact_environment_values, sanitized_environment
+
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 120.0
@@ -65,12 +67,7 @@ TerminalAuditSink = Callable[[MCPTerminalResult], None]
 
 
 class MCPTerminalCapabilityBoundary:
-    """Expose the existing allow-listed terminal policy through MCP.
-
-    The execution registry is an ephemeral control-plane projection, not a
-    second audit store. When configured, the canonical WorkflowEventLog keeps
-    the durable lifecycle events.
-    """
+    """Expose the existing allow-listed terminal policy through MCP."""
 
     def __init__(self, workspace_root: str, *, audit_sink: TerminalAuditSink | None = None, workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None) -> None:
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
@@ -172,8 +169,10 @@ class MCPTerminalCapabilityBoundary:
         self._register(_TerminalExecution(execution_id, command, relative_cwd, self._timestamp(), "active"))
         self._emit_event("mcp_terminal_execution_requested", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "timeout": normalized_timeout, "max_output_chars": output_limit, "status": "active"})
         try:
-            raw = run_command(command, relative_cwd, sandbox=self._sandbox, timeout=normalized_timeout)
+            child_environment = sanitized_environment()
+            raw = run_command(command, relative_cwd, sandbox=self._sandbox, timeout=normalized_timeout, env=child_environment)
             exit_code, output = self._parse_output(raw)
+            output = redact_environment_values(output, child_environment)
             timed_out = exit_code == 124
             truncated = len(output) > output_limit
             bounded_output = output[:output_limit]
