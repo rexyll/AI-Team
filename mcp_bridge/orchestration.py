@@ -51,6 +51,8 @@ class MCPOrchestrationBoundary:
         self._project_id = project_id.strip() if isinstance(project_id, str) else project_id
         self._execution_locks: dict[str, Lock] = {}
         self._execution_locks_guard = Lock()
+        self._idempotency: dict[str, tuple[str, str]] = {}
+        self._idempotency_guard = Lock()
 
     @classmethod
     def from_orchestrator(cls, orchestrator: Any) -> "MCPOrchestrationBoundary":
@@ -97,6 +99,11 @@ class MCPOrchestrationBoundary:
     def workflow_capabilities(self) -> dict[str, bool]:
         return {"task_read": True, "agent_read": self._agent_router is not None, "workflow_execute": self._workflow_factory is not None, "workflow_cancel": False, "execution_observability": self._workflow_event_log is not None and bool(self._project_id)}
 
+    def _mcp_events(self) -> list[WorkflowEvent]:
+        if self._workflow_event_log is None or not self._project_id:
+            return []
+        return [event for event in self._workflow_event_log.list_for_project(self._project_id) if event.payload.get("source") == "mcp"]
+
     def execution_history(self, task_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
@@ -112,6 +119,26 @@ class MCPOrchestrationBoundary:
             result.append({"event_type": event.event_type, "occurred_at": event.occurred_at, "execution_id": event.payload.get("execution_id"), "status": event.payload.get("status"), "error_type": event.payload.get("error_type")})
         return result[-limit:]
 
+    def execution_status(self, execution_id: str) -> dict[str, Any]:
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution_id must be a non-empty string")
+        normalized_id = execution_id.strip()
+        events = [event for event in self._mcp_events() if event.payload.get("execution_id") == normalized_id]
+        if not events:
+            raise KeyError(f"Unknown execution id: {normalized_id}")
+        requested = next((event for event in events if event.event_type == "mcp_task_execution_requested"), events[0])
+        completed = next((event for event in events if event.event_type == "mcp_task_execution_completed"), None)
+        failed = next((event for event in events if event.event_type == "mcp_task_execution_failed"), None)
+        status = "completed" if completed is not None else "failed" if failed is not None else "active"
+        result: dict[str, Any] = {"execution_id": normalized_id, "task_id": requested.task_id, "status": status, "started_at": requested.occurred_at}
+        if completed is not None:
+            result["completed_at"] = completed.occurred_at
+            result["task_status"] = completed.payload.get("status")
+        if failed is not None:
+            result["completed_at"] = failed.occurred_at
+            result["error_type"] = failed.payload.get("error_type")
+        return result
+
     def _execution_lock(self, task_id: str) -> Lock:
         with self._execution_locks_guard:
             lock = self._execution_locks.get(task_id)
@@ -125,12 +152,28 @@ class MCPOrchestrationBoundary:
             return
         self._workflow_event_log.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=self._project_id, task_id=task_id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload={"execution_id": execution_id, "source": "mcp", **(payload or {})}))
 
-    def execute_task(self, task_id: str) -> dict[str, Any]:
+    def execute_task(self, task_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
         if self._workflow_factory is None:
             raise RuntimeError("MCP workflow execution is not configured")
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
         normalized_id = task_id.strip()
+        normalized_key = idempotency_key.strip() if isinstance(idempotency_key, str) else idempotency_key
+        if normalized_key is not None and not normalized_key:
+            raise ValueError("idempotency_key must be a non-empty string or None")
+        if normalized_key is not None:
+            with self._idempotency_guard:
+                existing = self._idempotency.get(normalized_key)
+                if existing is not None:
+                    existing_task_id, existing_execution_id = existing
+                    if existing_task_id != normalized_id:
+                        raise ValueError("idempotency_key is already bound to a different task")
+                    status = self.execution_status(existing_execution_id) if self._workflow_event_log is not None and self._project_id else None
+                    if status is not None and status["status"] == "completed":
+                        return {**self._snapshot(self._task_manager.get_task(normalized_id)).as_dict(), "execution_id": existing_execution_id}
+                    if status is not None and status["status"] == "failed":
+                        raise RuntimeError(f"Idempotent execution {existing_execution_id} already failed")
+                    raise RuntimeError(f"Idempotent execution {existing_execution_id} is already active")
         task = self._task_manager.ensure_executable(normalized_id)
         if task.status != "ready":
             raise RuntimeError(f"Task {normalized_id} is already active with status {task.status}")
@@ -138,6 +181,13 @@ class MCPOrchestrationBoundary:
         if not lock.acquire(blocking=False):
             raise RuntimeError(f"Task {normalized_id} is already being executed")
         execution_id = str(uuid4())
+        if normalized_key is not None:
+            with self._idempotency_guard:
+                existing = self._idempotency.get(normalized_key)
+                if existing is not None:
+                    lock.release()
+                    raise RuntimeError(f"Idempotent execution {existing[1]} is already active")
+                self._idempotency[normalized_key] = (normalized_id, execution_id)
         try:
             task = self._task_manager.get_task(normalized_id)
             if task.status != "ready":
