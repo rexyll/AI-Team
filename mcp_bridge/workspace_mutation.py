@@ -64,21 +64,19 @@ class MCPWorkspaceMutationBoundary:
         resolved = self._boundary.resolve(path)
         if any(part in IGNORED_DIRECTORIES for part in Path(resolved.relative_path).parts):
             raise PermissionError("Access to ignored workspace directories is not allowed")
-        if resolved.absolute_path.exists() and not resolved.absolute_path.is_file():
+        existed = resolved.absolute_path.exists()
+        if existed and not resolved.absolute_path.is_file():
             raise ValueError(f"Not a file: {resolved.relative_path}")
-        if resolved.absolute_path.exists() and not overwrite:
+        if existed and not overwrite:
             raise FileExistsError(f"File already exists: {resolved.relative_path}")
 
-        # The parent is resolved independently so a future refactor cannot
-        # accidentally create directories outside the authorized workspace.
-        parent = self._boundary.resolve(
-            resolved.absolute_path.parent,
-            require_exists=False,
-        )
+        # Resolve the parent before creating it so the parent remains inside
+        # the same canonical workspace boundary.
+        parent = self._boundary.resolve(resolved.absolute_path.parent, require_exists=False)
         parent.absolute_path.mkdir(parents=True, exist_ok=True)
         resolved.absolute_path.write_bytes(payload)
 
-        operation = "update" if resolved.absolute_path.exists() and overwrite else "create"
+        operation = "update" if existed else "create"
         event = WorkspaceMutationEvent(operation, resolved.relative_path, len(payload))
         if self._audit_sink is not None:
             self._audit_sink(event)
