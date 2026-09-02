@@ -143,7 +143,7 @@ class Orchestrator:
         return self.task_manager.get_task(task.id)
     def _execute_task(self, task, *, execution_id: str | None = None) -> None:
         print("\n" + "-" * 60); print(f"{task.id} | {task.role} | {task.title}"); print("-" * 60)
-        active_execution_id = execution_id or str(uuid4())
+        active_execution_id = execution_id or task.context.get("execution_id") or str(uuid4())
         try:
             context = build_task_context(task, self.task_manager.tasks); task.context["dependencies"] = context; task.context["execution_id"] = active_execution_id
             if task.status == "ready":
