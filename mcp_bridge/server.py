@@ -8,6 +8,7 @@ from mcp_bridge.config import MCPBridgeConfig
 from mcp_bridge.git import MCPGitCapabilityBoundary
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 from mcp_bridge.orchestration_tools import register_orchestration_tools
+from mcp_bridge.terminal import MCPTerminalCapabilityBoundary, MCPTerminalResult
 from mcp_bridge.workspace import MCPWorkspaceBoundary
 from mcp_bridge.workspace_mutation import MCPWorkspaceMutationBoundary, WorkspaceMutationEvent
 
@@ -24,8 +25,8 @@ def _configure_logging(level: str) -> None:
     LOGGER.propagate = False
 
 
-def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOrchestrationBoundary | None = None) -> Any:
-    """Create the secure MCP server with optional host-owned orchestration."""
+def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOrchestrationBoundary | None = None, terminal: bool = False) -> Any:
+    """Create the secure MCP server with optional host-owned capabilities."""
     try:
         from mcp.server import MCPServer
         from mcp.types import ToolAnnotations
@@ -38,11 +39,13 @@ def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOr
     mutation_events: list[WorkspaceMutationEvent] = []
     mutation_boundary = MCPWorkspaceMutationBoundary(effective_config.workspace_root, audit_sink=mutation_events.append)
     git_boundary = MCPGitCapabilityBoundary(effective_config.workspace_root)
+    terminal_events: list[MCPTerminalResult] = []
+    terminal_boundary = MCPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append) if terminal else None
 
     server = MCPServer("AI-Team Local MCP Bridge", instructions=(
-        "Local bridge for the authorized AI-Team workspace. Phase 6 exposes bounded workspace, mutation, "
-        "allow-listed Git, and optional host-owned task/agent/workflow capabilities. Terminal, network, "
-        "and direct Git metadata access remain disabled."
+        "Local bridge for the authorized AI-Team workspace. Phase 7 exposes bounded workspace, mutation, "
+        "allow-listed Git, optional host-owned task/agent/workflow, and optional controlled terminal capabilities. "
+        "Network, and direct Git metadata access remain disabled."
     ))
 
     @server.tool(name="bridge_health", title="AI-Team MCP Bridge Health", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
@@ -50,10 +53,11 @@ def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOr
         capabilities = orchestration.workflow_capabilities() if orchestration is not None else {
             "task_read": False, "agent_read": False, "workflow_execute": False,
             "workflow_cancel": False, "execution_observability": False,
+            "execution_status": False, "execution_idempotency": False,
         }
-        return {"status": "ok", "bridge": "ai-team-local-mcp", "phase": "6-task-agent-workflow-boundary",
+        return {"status": "ok", "bridge": "ai-team-local-mcp", "phase": "7-controlled-terminal-boundary",
                 "workspace_configured": True, "read_enabled": True, "write_enabled": True,
-                "terminal_enabled": False, "git_enabled": True, "git_write_enabled": True,
+                "terminal_enabled": terminal_boundary is not None, "git_enabled": True, "git_write_enabled": True,
                 "orchestration_enabled": orchestration is not None, "orchestration": capabilities}
 
     @server.tool(name="workspace_validate_path", title="Validate AI-Team Workspace Path", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
@@ -98,6 +102,13 @@ def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOr
     def git_add(path: str, paths: list[str]) -> dict[str, object]: return git_boundary.add(path, paths)
     @server.tool(name="git_commit", title="Git Commit", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
     def git_commit(path: str, message: str) -> dict[str, object]: return git_boundary.commit(path, message)
+
+    if terminal_boundary is not None:
+        @server.tool(name="terminal_execute", title="Execute Controlled Development Command", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        def terminal_execute(command: str, cwd: str = ".", timeout: float = 30.0, max_output_chars: int = 64 * 1024) -> dict[str, object]:
+            result = terminal_boundary.execute(command, cwd, timeout=timeout, max_output_chars=max_output_chars)
+            LOGGER.info("terminal execution cwd=%s exit_code=%s timed_out=%s truncated=%s", result["cwd"], result["exit_code"], result["timed_out"], result["truncated"])
+            return result
 
     if orchestration is not None:
         register_orchestration_tools(server, orchestration)
