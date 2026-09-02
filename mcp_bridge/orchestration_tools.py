@@ -11,7 +11,6 @@ def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary
         raise TypeError("boundary must be an MCPOrchestrationBoundary")
     if not hasattr(server, "tool"):
         raise TypeError("server must expose tool()")
-
     try:
         from mcp.types import ToolAnnotations
     except ImportError as exc:
@@ -36,6 +35,10 @@ def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary
     @server.tool(name="workflow_capabilities", title="AI-Team Workflow Capabilities", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def workflow_capabilities() -> dict[str, bool]:
         return boundary.workflow_capabilities()
+
+    @server.tool(name="task_execution_history", title="AI-Team Task Execution History", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    def task_execution_history(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return boundary.execution_history(task_id, limit=limit)
 
     @server.tool(name="task_execute", title="Execute AI-Team Task", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
     def task_execute(task_id: str) -> dict[str, Any]:
