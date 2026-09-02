@@ -17,21 +17,17 @@ mcp_bridge
    |     +-- workflow execute
    |     +-- terminal capability
    |
-   +-- workspace policy
-   +-- mutation policy
-   +-- Git capability policy
-   +-- orchestration capability policy
-   +-- controlled terminal policy
+   +-- MCPOperationTracker
+   |     +-- request_id
+   |     +-- operation_id
+   |     +-- execution_id
+   |     +-- duration / outcome / error category
    |
-   +------------------------------+
-   |                              |
-   v                              v
-workspace / Git / terminal    MCPOrchestrationBoundary
-adapters                            |
-                         host-owned Orchestrator
-                                  |
-                                  v
-                         WorkflowEventLog
+   +-- workspace / Git / terminal adapters
+   +-- MCPOrchestrationBoundary
+   |
+   v
+host-owned runtime + WorkflowEventLog
 ```
 
 ## Phase 6 orchestration boundary
@@ -53,8 +49,8 @@ its public `execute_task(task_id, execution_id=...)` entrypoint, preserving the
 existing TaskManager, retry/recovery, resource, and checkpoint semantics.
 
 Every MCP-triggered execution receives an opaque UUID `execution_id`. MCP
-records `mcp_task_execution_requested` and a matching completed/failed event
-in the existing canonical `WorkflowEventLog`. Execution status and history are
+records `mcp_task_execution_requested` and a matching completed/failed event in
+the existing canonical `WorkflowEventLog`. Execution status and history are
 projections of that log. An optional `idempotency_key` is atomically bound to a
 single task execution and fails closed when canonical execution observability
 is unavailable.
@@ -80,7 +76,7 @@ Supported profiles are:
   Git writes, terminal execution, and workflow execution are not registered.
 
 The profile is configured with `AI_TEAM_MCP_POLICY_PROFILE` and defaults to
-`developer` for compatibility with the existing bridge behavior.
+`developer` for compatibility with the existing bridge.
 
 ```text
 policy profile
@@ -160,6 +156,37 @@ Terminal capability deliberately does **not** provide:
 Output is truncated only at the MCP boundary, with an explicit truncation
 marker. This keeps the MCP response bounded while retaining the exit code.
 Timeout and output limits are independently validated before command execution.
+
+## MCP operation identity, observability, and errors
+
+All server-registered MCP capability calls are wrapped by a single
+`MCPOperationTracker`. Each invocation receives an opaque `request_id` and
+`operation_id`; execution-producing calls additionally correlate their
+returned `execution_id`. The tracker records policy profile, capability,
+start/finish timestamps, duration, outcome, and a stable error category.
+
+The tracker is deliberately bounded and in-memory. It is a correlation and
+metrics adapter, **not** a durable audit store. Durable workflow lifecycle
+remains owned by `WorkflowEventLog`, and terminal-specific lifecycle remains
+owned by its existing control-plane boundary.
+
+The MCP error contract normalizes failures into stable categories:
+
+- `configuration_error`
+- `policy_denied`
+- `invalid_request`
+- `execution_error`
+- `not_found`
+- `bridge_error`
+
+The server records the normalized category for observability while preserving
+the existing exception/result behavior of the underlying MCP tools. This
+avoids creating a second incompatible error envelope at the protocol adapter
+layer.
+
+`create_server(..., operation_tracker=...)` accepts an optional tracker so a
+host or test can own the correlation sink. When omitted, the bridge creates a
+bounded tracker for the server instance. No global tracker is used.
 
 ## Public MCP surface
 
