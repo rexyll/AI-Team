@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from agents.mock_agents import MockAgent
@@ -85,3 +88,72 @@ def test_workflow_execution_returns_only_task_projection() -> None:
     assert result["id"] == "TASK-001"
     assert result["status"] == "completed"
     assert "context" not in result
+
+
+def test_from_orchestrator_reuses_host_task_manager_and_router() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    router = AgentRouter()
+    router.register(MockAgent("developer"))
+
+    class Host:
+        def __init__(self):
+            self.task_manager = manager
+            self.agent_router = router
+            self.calls = 0
+
+        def _execute_task(self, task):
+            self.calls += 1
+            task.status = "completed"
+
+    host = Host()
+    boundary = MCPOrchestrationBoundary.from_orchestrator(host)
+
+    result = boundary.execute_task("TASK-001")
+
+    assert result["status"] == "completed"
+    assert host.calls == 1
+    assert boundary._task_manager is manager
+    assert boundary._agent_router is router
+
+
+def test_execute_rejects_task_already_active() -> None:
+    boundary, manager = _boundary()
+    manager.get_task("TASK-001").status = "running"
+    boundary_with_workflow = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _: object(),
+    )
+    with pytest.raises(RuntimeError, match="already active"):
+        boundary_with_workflow.execute_task("TASK-001")
+
+
+def test_execute_rejects_duplicate_concurrent_mcp_start() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    entered = threading.Event()
+    release = threading.Event()
+    errors: list[Exception] = []
+
+    class SlowWorkflow:
+        def execute(self, task_id: str):
+            entered.set()
+            release.wait(timeout=2)
+            task = manager.get_task(task_id)
+            task.status = "completed"
+            return task
+
+    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: SlowWorkflow())
+    first_result: list[dict] = []
+
+    def run_first():
+        first_result.append(boundary.execute_task("TASK-001"))
+
+    thread = threading.Thread(target=run_first)
+    thread.start()
+    assert entered.wait(timeout=2)
+    time.sleep(0.02)
+    with pytest.raises(RuntimeError, match="already active|already being executed"):
+        boundary.execute_task("TASK-001")
+    release.set()
+    thread.join(timeout=2)
+    assert not errors
+    assert first_result[0]["status"] == "completed"
