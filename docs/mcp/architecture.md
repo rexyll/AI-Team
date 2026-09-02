@@ -1,9 +1,9 @@
-# AI-Team Local MCP Bridge Architecture — Phase 6
+# AI-Team Local MCP Bridge Architecture — Phase 6.3
 
 ## Purpose
 
 The bridge exposes a deliberately narrow MCP surface over an authorized local
-AI-Team repository. It is an adapter, not a second runtime/security system.
+AI-Team repository. It is an adapter, not a second runtime or audit store.
 
 ```text
 MCP Host
@@ -15,6 +15,7 @@ mcp_bridge
    +-- mutation policy
    +-- Git capability policy
    +-- orchestration capability policy
+   +-- execution observability
    |
    +------------------------------+
    |                              |
@@ -25,9 +26,13 @@ workspace / Git adapters    MCPOrchestrationBoundary
                     |                             |
                     v                             v
                TaskManager                    AgentRouter
-                    |
-                    v
-             host-owned workflow
+                    |                             |
+                    +-------------+---------------+
+                                  v
+                         host-owned Orchestrator
+                                  |
+                                  v
+                         WorkflowEventLog
 ```
 
 ## Phase 6 orchestration boundary
@@ -36,13 +41,14 @@ workspace / Git adapters    MCPOrchestrationBoundary
 runtime. It does not expose `Task`, agent, or workflow objects directly. MCP
 receives stable projections only.
 
-The Phase 6 surface is split into inspection and execution:
+The surface is split into inspection, execution, and execution observability:
 
 - task inspection: list tasks, fetch one task, list ready tasks;
 - agent inspection: list registered roles without exposing agent instances;
-- capability discovery: report whether task/agent inspection and workflow
-  execution are configured;
-- workflow execution: available only when a host explicitly injects execution.
+- capability discovery: report whether task/agent inspection, workflow
+  execution, and execution observability are configured;
+- workflow execution: available only when a host explicitly injects execution;
+- execution history: return bounded MCP execution lifecycle records for one task.
 
 Task projections contain identity, title, role, lifecycle status,
 dependencies, error state, review/retry counters, and cancellation state.
@@ -59,76 +65,88 @@ server = create_server(config, orchestration=boundary)
 ```
 
 The supplied `Orchestrator` remains the sole runtime owner. The adapter reuses
-its existing `TaskManager` and `AgentRouter` and delegates execution to the
-Orchestrator's canonical per-task execution entrypoint. Consequently MCP task
-execution inherits the existing dependency scheduling, developer selection,
-workflow gates, retry/recovery, resource governance, checkpoint, event, and
-terminal-state behavior instead of introducing parallel orchestration logic.
+its existing `TaskManager` and `AgentRouter` and delegates execution through
+its public `execute_task()` entrypoint. MCP therefore cannot accidentally
+create a parallel workflow runtime or bypass retry/recovery/resource/checkpoint
+semantics.
 
-MCP execution is guarded in two layers:
+`Orchestrator.execute_task(task_id, execution_id=...)` is now the supported
+external execution entrypoint. Internal scheduler execution continues to use
+the same `_execute_task()` implementation, so there is only one task execution
+implementation.
 
-1. `TaskManager.ensure_executable()` supplies the canonical dependency/state
+Execution is guarded in two layers:
+
+1. `TaskManager.ensure_executable()` supplies canonical dependency/state
    admission semantics.
 2. `MCPOrchestrationBoundary` adds a non-blocking per-task lock and rejects a
-   task that is already active. Different task IDs are not serialized by this
-   lock.
+   task that is already active. Different task IDs are not serialized.
 
-The boundary returns a fresh task projection after execution. Mutable runtime
-objects never cross the MCP protocol boundary.
+## Phase 6.3 execution correlation and audit
 
-The standalone MCP server still does **not** construct an Orchestrator or
-agents implicitly. Host composition must be explicit. This preserves the
-fail-closed property and avoids creating a second runtime with different
-lifecycle or authorization semantics.
+Every MCP-triggered execution receives a UUID `execution_id`. The ID is passed
+from the MCP boundary into the host `Orchestrator`, and the host records it in
+the task's internal execution context and lifecycle events. It is also returned
+in the `task_execute` response so a caller can correlate the result with the
+runtime event stream.
 
-## Phase 5 public MCP surface
+The MCP boundary records two explicit adapter events in the existing canonical
+`WorkflowEventLog` when an event log and project identity are configured:
 
-The existing workspace and Git surface remains unchanged:
+- `mcp_task_execution_requested`
+- `mcp_task_execution_completed` or `mcp_task_execution_failed`
 
-- `bridge_health`
-- `workspace_validate_path`
-- `workspace_list_files`
-- `workspace_read_file`
-- `workspace_search_text`
-- `workspace_write_file`
-- `workspace_delete_file`
-- `git_status`
-- `git_diff`
-- `git_log`
-- `git_show`
-- `git_branch`
-- `git_rev_parse`
-- `git_add`
-- `git_commit`
+Each event carries `source=mcp` and the same `execution_id`. No second audit
+store is created by MCP. `task_execution_history` is a read-only projection of
+these existing workflow events, bounded to at most 200 records per request.
 
-Phase 6 adds the orchestration capability family:
+This gives the control plane a traceable chain:
+
+```text
+MCP task_execute
+      |
+      +-- execution_id
+      |
+      +--> mcp_task_execution_requested
+      |
+      +--> Orchestrator.execute_task(execution_id=...)
+      |        |
+      |        +--> task_started / workflow events / retry / failure
+      |
+      +--> mcp_task_execution_completed|failed
+      |
+      +--> task_execute response {execution_id, task projection}
+```
+
+The MCP layer does not copy arbitrary task context or workflow payloads into
+its audit response. Only bounded lifecycle metadata is projected.
+
+## Public MCP surface
+
+Workspace and Git tools remain unchanged. Phase 6 adds:
 
 - `task_list`
 - `task_get`
 - `task_ready`
 - `agent_list`
 - `workflow_capabilities`
+- `task_execution_history`
 - `task_execute`
 
-The server's workspace, Git, terminal, and network authorization policies are
-not widened by the orchestration boundary.
+Terminal, network, cancellation, and other control-plane mutations remain
+disabled. The standalone MCP server still does **not** construct an
+Orchestrator or agents implicitly; host composition must be explicit.
 
 ## Security rules
 
 Orchestration must use existing host-owned lifecycle and routing semantics.
 The MCP layer must not mutate `Task.status`, task context, retry counters, or
-agent registries directly. Execution, when enabled, crosses the host
-Orchestrator and therefore the canonical `TaskManager`/`TaskWorkflow`
-semantics.
+agent registries directly. Execution crosses the host `Orchestrator` and its
+canonical `TaskManager`/`TaskWorkflow` semantics.
 
 No orchestration tool may provide a generic method name, Python object,
 filesystem handle, subprocess handle, environment variable, or network client
 to the MCP caller.
-
-Cancellation and other control-plane mutations require a separate explicit
-authorization contract and are not included in Phase 6.2.
-
-## Earlier workspace and Git controls
 
 All workspace reads and mutations continue to cross the canonical
 `security.workspace.WorkspaceSandbox`. Git operations continue through
