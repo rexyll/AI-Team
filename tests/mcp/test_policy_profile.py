@@ -26,6 +26,16 @@ def test_readonly_policy_disables_mutating_and_execution_capabilities() -> None:
     assert policy.workflow_execute is False
 
 
+def test_production_policy_is_fail_closed() -> None:
+    policy = MCPPolicy.from_profile("production")
+
+    assert policy.profile == "production"
+    assert policy.workspace_write is False
+    assert policy.git_write is False
+    assert policy.terminal is False
+    assert policy.workflow_execute is False
+
+
 def test_unknown_policy_capability_is_rejected() -> None:
     policy = MCPPolicy.from_profile("readonly")
 
@@ -41,6 +51,19 @@ def test_config_loads_policy_profile(tmp_path) -> None:
 
     assert config.policy_profile == "readonly"
     assert config.policy.workspace_write is False
+
+
+def test_config_loads_production_policy_profile(tmp_path) -> None:
+    config = MCPBridgeConfig.from_env({
+        WORKSPACE_ENV: str(tmp_path),
+        POLICY_PROFILE_ENV: "production",
+    })
+
+    assert config.policy_profile == "production"
+    assert config.policy.workspace_write is False
+    assert config.policy.git_write is False
+    assert config.policy.terminal is False
+    assert config.policy.workflow_execute is False
 
 
 def test_config_rejects_unknown_policy_profile(tmp_path) -> None:
