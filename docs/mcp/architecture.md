@@ -32,34 +32,54 @@ workspace / Git adapters    MCPOrchestrationBoundary
 
 ## Phase 6 orchestration boundary
 
-`MCPOrchestrationBoundary` is a separate capability boundary over the
-host-owned runtime. It does not expose `Task`, agent, or workflow objects
-directly. MCP receives stable projections only.
+`MCPOrchestrationBoundary` is a capability boundary over the host-owned
+runtime. It does not expose `Task`, agent, or workflow objects directly. MCP
+receives stable projections only.
 
-The initial Phase 6 surface is intentionally split into inspection and
-execution:
+The Phase 6 surface is split into inspection and execution:
 
 - task inspection: list tasks, fetch one task, list ready tasks;
 - agent inspection: list registered roles without exposing agent instances;
 - capability discovery: report whether task/agent inspection and workflow
   execution are configured;
-- workflow execution: available only when a host explicitly injects a
-  workflow factory.
+- workflow execution: available only when a host explicitly injects execution.
 
 Task projections contain identity, title, role, lifecycle status,
 dependencies, error state, review/retry counters, and cancellation state.
 Runtime context, tool history, agent objects, result payloads, credentials,
 and arbitrary runtime internals are not exposed by the projection.
 
-Workflow execution is **fail-closed**. The standalone MCP server does not
-construct agents or workflows implicitly. Without an injected host-owned
-workflow factory, `task_execute` remains unavailable and returns a bounded
-configuration error. This prevents the MCP adapter from silently creating a
-second orchestration runtime with different authorization or lifecycle rules.
+## Phase 6.2 host runtime composition
 
-The workflow factory must return an object exposing `execute(task_id)`. The
-result is projected back to the same bounded task representation, so the MCP
-caller never receives the mutable Task object.
+Production integration is created with:
+
+```python
+boundary = MCPOrchestrationBoundary.from_orchestrator(orchestrator)
+server = create_server(config, orchestration=boundary)
+```
+
+The supplied `Orchestrator` remains the sole runtime owner. The adapter reuses
+its existing `TaskManager` and `AgentRouter` and delegates execution to the
+Orchestrator's canonical per-task execution entrypoint. Consequently MCP task
+execution inherits the existing dependency scheduling, developer selection,
+workflow gates, retry/recovery, resource governance, checkpoint, event, and
+terminal-state behavior instead of introducing parallel orchestration logic.
+
+MCP execution is guarded in two layers:
+
+1. `TaskManager.ensure_executable()` supplies the canonical dependency/state
+   admission semantics.
+2. `MCPOrchestrationBoundary` adds a non-blocking per-task lock and rejects a
+   task that is already active. Different task IDs are not serialized by this
+   lock.
+
+The boundary returns a fresh task projection after execution. Mutable runtime
+objects never cross the MCP protocol boundary.
+
+The standalone MCP server still does **not** construct an Orchestrator or
+agents implicitly. Host composition must be explicit. This preserves the
+fail-closed property and avoids creating a second runtime with different
+lifecycle or authorization semantics.
 
 ## Phase 5 public MCP surface
 
@@ -97,22 +117,16 @@ not widened by the orchestration boundary.
 
 Orchestration must use existing host-owned lifecycle and routing semantics.
 The MCP layer must not mutate `Task.status`, task context, retry counters, or
-agent registries directly. Execution, when enabled, crosses the injected
-workflow object and therefore the canonical `TaskWorkflow`/`TaskManager`
+agent registries directly. Execution, when enabled, crosses the host
+Orchestrator and therefore the canonical `TaskManager`/`TaskWorkflow`
 semantics.
 
 No orchestration tool may provide a generic method name, Python object,
 filesystem handle, subprocess handle, environment variable, or network client
 to the MCP caller.
 
-## Remaining Phase 6 work
-
-The current boundary establishes the safe read/execute contract. The next
-increment should integrate it with the production server's actual runtime
-composition and add protocol-level tests for the Phase 6 tool registration,
-health/capability reporting, disabled-by-default execution, and bounded task
-projections. Cancellation and other control-plane mutations require a separate
-explicit authorization contract and are not included in this increment.
+Cancellation and other control-plane mutations require a separate explicit
+authorization contract and are not included in Phase 6.2.
 
 ## Earlier workspace and Git controls
 
