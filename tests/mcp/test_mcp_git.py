@@ -66,7 +66,7 @@ async def test_server_exposes_phase_5_git_tools(tmp_path):
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
     assert names == {
-        "bridge_health", "workspace_validate_path", "workspace_list_files",
+        "bridge_health", "bridge_readiness", "workspace_validate_path", "workspace_list_files",
         "workspace_read_file", "workspace_search_text", "workspace_write_file",
         "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show",
         "git_branch", "git_rev_parse", "git_add", "git_commit",
