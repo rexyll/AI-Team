@@ -1,6 +1,7 @@
 import locale
 import re
 import subprocess
+from pathlib import Path
 
 from security.workspace import resolve_workspace_path
 
@@ -46,6 +47,55 @@ def _validate_command(command: str) -> None:
         )
 
 
+def _replace_first_token(command: str, executable: str) -> str:
+    """Replace only the command's first token while preserving its arguments."""
+    leading = command[: len(command) - len(command.lstrip())]
+    remainder = command.lstrip()
+
+    if remainder.startswith('"'):
+        closing_quote = remainder.find('"', 1)
+        if closing_quote == -1:
+            return command
+        return leading + executable + remainder[closing_quote + 1 :]
+
+    parts = remainder.split(None, 1)
+    if len(parts) == 1:
+        return leading + executable
+    return leading + executable + " " + parts[1]
+
+
+def _resolve_workspace_executable(command: str, workspace: Path) -> str:
+    """Prefer a workspace-local Windows virtualenv executable for bare commands."""
+    stripped = command.lstrip()
+    if not stripped:
+        return command
+
+    first_token = stripped.split(None, 1)[0].strip('"')
+    if any(separator in first_token for separator in ("/", "\\", ":")):
+        return command
+
+    executable = Path(first_token).name.lower()
+    if executable not in ALLOWED_EXECUTABLES:
+        return command
+
+    scripts_dir = workspace / ".venv" / "Scripts"
+    candidates = [scripts_dir / executable]
+
+    if "." not in executable:
+        candidates.extend(
+            [
+                scripts_dir / f"{executable}.exe",
+                scripts_dir / f"{executable}.cmd",
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return _replace_first_token(command, str(candidate))
+
+    return command
+
+
 def run_command(
     command: str,
     cwd: str | None = ".",
@@ -53,6 +103,7 @@ def run_command(
     """Execute an allow-listed development command inside the workspace."""
     working_directory = resolve_workspace_path(cwd or ".")
     _validate_command(command)
+    command = _resolve_workspace_executable(command, working_directory)
 
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
