@@ -7,3 +7,7 @@ class MCPBridgeError(RuntimeError):
 
 class MCPBridgeConfigurationError(MCPBridgeError):
     """Raised when the bridge cannot start with a safe configuration."""
+
+
+class MCPBridgePolicyError(MCPBridgeError):
+    """Raised when the configured MCP policy does not allow an operation."""
