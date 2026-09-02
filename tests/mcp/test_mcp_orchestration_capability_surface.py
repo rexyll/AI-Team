@@ -53,7 +53,7 @@ async def test_readonly_profiles_hide_orchestration_execution(tmp_path, profile:
     assert "task_execute" not in names
     assert "task_list" in names
     assert health.structured_content["orchestration"]["workflow_execute"] is False
-    assert capabilities.structured_content["result"]["workflow_execute"] is False
+    assert capabilities.structured_content["workflow_execute"] is False
 
 
 @pytest.mark.anyio
@@ -73,6 +73,6 @@ async def test_developer_profile_exposes_host_orchestration_execution(tmp_path) 
 
     names = {tool.name for tool in result.tools}
     assert "task_execute" in names
-    assert capabilities.structured_content["result"]["workflow_execute"] is True
+    assert capabilities.structured_content["workflow_execute"] is True
     assert execution.is_error is False
     assert execution.structured_content["result"]["execution_id"]
