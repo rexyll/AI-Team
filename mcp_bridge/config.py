@@ -11,8 +11,24 @@ from .policy import DEFAULT_POLICY_PROFILE, MCPPolicy, POLICY_PROFILE_ENV
 
 WORKSPACE_ENV = "AI_TEAM_WORKSPACE"
 LOG_LEVEL_ENV = "AI_TEAM_MCP_LOG_LEVEL"
+TRANSPORT_ENV = "AI_TEAM_MCP_TRANSPORT"
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_TRANSPORT = "stdio"
+STANDALONE_DEFAULT_POLICY_PROFILE = "readonly"
 _ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
+_ALLOWED_TRANSPORTS = {"stdio"}
+
+
+@dataclass(frozen=True)
+class MCPTransportConfig:
+    """Transport settings accepted by the local bridge.
+
+    The local MCP bridge intentionally exposes stdio only. Adding a network
+    transport must be a separate security-reviewed capability, not an
+    implicit startup option.
+    """
+
+    transport: str = DEFAULT_TRANSPORT
 
 
 @dataclass(frozen=True)
@@ -22,6 +38,7 @@ class MCPBridgeConfig:
     workspace_root: Path
     log_level: str = DEFAULT_LOG_LEVEL
     policy_profile: str = DEFAULT_POLICY_PROFILE
+    transport: MCPTransportConfig = MCPTransportConfig()
 
     @property
     def policy(self) -> MCPPolicy:
@@ -31,6 +48,8 @@ class MCPBridgeConfig:
     def from_env(
         cls,
         environ: Mapping[str, str] | None = None,
+        *,
+        standalone: bool = False,
     ) -> "MCPBridgeConfig":
         env = os.environ if environ is None else environ
 
@@ -63,7 +82,17 @@ class MCPBridgeConfig:
                 + ", ".join(sorted(_ALLOWED_LOG_LEVELS))
             )
 
-        policy_profile = env.get(POLICY_PROFILE_ENV, DEFAULT_POLICY_PROFILE).strip().lower()
+        raw_transport = env.get(TRANSPORT_ENV, DEFAULT_TRANSPORT).strip().lower()
+        if raw_transport not in _ALLOWED_TRANSPORTS:
+            raise MCPBridgeConfigurationError(
+                f"{TRANSPORT_ENV} must be one of: "
+                + ", ".join(sorted(_ALLOWED_TRANSPORTS))
+            )
+
+        default_profile = (
+            STANDALONE_DEFAULT_POLICY_PROFILE if standalone else DEFAULT_POLICY_PROFILE
+        )
+        policy_profile = env.get(POLICY_PROFILE_ENV, default_profile).strip().lower()
         try:
             MCPPolicy.from_profile(policy_profile)
         except ValueError as exc:
@@ -73,4 +102,5 @@ class MCPBridgeConfig:
             workspace_root=workspace_root,
             log_level=log_level,
             policy_profile=policy_profile,
+            transport=MCPTransportConfig(transport=raw_transport),
         )
