@@ -48,6 +48,8 @@ class MCPTerminalCapabilityBoundary:
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
+        if workflow_event_log is not None and not project_id:
+            raise ValueError("project_id is required when workflow_event_log is configured")
         if project_id and workflow_event_log is None:
             raise ValueError("project_id requires workflow_event_log")
         self._sandbox = WorkspaceSandbox(workspace_root)
