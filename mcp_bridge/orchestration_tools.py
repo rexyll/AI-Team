@@ -40,6 +40,10 @@ def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary
     def task_execution_history(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
         return boundary.execution_history(task_id, limit=limit)
 
+    @server.tool(name="task_execution_status", title="AI-Team Task Execution Status", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    def task_execution_status(execution_id: str) -> dict[str, Any]:
+        return boundary.execution_status(execution_id)
+
     @server.tool(name="task_execute", title="Execute AI-Team Task", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
-    def task_execute(task_id: str) -> dict[str, Any]:
-        return boundary.execute_task(task_id)
+    def task_execute(task_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
+        return boundary.execute_task(task_id, idempotency_key=idempotency_key)
