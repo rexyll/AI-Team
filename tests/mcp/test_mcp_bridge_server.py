@@ -9,7 +9,7 @@ from mcp_bridge.server import create_server
 
 
 @pytest.mark.anyio
-async def test_server_lists_phase_3_read_only_tools(tmp_path):
+async def test_server_lists_phase_4_tools(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
 
     async with Client(server, raise_exceptions=True) as client:
@@ -22,11 +22,13 @@ async def test_server_lists_phase_3_read_only_tools(tmp_path):
         "workspace_list_files",
         "workspace_read_file",
         "workspace_search_text",
+        "workspace_write_file",
+        "workspace_delete_file",
     }
 
 
 @pytest.mark.anyio
-async def test_health_reports_read_only_phase(tmp_path):
+async def test_health_reports_secure_mutation_phase(tmp_path):
     server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
 
     async with Client(server, raise_exceptions=True) as client:
@@ -34,8 +36,11 @@ async def test_health_reports_read_only_phase(tmp_path):
 
     assert result.is_error is False
     assert result.structured_content["status"] == "ok"
+    assert result.structured_content["phase"] == "4-secure-workspace-mutation"
     assert result.structured_content["read_enabled"] is True
-    assert result.structured_content["write_enabled"] is False
+    assert result.structured_content["write_enabled"] is True
+    assert result.structured_content["terminal_enabled"] is False
+    assert result.structured_content["git_write_enabled"] is False
 
 
 @pytest.mark.anyio
