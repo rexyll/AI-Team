@@ -80,7 +80,7 @@ def test_operation_history_does_not_leak_sensitive_metadata() -> None:
     metadata = item["metadata"]
 
     assert metadata["api_token"] == "[REDACTED]"
-    assert metadata["authorization"] == "Bearer [REDACTED]"
+    assert metadata["authorization"] == "[REDACTED]"
     assert metadata["safe"] == "value"
     assert "hidden" not in item["project_id"]
 
