@@ -97,11 +97,13 @@ class MCPTerminalCapabilityBoundary:
         output_limit = self._validate_output_limit(max_output_chars)
         resolved = self._sandbox.resolve(cwd or ".")
         if not resolved.is_dir():
-            raise NotADirectoryError(f"Terminal cwd must be a directory: {resolved.relative_path}")
+            relative_cwd = resolved.relative_to(self._sandbox.root).as_posix() or "."
+            raise NotADirectoryError(f"Terminal cwd must be a directory: {relative_cwd}")
 
+        relative_cwd = resolved.relative_to(self._sandbox.root).as_posix() or "."
         raw = run_command(
             command,
-            resolved.relative_path,
+            relative_cwd,
             sandbox=self._sandbox,
             timeout=normalized_timeout,
         )
@@ -111,7 +113,7 @@ class MCPTerminalCapabilityBoundary:
         bounded_output = output[:output_limit]
         if truncated:
             bounded_output += "\n[output truncated by MCP terminal boundary]"
-        result = MCPTerminalResult(command, resolved.relative_path, bounded_output, exit_code, timed_out, truncated)
+        result = MCPTerminalResult(command, relative_cwd, bounded_output, exit_code, timed_out, truncated)
         if self._audit_sink is not None:
             self._audit_sink(result)
         return result.as_dict()
