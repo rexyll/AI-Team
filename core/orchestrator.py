@@ -32,8 +32,6 @@ class _OrchestratorWorkflowEventLog(WorkflowEventLog):
         self._delegate = delegate
 
     def append(self, event: WorkflowEvent) -> None:
-        # Assignment is internal routing metadata; the canonical lifecycle
-        # contract intentionally remains five events per successful task.
         if event.event_type in {"developer_failed", "developer_assigned"}:
             return
         self._delegate.append(event)
@@ -85,6 +83,14 @@ class Orchestrator:
     def resource_governor(self) -> ResourceGovernor:
         return self._resource_execution.governor
 
+    @property
+    def workflow_event_log(self) -> WorkflowEventLog | None:
+        return self._workflow_event_log
+
+    @property
+    def project_id(self) -> str | None:
+        return self._project_id
+
     def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
         if hook is not None and not callable(hook):
             raise TypeError("hook must be callable or None")
@@ -131,12 +137,7 @@ class Orchestrator:
 
     @staticmethod
     def _failure_class_for_kind(failure_kind: FailureKind) -> FailureClass:
-        """Bridge the legacy retry classifier into the new recovery taxonomy."""
-        if failure_kind in {
-            FailureKind.EXECUTION,
-            FailureKind.QUALITY_GATE,
-            FailureKind.INVALID_RESULT,
-        }:
+        if failure_kind in {FailureKind.EXECUTION, FailureKind.QUALITY_GATE, FailureKind.INVALID_RESULT}:
             return FailureClass.TRANSIENT
         return FailureClass.UNKNOWN
 
@@ -217,22 +218,35 @@ class Orchestrator:
             model = getattr(config, "model", None)
         return {"developer_id": developer_id, "model": model}
 
-    def _execute_task(self, task) -> None:
+    def execute_task(self, task_id: str, *, execution_id: str | None = None):
+        """Execute one ready task through the canonical host-owned runtime."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must be a non-empty string")
+        task = self.task_manager.ensure_executable(task_id.strip())
+        if task.status != "ready":
+            raise RuntimeError(f"Task {task.id} is already active with status {task.status}")
+        normalized_execution_id = execution_id.strip() if isinstance(execution_id, str) and execution_id.strip() else str(uuid4())
+        self._execute_task(task, execution_id=normalized_execution_id)
+        return self.task_manager.get_task(task.id)
+
+    def _execute_task(self, task, *, execution_id: str | None = None) -> None:
         print("\n" + "-" * 60)
         print(f"{task.id} | {task.role} | {task.title}")
         print("-" * 60)
+        active_execution_id = execution_id or str(uuid4())
         try:
             context = build_task_context(task, self.task_manager.tasks)
             task.context["dependencies"] = context
+            task.context["execution_id"] = active_execution_id
             if task.status == "ready":
                 self.task_manager.mark_running(task.id)
-                self._emit_event("task_started", task, payload={"status": task.status})
+                self._emit_event("task_started", task, payload={"status": task.status, "execution_id": active_execution_id})
                 self._persist_state_checkpoint()
             if task.role == "developer":
                 developer = self._select_developer(task)
                 identity = self._developer_identity(developer)
                 task.context["developer_assignment"] = identity
-                self._emit_event("developer_assigned", task, payload=identity)
+                self._emit_event("developer_assigned", task, payload=identity | {"execution_id": active_execution_id})
                 workflow = create_task_workflow(
                     task_manager=self.task_manager,
                     agent_router=self.agent_router,
@@ -246,7 +260,7 @@ class Orchestrator:
                 agent = self.agent_router.get_agent(task.role)
                 result = agent.run(task)
                 self.task_manager.mark_completed(task.id, result)
-                self._emit_event("task_completed", task, payload={"status": task.status})
+                self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
             if task.role != "developer":
                 self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
@@ -256,7 +270,7 @@ class Orchestrator:
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
                 if task.status != "failed":
                     self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
-                self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error})
+                self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error, "execution_id": active_execution_id})
             self._apply_retry_policy(task, exc)
             self._persist_state_checkpoint()
             print(f"[Failed] {task.id}: {exc}")
@@ -268,41 +282,31 @@ class Orchestrator:
             return False
         failure_class = self._classify_recovery_failure(error)
         reason = f"{type(error).__name__}: {error}"
-        classification = classify_failure(
-            failure_class=failure_class,
-            reason=reason,
-        )
-        decision = decide_recovery(
-            classification,
-            retry_attempt=task.retry_attempt,
-            max_retries=task.max_retries,
-        )
+        classification = classify_failure(failure_class=failure_class, reason=reason)
+        decision = decide_recovery(classification, retry_attempt=task.retry_attempt, max_retries=task.max_retries)
         if decision.action is RecoveryAction.RETRY:
             self.failure_recovery_executor.execute(task.id, decision)
             self._emit_event("task_retrying", task, payload={
                 "status": task.status, "retry_attempt": task.retry_attempt,
                 "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason,
+                "execution_id": task.context.get("execution_id"),
             })
             return True
         if decision.action is RecoveryAction.REPLAN:
             if self._replan_coordinator is None:
                 return False
-            intent = RecoveryIntent(
-                action=decision.action,
-                task_id=task.id,
-                failure_class=decision.failure_class,
-                failure_reason=decision.failure_reason or reason,
-                decision_reason=decision.reason,
-                attempt=decision.retry_attempt,
-            )
+            intent = RecoveryIntent(action=decision.action, task_id=task.id,
+                                    failure_class=decision.failure_class,
+                                    failure_reason=decision.failure_reason or reason,
+                                    decision_reason=decision.reason, attempt=decision.retry_attempt)
             requirement = f"{task.description}\n\nRecovery reason: {reason}"
             outcome = self._replan_coordinator.prepare(intent, requirement)
             self._replan_coordinator.commit(outcome)
             live_task = self.task_manager.get_task(task.id)
             self._emit_event("task_replanned", live_task, payload={
-                "status": live_task.status,
-                "attempt": outcome.result.attempt,
+                "status": live_task.status, "attempt": outcome.result.attempt,
                 "task_count": len(outcome.replacement.tasks),
+                "execution_id": live_task.context.get("execution_id"),
             })
             return True
         return False
