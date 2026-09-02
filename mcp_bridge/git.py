@@ -7,6 +7,8 @@ from typing import Sequence
 from runtime.host_git import HostGitOperationService
 from security.workspace import WorkspaceSandbox
 
+from .sanitization import redact_environment_values, sanitized_environment
+
 
 DEFAULT_MAX_OUTPUT_CHARS = 64 * 1024
 MAX_OUTPUT_CHARS = 512 * 1024
@@ -65,26 +67,29 @@ class MCPGitCapabilityBoundary:
             raise PermissionError(f"Git operation is not allowed: {operation!r}")
         workspace = self._resolve_git_workspace(path)
 
+        # Keep the existing host-owned service as the semantic Git boundary,
+        # but execute its subprocesses with a credential-free environment.
+        child_environment = sanitized_environment()
         if operation == "status":
-            raw = self._service.status(str(workspace))
+            raw = self._service.status(str(workspace), env=child_environment)
         elif operation == "diff":
-            raw = self._service.diff(str(workspace), staged=staged)
+            raw = self._service.diff(str(workspace), staged=staged, env=child_environment)
         elif operation == "log":
-            raw = self._service.log(str(workspace), max_count=max_count)
+            raw = self._service.log(str(workspace), max_count=max_count, env=child_environment)
         elif operation == "show":
-            raw = self._service.show(str(workspace), revision=revision)
+            raw = self._service.show(str(workspace), revision=revision, env=child_environment)
         elif operation == "branch":
-            raw = self._service.branch(str(workspace))
+            raw = self._service.branch(str(workspace), env=child_environment)
         elif operation == "rev-parse":
-            raw = self._service.rev_parse(str(workspace), revision=revision)
+            raw = self._service.rev_parse(str(workspace), revision=revision, env=child_environment)
         elif operation == "add":
-            raw = self._service.add(str(workspace), paths)
+            raw = self._service.add(str(workspace), paths, env=child_environment)
         elif operation == "commit":
-            raw = self._service.commit(str(workspace), message)
+            raw = self._service.commit(str(workspace), message, env=child_environment)
         else:
             raise AssertionError(f"unhandled Git operation: {operation}")
 
-        result = self._bounded_result(operation, raw)
+        result = self._bounded_result(operation, redact_environment_values(raw, child_environment))
         return result.as_dict()
 
     def status(self, path: str = ".") -> dict[str, object]:
