@@ -186,6 +186,42 @@ MCP request
 MCP response
 ```
 
+## Capability matrix contract
+
+The effective MCP surface is defined by the intersection of four dimensions:
+
+```text
+Capability × Policy Profile × Transport × Host Opt-in
+                         |
+                         v
+                 Registered MCP Tool
+```
+
+The contract is:
+
+| Capability | developer | readonly | production | Additional gate |
+|---|---:|---:|---:|---|
+| Workspace read | yes | yes | yes | workspace boundary |
+| Workspace write/delete | yes | no | no | policy |
+| Git read | yes | yes | yes | Git boundary |
+| Git add/commit | yes | no | no | policy |
+| Terminal | yes | no | no | policy + `terminal=True` |
+| Workflow execute | yes | no | no | policy + orchestration boundary |
+| Task/agent read | boundary-dependent | boundary-dependent | boundary-dependent | orchestration boundary |
+
+Transport is currently `stdio` only. A non-`stdio` configuration is rejected
+before server creation. Therefore transport cannot be used to bypass policy.
+
+For every supported profile, tests verify both the declared `bridge_health`
+state and the **actual registered tool set**. This is intentional: reporting a
+capability as disabled while still registering an executable mutation tool is a
+security failure. The matrix therefore treats registration as the authoritative
+protocol surface and health as its machine-readable declaration.
+
+When orchestration is injected, workflow execution is additionally constrained
+by the host-owned `MCPOrchestrationBoundary`; policy permission alone never
+creates an execution path.
+
 ## Public MCP surface
 
 The capability surface is policy-derived. Read tools remain available across
