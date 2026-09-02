@@ -67,8 +67,6 @@ class MCPGitCapabilityBoundary:
             raise PermissionError(f"Git operation is not allowed: {operation!r}")
         workspace = self._resolve_git_workspace(path)
 
-        # Keep the existing host-owned service as the semantic Git boundary,
-        # but execute its subprocesses with a credential-free environment.
         child_environment = sanitized_environment()
         if operation == "status":
             raw = self._service.status(str(workspace), env=child_environment)
@@ -89,7 +87,7 @@ class MCPGitCapabilityBoundary:
         else:
             raise AssertionError(f"unhandled Git operation: {operation}")
 
-        result = self._bounded_result(operation, redact_environment_values(raw, child_environment))
+        result = self._bounded_result(operation, redact_environment_values(raw))
         return result.as_dict()
 
     def status(self, path: str = ".") -> dict[str, object]:
