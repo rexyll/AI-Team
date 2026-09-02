@@ -143,6 +143,8 @@ class MCPOrchestrationBoundary:
         requested = next((event for event in events if event.event_type == "mcp_task_execution_requested"), events[0])
         completed = next((event for event in events if event.event_type == "mcp_task_execution_completed"), None)
         failed = next((event for event in events if event.event_type == "mcp_task_execution_failed"), None)
+        if completed is not None and failed is not None:
+            raise RuntimeError(f"Execution {normalized_id} has conflicting terminal events")
         status = "completed" if completed is not None else "failed" if failed is not None else "active"
         result: dict[str, Any] = {"execution_id": normalized_id, "task_id": requested.task_id, "status": status, "started_at": requested.occurred_at}
         if completed is not None:
