@@ -12,6 +12,7 @@ def test_readiness_gates_are_ordered_and_use_real_regression_contracts() -> None
         "extension-boundary",
         "observability",
         "persistence-recovery",
+        "mcp-security",
         "full-regression",
     ]
 
@@ -27,6 +28,8 @@ def test_readiness_gates_are_ordered_and_use_real_regression_contracts() -> None
     assert "tests/test_tracing.py" in commands["observability"]
     assert "tests/test_workflow_event_metrics.py" in commands["observability"]
     assert "tests/test_workflow_recovery_state_consistency.py" in commands["persistence-recovery"]
+    assert commands["mcp-security"][:3] == (readiness.sys.executable, "-m", "pytest")
+    assert "tests/mcp/test_mcp_orchestration.py" in commands["mcp-security"]
     assert commands["full-regression"][-2:] == ("pytest", "-q")
 
 
