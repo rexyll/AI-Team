@@ -26,294 +26,160 @@ class _CheckpointFailure(OSError):
 
 class _OrchestratorWorkflowEventLog(WorkflowEventLog):
     """Delegate workflow events while reserving task failure for Orchestrator."""
-
     def __init__(self, delegate: WorkflowEventLog) -> None:
-        super().__init__()
-        self._delegate = delegate
-
+        super().__init__(); self._delegate = delegate
     def append(self, event: WorkflowEvent) -> None:
-        if event.event_type in {"developer_failed", "developer_assigned"}:
-            return
+        if event.event_type in {"developer_failed", "developer_assigned"}: return
         self._delegate.append(event)
-
     def append_if_absent(self, event: WorkflowEvent) -> bool:
-        if event.event_type in {"developer_failed", "developer_assigned"}:
-            return False
+        if event.event_type in {"developer_failed", "developer_assigned"}: return False
         return self._delegate.append_if_absent(event)
 
 
 class Orchestrator:
     """Schedule tasks and delegate per-task execution to the proper workflow."""
-
     def __init__(self, task_manager: TaskManager, agent_router: AgentRouter, max_workers: int = 4,
                  failure_classifier: Callable[[BaseException], FailureKind] | None = None,
                  workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None,
                  replan_planner: Callable[[str], dict[str, Any]] | None = None,
                  recovery_classifier: Callable[[BaseException], FailureClass] | None = None,
                  resource_governor: ResourceGovernor | None = None):
-        if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
-            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be a non-empty string or None")
-        if recovery_classifier is not None and not callable(recovery_classifier):
-            raise TypeError("recovery_classifier must be callable or None")
-        if resource_governor is not None and not isinstance(resource_governor, ResourceGovernor):
-            raise TypeError("resource_governor must be a ResourceGovernor or None")
-        self.task_manager = task_manager
-        self.agent_router = agent_router
-        self.task_executor = TaskLayerExecutor(max_workers=max_workers)
-        self.failure_classifier = failure_classifier or self._default_failure_classifier
-        self.recovery_classifier = recovery_classifier
+        if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog): raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()): raise ValueError("project_id must be a non-empty string or None")
+        if recovery_classifier is not None and not callable(recovery_classifier): raise TypeError("recovery_classifier must be callable or None")
+        if resource_governor is not None and not isinstance(resource_governor, ResourceGovernor): raise TypeError("resource_governor must be a ResourceGovernor or None")
+        self.task_manager = task_manager; self.agent_router = agent_router; self.task_executor = TaskLayerExecutor(max_workers=max_workers)
+        self.failure_classifier = failure_classifier or self._default_failure_classifier; self.recovery_classifier = recovery_classifier
         self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
-        self._resource_execution = ResourceExecutionCoordinator(
-            resource_governor
-            if resource_governor is not None
-            else ResourceGovernor(ResourceLimits(max_concurrent_tasks=max_workers))
-        )
-        self._replan_coordinator = (
-            RecoveryReplanCoordinator(task_manager, replan_planner)
-            if replan_planner is not None else None
-        )
-        self._state_change_hook: Callable[[TaskManager], None] | None = None
-        self._workflow_event_log = workflow_event_log
-        self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None
-        self._project_id = project_id
-
+        self._resource_execution = ResourceExecutionCoordinator(resource_governor if resource_governor is not None else ResourceGovernor(ResourceLimits(max_concurrent_tasks=max_workers)))
+        self._replan_coordinator = RecoveryReplanCoordinator(task_manager, replan_planner) if replan_planner is not None else None
+        self._state_change_hook: Callable[[TaskManager], None] | None = None; self._workflow_event_log = workflow_event_log
+        self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None; self._project_id = project_id
     @property
-    def resource_governor(self) -> ResourceGovernor:
-        return self._resource_execution.governor
-
+    def resource_governor(self) -> ResourceGovernor: return self._resource_execution.governor
     @property
-    def workflow_event_log(self) -> WorkflowEventLog | None:
-        return self._workflow_event_log
-
+    def workflow_event_log(self) -> WorkflowEventLog | None: return self._workflow_event_log
     @property
-    def project_id(self) -> str | None:
-        return self._project_id
-
+    def project_id(self) -> str | None: return self._project_id
     def set_state_change_hook(self, hook: Callable[[TaskManager], None] | None) -> None:
-        if hook is not None and not callable(hook):
-            raise TypeError("hook must be callable or None")
+        if hook is not None and not callable(hook): raise TypeError("hook must be callable or None")
         self._state_change_hook = hook
-
     def set_workflow_event_log(self, log: WorkflowEventLog | None, *, project_id: str | None = None) -> None:
-        if log is not None and not isinstance(log, WorkflowEventLog):
-            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be a non-empty string or None")
-        self._workflow_event_log = log
-        self._workflow_event_sink = _OrchestratorWorkflowEventLog(log) if log is not None else None
-        if project_id is not None:
-            self._project_id = project_id
-
+        if log is not None and not isinstance(log, WorkflowEventLog): raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()): raise ValueError("project_id must be a non-empty string or None")
+        self._workflow_event_log = log; self._workflow_event_sink = _OrchestratorWorkflowEventLog(log) if log is not None else None
+        if project_id is not None: self._project_id = project_id
     def _persist_state_checkpoint(self, task_manager: TaskManager | None = None) -> None:
-        hook = self._state_change_hook
-        if hook is None:
-            return
-        try:
-            hook(task_manager if task_manager is not None else self.task_manager)
-        except _CheckpointFailure:
-            raise
-        except OSError as exc:
-            raise _CheckpointFailure(str(exc)) from exc
-
+        if self._state_change_hook is None: return
+        try: self._state_change_hook(task_manager if task_manager is not None else self.task_manager)
+        except _CheckpointFailure: raise
+        except OSError as exc: raise _CheckpointFailure(str(exc)) from exc
     def _emit_event(self, event_type: str, task, *, payload: dict[str, Any] | None = None) -> None:
-        if self._workflow_event_sink is None:
-            return
+        if self._workflow_event_sink is None: return
         project_id = self._project_id or task.context.get("project_id")
-        if not isinstance(project_id, str) or not project_id.strip():
-            raise ValueError("project_id is required when workflow_event_log is enabled")
-        self._workflow_event_sink.append(WorkflowEvent(
-            event_id=str(uuid4()), event_type=event_type, project_id=project_id,
-            task_id=task.id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            payload=payload or {},
-        ))
-
+        if not isinstance(project_id, str) or not project_id.strip(): raise ValueError("project_id is required when workflow_event_log is enabled")
+        self._workflow_event_sink.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=project_id, task_id=task.id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload=payload or {}))
     @staticmethod
     def _default_failure_classifier(error: BaseException) -> FailureKind:
-        if isinstance(error, (TypeError, ValueError, KeyError)):
-            return FailureKind.NON_RETRYABLE
-        return FailureKind.EXECUTION
-
+        return FailureKind.NON_RETRYABLE if isinstance(error, (TypeError, ValueError, KeyError)) else FailureKind.EXECUTION
     @staticmethod
     def _failure_class_for_kind(failure_kind: FailureKind) -> FailureClass:
-        if failure_kind in {FailureKind.EXECUTION, FailureKind.QUALITY_GATE, FailureKind.INVALID_RESULT}:
-            return FailureClass.TRANSIENT
-        return FailureClass.UNKNOWN
-
+        return FailureClass.TRANSIENT if failure_kind in {FailureKind.EXECUTION, FailureKind.QUALITY_GATE, FailureKind.INVALID_RESULT} else FailureClass.UNKNOWN
     def _classify_recovery_failure(self, error: BaseException) -> FailureClass:
         if self.recovery_classifier is not None:
             failure_class = self.recovery_classifier(error)
-            if not isinstance(failure_class, FailureClass):
-                raise TypeError("recovery_classifier must return FailureClass")
+            if not isinstance(failure_class, FailureClass): raise TypeError("recovery_classifier must return FailureClass")
             return failure_class
         failure_kind = self.failure_classifier(error)
-        if not isinstance(failure_kind, FailureKind):
-            raise TypeError("failure_classifier must return FailureKind")
+        if not isinstance(failure_kind, FailureKind): raise TypeError("failure_classifier must return FailureKind")
         return self._failure_class_for_kind(failure_kind)
-
     def run(self) -> None:
-        print("\n" + "=" * 60)
-        print("AI TEAM START")
-        print("=" * 60)
+        print("\n" + "=" * 60); print("AI TEAM START"); print("=" * 60)
         while not self.task_manager.is_finished():
             ready_tasks = self._get_executable_tasks()
-            if not ready_tasks:
-                self._handle_no_ready_tasks()
-                break
-            try:
-                self._persist_state_checkpoint()
-                self.task_executor.run_layer(ready_tasks, self._execute_task)
+            if not ready_tasks: self._handle_no_ready_tasks(); break
+            try: self._persist_state_checkpoint(); self.task_executor.run_layer(ready_tasks, self._execute_task)
             finally:
-                for task in ready_tasks:
-                    self._resource_execution.finish(task.id)
-        print("\n" + "=" * 60)
-        print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED")
-        print("=" * 60)
-
+                for task in ready_tasks: self._resource_execution.finish(task.id)
+        print("\n" + "=" * 60); print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED"); print("=" * 60)
     def _get_executable_tasks(self):
         scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
         while True:
             blocked_decisions = scheduler.get_blocked_decisions()
-            if not blocked_decisions:
-                break
-            for decision in blocked_decisions:
-                self.task_manager.mark_blocked(decision.task_id, decision.reason or "Blocked by dependencies")
+            if not blocked_decisions: break
+            for decision in blocked_decisions: self.task_manager.mark_blocked(decision.task_id, decision.reason or "Blocked by dependencies")
             scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
         scheduled_tasks = scheduler.get_ready_tasks()
         for task in scheduled_tasks:
-            if task.status == "pending":
-                self.task_manager.mark_ready(task.id)
+            if task.status == "pending": self.task_manager.mark_ready(task.id)
         already_ready = [task for task in self.task_manager.get_all_tasks() if task.status == "ready"]
         candidates, seen = [], set()
         for task in [*scheduled_tasks, *already_ready]:
-            if task.id not in seen:
-                candidates.append(task)
-                seen.add(task.id)
+            if task.id not in seen: candidates.append(task); seen.add(task.id)
         executable = []
         for task in candidates:
-            lifecycle = self._resource_execution.admit(task)
-            if lifecycle is not None:
-                executable.append(task)
+            if self._resource_execution.admit(task) is not None: executable.append(task)
         return executable
-
     def _select_developer(self, task) -> object:
         selector = getattr(self.agent_router, "get_developer_for_task", None)
-        if callable(selector):
-            return selector(task.id)
+        if callable(selector): return selector(task.id)
         agent = self.agent_router.get_agent("developer")
-        if agent is None:
-            raise ValueError("No developer agent is registered")
+        if agent is None: raise ValueError("No developer agent is registered")
         return agent
-
     @staticmethod
     def _developer_identity(agent) -> dict[str, Any]:
-        config = getattr(agent, "config", None)
-        developer_id = None
-        model = None
+        config = getattr(agent, "config", None); developer_id = None; model = None
         if config is not None:
             extra = getattr(config, "extra", {})
-            if isinstance(extra, dict):
-                developer_id = extra.get("developer_id")
+            if isinstance(extra, dict): developer_id = extra.get("developer_id")
             model = getattr(config, "model", None)
         return {"developer_id": developer_id, "model": model}
-
     def execute_task(self, task_id: str, *, execution_id: str | None = None):
         """Execute one ready task through the canonical host-owned runtime."""
-        if not isinstance(task_id, str) or not task_id.strip():
-            raise ValueError("task_id must be a non-empty string")
+        if not isinstance(task_id, str) or not task_id.strip(): raise ValueError("task_id must be a non-empty string")
         task = self.task_manager.ensure_executable(task_id.strip())
-        if task.status != "ready":
-            raise RuntimeError(f"Task {task.id} is already active with status {task.status}")
+        if task.status != "ready": raise RuntimeError(f"Task {task.id} is already active with status {task.status}")
         normalized_execution_id = execution_id.strip() if isinstance(execution_id, str) and execution_id.strip() else str(uuid4())
         self._execute_task(task, execution_id=normalized_execution_id)
         return self.task_manager.get_task(task.id)
-
     def _execute_task(self, task, *, execution_id: str | None = None) -> None:
-        print("\n" + "-" * 60)
-        print(f"{task.id} | {task.role} | {task.title}")
-        print("-" * 60)
+        print("\n" + "-" * 60); print(f"{task.id} | {task.role} | {task.title}"); print("-" * 60)
         active_execution_id = execution_id or str(uuid4())
         try:
-            context = build_task_context(task, self.task_manager.tasks)
-            task.context["dependencies"] = context
-            task.context["execution_id"] = active_execution_id
+            context = build_task_context(task, self.task_manager.tasks); task.context["dependencies"] = context; task.context["execution_id"] = active_execution_id
             if task.status == "ready":
-                self.task_manager.mark_running(task.id)
-                self._emit_event("task_started", task, payload={"status": task.status, "execution_id": active_execution_id})
-                self._persist_state_checkpoint()
+                self.task_manager.mark_running(task.id); self._emit_event("task_started", task, payload={"status": task.status, "execution_id": active_execution_id}); self._persist_state_checkpoint()
             if task.role == "developer":
-                developer = self._select_developer(task)
-                identity = self._developer_identity(developer)
-                task.context["developer_assignment"] = identity
+                developer = self._select_developer(task); identity = self._developer_identity(developer); task.context["developer_assignment"] = identity
                 self._emit_event("developer_assigned", task, payload=identity | {"execution_id": active_execution_id})
-                workflow = create_task_workflow(
-                    task_manager=self.task_manager,
-                    agent_router=self.agent_router,
-                    state_change_hook=self._persist_state_checkpoint,
-                    workflow_event_log=self._workflow_event_sink,
-                    project_id=self._project_id,
-                    developer=developer,
-                )
-                workflow.execute(task.id)
+                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer); workflow.execute(task.id)
             else:
-                agent = self.agent_router.get_agent(task.role)
-                result = agent.run(task)
-                self.task_manager.mark_completed(task.id, result)
-                self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
-            if task.role != "developer":
-                self._persist_state_checkpoint()
+                agent = self.agent_router.get_agent(task.role); result = agent.run(task); self.task_manager.mark_completed(task.id, result); self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
+            if task.role != "developer": self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
-        except _CheckpointFailure:
-            raise
+        except _CheckpointFailure: raise
         except Exception as exc:
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
-                if task.status != "failed":
-                    self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
+                if task.status != "failed": self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
                 self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error, "execution_id": active_execution_id})
-            self._apply_retry_policy(task, exc)
-            self._persist_state_checkpoint()
-            print(f"[Failed] {task.id}: {exc}")
-        finally:
-            self._resource_execution.finish(task.id)
-
+            self._apply_retry_policy(task, exc); self._persist_state_checkpoint(); print(f"[Failed] {task.id}: {exc}")
+        finally: self._resource_execution.finish(task.id)
     def _apply_retry_policy(self, task, error: BaseException) -> bool:
-        if task.status != "failed":
-            return False
-        failure_class = self._classify_recovery_failure(error)
-        reason = f"{type(error).__name__}: {error}"
-        classification = classify_failure(failure_class=failure_class, reason=reason)
+        if task.status != "failed": return False
+        failure_class = self._classify_recovery_failure(error); reason = f"{type(error).__name__}: {error}"; classification = classify_failure(failure_class=failure_class, reason=reason)
         decision = decide_recovery(classification, retry_attempt=task.retry_attempt, max_retries=task.max_retries)
         if decision.action is RecoveryAction.RETRY:
             self.failure_recovery_executor.execute(task.id, decision)
-            self._emit_event("task_retrying", task, payload={
-                "status": task.status, "retry_attempt": task.retry_attempt,
-                "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason,
-                "execution_id": task.context.get("execution_id"),
-            })
+            self._emit_event("task_retrying", task, payload={"status": task.status, "retry_attempt": task.retry_attempt, "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason})
             return True
         if decision.action is RecoveryAction.REPLAN:
-            if self._replan_coordinator is None:
-                return False
-            intent = RecoveryIntent(action=decision.action, task_id=task.id,
-                                    failure_class=decision.failure_class,
-                                    failure_reason=decision.failure_reason or reason,
-                                    decision_reason=decision.reason, attempt=decision.retry_attempt)
-            requirement = f"{task.description}\n\nRecovery reason: {reason}"
-            outcome = self._replan_coordinator.prepare(intent, requirement)
-            self._replan_coordinator.commit(outcome)
-            live_task = self.task_manager.get_task(task.id)
-            self._emit_event("task_replanned", live_task, payload={
-                "status": live_task.status, "attempt": outcome.result.attempt,
-                "task_count": len(outcome.replacement.tasks),
-                "execution_id": live_task.context.get("execution_id"),
-            })
+            if self._replan_coordinator is None: return False
+            intent = RecoveryIntent(action=decision.action, task_id=task.id, failure_class=decision.failure_class, failure_reason=decision.failure_reason or reason, decision_reason=decision.reason, attempt=decision.retry_attempt)
+            requirement = f"{task.description}\n\nRecovery reason: {reason}"; outcome = self._replan_coordinator.prepare(intent, requirement); self._replan_coordinator.commit(outcome); live_task = self.task_manager.get_task(task.id)
+            self._emit_event("task_replanned", live_task, payload={"status": live_task.status, "attempt": outcome.result.attempt, "task_count": len(outcome.replacement.tasks)})
             return True
         return False
-
     def _handle_no_ready_tasks(self) -> None:
-        print("\n[ERROR] 没有可以执行的任务。\n")
-        print("当前任务状态：")
+        print("\n[ERROR] 没有可以执行的任务。\n"); print("当前任务状态：")
         for task in self.task_manager.get_all_tasks():
-            error = f" | {task.error}" if task.error else ""
-            print(f"{task.id:<10}{task.status:<14}{task.role:<12}{task.title}{error}")
+            error = f" | {task.error}" if task.error else ""; print(f"{task.id:<10}{task.status:<14}{task.role:<12}{task.title}{error}")
