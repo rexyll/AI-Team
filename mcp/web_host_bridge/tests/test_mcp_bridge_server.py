@@ -14,7 +14,7 @@ async def test_server_lists_phase_7_tools_when_terminal_enabled(tmp_path):
     async with Client(server, raise_exceptions=True) as client:
         result = await client.list_tools()
         names = {tool.name for tool in result.tools}
-    assert names == {"bridge_health", "bridge_readiness", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute", "terminal_execution_status", "terminal_execution_history"}
+    assert names == {"bridge_health", "bridge_readiness", "workspace_validate_path", "workspace_list_files", "workspace_read_file", "workspace_stat_path", "workspace_search_text", "workspace_write_file", "workspace_delete_file", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_rev_parse", "git_add", "git_commit", "terminal_execute", "terminal_execution_status", "terminal_execution_history"}
 
 
 @pytest.mark.anyio
@@ -126,6 +126,23 @@ async def test_search_text_returns_bounded_relative_matches(tmp_path):
         result = await client.call_tool("workspace_search_text", {"query": "target", "path": "src"})
     assert result.is_error is False
     assert result.structured_content == {"result": [{"path": "src/example.py", "line": 2, "text": "TARGET = 42"}]}
+
+
+@pytest.mark.anyio
+async def test_stat_path_returns_bounded_metadata_without_absolute_paths(tmp_path):
+    source = tmp_path / "module.py"
+    source.write_bytes(b"x = 1\n")
+    server = create_server(MCPBridgeConfig(workspace_root=tmp_path))
+    async with Client(server, raise_exceptions=True) as client:
+        result = await client.call_tool("workspace_stat_path", {"path": "module.py"})
+        missing = await client.call_tool("workspace_stat_path", {"path": "missing.txt"})
+    assert result.is_error is False
+    payload = result.structured_content
+    assert payload["path"] == "module.py"
+    assert payload["kind"] == "file"
+    assert payload["size"] == 6
+    assert str(tmp_path.resolve()) not in str(payload)
+    assert missing.is_error is True
 
 
 @pytest.mark.anyio

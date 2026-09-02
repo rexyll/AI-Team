@@ -26,6 +26,7 @@ async def test_production_profile_exposes_only_read_capabilities(tmp_path):
         "workspace_validate_path",
         "workspace_list_files",
         "workspace_read_file",
+        "workspace_stat_path",
         "workspace_search_text",
         "git_status",
         "git_diff",

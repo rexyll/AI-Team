@@ -177,6 +177,11 @@ def create_server(
     def workspace_read_file(path: str, max_bytes: int = 512 * 1024) -> str:
         return boundary.read_file(path, max_bytes=max_bytes)
 
+    @server.tool(name="workspace_stat_path", title="Stat AI-Team Workspace Path", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("workspace_stat_path")
+    def workspace_stat_path(path: str = ".") -> dict[str, object]:
+        return boundary.stat_path(path)
+
     @server.tool(name="workspace_search_text", title="Search AI-Team Workspace Text", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     @tracked_tool("workspace_search_text")
     def workspace_search_text(query: str, path: str = ".", max_results: int = 100, case_sensitive: bool = False) -> list[dict[str, object]]:

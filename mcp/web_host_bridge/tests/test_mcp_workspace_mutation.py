@@ -23,6 +23,7 @@ async def test_server_lists_phase_5_mutation_and_git_tools(tmp_path):
         "workspace_validate_path",
         "workspace_list_files",
         "workspace_read_file",
+        "workspace_stat_path",
         "workspace_search_text",
         "workspace_write_file",
         "workspace_delete_file",

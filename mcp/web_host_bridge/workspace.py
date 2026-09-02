@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from security.workspace import WorkspaceSandbox
@@ -95,6 +96,19 @@ class MCPWorkspaceBoundary:
         if resolved.absolute_path.stat().st_size > max_bytes:
             raise ValueError(f"File exceeds max_bytes: {resolved.relative_path}")
         return resolved.absolute_path.read_text(encoding="utf-8", errors="replace")
+
+    def stat_path(self, path: str = ".") -> dict[str, object]:
+        """Return bounded metadata for one authorized workspace path."""
+        resolved = self.resolve(path, require_exists=True)
+        stat = resolved.absolute_path.stat()
+        return {
+            "path": resolved.relative_path,
+            "kind": resolved.kind,
+            "size": stat.st_size if resolved.kind == "file" else 0,
+            "modified_at": datetime.fromtimestamp(
+                stat.st_mtime, tz=timezone.utc
+            ).isoformat(),
+        }
 
     def search_text(
         self,

@@ -82,3 +82,38 @@ def test_symlink_escape_is_rejected_when_supported(tmp_path):
     boundary = MCPWorkspaceBoundary(tmp_path)
     with pytest.raises(PermissionError):
         boundary.resolve("escape-link")
+
+
+def test_stat_path_reports_bounded_file_metadata(tmp_path):
+    source = tmp_path / "module.py"
+    source.write_bytes(b"x = 1\n")
+
+    boundary = MCPWorkspaceBoundary(tmp_path)
+    result = boundary.stat_path("module.py")
+
+    assert result["path"] == "module.py"
+    assert result["kind"] == "file"
+    assert result["size"] == 6
+    assert isinstance(result["modified_at"], str)
+    assert str(tmp_path.resolve()) not in str(result)
+
+
+def test_stat_path_reports_directories_without_file_size(tmp_path):
+    directory = tmp_path / "runtime"
+    directory.mkdir()
+
+    boundary = MCPWorkspaceBoundary(tmp_path)
+    result = boundary.stat_path("runtime")
+
+    assert result["path"] == "runtime"
+    assert result["kind"] == "directory"
+    assert result["size"] == 0
+
+
+def test_stat_path_requires_an_existing_authorized_path(tmp_path):
+    boundary = MCPWorkspaceBoundary(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        boundary.stat_path("missing/file.txt")
+    with pytest.raises(PermissionError):
+        boundary.stat_path("../outside.txt")
