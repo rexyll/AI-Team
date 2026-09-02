@@ -67,25 +67,17 @@ class HostGitOperationService:
         self._require_repository(workspace)
 
         if request.operation == "status":
-            return git_tool.git_command("status --short", str(workspace))
+            return self._git("status --short", workspace)
         if request.operation == "diff":
-            return git_tool.git_command(
-                "diff --cached" if request.staged else "diff", str(workspace)
-            )
+            return self._git("diff --cached" if request.staged else "diff", workspace)
         if request.operation == "log":
-            return git_tool.git_command(
-                f"log --max-count={request.max_count}", str(workspace)
-            )
+            return self._git(f"log --max-count={request.max_count}", workspace)
         if request.operation == "show":
-            return git_tool.git_command(
-                f"show {self._revision(request.revision)}", str(workspace)
-            )
+            return self._git(f"show {self._revision(request.revision)}", workspace)
         if request.operation == "branch":
-            return git_tool.git_command("branch --list", str(workspace))
+            return self._git("branch --list", workspace)
         if request.operation == "rev-parse":
-            return git_tool.git_command(
-                f"rev-parse {self._revision(request.revision)}", str(workspace)
-            )
+            return self._git(f"rev-parse {self._revision(request.revision)}", workspace)
         if request.operation == "add":
             return self._add(request, workspace)
         if request.operation == "commit":
@@ -116,8 +108,11 @@ class HostGitOperationService:
     def commit(self, workspace: str, message: str) -> str:
         return self.execute(GitOperationRequest("commit", workspace, message=message))
 
+    def _git(self, command: str, workspace: Path) -> str:
+        return git_tool.git_command(command, str(workspace), sandbox=self._sandbox)
+
     def _require_repository(self, workspace: Path) -> None:
-        result = git_tool.git_command("rev-parse --show-toplevel", str(workspace))
+        result = self._git("rev-parse --show-toplevel", workspace)
         if not result.startswith("exit_code=0\n"):
             raise ValueError("workspace is not a Git repository")
         lines = result.splitlines()
@@ -145,7 +140,7 @@ class HostGitOperationService:
                 raise PermissionError("Git path is outside the authorized workspace") from exc
             safe_paths.append(str(relative))
         quoted = " ".join(self._quote(path) for path in safe_paths)
-        return git_tool.git_command(f"add {quoted}", str(workspace))
+        return self._git(f"add {quoted}", workspace)
 
     def _commit(self, request: GitOperationRequest, workspace: Path) -> str:
         message = request.message.strip()
@@ -153,7 +148,7 @@ class HostGitOperationService:
             raise ValueError("commit message must be non-empty")
         if "\n" in message or "\r" in message:
             raise ValueError("commit message must be single-line")
-        return git_tool.git_command(f"commit -m {self._quote(message)}", str(workspace))
+        return self._git(f"commit -m {self._quote(message)}", workspace)
 
     @staticmethod
     def _revision(revision: str) -> str:
