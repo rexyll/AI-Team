@@ -9,6 +9,19 @@ from mcp_bridge.observability import MCPOperationTracker
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 
 
+def _extract_execution_id(value: Any) -> str | None:
+    if isinstance(value, dict):
+        execution_id = value.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            return execution_id
+
+        nested = value.get("result")
+        if nested is not value:
+            return _extract_execution_id(nested)
+
+    return None
+
+
 def register_orchestration_tools(
     server: Any,
     boundary: MCPOrchestrationBoundary,
@@ -29,31 +42,48 @@ def register_orchestration_tools(
 
     tracker = operation_tracker
 
-    def tracked(capability: str, func: Callable[..., Any]) -> Callable[..., Any]:
-        if tracker is None:
-            return func
+    def tracked(
+        capability: str,
+        func: Callable[..., Any] | None = None,
+    ) -> Callable[..., Any]:
+        if func is None:
+            return lambda actual_func: tracked(capability, actual_func)
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            record = tracker.start(
+            project_id = kwargs.get("project_id")
+            project_id = project_id if isinstance(project_id, str) else None
+
+            record = operation_tracker.start(
                 capability,
                 policy_profile=policy_profile,
                 policy_allowed=True,
-                project_id=kwargs.get("project_id") if isinstance(kwargs.get("project_id"), str) else None,
+                project_id=project_id,
             )
+
             try:
                 result = func(*args, **kwargs)
-                execution_id = result.get("execution_id") if isinstance(result, dict) else None
-                tracker.finish(record.operation_id, outcome="success", execution_id=execution_id)
+
+                execution_id = _extract_execution_id(result)
+
+                operation_tracker.finish(
+                    record.operation_id,
+                    outcome="success",
+                    execution_id=execution_id,
+                )
+
                 return result
+
             except Exception as exc:
                 normalized = normalize_error(exc)
-                tracker.finish(
+
+                operation_tracker.finish(
                     record.operation_id,
                     outcome="error",
                     error_type=normalized["category"],
                     metadata={"error_type": normalized["type"]},
                 )
+
                 raise
 
         return wrapper

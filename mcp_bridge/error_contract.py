@@ -23,6 +23,8 @@ def normalize_error(exc: BaseException) -> dict[str, Any]:
             category = _ERROR_CATEGORIES["execution"]
         elif isinstance(exc, (ValueError, TypeError)):
             category = _ERROR_CATEGORIES["request"]
+        elif isinstance(exc, FileNotFoundError):
+            category = _ERROR_CATEGORIES["not_found"]
         else:
             category = "bridge_error"
     return {

@@ -58,45 +58,48 @@ def create_server(
     _configure_logging(effective_config.log_level)
     tracker = operation_tracker or MCPOperationTracker()
 
-    def tracked_tool(capability: str, func: Callable[..., Any]) -> Callable[..., Any]:
-        """Add correlation/metrics without changing the public tool result contract."""
+    def tracked_tool(
+        capability: str,
+        func: Callable[..., Any] | None = None,
+    ) -> Callable[..., Any]:
+        if func is None:
+            return lambda actual_func: tracked_tool(capability, actual_func)
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             project_id = kwargs.get("project_id")
             project_id = project_id if isinstance(project_id, str) else None
+
             record = tracker.start(
                 capability,
                 policy_profile=policy.profile,
                 policy_allowed=True,
                 project_id=project_id,
             )
+
             try:
                 result = func(*args, **kwargs)
+
                 execution_id = _extract_execution_id(result)
-                tracker.finish(record.operation_id, outcome="success", execution_id=execution_id)
-                LOGGER.info(
-                    "mcp operation_id=%s request_id=%s capability=%s outcome=success duration_ms=%.3f",
+
+                tracker.finish(
                     record.operation_id,
-                    record.request_id,
-                    capability,
-                    tracker.get(record.operation_id).duration_ms or 0.0,
+                    outcome="success",
+                    execution_id=execution_id,
                 )
+
                 return result
+
             except Exception as exc:
                 normalized = normalize_error(exc)
+
                 tracker.finish(
                     record.operation_id,
                     outcome="error",
                     error_type=normalized["category"],
                     metadata={"error_type": normalized["type"]},
                 )
-                LOGGER.warning(
-                    "mcp operation_id=%s request_id=%s capability=%s outcome=error error_type=%s",
-                    record.operation_id,
-                    record.request_id,
-                    capability,
-                    normalized["category"],
-                )
+
                 raise
 
         return wrapper
