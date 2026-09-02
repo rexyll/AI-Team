@@ -54,6 +54,9 @@ def create_server(
         raise RuntimeError("MCP SDK is not installed. Run: python -m pip install -r requirements-mcp.txt") from exc
 
     effective_config = config or MCPBridgeConfig.from_env()
+    if effective_config.transport.transport != "stdio":
+        raise ValueError(f"unsupported MCP transport: {effective_config.transport.transport}")
+
     policy = effective_config.policy
     _configure_logging(effective_config.log_level)
     tracker = operation_tracker or MCPOperationTracker()
@@ -79,27 +82,17 @@ def create_server(
 
             try:
                 result = func(*args, **kwargs)
-
                 execution_id = _extract_execution_id(result)
-
-                tracker.finish(
-                    record.operation_id,
-                    outcome="success",
-                    execution_id=execution_id,
-                )
-
+                tracker.finish(record.operation_id, outcome="success", execution_id=execution_id)
                 return result
-
             except Exception as exc:
                 normalized = normalize_error(exc)
-
                 tracker.finish(
                     record.operation_id,
                     outcome="error",
                     error_type=normalized["category"],
                     metadata={"error_type": normalized["type"]},
                 )
-
                 raise
 
         return wrapper
@@ -121,7 +114,7 @@ def create_server(
     server = MCPServer("AI-Team Local MCP Bridge", instructions=(
         "Local bridge for the authorized AI-Team workspace. Phase 7 exposes bounded workspace, mutation, "
         "allow-listed Git, optional host-owned task/agent/workflow, and optional controlled terminal capabilities. "
-        "Network, and direct Git metadata access remain disabled."
+        "Network, and direct Git metadata access remain disabled. Transport is stdio only."
     ))
 
     @server.tool(name="bridge_health", title="AI-Team MCP Bridge Health", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
@@ -141,6 +134,7 @@ def create_server(
             "phase": "7-controlled-terminal-boundary",
             "workspace_configured": True,
             "policy_profile": policy.profile,
+            "transport": effective_config.transport.transport,
             "read_enabled": True,
             "write_enabled": policy.workspace_write,
             "terminal_enabled": terminal_boundary is not None,
@@ -257,7 +251,7 @@ def create_server(
 
 
 def main() -> None:
-    create_server(MCPBridgeConfig.from_env()).run()
+    create_server(MCPBridgeConfig.from_env(standalone=True)).run()
 
 
 if __name__ == "__main__":
