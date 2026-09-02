@@ -35,18 +35,18 @@ class MCPOperationRecord:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "request_id": self.request_id,
-            "operation_id": self.operation_id,
-            "capability": self.capability,
-            "policy_profile": self.policy_profile,
+            "request_id": redact_secrets(self.request_id),
+            "operation_id": redact_secrets(self.operation_id),
+            "capability": redact_secrets(self.capability),
+            "policy_profile": redact_secrets(self.policy_profile),
             "policy_allowed": self.policy_allowed,
             "started_at": self.started_at,
-            "project_id": self.project_id,
-            "execution_id": self.execution_id,
+            "project_id": redact_secrets(self.project_id),
+            "execution_id": redact_secrets(self.execution_id),
             "finished_at": self.finished_at,
             "duration_ms": self.duration_ms,
-            "outcome": self.outcome,
-            "error_type": self.error_type,
+            "outcome": redact_secrets(self.outcome),
+            "error_type": redact_secrets(self.error_type),
             "metadata": redact_secrets(self.metadata),
         }
 
@@ -86,7 +86,7 @@ class MCPOperationTracker:
             started_at=_utc_now(),
             project_id=project_id,
             execution_id=execution_id,
-            metadata=dict(metadata or {}),
+            metadata=redact_secrets(dict(metadata or {})),
         )
         with self._lock:
             self._records[record.operation_id] = record
