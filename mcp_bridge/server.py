@@ -144,6 +144,23 @@ def create_server(
             "orchestration": capabilities,
         }
 
+    @server.tool(name="bridge_readiness", title="AI-Team MCP Bridge Readiness", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+    @tracked_tool("bridge_readiness")
+    def bridge_readiness() -> dict[str, object]:
+        checks = {
+            "workspace": effective_config.workspace_root.is_dir(),
+            "policy": policy.profile in {"readonly", "developer", "production"},
+            "transport": effective_config.transport.transport == "stdio",
+        }
+        ready = all(checks.values())
+        return {
+            "status": "ready" if ready else "not_ready",
+            "ready": ready,
+            "checks": checks,
+            "policy_profile": policy.profile,
+            "transport": effective_config.transport.transport,
+        }
+
     @server.tool(name="workspace_validate_path", title="Validate AI-Team Workspace Path", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     @tracked_tool("workspace_validate_path")
     def workspace_validate_path(path: str = ".", expected_kind: str | None = None) -> dict[str, object]:
