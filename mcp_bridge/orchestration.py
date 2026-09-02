@@ -97,7 +97,8 @@ class MCPOrchestrationBoundary:
         return [{"role": role, "registered": agents[role] is not None} for role in sorted(agents)]
 
     def workflow_capabilities(self) -> dict[str, bool]:
-        return {"task_read": True, "agent_read": self._agent_router is not None, "workflow_execute": self._workflow_factory is not None, "workflow_cancel": False, "execution_observability": self._workflow_event_log is not None and bool(self._project_id)}
+        observable = self._workflow_event_log is not None and bool(self._project_id)
+        return {"task_read": True, "agent_read": self._agent_router is not None, "workflow_execute": self._workflow_factory is not None, "workflow_cancel": False, "execution_observability": observable, "execution_status": observable, "execution_idempotency": observable}
 
     def _mcp_events(self) -> list[WorkflowEvent]:
         if self._workflow_event_log is None or not self._project_id:
