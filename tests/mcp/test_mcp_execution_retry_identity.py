@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
 from agents.mock_agents import MockAgent
 from core.orchestrator import Orchestrator
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
@@ -101,3 +104,89 @@ def test_mcp_boundary_marks_returned_failed_task_as_failed_execution() -> None:
     status = boundary.execution_status(result["execution_id"])
     assert status["status"] == "failed"
     assert status["error_type"] == "TaskExecutionFailed"
+
+
+def test_mcp_same_idempotency_key_concurrent_calls_execute_once() -> None:
+    manager = TaskManager([Task(id="TASK-CONCURRENT", title="Concurrent", description="same key", role="developer")])
+    manager.mark_ready("TASK-CONCURRENT")
+    event_log = WorkflowEventLog()
+    started = Event()
+    release = Event()
+    calls: list[str] = []
+
+    class Workflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            calls.append(execution_id)
+            started.set()
+            assert release.wait(timeout=5)
+            task = manager.get_task(task_id)
+            manager.mark_running(task_id)
+            manager.mark_completed(task_id, MockAgent("developer").run(task))
+            return manager.get_task(task_id)
+
+    boundary = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _task_id: Workflow(),
+        workflow_event_log=event_log,
+        project_id="PROJECT-CONCURRENT",
+    )
+
+    def invoke():
+        return boundary.execute_task("TASK-CONCURRENT", idempotency_key="idem-concurrent")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(invoke)
+        assert started.wait(timeout=5)
+        second_future = pool.submit(invoke)
+        release.set()
+        first = first_future.result(timeout=5)
+        second = second_future.result(timeout=5)
+
+    assert first["execution_id"] == second["execution_id"]
+    assert len(calls) == 1
+    requested = [
+        event
+        for event in event_log.list_for_task("TASK-CONCURRENT")
+        if event.event_type == "mcp_task_execution_requested"
+    ]
+    assert len(requested) == 1
+
+
+def test_mcp_different_idempotency_keys_for_same_task_are_rejected_while_active() -> None:
+    manager = TaskManager([Task(id="TASK-CONFLICT", title="Conflict", description="different keys", role="developer")])
+    manager.mark_ready("TASK-CONFLICT")
+    event_log = WorkflowEventLog()
+    started = Event()
+    release = Event()
+
+    class Workflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            started.set()
+            assert release.wait(timeout=5)
+            task = manager.get_task(task_id)
+            manager.mark_running(task_id)
+            manager.mark_completed(task_id, MockAgent("developer").run(task))
+            return manager.get_task(task_id)
+
+    boundary = MCPOrchestrationBoundary(
+        manager,
+        workflow_factory=lambda _task_id: Workflow(),
+        workflow_event_log=event_log,
+        project_id="PROJECT-CONFLICT",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(boundary.execute_task, "TASK-CONFLICT", idempotency_key="idem-a")
+        assert started.wait(timeout=5)
+        second_future = pool.submit(boundary.execute_task, "TASK-CONFLICT", idempotency_key="idem-b")
+        try:
+            second_future.result(timeout=5)
+            raise AssertionError("different idempotency keys must not share an active task execution")
+        except RuntimeError as exc:
+            assert str(exc) == "Task TASK-CONFLICT is already being executed"
+        finally:
+            release.set()
+        first = first_future.result(timeout=5)
+
+    assert first["status"] == "completed"
+    assert first["execution_id"]
