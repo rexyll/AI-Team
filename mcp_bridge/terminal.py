@@ -30,8 +30,11 @@ class MCPTerminalResult:
     truncated: bool
     execution_id: str
 
-    def as_dict(self) -> dict[str, object]:
-        return {"command": self.command, "cwd": self.cwd, "output": self.output, "exit_code": self.exit_code, "timed_out": self.timed_out, "truncated": self.truncated, "execution_id": self.execution_id}
+    def as_dict(self, *, include_execution_id: bool = False) -> dict[str, object]:
+        result = {"command": self.command, "cwd": self.cwd, "output": self.output, "exit_code": self.exit_code, "timed_out": self.timed_out, "truncated": self.truncated}
+        if include_execution_id:
+            result["execution_id"] = self.execution_id
+        return result
 
 
 @dataclass(frozen=True)
@@ -151,10 +154,10 @@ class MCPTerminalCapabilityBoundary:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
         with self._executions_lock:
-            records = sorted(self._executions.values(), key=lambda item: item.started_at)
+            records = list(self._executions.values())
         return [record.as_dict() for record in records[-limit:]]
 
-    def execute(self, command: str, cwd: str = ".", *, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> dict[str, object]:
+    def execute(self, command: str, cwd: str = ".", *, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS, include_execution_id: bool = False) -> dict[str, object]:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command must be a non-empty string")
         self._validate_command_shape(command)
@@ -182,7 +185,7 @@ class MCPTerminalCapabilityBoundary:
             status = "completed" if exit_code == 0 else "failed"
             self._update(execution_id, status=status, completed_at=self._timestamp(), exit_code=exit_code, timed_out=timed_out, truncated=truncated)
             self._emit_event("mcp_terminal_execution_completed", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "exit_code": exit_code, "timed_out": timed_out, "truncated": truncated, "status": status})
-            return result.as_dict()
+            return result.as_dict(include_execution_id=include_execution_id)
         except Exception as exc:
             self._update(execution_id, status="failed", completed_at=self._timestamp(), error_type=type(exc).__name__)
             self._emit_event("mcp_terminal_execution_failed", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "error_type": type(exc).__name__, "status": "failed"})
