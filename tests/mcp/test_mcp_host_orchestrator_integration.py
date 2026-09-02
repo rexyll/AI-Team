@@ -50,7 +50,8 @@ async def test_mcp_executes_through_real_orchestrator_and_recovers_idempotency(t
             {"limit": 10},
         )
         task_execute_operation = next(
-            item for item in operation_history.structured_content["result"]
+            item
+            for item in operation_history.structured_content["result"]
             if item["capability"] == "task_execute"
         )
         operation = await client.call_tool(
@@ -65,8 +66,8 @@ async def test_mcp_executes_through_real_orchestrator_and_recovers_idempotency(t
     assert status.structured_content["status"] == "completed"
     assert task_execute_operation["outcome"] == "success"
     assert task_execute_operation["execution_id"] == execution_id
-    assert operation.structured_content["result"]["operation_id"] == task_execute_operation["operation_id"]
-    assert operation.structured_content["result"]["capability"] == "task_execute"
+    assert operation.structured_content["operation_id"] == task_execute_operation["operation_id"]
+    assert operation.structured_content["capability"] == "task_execute"
 
     events = [
         event
