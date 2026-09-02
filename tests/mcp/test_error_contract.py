@@ -43,4 +43,4 @@ def test_redaction_handles_bearer_and_authorization_without_double_redaction() -
     error = normalize_error(
         ValueError("Authorization: Bearer token-one authorization=Bearer token-two")
     )
-    assert error["message"] == "Authorization: Bearer [REDACTED] authorization=[REDACTED]"
+    assert error["message"] == "Authorization: [REDACTED] authorization=[REDACTED]"
