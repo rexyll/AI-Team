@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
@@ -78,6 +79,18 @@ class MCPOrchestrationBoundary:
     @staticmethod
     def _snapshot(task) -> MCPTaskSnapshot:
         return MCPTaskSnapshot(id=task.id, title=task.title, role=task.role, status=task.status, dependencies=tuple(task.dependencies), error=task.error, review_round=task.review_round, retry_attempt=task.retry_attempt, max_retries=task.max_retries, cancellation_requested=task.cancellation_requested)
+
+    @staticmethod
+    def _supports_execution_id(execute: Callable[..., Any]) -> bool | None:
+        """Return whether a callable accepts execution_id; None means signature is unavailable."""
+        try:
+            signature = inspect.signature(execute)
+        except (TypeError, ValueError):
+            return None
+        parameter = signature.parameters.get("execution_id")
+        if parameter is not None:
+            return parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        return any(item.kind == inspect.Parameter.VAR_KEYWORD for item in signature.parameters.values())
 
     def list_tasks(self) -> list[dict[str, Any]]:
         return [self._snapshot(task).as_dict() for task in self._task_manager.get_all_tasks()]
@@ -220,11 +233,10 @@ class MCPOrchestrationBoundary:
             execute = getattr(workflow, "execute", None)
             if not callable(execute):
                 raise TypeError("workflow factory must return an object exposing execute(task_id)")
-            try:
+            supports_execution_id = self._supports_execution_id(execute)
+            if supports_execution_id is True or supports_execution_id is None:
                 task = execute(normalized_id, execution_id=execution_id)
-            except TypeError as exc:
-                if "execution_id" not in str(exc):
-                    raise
+            else:
                 task = execute(normalized_id)
             snapshot = self._snapshot(task).as_dict()
             self._emit_execution_event("mcp_task_execution_completed", normalized_id, execution_id, payload={"status": snapshot["status"]})
