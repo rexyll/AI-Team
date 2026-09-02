@@ -12,6 +12,7 @@ from mcp_bridge.server import create_server
 
 READ_TOOLS = {
     "bridge_health",
+    "bridge_readiness",
     "workspace_validate_path",
     "workspace_list_files",
     "workspace_read_file",
