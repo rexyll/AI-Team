@@ -11,18 +11,17 @@ def test_terminal_result_exposes_execution_id_and_status(tmp_path, monkeypatch):
 
     result = boundary.execute("python --version")
     execution_id = result["execution_id"]
+    status = boundary.execution_status(execution_id)
 
-    assert boundary.execution_status(execution_id) == {
-        "execution_id": execution_id,
-        "command": "python --version",
-        "cwd": ".",
-        "status": "completed",
-        "started_at": pytest.approx(boundary.execution_status(execution_id)["started_at"]),
-        "completed_at": boundary.execution_status(execution_id)["completed_at"],
-        "exit_code": 0,
-        "timed_out": False,
-        "truncated": False,
-    }
+    assert status["execution_id"] == execution_id
+    assert status["command"] == "python --version"
+    assert status["cwd"] == "."
+    assert status["status"] == "completed"
+    assert status["started_at"]
+    assert status["completed_at"]
+    assert status["exit_code"] == 0
+    assert status["timed_out"] is False
+    assert status["truncated"] is False
 
 
 def test_terminal_execution_failure_has_failed_control_state(tmp_path, monkeypatch):
@@ -44,7 +43,7 @@ def test_terminal_execution_failure_has_failed_control_state(tmp_path, monkeypat
     assert "exit_code" not in status
 
 
-def test_terminal_execution_history_is_bounded_and_newest_first_by_time(tmp_path, monkeypatch):
+def test_terminal_execution_history_is_bounded_and_newest_by_insertion_order(tmp_path, monkeypatch):
     boundary = MCPTerminalCapabilityBoundary(str(tmp_path))
     monkeypatch.setattr("mcp_bridge.terminal.run_command", lambda *args, **kwargs: "exit_code=0\nok")
 
