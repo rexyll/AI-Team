@@ -1,3 +1,0 @@
-# MCP is kept separate from AI-Team's core requirements during Phase 0-2.
-# v2 is the current stable SDK line.
-mcp[cli]>=2,<3
