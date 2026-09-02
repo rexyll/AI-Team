@@ -243,7 +243,13 @@ def create_server(
             return {"result": terminal_boundary.execution_history(limit=limit)}
 
     if orchestration is not None:
-        register_orchestration_tools(server, orchestration, allow_execute=policy.workflow_execute)
+        register_orchestration_tools(
+            server,
+            orchestration,
+            allow_execute=policy.workflow_execute,
+            operation_tracker=tracker,
+            policy_profile=policy.profile,
+        )
     return server
 
 
