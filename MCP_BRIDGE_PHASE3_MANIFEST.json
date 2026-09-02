@@ -1,10 +1,12 @@
 {
-  "phase": "3-read-only-workspace",
+  "phase": "4-secure-workspace-mutation",
   "new_files_only": false,
   "existing_ai_team_files_modified": [
     "mcp_bridge/workspace.py",
     "mcp_bridge/server.py",
+    "mcp_bridge/workspace_mutation.py",
     "tests/mcp/test_mcp_bridge_server.py",
+    "tests/mcp/test_mcp_workspace_mutation.py",
     "docs/mcp/architecture.md"
   ],
   "tools": [
@@ -12,9 +14,14 @@
     "workspace_validate_path",
     "workspace_list_files",
     "workspace_read_file",
-    "workspace_search_text"
+    "workspace_search_text",
+    "workspace_write_file",
+    "workspace_delete_file"
   ],
-  "write_enabled": false,
+  "write_enabled": true,
   "terminal_enabled": false,
-  "git_write_enabled": false
+  "git_write_enabled": false,
+  "max_write_bytes": 8388608,
+  "overwrite_requires_explicit_flag": true,
+  "direct_git_metadata_access": false
 }
