@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 POLICY_PROFILE_ENV = "AI_TEAM_MCP_POLICY_PROFILE"
 DEFAULT_POLICY_PROFILE = "developer"
-VALID_POLICY_PROFILES = frozenset({"readonly", "developer"})
+VALID_POLICY_PROFILES = frozenset({"readonly", "developer", "production"})
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class MCPPolicy:
         if normalized not in VALID_POLICY_PROFILES:
             allowed = ", ".join(sorted(VALID_POLICY_PROFILES))
             raise ValueError(f"policy profile must be one of: {allowed}")
-        if normalized == "readonly":
+        if normalized in {"readonly", "production"}:
             return cls(
                 profile=normalized,
                 workspace_write=False,
