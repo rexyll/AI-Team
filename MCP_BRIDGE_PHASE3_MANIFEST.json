@@ -1,0 +1,20 @@
+{
+  "phase": "3-read-only-workspace",
+  "new_files_only": false,
+  "existing_ai_team_files_modified": [
+    "mcp_bridge/workspace.py",
+    "mcp_bridge/server.py",
+    "tests/mcp/test_mcp_bridge_server.py",
+    "docs/mcp/architecture.md"
+  ],
+  "tools": [
+    "bridge_health",
+    "workspace_validate_path",
+    "workspace_list_files",
+    "workspace_read_file",
+    "workspace_search_text"
+  ],
+  "write_enabled": false,
+  "terminal_enabled": false,
+  "git_write_enabled": false
+}
