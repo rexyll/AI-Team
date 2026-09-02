@@ -110,6 +110,7 @@ class TaskWorkflow:
         workflow_event_log: WorkflowEventLog | None = None,
         project_id: str | None = None,
         max_reviewer_recovery_attempts: int = MAX_REVIEWER_RECOVERY_ATTEMPTS,
+        execution_id: str | None = None,
     ):
         if max_review_rounds <= 0:
             raise ValueError("max_review_rounds must be greater than 0")
@@ -121,6 +122,8 @@ class TaskWorkflow:
             raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be a non-empty string or None")
+        if execution_id is not None and (not isinstance(execution_id, str) or not execution_id.strip()):
+            raise ValueError("execution_id must be a non-empty string or None")
 
         self.task_manager = task_manager
         self.agent_router = agent_router
@@ -132,6 +135,7 @@ class TaskWorkflow:
         self._developer = developer
         self._reviewer = reviewer
         self._tester = tester
+        self._execution_id = execution_id.strip() if isinstance(execution_id, str) else None
         self._last_checkpoint_status: str | None = None
 
         self._validate_explicit_agent("developer", developer)
@@ -202,10 +206,13 @@ class TaskWorkflow:
         project_id = self._project_id or task.context.get("project_id")
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id is required when workflow_event_log is enabled")
+        event_payload = dict(payload or {})
+        if self._execution_id is not None:
+            event_payload.setdefault("execution_id", self._execution_id)
         self._workflow_event_log.append(WorkflowEvent(
             event_id=str(uuid4()), event_type=event_type, project_id=project_id,
             task_id=task.id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            payload=payload or {},
+            payload=event_payload,
         ))
 
     def _capture_developer_tool_history(self, task: Task) -> None:
@@ -286,8 +293,18 @@ class TaskWorkflow:
             outcome = run_gate()
         return outcome
 
-    def execute(self, task_id: str) -> Task:
+    def execute(self, task_id: str, *, execution_id: str | None = None) -> Task:
+        if execution_id is not None:
+            if not isinstance(execution_id, str) or not execution_id.strip():
+                raise ValueError("execution_id must be a non-empty string or None")
+            normalized_execution_id = execution_id.strip()
+            if self._execution_id is not None and self._execution_id != normalized_execution_id:
+                raise ValueError("execution_id conflicts with workflow execution identity")
+            self._execution_id = normalized_execution_id
+        if self._execution_id is None:
+            self._execution_id = str(uuid4())
         task = self.task_manager.ensure_executable(task_id)
+        task.context["execution_id"] = self._execution_id
         last_gate_note = "unknown"
         for round_index in range(1, self.max_review_rounds + 1):
             if task.status == "ready":
