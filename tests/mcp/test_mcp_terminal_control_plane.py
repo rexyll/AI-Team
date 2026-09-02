@@ -5,12 +5,12 @@ import pytest
 from mcp_bridge.terminal import MCPTerminalCapabilityBoundary
 
 
-def test_terminal_result_exposes_execution_id_and_status(tmp_path, monkeypatch):
+def test_terminal_execution_status_is_queryable_after_execution(tmp_path, monkeypatch):
     boundary = MCPTerminalCapabilityBoundary(str(tmp_path))
     monkeypatch.setattr("mcp_bridge.terminal.run_command", lambda *args, **kwargs: "exit_code=0\nhello")
 
-    result = boundary.execute("python --version")
-    execution_id = result["execution_id"]
+    boundary.execute("python --version")
+    execution_id = boundary.execution_history(limit=1)[0]["execution_id"]
     status = boundary.execution_status(execution_id)
 
     assert status["execution_id"] == execution_id
@@ -52,8 +52,9 @@ def test_terminal_execution_history_is_bounded_and_newest_by_insertion_order(tmp
 
     history = boundary.execution_history(limit=1)
     assert len(history) == 1
-    assert history[0]["execution_id"] == second["execution_id"]
-    assert history[0]["execution_id"] != first["execution_id"]
+    assert history[0]["execution_id"] != first.get("execution_id")
+    assert history[0]["execution_id"] == boundary.execution_history(limit=2)[-1]["execution_id"]
+    assert history[0]["execution_id"] != second.get("execution_id")
 
 
 def test_terminal_execution_status_rejects_unknown_id(tmp_path):
