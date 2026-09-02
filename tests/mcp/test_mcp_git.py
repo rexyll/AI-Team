@@ -86,7 +86,7 @@ async def test_server_git_read_and_mutation_are_bounded(tmp_path):
     assert "change.txt" in status.structured_content["output"]
     assert add.is_error is False
     assert commit.is_error is False
-    assert "commit" in commit.structured_content["output"].lower()
+    assert "add change" in commit.structured_content["output"].lower()
 
 
 @pytest.mark.anyio
