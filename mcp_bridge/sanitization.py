@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 _REDACTED = "[REDACTED]"
+_REDACTION_SENTINEL = "\x00MCP_REDACTED\x00"
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
@@ -33,10 +34,12 @@ _SENSITIVE_ENV_KEY_RE = re.compile(
 def redact_secrets(value: Any) -> Any:
     """Return a recursively sanitized value safe for MCP telemetry/responses."""
     if isinstance(value, str):
+        # Protect placeholders produced by earlier patterns so a later pattern
+        # cannot redact the placeholder itself (e.g. authorization=Bearer ...).
         result = value
         for pattern in _SECRET_PATTERNS:
-            result = pattern.sub(lambda match: match.group(1) + _REDACTED, result)
-        return result
+            result = pattern.sub(lambda match: match.group(1) + _REDACTION_SENTINEL, result)
+        return result.replace(_REDACTION_SENTINEL, _REDACTED)
     if isinstance(value, Mapping):
         return {
             str(key): _REDACTED if _SENSITIVE_KEY_RE.search(str(key)) else redact_secrets(item)
