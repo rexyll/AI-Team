@@ -55,6 +55,8 @@ async def test_server_exposes_host_composed_orchestration_capabilities(tmp_path)
         "workflow_execute": True,
         "workflow_cancel": False,
         "execution_observability": True,
+        "execution_status": True,
+        "execution_idempotency": True,
     }
     assert task.structured_content["id"] == "TASK-001"
     assert task.structured_content["status"] == "completed"
