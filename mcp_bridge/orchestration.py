@@ -161,6 +161,8 @@ class MCPOrchestrationBoundary:
         normalized_key = idempotency_key.strip() if isinstance(idempotency_key, str) else idempotency_key
         if normalized_key is not None and not normalized_key:
             raise ValueError("idempotency_key must be a non-empty string or None")
+        if normalized_key is not None and (self._workflow_event_log is None or not self._project_id):
+            raise RuntimeError("idempotency requires execution observability")
         if normalized_key is not None:
             with self._idempotency_guard:
                 existing = self._idempotency.get(normalized_key)
@@ -168,10 +170,10 @@ class MCPOrchestrationBoundary:
                     existing_task_id, existing_execution_id = existing
                     if existing_task_id != normalized_id:
                         raise ValueError("idempotency_key is already bound to a different task")
-                    status = self.execution_status(existing_execution_id) if self._workflow_event_log is not None and self._project_id else None
-                    if status is not None and status["status"] == "completed":
+                    status = self.execution_status(existing_execution_id)
+                    if status["status"] == "completed":
                         return {**self._snapshot(self._task_manager.get_task(normalized_id)).as_dict(), "execution_id": existing_execution_id}
-                    if status is not None and status["status"] == "failed":
+                    if status["status"] == "failed":
                         raise RuntimeError(f"Idempotent execution {existing_execution_id} already failed")
                     raise RuntimeError(f"Idempotent execution {existing_execution_id} is already active")
         task = self._task_manager.ensure_executable(normalized_id)
