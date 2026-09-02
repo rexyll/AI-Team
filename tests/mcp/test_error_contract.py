@@ -37,3 +37,10 @@ def test_unknown_mcp_category_falls_back_to_bridge_error() -> None:
 def test_normalized_error_redacts_secrets() -> None:
     error = normalize_error(ValueError("authorization=Bearer super-secret-token"))
     assert error["message"] == "authorization=[REDACTED]"
+
+
+def test_redaction_handles_bearer_and_authorization_without_double_redaction() -> None:
+    error = normalize_error(
+        ValueError("Authorization: Bearer token-one authorization=Bearer token-two")
+    )
+    assert error["message"] == "Authorization: Bearer [REDACTED] authorization=[REDACTED]"
