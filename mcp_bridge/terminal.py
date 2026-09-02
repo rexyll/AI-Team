@@ -90,26 +90,17 @@ class MCPTerminalCapabilityBoundary:
         normalized_timeout = self._validate_timeout(timeout)
         output_limit = self._validate_output_limit(max_output_chars)
         resolved = self._sandbox.resolve(cwd or ".")
-        if not resolved.is_dir():
+        if resolved.kind != "directory":
             raise NotADirectoryError(f"Terminal cwd must be a directory: {resolved.relative_path}")
 
-        try:
-            raw = run_command(
-                command,
-                resolved.relative_path,
-                sandbox=self._sandbox,
-                timeout=normalized_timeout,
-            )
-            exit_code, output = self._parse_output(raw)
-            timed_out = exit_code == 124
-        except TimeoutError:
-            result = MCPTerminalResult(command, resolved.relative_path, "Command timed out", 124, True, False)
-            if self._audit_sink is not None:
-                self._audit_sink(result)
-            raise
-        except Exception:
-            raise
-
+        raw = run_command(
+            command,
+            resolved.relative_path,
+            sandbox=self._sandbox,
+            timeout=normalized_timeout,
+        )
+        exit_code, output = self._parse_output(raw)
+        timed_out = exit_code == 124
         truncated = len(output) > output_limit
         bounded_output = output[:output_limit]
         if truncated:
