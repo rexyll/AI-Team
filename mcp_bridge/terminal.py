@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
+from uuid import uuid4
 
+from runtime.workflow_event import WorkflowEvent
+from runtime.workflow_event_log import WorkflowEventLog
 from security.workspace import WorkspaceSandbox
 from tools.terminal import run_command
 
@@ -25,30 +29,31 @@ class MCPTerminalResult:
     truncated: bool
 
     def as_dict(self) -> dict[str, object]:
-        return {
-            "command": self.command,
-            "cwd": self.cwd,
-            "output": self.output,
-            "exit_code": self.exit_code,
-            "timed_out": self.timed_out,
-            "truncated": self.truncated,
-        }
+        return {"command": self.command, "cwd": self.cwd, "output": self.output, "exit_code": self.exit_code, "timed_out": self.timed_out, "truncated": self.truncated}
 
 
 TerminalAuditSink = Callable[[MCPTerminalResult], None]
 
 
 class MCPTerminalCapabilityBoundary:
-    """Expose only the existing allow-listed terminal policy through MCP."""
+    """Expose the existing allow-listed terminal policy through MCP.
 
-    def __init__(
-        self,
-        workspace_root: str,
-        *,
-        audit_sink: TerminalAuditSink | None = None,
-    ) -> None:
+    If a host WorkflowEventLog and project id are supplied, terminal lifecycle
+    facts are written to that canonical event log. The optional audit sink is
+    retained as a local observer and is not a second persistence mechanism.
+    """
+
+    def __init__(self, workspace_root: str, *, audit_sink: TerminalAuditSink | None = None, workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None) -> None:
+        if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
+            raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be a non-empty string or None")
+        if project_id and workflow_event_log is None:
+            raise ValueError("project_id requires workflow_event_log")
         self._sandbox = WorkspaceSandbox(workspace_root)
         self._audit_sink = audit_sink
+        self._workflow_event_log = workflow_event_log
+        self._project_id = project_id.strip() if isinstance(project_id, str) else project_id
 
     @staticmethod
     def _validate_timeout(timeout: float) -> float:
@@ -82,38 +87,45 @@ class MCPTerminalCapabilityBoundary:
             raise RuntimeError("terminal backend returned an invalid exit code") from exc
         return exit_code, remainder
 
-    def execute(
-        self,
-        command: str,
-        cwd: str = ".",
-        *,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
-    ) -> dict[str, object]:
+    @staticmethod
+    def _timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _emit_event(self, event_type: str, *, execution_id: str, cwd: str, payload: dict[str, object]) -> None:
+        if self._workflow_event_log is None or not self._project_id:
+            return
+        self._workflow_event_log.append(WorkflowEvent(
+            event_id=str(uuid4()), event_type=event_type, project_id=self._project_id,
+            occurred_at=self._timestamp(),
+            payload={"source": "mcp", "execution_id": execution_id, "cwd": cwd, **payload},
+        ))
+
+    def execute(self, command: str, cwd: str = ".", *, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> dict[str, object]:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command must be a non-empty string")
         self._validate_command_shape(command)
         normalized_timeout = self._validate_timeout(timeout)
         output_limit = self._validate_output_limit(max_output_chars)
         resolved = self._sandbox.resolve(cwd or ".")
+        relative_cwd = resolved.relative_to(self._sandbox.root).as_posix() or "."
         if not resolved.is_dir():
-            relative_cwd = resolved.relative_to(self._sandbox.root).as_posix() or "."
             raise NotADirectoryError(f"Terminal cwd must be a directory: {relative_cwd}")
 
-        relative_cwd = resolved.relative_to(self._sandbox.root).as_posix() or "."
-        raw = run_command(
-            command,
-            relative_cwd,
-            sandbox=self._sandbox,
-            timeout=normalized_timeout,
-        )
-        exit_code, output = self._parse_output(raw)
-        timed_out = exit_code == 124
-        truncated = len(output) > output_limit
-        bounded_output = output[:output_limit]
-        if truncated:
-            bounded_output += "\n[output truncated by MCP terminal boundary]"
-        result = MCPTerminalResult(command, relative_cwd, bounded_output, exit_code, timed_out, truncated)
-        if self._audit_sink is not None:
-            self._audit_sink(result)
-        return result.as_dict()
+        execution_id = str(uuid4())
+        self._emit_event("mcp_terminal_execution_requested", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "timeout": normalized_timeout, "max_output_chars": output_limit})
+        try:
+            raw = run_command(command, relative_cwd, sandbox=self._sandbox, timeout=normalized_timeout)
+            exit_code, output = self._parse_output(raw)
+            timed_out = exit_code == 124
+            truncated = len(output) > output_limit
+            bounded_output = output[:output_limit]
+            if truncated:
+                bounded_output += "\n[output truncated by MCP terminal boundary]"
+            result = MCPTerminalResult(command, relative_cwd, bounded_output, exit_code, timed_out, truncated)
+            if self._audit_sink is not None:
+                self._audit_sink(result)
+            self._emit_event("mcp_terminal_execution_completed", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "exit_code": exit_code, "timed_out": timed_out, "truncated": truncated, "status": "completed" if exit_code == 0 else "failed"})
+            return result.as_dict()
+        except Exception as exc:
+            self._emit_event("mcp_terminal_execution_failed", execution_id=execution_id, cwd=relative_cwd, payload={"command": command, "error_type": type(exc).__name__})
+            raise
