@@ -101,7 +101,7 @@ class Orchestrator:
             try: self._persist_state_checkpoint(); self.task_executor.run_layer(ready_tasks, self._execute_task)
             finally:
                 for task in ready_tasks: self._resource_execution.finish(task.id)
-        print("\n" + "=" * 60); print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED"); print("=" * 60)
+        print("\n" + "=" * 60); print("AI TEAM FINISHED" if self.task_manager.is_finished() else "AI TEAM STOPPED")
     def _get_executable_tasks(self):
         scheduler = DependencyScheduler(self.task_manager.get_all_tasks())
         while True:
@@ -135,7 +135,6 @@ class Orchestrator:
             model = getattr(config, "model", None)
         return {"developer_id": developer_id, "model": model}
     def execute_task(self, task_id: str, *, execution_id: str | None = None):
-        """Execute one ready task through the canonical host-owned runtime."""
         if not isinstance(task_id, str) or not task_id.strip(): raise ValueError("task_id must be a non-empty string")
         task = self.task_manager.ensure_executable(task_id.strip())
         if task.status != "ready": raise RuntimeError(f"Task {task.id} is already active with status {task.status}")
@@ -162,21 +161,26 @@ class Orchestrator:
             if task.status in {"running", "reviewing", "review_pending", "failed"}:
                 if task.status != "failed": self.task_manager.mark_failed(task.id, f"{type(exc).__name__}: {exc}")
                 self._emit_event("task_failed", task, payload={"status": task.status, "error": task.error, "execution_id": active_execution_id})
-            self._apply_retry_policy(task, exc); self._persist_state_checkpoint(); print(f"[Failed] {task.id}: {exc}")
+            self._apply_retry_policy(task, exc, execution_id=active_execution_id); self._persist_state_checkpoint(); print(f"[Failed] {task.id}: {exc}")
         finally: self._resource_execution.finish(task.id)
-    def _apply_retry_policy(self, task, error: BaseException) -> bool:
+    def _apply_retry_policy(self, task, error: BaseException, *, execution_id: str | None = None) -> bool:
         if task.status != "failed": return False
+        active_execution_id = execution_id or task.context.get("execution_id")
         failure_class = self._classify_recovery_failure(error); reason = f"{type(error).__name__}: {error}"; classification = classify_failure(failure_class=failure_class, reason=reason)
         decision = decide_recovery(classification, retry_attempt=task.retry_attempt, max_retries=task.max_retries)
         if decision.action is RecoveryAction.RETRY:
             self.failure_recovery_executor.execute(task.id, decision)
-            self._emit_event("task_retrying", task, payload={"status": task.status, "retry_attempt": task.retry_attempt, "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason})
+            payload = {"status": task.status, "retry_attempt": task.retry_attempt, "max_retries": task.max_retries, "reason": decision.failure_reason or decision.reason}
+            if isinstance(active_execution_id, str) and active_execution_id.strip(): payload["execution_id"] = active_execution_id
+            self._emit_event("task_retrying", task, payload=payload)
             return True
         if decision.action is RecoveryAction.REPLAN:
             if self._replan_coordinator is None: return False
             intent = RecoveryIntent(action=decision.action, task_id=task.id, failure_class=decision.failure_class, failure_reason=decision.failure_reason or reason, decision_reason=decision.reason, attempt=decision.retry_attempt)
             requirement = f"{task.description}\n\nRecovery reason: {reason}"; outcome = self._replan_coordinator.prepare(intent, requirement); self._replan_coordinator.commit(outcome); live_task = self.task_manager.get_task(task.id)
-            self._emit_event("task_replanned", live_task, payload={"status": live_task.status, "attempt": outcome.result.attempt, "task_count": len(outcome.replacement.tasks)})
+            payload = {"status": live_task.status, "attempt": outcome.result.attempt, "task_count": len(outcome.replacement.tasks)}
+            if isinstance(active_execution_id, str) and active_execution_id.strip(): payload["execution_id"] = active_execution_id
+            self._emit_event("task_replanned", live_task, payload=payload)
             return True
         return False
     def _handle_no_ready_tasks(self) -> None:
