@@ -78,89 +78,48 @@ Supported profiles are:
   Git writes, terminal execution, and workflow execution are disabled even if a
   host explicitly requests terminal access.
 
-The profile is configured with `AI_TEAM_MCP_POLICY_PROFILE` and defaults to
-`developer` for compatibility with existing development deployments. A
-production deployment should explicitly select `production` rather than rely
-on the compatibility default.
+The profile is configured with `AI_TEAM_MCP_POLICY_PROFILE`. The compatibility
+`create_server(config)` path still defaults to `developer`, but the standalone
+entrypoint uses `readonly` when no profile is explicitly configured. Therefore
+running the bridge directly cannot silently acquire mutation or execution
+privileges. A deployment that needs developer capabilities must explicitly set
+the policy profile to `developer`; production deployments should explicitly
+select `production`.
+
+## Startup and transport security
+
+The standalone bridge accepts only `stdio` transport. `AI_TEAM_MCP_TRANSPORT`
+is validated at startup and currently permits only the explicit value `stdio`.
+Unknown or future network transports fail configuration rather than being
+silently accepted. Adding HTTP, SSE, or another network transport requires a
+separate security-reviewed implementation and authentication/origin policy.
+
+Startup configuration is treated as the security boundary:
+
+- `AI_TEAM_WORKSPACE` is mandatory and must be an absolute existing directory;
+- the standalone default policy is `readonly`;
+- terminal remains disabled unless both the host requests it and policy allows
+  it (and the standalone entrypoint does not request it);
+- policy capabilities are used for registration rather than inferred from
+  command-line arguments or transport selection;
+- `bridge_health` reports the effective policy and actual transport/capability
+  state;
+- operational logs remain on stderr so MCP protocol traffic is not mixed with
+  diagnostics.
+
+This prevents startup configuration from creating a second privilege path
+around `MCPPolicy`.
 
 ```text
-policy profile
+standalone startup
       |
-      +--> workspace mutation registration
-      +--> Git write registration
-      +--> workflow execution registration
-      +--> terminal capability gate
+      +--> validated workspace
+      +--> validated stdio transport
+      +--> readonly default policy
       |
       v
-canonical domain boundary
+MCPPolicy --> actual registered tools --> bridge_health
 ```
-
-This is intentionally a capability exposure gate, not a replacement for the
-canonical security models. Workspace operations still cross
-`WorkspaceSandbox`, Git still uses `HostGitOperationService`, terminal still
-uses the allow-listed `tools.terminal` path, and orchestration remains owned by
-the host runtime.
-
-The terminal boundary does not expose a generic shell or subprocess API. It
-reuses the existing `tools.terminal` command policy and adds MCP-specific
-controls:
-
-- canonical `WorkspaceSandbox` containment for `cwd`;
-- the existing executable allowlist;
-- the existing shell-chaining, redirection, expansion, and code-evaluation
-  argument restrictions;
-- workspace-local `.venv\\Scripts` executable resolution;
-- a mandatory positive timeout bounded to 120 seconds;
-- a bounded response output of at most 512 KiB;
-- relative workspace paths only in returned metadata;
-- successful command results captured as structured exit code/output data;
-- successful and non-zero-exit results sent to an optional audit sink;
-- timeout exceptions are propagated rather than converted into a false success.
-
-### Terminal execution control plane
-
-Each accepted terminal execution is assigned an opaque `execution_id` and
-immediately enters the ephemeral `active` control state. The boundary exposes:
-
-- `terminal_execution_status(execution_id)` for point-in-time lifecycle state;
-- `terminal_execution_history(limit?)` for a bounded recent execution view;
-- `execution_id` in the MCP `terminal_execute` response so clients can correlate
-  the command with subsequent status queries;
-- `active`, `completed`, and `failed` lifecycle states;
-- `exit_code`, `timed_out`, and `truncated` only when execution reached the
-  corresponding completion path;
-- `error_type` for exceptions without fabricating an exit code.
-
-The control-plane registry is deliberately in-memory and bounded per query;
-it is **not** a second durable audit store. When `WorkflowEventLog` and
-`project_id` are configured, the canonical log remains the durable lifecycle
-record and carries the same execution ID. Concurrent terminal executions get
-independent IDs and state records.
-
-For compatibility, the low-level `MCPTerminalCapabilityBoundary.execute()`
-keeps its historical result shape by default. The MCP server requests the
-extended response containing `execution_id`; direct callers can opt into the
-same field with `include_execution_id=True`.
-
-The underlying terminal runner accepts an injected `WorkspaceSandbox` and a
-subprocess timeout. Existing callers retain the legacy behavior when those
-optional arguments are omitted, so this hardening does not change the existing
-DeveloperAgent terminal contract.
-
-Terminal capability deliberately does **not** provide:
-
-- arbitrary executables;
-- PowerShell code evaluation or encoded commands;
-- shell chaining, redirection, or environment expansion;
-- arbitrary host filesystem paths;
-- direct `.git` metadata access;
-- network APIs;
-- subprocess handles;
-- cancellation handles.
-
-Output is truncated only at the MCP boundary, with an explicit truncation
-marker. This keeps the MCP response bounded while retaining the exit code.
-Timeout and output limits are independently validated before command execution.
 
 ## MCP operation identity, observability, and errors
 
@@ -189,11 +148,12 @@ the existing exception/result behavior of the underlying MCP tools. This
 avoids creating a second incompatible error envelope at the protocol adapter
 layer.
 
-`create_server(..., operation_tracker=...)` accepts an optional tracker so a
-host or test can own the correlation sink. When omitted, the bridge creates a
-bounded tracker for the server instance. No global tracker is used.
-
 ## Public MCP surface
+
+The capability surface is policy-derived. Read tools remain available across
+profiles; mutation and execution tools are registered only when the effective
+policy allows them. `bridge_health` exposes the same effective policy and
+transport values used during registration.
 
 Workspace tools:
 
@@ -232,10 +192,8 @@ Terminal tools (only when `terminal=True` **and** policy allows terminal):
 - `terminal_execution_status(execution_id)`
 - `terminal_execution_history(limit?)`
 
-`bridge_health` reports the active policy profile and whether terminal
-execution is actually enabled. Terminal remains disabled by default in the
-standalone entrypoint, preventing an accidental privilege expansion for
-existing MCP deployments.
+`bridge_health` reports the active policy profile, transport, and whether
+terminal execution is actually enabled.
 
 ## Security and compatibility rules
 
