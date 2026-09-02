@@ -107,8 +107,16 @@ def create_server(config: MCPBridgeConfig | None = None, *, orchestration: MCPOr
         @server.tool(name="terminal_execute", title="Execute Controlled Development Command", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
         def terminal_execute(command: str, cwd: str = ".", timeout: float = 30.0, max_output_chars: int = 64 * 1024) -> dict[str, object]:
             result = terminal_boundary.execute(command, cwd, timeout=timeout, max_output_chars=max_output_chars)
-            LOGGER.info("terminal execution cwd=%s exit_code=%s timed_out=%s truncated=%s", result["cwd"], result["exit_code"], result["timed_out"], result["truncated"])
+            LOGGER.info("terminal execution id=%s cwd=%s exit_code=%s timed_out=%s truncated=%s", result["execution_id"], result["cwd"], result["exit_code"], result["timed_out"], result["truncated"])
             return result
+
+        @server.tool(name="terminal_execution_status", title="Terminal Execution Status", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        def terminal_execution_status(execution_id: str) -> dict[str, object]:
+            return terminal_boundary.execution_status(execution_id)
+
+        @server.tool(name="terminal_execution_history", title="Terminal Execution History", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        def terminal_execution_history(limit: int = 50) -> list[dict[str, object]]:
+            return terminal_boundary.execution_history(limit=limit)
 
     if orchestration is not None:
         register_orchestration_tools(server, orchestration)
