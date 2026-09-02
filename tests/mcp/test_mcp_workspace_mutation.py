@@ -19,6 +19,7 @@ async def test_server_lists_phase_5_mutation_and_git_tools(tmp_path):
 
     assert names == {
         "bridge_health",
+        "bridge_readiness",
         "workspace_validate_path",
         "workspace_list_files",
         "workspace_read_file",
