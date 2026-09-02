@@ -37,7 +37,7 @@ class MCPOrchestrationBoundary:
         if not isinstance(task_manager, TaskManager):
             raise TypeError("task_manager must be a TaskManager")
         if agent_router is not None and not hasattr(agent_router, "list_agents"):
-            raise TypeError("agent_router must expose list_agents() or be None")
+            raise TypeError("agent_router must expose list_agents() or None")
         if workflow_factory is not None and not callable(workflow_factory):
             raise TypeError("workflow_factory must be callable or None")
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog):
@@ -153,6 +153,27 @@ class MCPOrchestrationBoundary:
             return
         self._workflow_event_log.append(WorkflowEvent(event_id=str(uuid4()), event_type=event_type, project_id=self._project_id, task_id=task_id, occurred_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), payload={"execution_id": execution_id, "source": "mcp", **(payload or {})}))
 
+    def _find_idempotent_execution(self, idempotency_key: str) -> tuple[str, str] | None:
+        existing = self._idempotency.get(idempotency_key)
+        if existing is not None:
+            return existing
+        for event in reversed(self._mcp_events()):
+            if event.event_type != "mcp_task_execution_requested":
+                continue
+            if event.payload.get("idempotency_key") == idempotency_key:
+                execution_id = event.payload.get("execution_id")
+                if isinstance(execution_id, str) and execution_id:
+                    return event.task_id, execution_id
+        return None
+
+    def _resolve_idempotent_execution(self, task_id: str, execution_id: str) -> dict[str, Any]:
+        status = self.execution_status(execution_id)
+        if status["status"] == "completed":
+            return {**self._snapshot(self._task_manager.get_task(task_id)).as_dict(), "execution_id": execution_id}
+        if status["status"] == "failed":
+            raise RuntimeError(f"Idempotent execution {execution_id} already failed")
+        raise RuntimeError(f"Idempotent execution {execution_id} is already active")
+
     def execute_task(self, task_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
         if self._workflow_factory is None:
             raise RuntimeError("MCP workflow execution is not configured")
@@ -166,20 +187,12 @@ class MCPOrchestrationBoundary:
             raise RuntimeError("idempotency requires execution observability")
         if normalized_key is not None:
             with self._idempotency_guard:
-                existing = self._idempotency.get(normalized_key)
+                existing = self._find_idempotent_execution(normalized_key)
                 if existing is not None:
                     existing_task_id, existing_execution_id = existing
                     if existing_task_id != normalized_id:
                         raise ValueError("idempotency_key is already bound to a different task")
-                    try:
-                        status = self.execution_status(existing_execution_id)
-                    except KeyError:
-                        raise RuntimeError(f"Idempotent execution {existing_execution_id} is already active") from None
-                    if status["status"] == "completed":
-                        return {**self._snapshot(self._task_manager.get_task(normalized_id)).as_dict(), "execution_id": existing_execution_id}
-                    if status["status"] == "failed":
-                        raise RuntimeError(f"Idempotent execution {existing_execution_id} already failed")
-                    raise RuntimeError(f"Idempotent execution {existing_execution_id} is already active")
+                    return self._resolve_idempotent_execution(normalized_id, existing_execution_id)
         task = self._task_manager.ensure_executable(normalized_id)
         if task.status != "ready":
             raise RuntimeError(f"Task {normalized_id} is already active with status {task.status}")
@@ -189,16 +202,20 @@ class MCPOrchestrationBoundary:
         execution_id = str(uuid4())
         if normalized_key is not None:
             with self._idempotency_guard:
-                existing = self._idempotency.get(normalized_key)
+                existing = self._find_idempotent_execution(normalized_key)
                 if existing is not None:
                     lock.release()
-                    raise RuntimeError(f"Idempotent execution {existing[1]} is already active")
+                    existing_task_id, existing_execution_id = existing
+                    if existing_task_id != normalized_id:
+                        raise ValueError("idempotency_key is already bound to a different task")
+                    return self._resolve_idempotent_execution(normalized_id, existing_execution_id)
                 self._idempotency[normalized_key] = (normalized_id, execution_id)
         try:
             task = self._task_manager.get_task(normalized_id)
             if task.status != "ready":
                 raise RuntimeError(f"Task {normalized_id} is already active with status {task.status}")
-            self._emit_execution_event("mcp_task_execution_requested", normalized_id, execution_id)
+            request_payload = {"idempotency_key": normalized_key} if normalized_key is not None else None
+            self._emit_execution_event("mcp_task_execution_requested", normalized_id, execution_id, payload=request_payload)
             workflow = self._workflow_factory(normalized_id)
             execute = getattr(workflow, "execute", None)
             if not callable(execute):
