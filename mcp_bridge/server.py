@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 from mcp_bridge.config import MCPBridgeConfig
 from mcp_bridge.error_contract import normalize_error
-from mcp_bridge.errors import MCPBridgePolicyError
 from mcp_bridge.git import MCPGitCapabilityBoundary
 from mcp_bridge.observability import MCPOperationTracker
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
@@ -74,11 +73,7 @@ def create_server(
             try:
                 result = func(*args, **kwargs)
                 execution_id = _extract_execution_id(result)
-                tracker.finish(
-                    record.operation_id,
-                    outcome="success",
-                    execution_id=execution_id,
-                )
+                tracker.finish(record.operation_id, outcome="success", execution_id=execution_id)
                 LOGGER.info(
                     "mcp operation_id=%s request_id=%s capability=%s outcome=success duration_ms=%.3f",
                     record.operation_id,
@@ -112,9 +107,10 @@ def create_server(
     git_boundary = MCPGitCapabilityBoundary(effective_config.workspace_root)
     terminal_enabled = terminal and policy.allows("terminal")
     terminal_events: list[MCPTerminalResult] = []
-    terminal_boundary = MCPPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append) if False else None
-    if terminal_enabled:
-        terminal_boundary = MCPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append)
+    terminal_boundary = (
+        MCPTerminalCapabilityBoundary(effective_config.workspace_root, audit_sink=terminal_events.append)
+        if terminal_enabled else None
+    )
 
     if terminal and not policy.allows("terminal"):
         LOGGER.warning("terminal capability requested but denied by policy profile=%s", policy.profile)
