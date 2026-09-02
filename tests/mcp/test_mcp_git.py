@@ -16,6 +16,7 @@ def _git(cwd, *args):
 
 
 def _repo(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "test@example.com")
     _git(tmp_path, "config", "user.name", "MCP Test")
