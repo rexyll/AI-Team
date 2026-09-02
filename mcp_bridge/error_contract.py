@@ -12,21 +12,22 @@ _ERROR_CATEGORIES = {
     "execution": "execution_error",
     "not_found": "not_found",
 }
+_VALID_CATEGORIES = frozenset((*_ERROR_CATEGORIES.values(), "bridge_error"))
 
 
 def normalize_error(exc: BaseException) -> dict[str, Any]:
     """Convert an MCP-facing exception into a stable, non-sensitive shape."""
     category = getattr(exc, "error_category", None)
-    if not isinstance(category, str) or not category:
+    if not isinstance(category, str) or category not in _VALID_CATEGORIES:
         name = type(exc).__name__.lower()
         if "permission" in name or "policy" in name:
             category = _ERROR_CATEGORIES["policy"]
         elif "timeout" in name:
             category = _ERROR_CATEGORIES["execution"]
-        elif isinstance(exc, (ValueError, TypeError)):
-            category = _ERROR_CATEGORIES["request"]
         elif isinstance(exc, FileNotFoundError):
             category = _ERROR_CATEGORIES["not_found"]
+        elif isinstance(exc, (ValueError, TypeError)):
+            category = _ERROR_CATEGORIES["request"]
         else:
             category = "bridge_error"
     return {
