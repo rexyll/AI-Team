@@ -30,7 +30,7 @@ def register_orchestration_tools(
     operation_tracker: MCPOperationTracker | None = None,
     policy_profile: str = "developer",
 ) -> None:
-    """Register host-owned orchestration tools with policy-gated execution."""
+    """Register host-owned orchestration and operation-observability tools."""
     if boundary is None or not isinstance(boundary, MCPOrchestrationBoundary):
         raise TypeError("boundary must be an MCPOrchestrationBoundary")
     if not hasattr(server, "tool"):
@@ -63,27 +63,21 @@ def register_orchestration_tools(
 
             try:
                 result = func(*args, **kwargs)
-
                 execution_id = _extract_execution_id(result)
-
                 operation_tracker.finish(
                     record.operation_id,
                     outcome="success",
                     execution_id=execution_id,
                 )
-
                 return result
-
             except Exception as exc:
                 normalized = normalize_error(exc)
-
                 operation_tracker.finish(
                     record.operation_id,
                     outcome="error",
                     error_type=normalized["category"],
                     metadata={"error_type": normalized["type"]},
                 )
-
                 raise
 
         return wrapper
@@ -126,6 +120,22 @@ def register_orchestration_tools(
     @tracked("task_execution_status")
     def task_execution_status(execution_id: str) -> dict[str, Any]:
         return boundary.execution_status(execution_id)
+
+    if operation_tracker is not None:
+        @server.tool(name="mcp_operation_history", title="MCP Operation History", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        @tracked("mcp_operation_history")
+        def mcp_operation_history(limit: int = 50) -> list[dict[str, Any]]:
+            return operation_tracker.history(limit=limit)
+
+        @server.tool(name="mcp_operation_get", title="Get MCP Operation", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
+        @tracked("mcp_operation_get")
+        def mcp_operation_get(operation_id: str) -> dict[str, Any]:
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                raise ValueError("operation_id must be a non-empty string")
+            record = operation_tracker.get(operation_id.strip())
+            if record is None:
+                raise KeyError(f"unknown MCP operation: {operation_id.strip()}")
+            return record.as_dict()
 
     if allow_execute:
         @server.tool(name="task_execute", title="Execute AI-Team Task", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
