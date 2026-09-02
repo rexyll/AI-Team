@@ -9,6 +9,7 @@ from agents.mock_agents import MockAgent
 from runtime.agent_router import AgentRouter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
+from runtime.workflow_event_log import WorkflowEventLog
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 
 
@@ -143,3 +144,75 @@ def test_execute_rejects_duplicate_concurrent_mcp_start() -> None:
     release.set()
     thread.join(timeout=2)
     assert first_result[0]["status"] == "completed"
+
+
+def test_execution_status_projects_active_and_completed_state() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    event_log = WorkflowEventLog()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowWorkflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            entered.set()
+            release.wait(timeout=2)
+            task = manager.get_task(task_id)
+            task.status = "completed"
+            return task
+
+    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: SlowWorkflow(), workflow_event_log=event_log, project_id="PROJECT-001")
+    result: list[dict] = []
+    thread = threading.Thread(target=lambda: result.append(boundary.execute_task("TASK-001")))
+    thread.start()
+    assert entered.wait(timeout=2)
+    execution_id = next(iter(event.payload["execution_id"] for event in event_log.list_for_project("PROJECT-001") if event.event_type == "mcp_task_execution_requested"))
+    assert boundary.execution_status(execution_id) == {"execution_id": execution_id, "task_id": "TASK-001", "status": "active", "started_at": event_log.list_for_project("PROJECT-001")[0].occurred_at}
+    release.set()
+    thread.join(timeout=2)
+    assert boundary.execution_status(execution_id)["status"] == "completed"
+    assert boundary.execution_status(execution_id)["task_status"] == "completed"
+    assert result[0]["execution_id"] == execution_id
+
+
+def test_idempotency_key_reuses_completed_execution_without_rerun() -> None:
+    manager = TaskManager([Task(id="TASK-001", title="First", description="first", role="developer")])
+    event_log = WorkflowEventLog()
+    calls = 0
+
+    class Workflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            nonlocal calls
+            calls += 1
+            task = manager.get_task(task_id)
+            task.status = "completed"
+            return task
+
+    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: Workflow(), workflow_event_log=event_log, project_id="PROJECT-001")
+    first = boundary.execute_task("TASK-001", idempotency_key="request-001")
+    second = boundary.execute_task("TASK-001", idempotency_key="request-001")
+    assert calls == 1
+    assert second == first
+
+
+def test_idempotency_key_cannot_be_reused_for_another_task() -> None:
+    manager = TaskManager([
+        Task(id="TASK-001", title="First", description="first", role="developer"),
+        Task(id="TASK-002", title="Second", description="second", role="developer"),
+    ])
+
+    class Workflow:
+        def execute(self, task_id: str, *, execution_id: str):
+            task = manager.get_task(task_id)
+            task.status = "completed"
+            return task
+
+    boundary = MCPOrchestrationBoundary(manager, workflow_factory=lambda _: Workflow())
+    boundary.execute_task("TASK-001", idempotency_key="request-001")
+    with pytest.raises(ValueError, match="different task"):
+        boundary.execute_task("TASK-002", idempotency_key="request-001")
+
+
+def test_execution_status_rejects_unknown_execution() -> None:
+    boundary, _ = _boundary()
+    with pytest.raises(KeyError, match="Unknown execution id"):
+        boundary.execution_status("missing")
