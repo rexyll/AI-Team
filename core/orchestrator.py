@@ -152,7 +152,7 @@ class Orchestrator:
             if task.role == "developer":
                 developer = self._select_developer(task); identity = self._developer_identity(developer); task.context["developer_assignment"] = identity
                 self._emit_event("developer_assigned", task, payload=identity | {"execution_id": active_execution_id})
-                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer); workflow.execute(task.id)
+                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer, execution_id=active_execution_id); workflow.execute(task.id, execution_id=active_execution_id)
             else:
                 agent = self.agent_router.get_agent(task.role); result = agent.run(task); self.task_manager.mark_completed(task.id, result); self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
             if task.role != "developer": self._persist_state_checkpoint()
