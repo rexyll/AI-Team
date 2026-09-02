@@ -54,6 +54,7 @@ async def test_health_reports_phase_6_capability_phase(tmp_path):
         "agent_read": False,
         "workflow_execute": False,
         "workflow_cancel": False,
+        "execution_observability": False,
     }
 
 
