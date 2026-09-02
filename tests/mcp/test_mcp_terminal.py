@@ -38,6 +38,11 @@ def test_execute_rejects_shell_chaining(boundary):
         boundary.execute("python --version && whoami")
 
 
+def test_execute_rejects_multiline_command(boundary):
+    with pytest.raises(PermissionError, match="Multi-line"):
+        boundary.execute("python --version\nwhoami")
+
+
 def test_execute_rejects_blocked_code_argument(boundary):
     with pytest.raises(PermissionError, match="Code-evaluation"):
         boundary.execute("python -c print(1)")
