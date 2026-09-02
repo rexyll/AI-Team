@@ -109,6 +109,8 @@ class HostGitOperationService:
         return self.execute(GitOperationRequest("commit", workspace, message=message), env=env)
 
     def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
+        if env is None:
+            return git_tool.git_command(command, str(workspace), sandbox=self._sandbox)
         return git_tool.git_command(command, str(workspace), sandbox=self._sandbox, env=env)
 
     def _require_repository(self, workspace: Path, *, env: Mapping[str, str] | None = None) -> None:
