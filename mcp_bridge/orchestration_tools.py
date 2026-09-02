@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from mcp_bridge.errors import MCPBridgePolicyError
 from mcp_bridge.orchestration import MCPOrchestrationBoundary
 
 
-def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary) -> None:
-    """Register the Phase 6 orchestration tools on a host-owned MCP server."""
+def register_orchestration_tools(
+    server: Any,
+    boundary: MCPOrchestrationBoundary,
+    *,
+    allow_execute: bool = True,
+) -> None:
+    """Register host-owned orchestration tools with policy-gated execution."""
     if boundary is None or not isinstance(boundary, MCPOrchestrationBoundary):
         raise TypeError("boundary must be an MCPOrchestrationBoundary")
     if not hasattr(server, "tool"):
@@ -34,7 +40,11 @@ def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary
 
     @server.tool(name="workflow_capabilities", title="AI-Team Workflow Capabilities", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def workflow_capabilities() -> dict[str, bool]:
-        return boundary.workflow_capabilities()
+        capabilities = boundary.workflow_capabilities()
+        if not allow_execute:
+            capabilities = dict(capabilities)
+            capabilities["workflow_execute"] = False
+        return capabilities
 
     @server.tool(name="task_execution_history", title="AI-Team Task Execution History", annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
     def task_execution_history(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -44,6 +54,10 @@ def register_orchestration_tools(server: Any, boundary: MCPOrchestrationBoundary
     def task_execution_status(execution_id: str) -> dict[str, Any]:
         return boundary.execution_status(execution_id)
 
-    @server.tool(name="task_execute", title="Execute AI-Team Task", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
-    def task_execute(task_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
-        return boundary.execute_task(task_id, idempotency_key=idempotency_key)
+    if allow_execute:
+        @server.tool(name="task_execute", title="Execute AI-Team Task", annotations=ToolAnnotations(read_only_hint=False, open_world_hint=False))
+        def task_execute(task_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
+            return boundary.execute_task(task_id, idempotency_key=idempotency_key)
+    else:
+        def task_execute(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise MCPBridgePolicyError("MCP policy profile does not allow workflow execution")
