@@ -159,5 +159,5 @@ async def test_read_tools_reject_paths_outside_workspace(tmp_path):
     async with Client(server, raise_exceptions=True) as client:
         result = await client.call_tool("workspace_read_file", {"path": "../outside.txt"})
     assert result.is_error is True
-    assert str(result.content) == "[TextContent(type='text', text='Error executing tool workspace_read_file', annotations=None, meta=None)"
+    assert str(result.content) == "[TextContent(type='text', text='Error executing tool workspace_read_file', annotations=None, meta=None)]"
     outside.unlink()
