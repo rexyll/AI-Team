@@ -172,7 +172,7 @@ class MCPTerminalCapabilityBoundary:
             child_environment = sanitized_environment()
             raw = run_command(command, relative_cwd, sandbox=self._sandbox, timeout=normalized_timeout, env=child_environment)
             exit_code, output = self._parse_output(raw)
-            output = redact_environment_values(output, child_environment)
+            output = redact_environment_values(output)
             timed_out = exit_code == 124
             truncated = len(output) > output_limit
             bounded_output = output[:output_limit]
