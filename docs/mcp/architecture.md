@@ -1,4 +1,4 @@
-# AI-Team Local MCP Bridge Architecture — Phase 3
+# AI-Team Local MCP Bridge Architecture — Phase 4
 
 ## Purpose
 
@@ -12,12 +12,20 @@ MCP Host
 mcp_bridge
    |
    +-- configuration
-   +-- adapter policy
+   +-- read adapter policy
+   +-- mutation adapter policy
    |
-   v
+   +------------------------------+
+   |                              |
+   v                              v
+MCPWorkspaceBoundary      MCPWorkspaceMutationBoundary
+   |                              |
+   +--------------+---------------+
+                  |
+                  v
 security.workspace.WorkspaceSandbox
-   |
-   v
+                  |
+                  v
 authorized AI-Team repository
 ```
 
@@ -29,34 +37,61 @@ runtime.host_git.HostGitOperationService
 
 rather than reading or executing commands against `.git` directly.
 
-## Phase 3 public MCP surface
+## Phase 4 public MCP surface
 
-The bridge exposes five read-only tools:
+The bridge exposes seven tools:
 
 - `bridge_health`
 - `workspace_validate_path`
 - `workspace_list_files`
 - `workspace_read_file`
 - `workspace_search_text`
+- `workspace_write_file`
+- `workspace_delete_file`
 
-No source-code write, shell execution, Git write, network operation, or file
-deletion is enabled in this phase.
+Read operations remain bounded and deterministic. Mutation operations are
+explicitly separated from the generic `tools.filesystem` implementation.
 
-## Read-only workspace policy
+## Workspace mutation policy
 
-All workspace access crosses `MCPWorkspaceBoundary`, which delegates path
-containment to the canonical `security.workspace.WorkspaceSandbox`.
+All mutations cross `MCPWorkspaceMutationBoundary`, which delegates path
+containment to `MCPWorkspaceBoundary` and therefore to the canonical
+`security.workspace.WorkspaceSandbox`.
 
-The adapter additionally denies direct `.git` access and hides host absolute
-paths from tool results. File reads are bounded by `max_bytes`; directory
-listing and text search have explicit result limits.
+The mutation adapter additionally:
 
-The search implementation is intentionally literal substring matching rather
-than a shell command or regular-expression engine. This keeps the first MCP
-read surface deterministic and avoids turning search into an execution path.
+- rejects `.git`, `.venv`, caches, and IDE metadata;
+- rejects paths outside the authorized workspace;
+- accepts UTF-8 text only;
+- enforces a configurable per-write byte limit capped at 8 MiB;
+- creates parent directories only after validating the canonical parent path;
+- refuses to overwrite an existing file unless `overwrite=true` is explicit;
+- allows deletion only for regular files;
+- returns relative paths only; and
+- emits an audit event only after a successful mutation.
 
-Ignored implementation directories (`.git`, `.venv`, caches, IDE metadata) are
-not returned or searched.
+The adapter never invokes a shell, Git command, network request, or generic
+filesystem tool.
+
+## Audit and tracing boundary
+
+`WorkspaceMutationEvent` is the host-owned mutation event contract. The
+mutation boundary accepts an audit sink callback and emits `create`, `update`,
+or `delete` events only after the corresponding filesystem operation succeeds.
+
+The MCP server also logs successful mutations through the existing stderr-only
+application logger. The event payload contains only the relative path,
+operation, and byte count; no host absolute path or file contents are emitted.
+
+A later production phase can route this event contract into the canonical
+runtime audit/tracing pipeline without changing the MCP authorization model.
+
+## Error behavior
+
+The MCP SDK may normalize server-side exceptions into a generic tool error at
+the protocol boundary. Security and validation behavior therefore remains
+asserted at the `MCPWorkspaceMutationBoundary` unit level, while MCP client
+contract tests assert `is_error=true` for rejected operations.
 
 ## stdio safety
 
@@ -65,7 +100,7 @@ therefore configured on stderr only.
 
 ## Next extension boundary
 
-Write operations must not be added by directly calling `tools.filesystem`.
-The next write phase should introduce an explicit host-owned MCP mutation
-adapter with authorization, audit, tracing, and bounded payload semantics.
-Terminal and Git mutation should remain separate capability boundaries.
+Git read and mutation must not be added to the workspace adapter. The next
+phase should introduce an explicit host-owned Git boundary with allowlisted
+operations, structured results, authorization, audit/tracing, and no direct
+`.git` access. Terminal execution remains a separate capability boundary.
