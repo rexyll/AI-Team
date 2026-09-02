@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
 from runtime.host_git import HostGitOperationService
@@ -62,7 +63,7 @@ class MCPGitCapabilityBoundary:
     ) -> dict[str, object]:
         if operation not in ALLOWED_OPERATIONS:
             raise PermissionError(f"Git operation is not allowed: {operation!r}")
-        workspace = self._sandbox.require_directory(path)
+        workspace = self._resolve_git_workspace(path)
 
         if operation == "status":
             raw = self._service.status(str(workspace))
@@ -109,6 +110,16 @@ class MCPGitCapabilityBoundary:
 
     def commit(self, path: str, message: str) -> dict[str, object]:
         return self.execute("commit", path=path, message=message)
+
+    def _resolve_git_workspace(self, path: str) -> Path:
+        workspace = self._sandbox.require_directory(path)
+        relative = workspace.relative_to(self._sandbox.root)
+        if ".git" in relative.parts:
+            raise PermissionError(
+                "Direct access to Git metadata is not allowed; "
+                "use the host-owned Git boundary"
+            )
+        return workspace
 
     def _bounded_result(self, operation: str, raw: str) -> MCPGitResult:
         if len(raw) <= self._max_output_chars:
