@@ -40,14 +40,14 @@ def register_orchestration_tools(
     except ImportError as exc:
         raise RuntimeError("MCP SDK is not installed") from exc
 
-    tracker = operation_tracker
-
     def tracked(
         capability: str,
         func: Callable[..., Any] | None = None,
     ) -> Callable[..., Any]:
         if func is None:
             return lambda actual_func: tracked(capability, actual_func)
+        if operation_tracker is None:
+            return func
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
