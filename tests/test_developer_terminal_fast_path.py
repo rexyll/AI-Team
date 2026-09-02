@@ -11,6 +11,7 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
     previous_workspace_root = get_default_workspace_root()
     set_default_workspace_root(repository_root)
     artifact = repository_root / "runtime" / "_fast_path_test_artifact.txt"
+    verification_command = "pytest -q tests/test_terminal_workspace_executable_resolution.py"
 
     try:
         llm = MockLLM(
@@ -25,7 +26,7 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
                         {
                             "call_id": "CALL-2",
                             "name": "run_command",
-                            "arguments": '{"command":"pytest -q"}',
+                            "arguments": '{"command":"pytest -q tests/test_terminal_workspace_executable_resolution.py"}',
                         },
                     ]
                 },
@@ -50,7 +51,7 @@ def test_developer_terminal_verification_fast_path_avoids_followup_llm_turn() ->
             "terminal": True,
         }
         assert result.data["tests"]
-        assert result.data["tests"][0]["command"] == "pytest -q"
+        assert result.data["tests"][0]["command"] == verification_command
     finally:
         if artifact.exists():
             artifact.unlink()
