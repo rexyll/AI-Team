@@ -33,6 +33,12 @@ The full agent/provider import chain requires two declared third-party dependenc
 pip install -r requirements.txt
 ```
 
+The local MCP bridge has a separate dependency set so the core runtime does not acquire the MCP SDK unnecessarily:
+
+```powershell
+pip install -r requirements-mcp.txt
+```
+
 `requirements.txt` pins the versions validated by the local development environment (`openai`, `python-dotenv`). Contract tests themselves stay network-independent through mock injection; `config/model.py` imports both packages and resolves the shared client lazily on first provider use. See `docs/production_configuration.md` for the full configuration checklist.
 
 Verify the interpreter:
@@ -194,11 +200,31 @@ review_started
 reviewer_approved
 ```
 
-Performance contracts count events produced by this real lifecycle rather than adding artificial events.
-
 Retry, revision, approval, persistence, projection, and recovery semantics are covered by the contract tests described in `DevPlan.md`.
 
-## 11. Development workflow
+## 11. Local MCP bridge service
+
+The MCP bridge is an optional local service boundary over the existing AI-Team workspace, Git, terminal, and host-composed orchestration capabilities. It does not replace the canonical runtime or create a second orchestration engine.
+
+Install the MCP dependency set separately:
+
+```powershell
+pip install -r requirements-mcp.txt
+```
+
+The standalone service accepts only stdio transport and requires `AI_TEAM_WORKSPACE` to point to an existing absolute workspace directory. When no policy profile is explicitly configured, standalone startup uses the fail-safe `readonly` policy and does not enable terminal execution.
+
+Start the standalone MCP service from the repository root:
+
+```powershell
+python -m mcp_bridge
+```
+
+The standalone service is therefore suitable for MCP hosts that need read-only local workspace/Git inspection by default. Mutation or workflow execution requires an explicitly configured policy and the corresponding host-owned capability boundary; terminal access additionally requires explicit host opt-in.
+
+For the complete MCP capability, policy, transport, orchestration, lifecycle, and secret-isolation contract, see `docs/mcp/architecture.md`.
+
+## 12. Development workflow
 
 For each DevPlan node:
 
