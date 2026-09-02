@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable
 
 from runtime.task_manager import TaskManager
@@ -37,12 +38,12 @@ class MCPTaskSnapshot:
 
 
 class MCPOrchestrationBoundary:
-    """Read-only MCP boundary over the host task/agent orchestration state.
+    """Controlled MCP boundary over the host task/agent orchestration state.
 
     The boundary deliberately returns projections instead of Task/agent
-    objects. MCP callers cannot mutate runtime state, access agent internals,
-    invoke arbitrary methods, or obtain filesystem/network capabilities through
-    this interface.
+    objects. Runtime execution is enabled only through an explicit host-owned
+    workflow factory. A per-task execution lock prevents duplicate concurrent
+    MCP starts while leaving different tasks independently executable.
     """
 
     def __init__(
@@ -61,6 +62,44 @@ class MCPOrchestrationBoundary:
         self._task_manager = task_manager
         self._agent_router = agent_router
         self._workflow_factory = workflow_factory
+        self._execution_locks: dict[str, Lock] = {}
+        self._execution_locks_guard = Lock()
+
+    @classmethod
+    def from_orchestrator(cls, orchestrator: Any) -> "MCPOrchestrationBoundary":
+        """Bind MCP to an already constructed production Orchestrator.
+
+        No TaskManager, AgentRouter, agents, or workflow runtime is created by
+        this adapter. The supplied Orchestrator remains the sole execution
+        owner; its existing retry, recovery, resource, checkpoint, routing, and
+        workflow semantics are reused unchanged.
+        """
+        if orchestrator is None:
+            raise TypeError("orchestrator must not be None")
+        task_manager = getattr(orchestrator, "task_manager", None)
+        agent_router = getattr(orchestrator, "agent_router", None)
+        execute_task = getattr(orchestrator, "_execute_task", None)
+        if not isinstance(task_manager, TaskManager):
+            raise TypeError("orchestrator must expose a TaskManager")
+        if agent_router is None or not callable(getattr(agent_router, "list_agents", None)):
+            raise TypeError("orchestrator must expose an AgentRouter")
+        if not callable(execute_task):
+            raise TypeError("orchestrator must expose its canonical task execution entrypoint")
+
+        class _HostWorkflow:
+            def __init__(self, host: Any) -> None:
+                self._host = host
+
+            def execute(self, task_id: str):
+                task = self._host.task_manager.get_task(task_id)
+                self._host._execute_task(task)
+                return self._host.task_manager.get_task(task_id)
+
+        return cls(
+            task_manager,
+            agent_router=agent_router,
+            workflow_factory=lambda _task_id: _HostWorkflow(orchestrator),
+        )
 
     @staticmethod
     def _snapshot(task) -> MCPTaskSnapshot:
@@ -107,14 +146,35 @@ class MCPOrchestrationBoundary:
             "workflow_cancel": False,
         }
 
+    def _execution_lock(self, task_id: str) -> Lock:
+        with self._execution_locks_guard:
+            lock = self._execution_locks.get(task_id)
+            if lock is None:
+                lock = Lock()
+                self._execution_locks[task_id] = lock
+            return lock
+
     def execute_task(self, task_id: str) -> dict[str, Any]:
         if self._workflow_factory is None:
             raise RuntimeError("MCP workflow execution is not configured")
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("task_id must be a non-empty string")
-        workflow = self._workflow_factory(task_id.strip())
-        execute = getattr(workflow, "execute", None)
-        if not callable(execute):
-            raise TypeError("workflow factory must return an object exposing execute(task_id)")
-        task = execute(task_id.strip())
-        return self._snapshot(task).as_dict()
+        normalized_id = task_id.strip()
+        task = self._task_manager.ensure_executable(normalized_id)
+        if task.status != "ready":
+            raise RuntimeError(f"Task {normalized_id} is already active with status {task.status}")
+        lock = self._execution_lock(normalized_id)
+        if not lock.acquire(blocking=False):
+            raise RuntimeError(f"Task {normalized_id} is already being executed")
+        try:
+            task = self._task_manager.get_task(normalized_id)
+            if task.status != "ready":
+                raise RuntimeError(f"Task {normalized_id} is already active with status {task.status}")
+            workflow = self._workflow_factory(normalized_id)
+            execute = getattr(workflow, "execute", None)
+            if not callable(execute):
+                raise TypeError("workflow factory must return an object exposing execute(task_id)")
+            task = execute(normalized_id)
+            return self._snapshot(task).as_dict()
+        finally:
+            lock.release()
