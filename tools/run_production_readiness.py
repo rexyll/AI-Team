@@ -65,6 +65,10 @@ GATES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
+        "mcp-security",
+        _pytest_gate("mcp/test_*.py"),
+    ),
+    (
         "full-regression",
         (sys.executable, "-m", "pytest", "-q"),
     ),
