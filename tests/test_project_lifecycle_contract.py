@@ -118,6 +118,8 @@ class Router:
             "developer": self.developer,
             "tester": self.tester,
             "reviewer": self.reviewer,
+            "analyst": None,
+            "doc_writer": None,
         }[role]
 
 

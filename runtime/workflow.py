@@ -314,8 +314,31 @@ class TaskWorkflow:
             self._build_context(task)
             developer_outcome = self._run_developer(task)
             self._capture_developer_tool_history(task)
-            self._apply_developer_outcome(task, developer_outcome)
             result_data = developer_outcome.result.data if developer_outcome.result is not None else None
+            guard = result_data.get("tool_loop_guard", {}) if isinstance(result_data, dict) else {}
+            if isinstance(guard, dict) and guard.get("tripped") and round_index < self.max_review_rounds:
+                # A progress-guard trip is stochastic model behavior, not a
+                # deterministic failure. Intercept it before the failure
+                # outcome marks the task failed: the task stays RUNNING and
+                # the next round retries with the guard reason as feedback.
+                reason = str(guard.get("reason") or "tool loop made no progress")
+                last_gate_note = f"进度守卫拦截并重试（第 {round_index} 轮）"
+                self.task_manager.set_feedback(
+                    task.id,
+                    "reviewer",
+                    {
+                        "decision": "retry",
+                        "summary": (
+                            f"上一轮被进度守卫拦截：{reason}。"
+                            "请调整策略，避免重复无进展的调用。"
+                        ),
+                    },
+                )
+                self._emit_event("developer_guard_retry", task, payload={"round": round_index, "reason": reason})
+                self._checkpoint()
+                print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: guard retry with feedback")
+                continue
+            self._apply_developer_outcome(task, developer_outcome)
             validation = result_data.get("validation", {}) if isinstance(result_data, dict) else {}
             dev_metrics = ""
             if validation:

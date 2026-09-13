@@ -1,9 +1,12 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
 from tools.registry import TOOL_REGISTRY, TOOLS
 from agents.base import BaseAgent
+from runtime.artifact_store import FilesystemArtifactStore
+from runtime.llm.base import BaseLLM
 from runtime.task import Task
 from runtime.agent_context import AgentContext
 from runtime.context_view import context_view
@@ -37,6 +40,14 @@ SYSTEM_PROMPT = """
 查看目录优先使用 list_files，读取文件使用 read_file，修改文件使用 write_file。
 不要使用 run_command 代替文件工具。
 run_command 只用于测试、构建、执行程序或专用开发工具。
+run_command 只允许以下可执行文件：python, pytest, pip, uv, poetry, ruff, mypy, node, npm, npx, pnpm, yarn, dotnet, cargo, go, cmake, msbuild。
+dir、ls、echo 等系统命令不在白名单内，列出文件必须使用 list_files。
+run_command 禁止 shell 元字符（; & | < > ` $()）和 python -c 内联代码；需要多条语句时，
+先用 write_file 写成 .py 脚本，再用 python 脚本.py 运行。
+运行子目录中的脚本或测试时，必须使用 cwd 参数指向该目录（例如 cwd: workspace/e2e_delivery），
+不要从工作区根目录用长路径直接执行。
+你编写的单元测试必须在任意工作目录下都能运行：测试文件开头把脚本所在目录加入 sys.path。
+所有工具的 path/cwd 参数都相对于工作区根目录（"." 即根目录），不要在路径中重复拼接根目录名。
 
 执行开发任务时：
 1. 理解任务
@@ -77,6 +88,31 @@ run_command 只用于测试、构建、执行程序或专用开发工具。
 
 
 class DeveloperAgent(BaseAgent):
+    DEFAULT_ARTIFACT_MIN_CHARS = 16384
+
+    def __init__(
+        self,
+        config: AgentConfig | None = None,
+        *,
+        llm: BaseLLM | None = None,
+        artifact_store: FilesystemArtifactStore | None = None,
+        artifact_min_chars: int | None = None,
+    ) -> None:
+        super().__init__(config, llm=llm)
+        if artifact_store is not None and not isinstance(artifact_store, FilesystemArtifactStore):
+            raise TypeError("artifact_store must be a FilesystemArtifactStore or None")
+        if artifact_store is not None:
+            if artifact_min_chars is None:
+                artifact_min_chars = self.DEFAULT_ARTIFACT_MIN_CHARS
+            if isinstance(artifact_min_chars, bool) or not isinstance(artifact_min_chars, int):
+                raise TypeError("artifact_min_chars must be an integer")
+            if artifact_min_chars < 1:
+                raise ValueError("artifact_min_chars must be >= 1")
+        else:
+            artifact_min_chars = None
+        self.artifact_store = artifact_store
+        self.artifact_min_chars = artifact_min_chars
+
     @property
     def role(self) -> str:
         return "developer"
@@ -155,6 +191,7 @@ EXECUTION REQUIREMENT
         tool_calls: list[dict[str, Any]] = []
         loop_telemetry: list[dict[str, Any]] = []
         prior_signatures: list[tuple[str, str, str, str]] = []
+        prior_revisions: list[int] = []
         cache = ToolResultCache()
         progress_guard = ToolLoopProgressGuard()
         decision_budget = ToolLoopDecisionBudget()
@@ -204,9 +241,18 @@ EXECUTION REQUIREMENT
                     if batch_possible:
                         decision = classify_safe_tool_batch(batch_candidates)
                         if decision.safe:
+                            def invoke_batch_output(name, arguments, execution_id):
+                                # Keep the model-facing failure reason instead
+                                # of collapsing a failed read to bare None.
+                                batch_result = invocation.invoke(tool_name=name, execution_id=execution_id, task_id=context.task_id, arguments=arguments)
+                                if not batch_result.success:
+                                    message = batch_result.error.message if batch_result.error is not None else "tool invocation failed"
+                                    return "Tool error: " + str(message)
+                                return batch_result.output
+
                             _, results = execute_safe_tool_batch(
                                 [{"name": item["name"], "arguments": item["arguments"], "execution_id": item["call_id"]} for item in batch_candidates],
-                                lambda name, arguments, execution_id: invocation.invoke(tool_name=name, execution_id=execution_id, task_id=context.task_id, arguments=arguments).output,
+                                invoke_batch_output,
                             )
                             batched_results = {item["call_id"]: result for item, result in zip(batch_candidates, results)}
                 except Exception:
@@ -228,12 +274,12 @@ EXECUTION REQUIREMENT
                     status = "invalid_arguments"
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: invalid JSON arguments: " f"{type(exc).__name__}: {exc}"
-                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
+                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=self._relevant_priors(prior_signatures, prior_revisions, workspace_revision))
                     telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=False)
                     loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
-                    prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                    prior_revisions.append(workspace_revision)
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", False)
@@ -244,12 +290,12 @@ EXECUTION REQUIREMENT
                     status = "invalid_arguments"
                     error = {"type": "TypeError", "message": "tool arguments must be a JSON object"}
                     result = "Tool error: arguments must be a JSON object"
-                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=prior_signatures)
+                    telemetry = classify_tool_call(tool_name=tool_name, arguments={}, result=result, prior=self._relevant_priors(prior_signatures, prior_revisions, workspace_revision))
                     telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=False)
                     loop_telemetry.append(telemetry_dict)
                     messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, result)})
                     self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=None, error=error, metadata=telemetry_dict)
-                    prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                    prior_revisions.append(workspace_revision)
                     reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of)
                     if reason:
                         self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", False)
@@ -311,13 +357,14 @@ EXECUTION REQUIREMENT
                     error = {"type": type(exc).__name__, "message": str(exc)}
                     result = "Tool error: " f"{type(exc).__name__}: {exc}"
                     context_result = result
-                telemetry = classify_tool_call(tool_name=tool_name, arguments=record_arguments, result=result, prior=prior_signatures)
+                telemetry = classify_tool_call(tool_name=tool_name, arguments=record_arguments, result=result, prior=self._relevant_priors(prior_signatures, prior_revisions, workspace_revision))
                 telemetry_dict = self._telemetry_dict(tool_call.call_id, tool_name, telemetry, cache_reused=cache_reused)
                 loop_telemetry.append(telemetry_dict)
                 print(f"[Result]\n{result}")
                 messages.append({"role": "tool", "tool_call_id": tool_call.call_id, "content": self._build_tool_message(tool_name, context_result)})
                 self._record_tool_execution(execution_id=tool_call.call_id, task_id=context.task_id, tool_name=tool_name, started_at=started_at, status=status, arguments=record_arguments, output=result if status == "completed" else None, error=error, metadata=telemetry_dict)
                 prior_signatures.append((tool_call.call_id, tool_name, telemetry.arguments_hash, status))
+                prior_revisions.append(workspace_revision)
                 reason = progress_guard.record(tool_name=tool_name, status=status, duplicate_of=telemetry.duplicate_of, retry_of=telemetry.retry_of, result_hash=telemetry.result_hash, progress=True if verification_reused else None)
                 if reason:
                     self._record_decision_trace(decision_traces, decision_tool_call_count, cache, decision_cache_hits_before, verification_reused_count, decision_verification_reuses_before, batched_results, decision_budget, loop_telemetry, "progress_guard", verification_reused)
@@ -340,6 +387,23 @@ EXECUTION REQUIREMENT
             if budget_state.approaching_limit:
                 messages.append({"role": "user", "content": "Decision budget is approaching its soft limit. 优先复用仍然有效的已有证据、checkpoint 和 cache，并尽快完成必要的验证与收敛。不要为了预算而跳过 correctness-required 的重新读取、测试或验证；如果证据不足或工作区发生变化，必须继续获取有效证据。"})
         raise RuntimeError("Developer tool loop exceeded maximum iterations: " f"{MAX_TOOL_ITERATIONS}")
+
+    @staticmethod
+    def _relevant_priors(
+        signatures: list[tuple[str, str, str, str]],
+        revisions: list[int],
+        current_revision: int,
+    ) -> list[tuple[str, str, str, str]]:
+        """Duplicate/stagnation detection only considers calls made against
+        the current workspace revision: re-running a command after a file
+        write is legitimate re-verification of changed code, not a no-progress
+        duplicate (live run: reviewer-requested fixes were followed by a
+        re-verification loop that the guard wrongly tripped on)."""
+        return [
+            signature
+            for signature, revision in zip(signatures, revisions)
+            if revision == current_revision
+        ]
 
     @staticmethod
     def _record_decision_trace(collector: DeveloperDecisionTraceCollector, tool_call_count: int, cache: ToolResultCache, cache_hits_before: int, verification_reused_count: int, verification_reuses_before: int, batched_results: dict[str, Any], decision_budget: ToolLoopDecisionBudget, loop_telemetry: list[dict[str, Any]], convergence_reason: str | None, correctness_override: bool) -> None:
@@ -371,7 +435,45 @@ EXECUTION REQUIREMENT
         return AgentResult(status="failed", agent="developer", task_id=task_id, message=reason, data=data)
 
     def _record_tool_execution(self, *, execution_id: str, task_id: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: Any, metadata: dict[str, Any] | None = None) -> None:
-        self.tool_execution_history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output, error=error, metadata=metadata or {}))
+        recorded_output = output
+        recorded_metadata = dict(metadata or {})
+        if (
+            self.artifact_store is not None
+            and status == "completed"
+            and isinstance(output, str)
+            and len(output) >= self.artifact_min_chars
+        ):
+            # Snapshot growth fix: the full payload belongs to the artifact
+            # store, the execution history keeps a traceable reference. The
+            # live loop keeps working on the real result; only the audit copy
+            # is replaced, so classification, verification evidence, and the
+            # model-visible message are unchanged.
+            record = self.artifact_store.store(
+                output,
+                kind="tool_output",
+                task_id=task_id,
+                metadata={"tool_name": tool_name, "execution_id": execution_id},
+            )
+            recorded_output = (
+                f"[artifact {record.artifact_id}] full output archived: "
+                f"{record.size} chars, sha256={record.checksum}"
+            )
+            recorded_metadata["artifact_id"] = record.artifact_id
+            recorded_metadata["artifact_chars"] = record.size
+        record = ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=self.role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=recorded_output, error=error, metadata=recorded_metadata)
+        try:
+            self.tool_execution_history.append(record)
+        except ValueError:
+            # Gate retries reload the persisted history, and a resumed attempt
+            # can legitimately reuse model-generated call ids. Keep the audit
+            # record with a disambiguated id instead of killing the task.
+            suffix = 2
+            while True:
+                try:
+                    self.tool_execution_history.append(replace(record, execution_id=f"{execution_id}#{suffix}"))
+                    return
+                except ValueError:
+                    suffix += 1
 
     @staticmethod
     def _telemetry_dict(execution_id: str, tool_name: str, telemetry: Any, *, cache_reused: bool = False) -> dict[str, Any]:

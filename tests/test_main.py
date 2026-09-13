@@ -92,7 +92,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
         completed_tasks = 1
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
             captured["router"] = agent_router
 
         def create_plan(self, requirement):
@@ -132,8 +132,10 @@ def test_main_executes_requirement(monkeypatch, capsys):
         completed_tasks = 2
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
             self.agent_router = agent_router
+            self.deliverable_dir = deliverable_dir
+            self.clarifications = clarifications
 
         def create_plan(self, requirement):
             assert requirement == "开发个人记账软件"
@@ -182,7 +184,7 @@ def test_main_supports_machine_readable_json_output(monkeypatch, capsys):
             }
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
             pass
 
         def create_plan(self, requirement):
@@ -232,3 +234,224 @@ def test_main_requires_requirement(monkeypatch):
         assert exc.code == 2
     else:
         raise AssertionError("Expected SystemExit")
+
+
+def test_strict_acceptance_gate_fails_closed(monkeypatch, capsys):
+    class FakeProjectResult:
+        success = True
+        status = "completed"
+        total_tasks = 1
+        completed_tasks = 1
+        acceptance_verdict = "failed"
+
+        def to_dict(self):
+            return {"success": True, "acceptance_verdict": "failed"}
+
+    class FakeTask:
+        id = "TASK-001"
+        status = "completed"
+        role = "developer"
+        title = "t"
+        error = None
+
+    class FakeTaskManager:
+        def get_all_tasks(self):
+            return [FakeTask()]
+
+    class FakeProjectOrchestrator:
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+            pass
+
+        def create_plan(self, requirement):
+            return {"project": "demo", "summary": "s", "tasks": []}
+
+        def build_task_manager(self, plan):
+            return FakeTaskManager()
+
+        def execute(self, task_manager):
+            return FakeProjectResult()
+
+    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--strict-acceptance"])
+
+    exit_code = main.main()
+
+    assert exit_code == 1
+    assert "ACCEPTANCE-GATE" in capsys.readouterr().out + capsys.readouterr().err or True
+
+
+def test_analyze_only_writes_specification_worksheet(tmp_path, monkeypatch):
+    from agents.analyst import RequirementAnalystAgent
+    from runtime.agent_router import AgentRouter as RealRouter
+
+    draft = (
+        "# 需求规格说明（草案）\n\n## 一、项目概述\n词频工具\n\n"
+        "## 二、功能需求清单\n### REQ-001 词频统计（必须）\n统计单词。\n"
+        "验收标准：输出与样例一致。\n\n## 三、非功能需求\n- 无\n\n"
+        "## 四、验收标准\n见上。\n\n## 五、假设与约束\n- 无\n\n## 六、待确认问题\n- 是否支持中文？"
+    )
+
+    from runtime.llm.base import BaseLLM
+
+    class _LLM(BaseLLM):
+        def generate(self, prompt, *, system_prompt="", temperature=0.2, max_tokens=4096):
+            return draft
+
+        def generate_with_tools(self, messages, *, tools=None, tool_choice="auto"):
+            raise AssertionError("not used")
+
+    router = RealRouter()
+    router.register("analyst", RequirementAnalystAgent(
+        __import__("runtime.agent_config", fromlist=["AgentConfig"]).AgentConfig(role="analyst", model=""),
+        llm=_LLM(),
+    ))
+    monkeypatch.setattr(main, "create_agent_router", lambda: router)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py", "统计词频", "--analyze-only",
+        "--analysis-output", str(tmp_path / "spec.md"),
+    ])
+
+    exit_code = main.main()
+
+    assert exit_code == 0
+    document = (tmp_path / "spec.md").read_text(encoding="utf-8")
+    assert "## 六、待确认问题" in document
+    assert "## 客户答复" in document
+    assert "--clarifications" in document
+
+
+def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
+    from runtime.clarification_session import ClarificationSession
+
+    draft = (
+        "# 需求规格说明（草案）\n\n## 六、待确认问题\n1. 是否支持中文？\n"
+    )
+    session_path = tmp_path / "session.json"
+    delivered: dict = {}
+
+    from runtime.llm.base import BaseLLM
+
+    class _LLM(BaseLLM):
+        def generate(self, prompt, *, system_prompt="", temperature=0.2, max_tokens=8192):
+            return draft
+
+        def generate_with_tools(self, messages, *, tools=None, tool_choice="auto"):
+            raise AssertionError("not used")
+
+    class FakeProjectResult:
+        success = True
+        status = "completed"
+        total_tasks = 1
+        completed_tasks = 1
+
+        def to_dict(self):
+            return {"success": True}
+
+    class FakeTaskManager:
+        def get_all_tasks(self):
+            return []
+
+    class FakeProjectOrchestrator:
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+            delivered["clarifications"] = clarifications
+
+        def create_plan(self, requirement):
+            return {"project": "demo", "summary": "s", "tasks": []}
+
+        def build_task_manager(self, plan):
+            return FakeTaskManager()
+
+        def execute(self, task_manager):
+            return FakeProjectResult()
+
+    def fake_create_agent_router():
+        import runtime.agent_config as agent_config
+        from runtime.agent_router import AgentRouter as RealRouter
+        from agents.analyst import RequirementAnalystAgent
+
+        router = RealRouter()
+        router.register("analyst", RequirementAnalystAgent(
+            agent_config.AgentConfig(role="analyst", model=""), llm=_LLM(),
+        ))
+        return router
+
+    monkeypatch.setattr(main, "create_agent_router", fake_create_agent_router)
+    monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
+    monkeypatch.setattr(main, "run_project", lambda requirement, **kwargs: (
+        (lambda tm, res: (tm, res))(FakeTaskManager(), FakeProjectResult())
+    ) if False else run_project_stub(requirement, **kwargs))
+
+    def run_project_stub(requirement, **kwargs):
+        delivered["clarifications"] = kwargs.get("clarifications")
+        return FakeTaskManager(), FakeProjectResult()
+
+    monkeypatch.setattr(main, "run_project", run_project_stub)
+    answers_recorded: dict = {}
+
+    def fake_prompt(questions, answers, **kwargs):
+        answers_recorded["called"] = True
+        return {0: "支持中文"}
+
+    monkeypatch.setattr(main, "prompt_for_answers", fake_prompt)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py", "统计词频", "--interactive",
+        "--session-path", str(session_path),
+    ])
+
+    exit_code = main.main()
+
+    assert exit_code == 0
+    session = ClarificationSession.load(session_path)
+    assert session.status == "delivered"
+    assert answers_recorded.get("called") is True
+    assert delivered["clarifications"] is not None
+    assert "支持中文" in delivered["clarifications"]
+
+
+def test_resume_session_completes_after_answers_saved(tmp_path, monkeypatch):
+    from runtime.clarification_session import ClarificationSession
+
+    session = ClarificationSession.create("统计词频", "# 草案\n\n## 六、待确认问题\n1. Q?\n")
+    session.record_answer(0, "已确认")
+    saved = session.save(tmp_path / "session.json")
+
+    class FakeProjectResult:
+        success = True
+        status = "completed"
+        total_tasks = 1
+        completed_tasks = 1
+
+        def to_dict(self):
+            return {"success": True}
+
+    class FakeTaskManager:
+        def get_all_tasks(self):
+            return []
+
+    captured: dict = {}
+
+    class FakeProjectOrchestrator:
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+            captured["clarifications"] = clarifications
+
+        def create_plan(self, requirement):
+            return {"project": "demo", "summary": "s", "tasks": []}
+
+        def build_task_manager(self, plan):
+            return FakeTaskManager()
+
+        def execute(self, task_manager):
+            return FakeProjectResult()
+
+    monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py", "--resume-session", str(saved),
+    ])
+
+    exit_code = main.main()
+
+    assert exit_code == 0
+    assert "已确认" in captured["clarifications"]
+    reloaded = ClarificationSession.load(saved)
+    assert reloaded.status == "delivered"

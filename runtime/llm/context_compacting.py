@@ -131,6 +131,13 @@ class ContextCompactingLLM(BaseLLM):
         prefix_count = min(2, len(messages))
         prefix = messages[:prefix_count]
         tail_count = self.recent_messages + 1
-        tail = messages[-tail_count:] if tail_count else []
+        tail_start = max(0, len(messages) - tail_count)
+        # The window boundary must not cut between an assistant tool_calls
+        # message and the tool messages answering it: an orphaned tool message
+        # violates the OpenAI tool-continuation protocol and is rejected by
+        # OpenAI-compatible providers before the model is ever consulted.
+        while tail_start > prefix_count and messages[tail_start].get("role") == "tool":
+            tail_start -= 1
+        tail = messages[tail_start:]
         selected_indexes = {id(message) for message in prefix + tail}
         return [message for message in messages if id(message) in selected_indexes]

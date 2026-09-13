@@ -28,6 +28,11 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     "tester": frozenset({READ, EXECUTE}),
     "reviewer": frozenset({READ}),
     "planner": frozenset(),
+    # The analyst works purely on the LLM level and holds no tool surface.
+    "analyst": frozenset(),
+    # The documentation writer reads project context and writes documents,
+    # but never executes commands in the workspace.
+    "doc_writer": frozenset({READ, WRITE}),
 }
 
 

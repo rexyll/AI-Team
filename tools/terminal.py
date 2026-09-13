@@ -4,7 +4,19 @@ import subprocess
 from pathlib import Path
 from collections.abc import Mapping
 
+from runtime.tool_errors import ToolExecutionError
+from security.process_sandbox import create_process_job
 from security.workspace import WorkspaceSandbox, resolve_workspace_path
+
+
+class TerminalPolicyError(ToolExecutionError, PermissionError):
+    """Terminal allow-list violation.
+
+    Inherits ``PermissionError`` so existing security contracts that expect a
+    permission-style rejection keep working, and ``ToolExecutionError`` so the
+    error boundary preserves this file's own policy text (never traceback or
+    arbitrary exception details) as the model-facing denial reason.
+    """
 
 
 ALLOWED_EXECUTABLES = {
@@ -23,13 +35,22 @@ BLOCKED_ARGUMENTS = {
 SHELL_PATTERN = re.compile(r"[&|;<>`]|\$\(|\$\{|\$env:")
 
 
+def _allowed_executable_hint() -> str:
+    base_names = sorted(
+        name.rsplit(".", 1)[0] if name.endswith((".exe", ".cmd")) else name
+        for name in ALLOWED_EXECUTABLES
+    )
+    return ", ".join(dict.fromkeys(base_names))
+
+
 def _validate_command(command: str) -> None:
     if not isinstance(command, str) or not command.strip():
-        raise ValueError("command must be a non-empty string")
+        raise TerminalPolicyError("command must be a non-empty string")
 
     if SHELL_PATTERN.search(command):
-        raise PermissionError(
-            "Shell chaining, redirection, and expansion are not allowed"
+        raise TerminalPolicyError(
+            "Shell chaining, redirection, and expansion are not allowed. "
+            "Write multi-step logic to a .py file with write_file, then run it with python <script>."
         )
 
     normalized = command.strip().replace("/", "\\")
@@ -37,14 +58,17 @@ def _validate_command(command: str) -> None:
     executable = first_token.rsplit("\\", 1)[-1]
 
     if executable not in ALLOWED_EXECUTABLES:
-        raise PermissionError(
-            f"Executable is not allowed by terminal policy: {executable}"
+        raise TerminalPolicyError(
+            f"Executable is not allowed by terminal policy: {executable}. "
+            f"Allowed executables: {_allowed_executable_hint()}. "
+            "Use list_files / read_file / write_file for file operations."
         )
 
     tokens = normalized.lower().split()
     if any(token.strip('"') in BLOCKED_ARGUMENTS for token in tokens):
-        raise PermissionError(
-            "Code-evaluation and encoded-command arguments are not allowed"
+        raise TerminalPolicyError(
+            "Code-evaluation arguments (e.g. python -c) are not allowed. "
+            "Use write_file to create a script file, then run it with python <script>."
         )
 
 
@@ -105,31 +129,46 @@ def run_command(
     timeout: float | None = None,
     env: Mapping[str, str] | None = None,
 ) -> str:
-    """Execute an allow-listed development command inside the workspace."""
+    """Execute an allow-listed development command inside the workspace.
+
+    On Windows the spawned process tree is contained in a Job Object with
+    host-configured memory/process ceilings: a timeout terminates the whole
+    tree, and kill-on-close sweeps any survivors after the command completes.
+    """
     working_directory = (
         sandbox.resolve(cwd or ".") if sandbox is not None else resolve_workspace_path(cwd or ".")
     )
     _validate_command(command)
     command = _resolve_workspace_executable(command, working_directory)
 
+    job = create_process_job()
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
             cwd=str(working_directory),
-            capture_output=True,
-            text=False,
-            timeout=timeout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=dict(env) if env is not None else None,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise TimeoutError(f"Command timed out after {timeout} seconds") from exc
+        if job is not None:
+            job.assign(process)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if job is not None:
+                job.terminate()
+            process.wait()
+            raise TimeoutError(f"Command timed out after {timeout} seconds") from None
+    finally:
+        if job is not None:
+            job.close()
 
     encoding = locale.getpreferredencoding(False)
-    stdout = result.stdout.decode(encoding, errors="replace")
-    stderr = result.stderr.decode(encoding, errors="replace")
+    stdout_text = stdout.decode(encoding, errors="replace")
+    stderr_text = stderr.decode(encoding, errors="replace")
 
-    output = stdout
-    if stderr:
-        output += "\n" + stderr
+    output = stdout_text
+    if stderr_text:
+        output += "\n" + stderr_text
 
-    return f"exit_code={result.returncode}\n{output}"
+    return f"exit_code={process.returncode}\n{output}"

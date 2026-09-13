@@ -1639,3 +1639,42 @@ Enterprise / Service Platform
 尤其值得强调的是：当前项目已经通过了相当完整的 contract、failure injection、并发、性能和真实 Provider 闭环验证；最新 DevPlan 也已经明确指出，后续真正的风险已经从“功能是否正确”转向**规模、资源、并发、取消/恢复、性能和生产安全边界**。
 
 因此，我建议把当前版本**冻结为一个稳定基线**，不要再大幅修改现有核心 Workflow 语义。下一阶段直接建立 **Phase 9「Complex Project Readiness」**，优先解决上面前 10 项。这样以后拿它去开发大型项目时，不需要反复推翻现在已经稳定下来的 Runtime。
+
+---
+
+# 二十二、2026-09-06 实施状态对照（代码逐项核实结果）
+
+以下状态以仓库实际代码为准（验证基线：全量回归 1927 passed + 安全回归通过）：
+
+| # | 建议项 | 状态 | 证据 |
+|---|--------|------|------|
+| 1 | ToolInvocationService + PermissionPolicy 强制接入 | ✅ 已完成 | `runtime/tool_invocation_service.py` 统一授权/校验/审计边界（DevPlan 18.1） |
+| 2 | 真正的代码执行 Sandbox | ⚠️ 部分（首片落地） | Windows Job Object 进程沙箱（`security/process_sandbox.py`）：内存/进程数上限、超时全树击杀、kill-on-close 扫尾；命令白名单策略 + `resource_governor` + lease 协调器仍在。容器级隔离与跨平台 Job Object 等价物未做 |
+| 3 | TaskManager / AgentContext 状态隔离 | ⚠️ 部分 | Agent 只读 context snapshot + read-only 回归覆盖；`BaseAgent.run(task: Task)` 签名仍在 |
+| 4 | Project / Run / TaskAttempt / Event Sequence ID | ⚠️ 部分 | `execution_id` + `attempt`（`runtime/execution_record.py`）；run_id 层级未建 |
+| 5 | Workflow Event causal ordering | ✅ 已完成（本次） | `WorkflowEvent.sequence` 按项目单调递增：追加分配、持久化往返、跨重启续接（`tests/test_workflow_event_sequence.py`） |
+| 6 | Timeout + Cancellation | ✅ 已完成 | `runtime/timeout.py` / `timeout_execution.py` / `cancellation.py` + `TaskStatus.CANCELLED` 状态机 |
+| 7 | Artifact Store | ✅ 首批完成（本次） | `runtime/artifact_store.py` 内容寻址存储（sha256 去重、原子写入、读取校验）；DeveloperAgent 默认归档 ≥16KB 的工具输出（`AI_TEAM_ARTIFACT_MIN_CHARS` 可调/禁用），执行历史只留引用，阻断快照无限膨胀 |
+| 8 | SQLite Event Store + Snapshot/Replay | ✅ 首批完成（本次） | `runtime/workflow_event_sqlite_store.py`：与 JSON 适配器契约完全一致的可选后端（WAL + 标量列索引 + BEGIN IMMEDIATE 原子性），负载 JSON 仍为权威文档，恢复行为跨后端一致；file-per-event 仍为默认 |
+| 9 | LLM Gateway + Budget + Retry/Fallback | ✅ 已完成 | `ModelGovernance` / `ModelGovernedLLM`（预算+主备路由+准入）、`ProviderLLM` 重试/退避、`ModelCostRateRegistry` 成本核算、`RouteCircuitBreaker` 熔断器（closed→open→half-open，接入既有回退选择，策略层可选） |
+| 10 | Worker Process / Queue 化 | ⚠️ 部分 | ThreadPool 有界并行 + lease 协调器；分布式队列按 Phase 19 non-goal 推迟 |
+| 15 | Secret Redaction | ✅ 已完成 | `security/secrets.py` + agent/tool/log/delivery 边界脱敏（Phase 15.3） |
+| 19 | GitHub Actions CI | ✅ 已完成（本次） | `.github/workflows/ci.yml`：pytest 全量 + 安全回归，Python 3.13/3.14 矩阵 |
+| 22 | Property-Based Testing | ✅ 首批完成（本次） | `tests/test_dependency_graph_property.py`：种子化随机 DAG 拓扑序/分层正确性 |
+| 23 | 大规模压力测试 | ⚠️ 部分 | 1k/5k/10k DAG contract 已有（10k 为本次新增）；万级任务运行时内存/延迟专项未建 |
+| 24 | Chaos / Fault Injection | ✅ 大部分完成 | crash recovery、checkpoint quarantine、interrupted write、delivery crash/retry 回归 |
+| 16 | Planner Schema+Policy 驱动 | ⚠️ 部分 | `plan_constraints` 路径约束 + task 校验；完整结构化 constraints schema 未建 |
+| 17 | 独立 Acceptance 阶段 | ✅ 已完成 | 需求分析师 + 交付文档工程师 + 交付清单(sha256)+ 确定性需求追溯验收：REQ ↔ 需求/设计/测试报告矩阵，必须级缺追溯即 FAILED，报告落盘 acceptance_report.md |
+
+本次修复（均以真实端到端运行验证）：
+
+1. Developer 最近消息窗口在 assistant(tool_calls) 与 tool 结果之间切割会产生孤立 tool 消息（违反 OpenAI 续接协议，兼容网关报 `No user query found in messages`）——`ContextCompactingLLM._apply_recent_window` 已修复；DevPlan 18.3 遗留项随之关闭，Phase 18 验收通过。
+2. Provider 发送边界新增续接协议卫兵：`ProviderLLM._repair_tool_continuation` 修剪未应答的 tool_calls 声明与孤立响应（绝不合成内容、保留全部已执行历史）；多 Developer 并行实测单项目内成功修复 17 次，协议类 400 归零。
+3. 终端策略拒绝经 `TerminalPolicyError` 透出白名单等安全且可执行的拒绝原因（沙盒越界消息保持脱敏）；Developer 批量路径保留失败原因而非 `None`。
+4. `set_default_workspace_root` 主动创建被锚定的沙盒根目录；此前需求指定的新目录不存在会导致所有工作区相对读取在 Agent 产出任何东西之前就失败。
+
+端到端验收（真实 provider）：
+
+- 单 Developer：7/7 任务完成；交付 greet.py 实测通过（默认/`--name` 行为符合需求）、2 个单元测试通过、README 齐备。
+- 多 Developer（3 实例池）：10/10 任务完成，TASK-004/005/007 三路并行；交付工具包实测通过（25 个单元测试全过、main.py 演示可运行、README 齐备）。
+- 回归基线：全量 1938 passed + 安全回归通过。

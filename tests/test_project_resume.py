@@ -104,6 +104,8 @@ def test_resume_can_use_explicit_task_manager_and_never_rebuilds_plan():
 def test_resume_does_not_invoke_planner():
     class PlannerFailRouter:
         def get_agent(self, role):
+            if role in ("analyst", "doc_writer"):
+                return None
             raise AssertionError("planner must not be invoked during resume")
 
     project = ProjectOrchestrator(agent_router=PlannerFailRouter())

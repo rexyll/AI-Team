@@ -22,6 +22,9 @@ class ProjectResult:
     failed_tasks: tuple[str, ...]
     blocked_tasks: tuple[str, ...]
     completed_task_ids: tuple[str, ...] = ()
+    # Deterministic requirement-acceptance verdict from the delivery phase
+    # ("passed"/"failed"); None when the delivery phase did not run.
+    acceptance_verdict: str | None = None
 
     @classmethod
     def from_task_manager(
@@ -148,4 +151,5 @@ class ProjectResult:
             "failed_tasks": list(self.failed_tasks),
             "blocked_tasks": list(self.blocked_tasks),
             "completed_task_ids": list(self.completed_task_ids),
+            "acceptance_verdict": self.acceptance_verdict,
         }

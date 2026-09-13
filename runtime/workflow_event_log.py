@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from typing import Any, Iterable, Protocol
 
 from .metrics import DEFAULT_METRICS, MetricsRegistry
@@ -32,6 +33,7 @@ class WorkflowEventLog:
         self._events = {}
         self._append_sequence = {}
         self._next_append_sequence = 0
+        self._project_sequences: dict[str, int] = {}
         self._all_index = None
         self._project_indexes = {}
         self._task_indexes = {}
@@ -88,6 +90,35 @@ class WorkflowEventLog:
         else:
             self._append_sequence.pop(event.event_id, None)
 
+    def _assign_sequence(self, event: WorkflowEvent) -> WorkflowEvent:
+        """Assign the authoritative per-project causal sequence for a new event.
+
+        The sequence is monotonic per project across restarts: persisted events
+        carrying an explicit sequence advance the counter, unsequenced events
+        receive the next value. Callers must hold ``self._lock``.
+        """
+        counter = self._project_sequences.get(event.project_id, 0)
+        if event.sequence is not None:
+            if event.sequence > counter:
+                self._project_sequences[event.project_id] = event.sequence
+            return event
+        next_sequence = counter + 1
+        self._project_sequences[event.project_id] = next_sequence
+        return replace(event, sequence=next_sequence)
+
+    def _advance_sequence_counter(self, event: WorkflowEvent) -> WorkflowEvent:
+        """Honor an explicitly sequenced event without assigning new sequences.
+
+        Merge is a recovery path: events recovered without a sequence (legacy
+        persisted data) keep their timestamp-based ordering contract, while
+        persisted sequenced events restore the per-project counter.
+        """
+        if event.sequence is not None:
+            counter = self._project_sequences.get(event.project_id, 0)
+            if event.sequence > counter:
+                self._project_sequences[event.project_id] = event.sequence
+        return event
+
     def append(self, event: WorkflowEvent) -> None:
         if not isinstance(event, WorkflowEvent):
             raise TypeError("event must be a WorkflowEvent")
@@ -96,12 +127,13 @@ class WorkflowEventLog:
                 self._record_observability_metrics(event, outcome="duplicate", operation="append")
                 self._log_event("workflow.event.duplicate", workflow_event=event, operation="append")
                 raise ValueError(f"event_id already exists: {event.event_id}")
-            self._persist_if_configured(event)
-            self._record_event(event, preserve_append_order=True)
+            sequenced = self._assign_sequence(event)
+            self._persist_if_configured(sequenced)
+            self._record_event(sequenced, preserve_append_order=True)
             self._invalidate_indexes()
-            self._record_observability_metrics(event, outcome="appended", operation="append")
+            self._record_observability_metrics(sequenced, outcome="appended", operation="append")
             self._record_size_metric()
-            self._log_event("workflow.event.appended", workflow_event=event, operation="append")
+            self._log_event("workflow.event.appended", workflow_event=sequenced, operation="append")
 
     def append_if_absent(self, event: WorkflowEvent) -> bool:
         if not isinstance(event, WorkflowEvent):
@@ -109,12 +141,13 @@ class WorkflowEventLog:
         with self._lock:
             existing = self._events.get(event.event_id)
             if existing is None:
-                self._persist_if_configured(event)
-                self._record_event(event, preserve_append_order=True)
+                sequenced = self._assign_sequence(event)
+                self._persist_if_configured(sequenced)
+                self._record_event(sequenced, preserve_append_order=True)
                 self._invalidate_indexes()
-                self._record_observability_metrics(event, outcome="appended", operation="append_if_absent")
+                self._record_observability_metrics(sequenced, outcome="appended", operation="append_if_absent")
                 self._record_size_metric()
-                self._log_event("workflow.event.appended", workflow_event=event, operation="append_if_absent")
+                self._log_event("workflow.event.appended", workflow_event=sequenced, operation="append_if_absent")
                 return True
             if existing == event:
                 self._record_observability_metrics(event, outcome="duplicate", operation="append_if_absent")
@@ -149,7 +182,7 @@ class WorkflowEventLog:
             if self._persistence_sink is not None:
                 self._persistence_sink.save_if_absent_many(pending.values())
             for event in pending.values():
-                self._record_event(event, preserve_append_order=False)
+                self._record_event(self._advance_sequence_counter(event), preserve_append_order=False)
                 self._record_observability_metrics(event, outcome="appended", operation="merge")
             if pending:
                 self._invalidate_indexes()
@@ -160,13 +193,23 @@ class WorkflowEventLog:
             return len(pending)
 
     def _global_sort_key(self, event: WorkflowEvent):
-        sequence = self._append_sequence.get(event.event_id)
+        task_key = event.task_id if event.task_id is not None else "\uffff"
+        sequence = event.sequence
+        if sequence is None:
+            sequence = self._append_sequence.get(event.event_id)
         if sequence is not None:
-            return (event.project_id, event.task_id if event.task_id is not None else "\uffff", event.occurred_at, 0, sequence)
-        return (event.project_id, event.task_id if event.task_id is not None else "\uffff", event.occurred_at, 1, event.event_id)
+            return (event.project_id, task_key, event.occurred_at, 0, sequence)
+        return (event.project_id, task_key, event.occurred_at, 1, event.event_id)
 
     def _project_sort_key(self, event: WorkflowEvent):
-        return (1 if event.event_type == "project.resumed" else 0, event.occurred_at, event.event_id)
+        # Explicit per-project sequences express the true causal order for
+        # events appended after this log gained sequencing. Legacy events
+        # without a sequence keep the timestamp-based ordering and sort first,
+        # so a resumed log still lists historical events before new appends.
+        if event.sequence is not None:
+            return (1, event.sequence, event.occurred_at, event.event_id)
+        resumed_last = 1 if event.event_type == "project.resumed" else 0
+        return (0, resumed_last, f"{event.occurred_at}\x00{event.event_id}", "")
 
     def list_all(self):
         with self._lock:
@@ -183,10 +226,12 @@ class WorkflowEventLog:
             return list(cached)
 
     def _task_sort_key(self, event: WorkflowEvent):
+        if event.sequence is not None:
+            return (0, event.sequence, 0)
         sequence = self._append_sequence.get(event.event_id)
         if sequence is not None:
-            return (0, sequence, "")
-        return (1, 0, f"{event.occurred_at}\x00{event.event_id}")
+            return (1, sequence, 0)
+        return (2, 0, f"{event.occurred_at}\x00{event.event_id}")
 
     def list_for_task(self, task_id: str):
         with self._lock:

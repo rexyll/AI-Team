@@ -67,13 +67,15 @@ Reference examples are under `examples/` and are deterministic, provider-indepen
 
 ## Architecture
 
-Five specialized agents form a closed development loop:
+Seven specialized agents form a closed development loop:
 
+- Analyst Agent — normalizes requirements of any clarity into a structured draft spec (REQ ids, acceptance criteria, explicit assumptions, open questions)
 - Planner Agent — requirement decomposition and task graph
 - Architect Agent — structure and interface design
 - Developer Agent — implementation, test authoring, and fixes
 - Tester Agent — test-evidence review with TEST_PASSED / TEST_FAILED verdicts
 - Reviewer Agent — final approval gate (APPROVED / REVISION_REQUIRED)
+- Doc Writer Agent — standard delivery document set (requirements / design / test report / deployment guide / user manual) plus a checksummed delivery manifest
 
 The current runtime separates Agent routing, task orchestration, workflow lifecycle, durable workflow-event persistence, read-only projection, and operational query boundaries.
 

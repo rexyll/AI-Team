@@ -103,6 +103,7 @@ class ProviderLLM(BaseLLM):
         self.project_id = project_id.strip() if project_id is not None else None
         self.usage_ledger = usage_ledger
         self._client: Any = client_instance
+        self.protocol_repairs = 0
         capability_env = f"{self.provider_profile.upper()}_SUPPORTS_TOOL_CONTINUATION"
         self.capabilities = ProviderCapabilities(
             supports_standard_tool_continuation=_env_bool(capability_env, True)
@@ -251,6 +252,119 @@ class ProviderLLM(BaseLLM):
             for message in messages
         )
 
+    @staticmethod
+    def _first_incomplete_tool_turn(messages: list[dict[str, Any]]) -> int | None:
+        """Index of the earliest assistant turn with unanswered tool calls.
+
+        The OpenAI tool-continuation protocol requires every ``tool_calls``
+        declaration to be answered by the tool messages that immediately
+        follow it. A turn whose declarations lack their responses makes the
+        whole request invalid; providers reject it before the model runs.
+        """
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            raw_calls = message.get("tool_calls") or []
+            call_ids = {
+                call.get("id")
+                for call in raw_calls
+                if isinstance(call, dict) and call.get("id") is not None
+            }
+            if not call_ids:
+                continue
+            answered: set[Any] = set()
+            for later in messages[index + 1:]:
+                if not isinstance(later, dict) or later.get("role") != "tool":
+                    break
+                answered.add(later.get("tool_call_id"))
+            if any(call_id not in answered for call_id in call_ids):
+                return index
+        return None
+
+    @staticmethod
+    def _answered_call_ids(messages: list[dict[str, Any]], index: int) -> set[Any]:
+        """Call ids answered by the tool messages that follow message ``index``."""
+        answered: set[Any] = set()
+        for later in messages[index + 1:]:
+            if not isinstance(later, dict) or later.get("role") != "tool":
+                break
+            answered.add(later.get("tool_call_id"))
+        return answered
+
+    def _repair_tool_continuation(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Make the conversation satisfy the tool-continuation protocol.
+
+        Only provably-broken fragments are removed; no content is synthesized:
+        - unanswered tool-call declarations are trimmed from their assistant
+          message (the call never executed, so re-issuing it is honest);
+        - assistant messages left with neither content nor declarations, and
+          tool responses whose declaration was trimmed away, are dropped.
+        Everything else - including the full executed tool history - survives,
+        so the model keeps its context and re-plans from real evidence.
+        """
+        repaired = [dict(message) for message in messages]
+        changed = False
+
+        # Pass 1: trim declarations that their following tool block never
+        # answered. A declaration without a response means the call never
+        # executed; removing it is the honest, protocol-valid description.
+        for index, message in enumerate(repaired):
+            if message.get("role") != "assistant":
+                continue
+            raw_calls = message.get("tool_calls") or []
+            if not raw_calls:
+                continue
+            answered = self._answered_call_ids(repaired, index)
+            kept = [
+                call
+                for call in raw_calls
+                if isinstance(call, dict) and call.get("id") in answered
+            ]
+            if len(kept) == len(raw_calls):
+                continue
+            changed = True
+            content = message.get("content")
+            if kept:
+                message["tool_calls"] = kept
+            elif isinstance(content, str) and content.strip():
+                message.pop("tool_calls", None)
+            else:
+                message["__drop__"] = True
+
+        # Pass 2: drop assistant messages emptied by pass 1 and tool responses
+        # that no longer have a directly preceding declaration.
+        rebuilt: list[dict[str, Any]] = []
+        declared_for_turn: set[Any] = set()
+        for message in repaired:
+            if message.pop("__drop__", None):
+                changed = True
+                declared_for_turn = set()
+                continue
+            role = message.get("role")
+            if role == "assistant":
+                declared_for_turn = {
+                    call.get("id")
+                    for call in (message.get("tool_calls") or [])
+                    if isinstance(call, dict)
+                }
+                rebuilt.append(message)
+            elif role == "tool":
+                if message.get("tool_call_id") in declared_for_turn:
+                    rebuilt.append(message)
+                else:
+                    changed = True
+            else:
+                rebuilt.append(message)
+
+        if changed:
+            self.protocol_repairs += 1
+            print(
+                f"[LLM] {self.provider_profile}/{self.model} "
+                "repaired incomplete tool continuation "
+                f"({len(rebuilt)}/{len(messages)} messages kept)"
+            )
+        return rebuilt
+
     def _require_tool_continuation_support(self, messages: list[dict[str, Any]]) -> None:
         if not self._is_tool_continuation(messages):
             return
@@ -336,6 +450,7 @@ class ProviderLLM(BaseLLM):
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
         wire_messages = [dict(message) for message in messages]
+        wire_messages = self._repair_tool_continuation(wire_messages)
         self._require_tool_continuation_support(wire_messages)
 
         kwargs: dict[str, Any] = {

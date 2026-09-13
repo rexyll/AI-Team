@@ -79,6 +79,8 @@ class FakeRouter:
     def get_agent(self, role):
         if role == "planner":
             return self.planner
+        if role in ("analyst", "doc_writer"):
+            return None
         raise KeyError(role)
 
 

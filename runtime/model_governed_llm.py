@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from runtime.llm.base import BaseLLM, LLMResponse
+from runtime.llm.circuit_breaker import RouteCircuitBreaker
 from runtime.metrics import MetricsRegistry
 from runtime.model_governance import (
     ModelAdmissionDecision,
@@ -43,6 +44,8 @@ class ModelGovernedLLM(BaseLLM):
         primary_healthy: bool | Callable[[], bool] = True,
         estimated_output_tokens: int = 4096,
         metrics: MetricsRegistry | None = None,
+        circuit_breaker: RouteCircuitBreaker | None = None,
+        primary_route: ModelRoute | None = None,
     ) -> None:
         if not isinstance(project_id, str) or not project_id.strip():
             raise ValueError("project_id must be a non-empty string")
@@ -67,6 +70,15 @@ class ModelGovernedLLM(BaseLLM):
             raise TypeError("primary_healthy must be a bool or callable")
         if metrics is not None and not isinstance(metrics, MetricsRegistry):
             raise TypeError("metrics must be a MetricsRegistry or None")
+        if circuit_breaker is not None and not isinstance(circuit_breaker, RouteCircuitBreaker):
+            raise TypeError("circuit_breaker must be a RouteCircuitBreaker or None")
+        if circuit_breaker is not None:
+            if primary_route is None:
+                raise ValueError("primary_route is required when circuit_breaker is supplied")
+            if primary_route not in normalized:
+                raise ValueError("primary_route must be one of the configured routes")
+        elif primary_route is not None:
+            raise ValueError("primary_route is only valid together with circuit_breaker")
 
         self.project_id = project_id.strip()
         self.governance = governance
@@ -75,8 +87,12 @@ class ModelGovernedLLM(BaseLLM):
         self.primary_healthy = primary_healthy
         self.estimated_output_tokens = estimated_output_tokens
         self.metrics = metrics
+        self.circuit_breaker = circuit_breaker
+        self.primary_route = primary_route
 
     def _primary_health(self) -> bool:
+        if self.circuit_breaker is not None:
+            return self.circuit_breaker.is_healthy(self.primary_route)
         if callable(self.primary_healthy):
             return bool(self.primary_healthy())
         return self.primary_healthy
@@ -85,7 +101,7 @@ class ModelGovernedLLM(BaseLLM):
         if self.metrics is not None:
             self.metrics.inc(name)
 
-    def _admit(self, request: ModelUsage) -> BaseLLM:
+    def _admit(self, request: ModelUsage) -> tuple[ModelRoute, BaseLLM]:
         decision = self.governance.decide(
             self.project_id,
             usage=self.usage_ledger.usage_for(self.project_id),
@@ -98,7 +114,7 @@ class ModelGovernedLLM(BaseLLM):
         if decision.reason == "primary route unhealthy; fallback selected":
             self._record_metric("model_governance_fallback_selected_total")
         try:
-            return self.routes[decision.route]
+            return decision.route, self.routes[decision.route]
         except KeyError as exc:
             self._record_metric("model_governance_admission_rejected_total")
             raise ModelAdmissionError(
@@ -108,6 +124,23 @@ class ModelGovernedLLM(BaseLLM):
                     reason=f"governance selected an unconfigured route: {decision.route.provider}/{decision.route.model}",
                 )
             ) from exc
+
+    def _execute(self, llm: BaseLLM, route: ModelRoute, run: Callable[[], Any]) -> Any:
+        """Run one provider call, feeding route health to the circuit breaker.
+
+        The breaker observes execution outcomes but never changes them: a
+        failure is recorded and re-raised unchanged, a success closes the
+        route's circuit.
+        """
+        if self.circuit_breaker is None:
+            return run()
+        try:
+            result = run()
+        except Exception as exc:
+            self.circuit_breaker.record_failure(route, exc)
+            raise
+        self.circuit_breaker.record_success(route)
+        return result
 
     @staticmethod
     def _estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -143,19 +176,24 @@ class ModelGovernedLLM(BaseLLM):
             raise TypeError("system_prompt must be a string")
         if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0:
             raise ValueError("max_tokens must be a non-negative integer")
-        llm = self._admit(
+        route, llm = self._admit(
             ModelUsage(
                 input_tokens=estimate_tokens(system_prompt) + estimate_tokens(prompt),
                 output_tokens=self._estimated_output_for(max_tokens),
                 llm_calls=1,
             )
         )
-        return llm.generate(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        result = self._execute(
+            llm,
+            route,
+            lambda: llm.generate(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ),
         )
+        return result
 
     def generate_with_tools(
         self,
@@ -169,14 +207,19 @@ class ModelGovernedLLM(BaseLLM):
         input_tokens = self._estimate_message_tokens(messages)
         if tools:
             input_tokens += estimate_tokens(str(tools))
-        llm = self._admit(
+        route, llm = self._admit(
             ModelUsage(
                 input_tokens=input_tokens,
                 output_tokens=self._estimated_output_for(),
                 llm_calls=1,
             )
         )
-        return llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice)
+        result = self._execute(
+            llm,
+            route,
+            lambda: llm.generate_with_tools(messages, tools=tools, tool_choice=tool_choice),
+        )
+        return result
 
     def __getattr__(self, name: str) -> Any:
         """Preserve compatibility for provider-specific read-only attributes."""

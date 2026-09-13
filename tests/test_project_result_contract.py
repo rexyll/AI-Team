@@ -112,6 +112,7 @@ def test_project_result_to_dict_is_json_friendly():
     "failed_tasks": ["TASK-002"],
     "blocked_tasks": ["TASK-003"],
     "completed_task_ids": ["TASK-001"],
+    "acceptance_verdict": None,
 }
 
 

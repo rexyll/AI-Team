@@ -38,7 +38,9 @@ def test_default_window_is_bounded_for_long_tool_loop():
 
     sent = inner.messages[0]
     assert sent[:2] == source[:2]
-    assert len(sent) <= 11
+    # recent_messages + 1 tail plus one assistant message for the
+    # protocol-safe window boundary (never orphan a tool result).
+    assert len(sent) <= 12
     assert llm.max_input_messages_before == len(source)
     assert llm.max_input_messages_after == len(sent)
     assert llm.max_prompt_chars_after <= llm.context_compactor.config.max_prompt_chars

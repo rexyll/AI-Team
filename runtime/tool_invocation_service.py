@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -115,7 +116,21 @@ class ToolInvocationService:
         return requests
 
     def _append_record(self, *, execution_id: str, task_id: str, role: str, tool_name: str, started_at: str, status: str, arguments: dict[str, Any], output: Any, error: ToolError | None) -> None:
-        self._history.append(ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output if status == "completed" else None, error=error.to_dict() if error is not None else None))
+        record = ToolExecutionRecord(execution_id=execution_id, task_id=task_id, agent_role=role, tool_name=tool_name, started_at=started_at, completed_at=datetime.now(timezone.utc).isoformat(), status=status, arguments=arguments, output=output if status == "completed" else None, error=error.to_dict() if error is not None else None)
+        try:
+            self._history.append(record)
+        except ValueError:
+            # Resumed attempts (gate retries) reload a persisted history and
+            # can legitimately reuse model-generated call ids. The execution
+            # happened and must stay audited: keep the record under a
+            # disambiguated id instead of failing the invocation.
+            suffix = 2
+            while True:
+                try:
+                    self._history.append(replace(record, execution_id=f"{execution_id}#{suffix}"))
+                    return
+                except ValueError:
+                    suffix += 1
 
     @staticmethod
     def _classify_boundary_error(exc: BaseException) -> ToolError:

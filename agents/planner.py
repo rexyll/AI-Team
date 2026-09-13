@@ -34,6 +34,10 @@ SYSTEM_PROMPT = """
 与目录/路径相关的约束必须写入第一个实现类任务的 description 中。
 拆解完成后必须逐条核对需求原文，确认没有遗漏显式约束。
 
+如果提示中包含"需求分析师草案"部分：它仅供参考，不是用户原文。
+草案中的任何目录/路径/技术栈信息都不得视为用户显式约束，更不得出现在你声明的
+路径约束中；目录与路径约束只能来自用户原文。
+
 角色职责：
 - architect：设计结构与接口规范，不产出业务代码。
 - developer：编写代码、编写测试、运行验证命令、修复问题。
@@ -175,11 +179,13 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
         print(f"[Planner] 路径约束已由模型逐任务落实，无需注入: {required_dirs}")
     return plan
 
-def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: int | None = None, metrics: LLMMetrics | None = None) -> dict:
+def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: int | None = None, metrics: LLMMetrics | None = None, requirement_analysis: str | None = None) -> dict:
     if llm is not None and not isinstance(llm, BaseLLM):
         raise TypeError("create_plan llm must implement BaseLLM")
     if not isinstance(requirement, str) or not requirement.strip():
         raise ValueError("Planner requirement cannot be empty")
+    if requirement_analysis is not None and not isinstance(requirement_analysis, str):
+        raise TypeError("requirement_analysis must be a string or None")
     retry_budget = MAX_PLAN_RETRIES if max_retries is None else max_retries
     if not isinstance(retry_budget, int) or retry_budget < 0:
         raise ValueError("max_retries must be a non-negative integer")
@@ -232,5 +238,11 @@ class PlannerAgent(BaseAgent):
     def run(self, task: Task):
         if not isinstance(task, Task):
             raise TypeError("PlannerAgent.run() expects Task, " f"got {type(task).__name__}")
-        plan = create_plan(task.description, llm=self.llm, metrics=self.llm_metrics)
+        requirement_analysis = task.context.get("requirement_analysis")
+        plan = create_plan(
+            task.description,
+            llm=self.llm,
+            metrics=self.llm_metrics,
+            requirement_analysis=requirement_analysis if isinstance(requirement_analysis, str) else None,
+        )
         return {"status": "planner_completed", "agent": self.role, "task_id": task.id, "plan": plan}

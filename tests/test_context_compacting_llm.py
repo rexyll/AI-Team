@@ -35,7 +35,7 @@ def test_context_compacting_llm_sends_bounded_context():
     llm.generate_with_tools(source)
 
     sent = inner.messages[0]
-    assert len(sent) == 5
+    assert len(sent) == 6
     assert sent[0] == source[0]
     assert sent[1] == source[1]
     assert sent[-2:] == source[-2:]
@@ -43,6 +43,41 @@ def test_context_compacting_llm_sends_bounded_context():
     assert llm.max_input_messages_before == len(source)
     assert llm.max_input_messages_after == len(sent)
     assert llm.max_prompt_chars_before > llm.max_prompt_chars_after
+
+
+def test_context_compacting_llm_window_never_orphans_tool_messages():
+    inner = _FakeLLM()
+    llm = ContextCompactingLLM(inner, recent_messages=8)
+
+    source = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+    ]
+    for index in range(6):
+        source.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": f"call-{index}",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        })
+        source.append({"role": "tool", "tool_call_id": f"call-{index}", "content": f"result {index}"})
+
+    llm.generate_with_tools(source)
+
+    sent = inner.messages[0]
+    assert sent[0]["role"] == "system"
+    assert sent[1]["role"] == "user"
+    declared_call_ids = set()
+    for message in sent:
+        if message["role"] == "assistant":
+            declared_call_ids.update(
+                call["id"] for call in message.get("tool_calls") or []
+            )
+        if message["role"] == "tool":
+            assert message["tool_call_id"] in declared_call_ids
 
 
 def test_context_compacting_llm_does_not_mutate_source():

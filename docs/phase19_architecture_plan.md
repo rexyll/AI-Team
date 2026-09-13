@@ -67,20 +67,22 @@ The checkpoint store remains a control-plane durability boundary rather than a s
 - [x] Define deterministic model admission decisions without mutating usage state.
 - [x] Define explicit primary-route health and fallback selection semantics.
 - [x] Add cross-project budget-isolation and fallback regression coverage.
-- [ ] Attribute actual runtime token/call usage to projects.
-- [ ] Integrate governance admission with the canonical LLM invocation boundary.
-- [ ] Add provider/model cost-rate configuration.
-- [ ] Add budget-aware scheduler integration.
-- [ ] Add bounded degradation and fallback observability.
+- [x] Attribute actual runtime token/call usage to projects.
+- [x] Integrate governance admission with the canonical LLM invocation boundary.
+- [x] Add provider/model cost-rate configuration.
+- [x] Add budget-aware scheduler integration.
+- [x] Add bounded degradation and fallback observability.
 
-The first 19.3 slice is intentionally policy-only: `ModelGovernance` does not execute LLM calls and does not become a second runtime owner. Runtime usage attribution and invocation integration follow only after the policy contract is validated by focused and full regression.
+The first 19.3 slice is intentionally policy-only: `ModelGovernance` does not execute LLM calls and does not become a second runtime owner. Runtime usage attribution (`ProviderLLM` → `ModelUsageLedger`), the governed invocation boundary (`ModelGovernedLLM`), cost-rate configuration (`ModelCostRateRegistry` / `ProjectCostProjection`), budget-aware scheduling (`ModelBudgetProjectScheduler`), and bounded fallback/rejection telemetry are implemented and covered by the focused suites listed in `phase19_3_governed_llm_status.md` and `phase19_3_model_budget_scheduler_status.md` plus the full regression.
 
 ## 19.4 Git / CI / PR collaboration
 
-- [ ] Host-owned Git operation boundary.
+- [x] Host-owned Git operation boundary.
 - [ ] Branch/worktree lifecycle contracts.
 - [ ] CI verification as an evidence-bearing workflow stage.
 - [ ] PR status ingestion without allowing external status to bypass local gates.
+
+The Git boundary slice is implemented through `runtime.host_git.HostGitOperationService` with semantic operations only; raw `git_command` is host-only and not agent/plugin-visible. See `phase19_4_git_ci_pr_collaboration_status.md`.
 
 ## 19.5 Plugin ecosystem maturity
 

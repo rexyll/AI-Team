@@ -36,6 +36,8 @@ class FakeRouter:
         self.planner = planner
 
     def get_agent(self, role):
+        if role in ("analyst", "doc_writer"):
+            return None
         assert role == "planner"
         return self.planner
 
@@ -124,6 +126,7 @@ def test_project_result_reports_successful_execution():
         "failed_tasks": [],
         "blocked_tasks": [],
         "completed_task_ids": ["TASK-001"],
+        "acceptance_verdict": None,
     }
 
 
