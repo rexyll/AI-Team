@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .metrics import RealDeveloperBenchmarkResult
+
+
+@dataclass(frozen=True)
+class EfficiencyFinding:
+    """Evidence-backed optimization investigation candidate."""
+
+    kind: str
+    observed: float
+    message: str
+
+
+def _exact_duplicate_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+    return result.tool_call_category_counts.get("exact_duplicate", 0)
+
+
+def _duplicate_execution_tool_calls(result: RealDeveloperBenchmarkResult) -> int:
+    """Return exact-duplicate calls that actually executed the tool."""
+    return result.duplicate_execution_tool_calls
+
+
+def _cache_reuse_marker_available(result: RealDeveloperBenchmarkResult) -> bool:
+    """Return whether telemetry includes the per-call cache reuse marker."""
+    return any(
+        "cache_reused" in item
+        for task in result.task_metrics
+        for item in task.tool_loop_telemetry
+    )
+
+
+def _cache_probe_excess(result: RealDeveloperBenchmarkResult) -> int:
+    """Estimate cache hits that cannot be explained by duplicate requests.
+
+    New telemetry records per-call ``cache_reused`` facts, which are preferred.
+    Legacy telemetry has no such marker, so retain the historical compatible
+    estimate of ``cache_hits - exact_duplicate_requests``.
+    """
+    if _cache_reuse_marker_available(result):
+        cache_reused_tool_calls = sum(
+            1
+            for task in result.task_metrics
+            for item in task.tool_loop_telemetry
+            if item.get("cache_reused", False)
+        )
+        return max(0, result.cache_hits - cache_reused_tool_calls)
+    exact_duplicate_requests = _exact_duplicate_tool_calls(result)
+    return max(0, result.cache_hits - exact_duplicate_requests)
+
+
+def baseline_snapshot(result: RealDeveloperBenchmarkResult) -> dict[str, object]:
+    """Return a stable benchmark snapshot suitable for baseline comparison."""
+    if not isinstance(result, RealDeveloperBenchmarkResult):
+        raise TypeError("result must be a RealDeveloperBenchmarkResult")
+    category_counts = result.tool_call_category_counts
+    exact_duplicate_tool_calls = category_counts.get("exact_duplicate", 0)
+    duplicate_execution_tool_calls = _duplicate_execution_tool_calls(result)
+    cache_reused_tool_calls = sum(
+        1
+        for item in (entry for task in result.task_metrics for entry in task.tool_loop_telemetry)
+        if item.get("cache_reused", False)
+    )
+    cache_probe_excess = _cache_probe_excess(result)
+    return {
+        "scenario": result.scenario,
+        "developer_count": result.developer_count,
+        "task_count": result.task_count,
+        "completed": result.completed,
+        "failed": result.failed,
+        "blocked": result.blocked,
+        "duration_seconds": result.duration_seconds,
+        "llm_calls": result.llm_calls,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "tool_calls": result.tool_calls,
+        "unique_tool_calls": result.unique_tool_calls,
+        "duplicate_tool_calls": result.duplicate_tool_calls,
+        "exact_duplicate_tool_calls": exact_duplicate_tool_calls,
+        "duplicate_execution_tool_calls": duplicate_execution_tool_calls,
+        "cache_reused_tool_calls": cache_reused_tool_calls,
+        "retry_tool_calls": result.retry_tool_calls,
+        "tool_result_chars": result.tool_result_chars,
+        "cache_hits": result.cache_hits,
+        "cache_misses": result.cache_misses,
+        "cache_invalidations": result.cache_invalidations,
+        "cache_probe_excess": cache_probe_excess,
+        "llm_decision_trace_count": result.decision_trace_count,
+        "llm_decision_trace_reason_counts": result.decision_trace_reason_counts,
+        "duplicate_tool_call_ratio": result.duplicate_tool_call_ratio,
+        "retry_tool_call_ratio": result.retry_tool_call_ratio,
+        "llm_time_ratio": result.llm_time_ratio,
+        "avg_llm_calls_per_task": result.avg_llm_calls_per_task,
+        "avg_tool_calls_per_task": result.avg_tool_calls_per_task,
+        "tool_call_category_counts": category_counts,
+    }
+
+
+def _tool_loop_category_telemetry_available(result: RealDeveloperBenchmarkResult) -> bool:
+    """Return whether any task carries per-call category telemetry."""
+    return any(task.tool_loop_telemetry for task in result.task_metrics)
+
+
+def identify_efficiency_candidates(result: RealDeveloperBenchmarkResult) -> tuple[EfficiencyFinding, ...]:
+    """Identify measurable hotspots without claiming causality.
+
+    When category telemetry is available, only exact duplicate calls that were
+    actually executed are treated as direct duplicate-execution candidates.
+    Cache-served repeated requests remain visible through cache telemetry but do
+    not count as repeated tool executions. Legacy metric-only results continue
+    using the coarse duplicate_tool_calls field.
+    """
+    if not isinstance(result, RealDeveloperBenchmarkResult):
+        raise TypeError("result must be a RealDeveloperBenchmarkResult")
+
+    findings: list[EfficiencyFinding] = []
+    category_counts = result.tool_call_category_counts
+    has_category_telemetry = _tool_loop_category_telemetry_available(result)
+    if has_category_telemetry:
+        duplicate_count = _duplicate_execution_tool_calls(result)
+        duplicate_requests = category_counts.get("exact_duplicate", 0)
+        duplicate_message_suffix = " Cache-served repeated requests are excluded from this finding. Failure-recovery retries are excluded from this finding."
+        cache_probe_excess = _cache_probe_excess(result)
+    else:
+        duplicate_count = result.duplicate_tool_calls
+        duplicate_requests = duplicate_count
+        duplicate_message_suffix = " Per-call categories were unavailable, so this is a coarse legacy signal and may include retries."
+        cache_probe_excess = 0
+
+    if duplicate_count:
+        ratio = duplicate_count / result.tool_calls if result.tool_calls else 0.0
+        findings.append(
+            EfficiencyFinding(
+                kind="duplicate_tool_execution",
+                observed=ratio,
+                message=(
+                    f"{duplicate_count} of {result.tool_calls} tool calls were actually executed as "
+                    f"duplicates ({duplicate_requests} duplicate requests were classified); inspect whether "
+                    "cacheable/read-only evidence could be reused earlier."
+                    + duplicate_message_suffix
+                ),
+            )
+        )
+    if cache_probe_excess:
+        findings.append(
+            EfficiencyFinding(
+                kind="redundant_cache_probe",
+                observed=float(cache_probe_excess),
+                message=(
+                    f"{cache_probe_excess} cache hits were not represented by cache-reuse telemetry; "
+                    f"the agent may probe the cache more than once for the same evidence. "
+                    "Inspect cache accounting or duplicate-request classification."
+                ),
+            )
+        )
+    if result.llm_calls > result.task_count:
+        findings.append(
+            EfficiencyFinding(
+                kind="multi_turn_llm_execution",
+                observed=result.avg_llm_calls_per_task,
+                message=(
+                    f"Average LLM turns per task were {result.avg_llm_calls_per_task:.2f}; "
+                    "review decision turns and verification turns for avoidable repetition."
+                ),
+            )
+        )
+    if result.llm_time_ratio >= 0.90:
+        findings.append(
+            EfficiencyFinding(
+                kind="llm_dominant_wall_time",
+                observed=result.llm_time_ratio,
+                message=(
+                    f"LLM latency accounted for {result.llm_time_ratio:.1%} of measured "
+                    "wall time; prioritize prompt/tool-result size and unnecessary turns."
+                ),
+            )
+        )
+    return tuple(findings)

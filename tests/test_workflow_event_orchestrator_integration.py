@@ -73,10 +73,17 @@ def test_orchestrator_emits_retry_lifecycle_events():
         "review_started",
         "reviewer_approved",
     ]
+    execution_id = events[0].payload["execution_id"]
+    assert isinstance(execution_id, str) and execution_id
     assert events[2].payload == {
         "status": "ready",
         "retry_attempt": 1,
         "max_retries": 1,
         "reason": "RuntimeError: temporary failure",
+        "execution_id": execution_id,
     }
+    assert all(
+        event.payload.get("execution_id") == execution_id
+        for event in events
+    )
     assert events[-1].payload["status"] == "completed"

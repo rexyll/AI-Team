@@ -22,6 +22,7 @@ from security.workspace import (
     WorkspaceSandbox,
     anchor_workspace_root,
     get_default_workspace_root,
+    mandated_folded_prefix,
     set_default_workspace_root,
 )
 
@@ -92,6 +93,26 @@ def test_setter_rejects_invalid_type() -> None:
         set_default_workspace_root(None)
 
 
+def test_setter_creates_missing_anchor_root(tmp_path) -> None:
+    """A mandated root that does not exist yet must still become usable.
+
+    Without eager creation, every workspace-relative read fails before the
+    agents can produce anything (real run: list_files(".") -> Path not found
+    because the anchored root had never been created).
+    """
+    original = workspace_module.DEFAULT_SANDBOX
+    missing_root = tmp_path / "projects" / "workspace"
+    assert not missing_root.exists()
+    try:
+        created = set_default_workspace_root(missing_root)
+
+        assert created == missing_root.resolve()
+        assert missing_root.is_dir()
+        assert workspace_module.resolve_workspace_path(".").is_dir()
+    finally:
+        workspace_module.DEFAULT_SANDBOX = original
+
+
 # ---------------------------------------------------------------------------
 # End-to-end chain: requirement text -> extraction -> anchored root
 # ---------------------------------------------------------------------------
@@ -137,3 +158,65 @@ def test_project_root_points_at_sibling_projects_dir() -> None:
     # The default base is the repo's sibling `projects` directory.
     assert PROJECT_ROOT.name == "projects"
     assert PROJECT_ROOT.parent.name != "projects"
+
+
+# ---------------------------------------------------------------------------
+# Folded-prefix normalization (models re-prepend the mandated directory)
+# ---------------------------------------------------------------------------
+
+
+def test_mandated_folded_prefix_extracts_parent_chain():
+    assert mandated_folded_prefix("workspace/e2e_artifact") == "workspace"
+    assert mandated_folded_prefix("a/b/c") == "a/b"
+    assert mandated_folded_prefix("output") is None
+
+
+def test_folded_prefix_is_stripped_from_relative_paths(tmp_path):
+    original = workspace_module.DEFAULT_SANDBOX
+    root = tmp_path / "projects" / "workspace"
+    try:
+        set_default_workspace_root(root, folded_prefix="workspace")
+
+        resolved = workspace_module.resolve_workspace_path(
+            "workspace/e2e_artifact/logfilter.py"
+        )
+        assert resolved == root / "e2e_artifact" / "logfilter.py"
+
+        # Without the redundant prefix the path is untouched.
+        plain = workspace_module.resolve_workspace_path("e2e_artifact/logfilter.py")
+        assert plain == root / "e2e_artifact" / "logfilter.py"
+
+        # Exactly the folded prefix resolves to the root itself.
+        assert workspace_module.resolve_workspace_path("workspace") == root.resolve()
+    finally:
+        workspace_module.DEFAULT_SANDBOX = original
+
+
+def test_folded_prefix_match_is_case_insensitive_on_windows_semantics(tmp_path):
+    original = workspace_module.DEFAULT_SANDBOX
+    root = tmp_path / "ws"
+    try:
+        set_default_workspace_root(root, folded_prefix="Workspace")
+
+        resolved = workspace_module.resolve_workspace_path("WORKSPACE/e2e_artifact/f.txt")
+        assert resolved == root / "e2e_artifact" / "f.txt"
+    finally:
+        workspace_module.DEFAULT_SANDBOX = original
+
+
+def test_folded_prefix_stripping_preserves_escape_protection(tmp_path):
+    original = workspace_module.DEFAULT_SANDBOX
+    root = tmp_path / "projects" / "workspace"
+    try:
+        set_default_workspace_root(root, folded_prefix="workspace")
+
+        with pytest.raises(PermissionError):
+            workspace_module.resolve_workspace_path("workspace/../../outside.txt")
+    finally:
+        workspace_module.DEFAULT_SANDBOX = original
+
+
+def test_sandbox_without_folded_prefix_leaves_relative_paths_alone(tmp_path):
+    sandbox = WorkspaceSandbox(tmp_path)
+    assert sandbox.folded_prefix == ()
+    assert sandbox.resolve("a/b.txt") == tmp_path / "a" / "b.txt"

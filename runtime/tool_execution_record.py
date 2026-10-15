@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 import json
 
+from security.secrets import redact_value
+from runtime.provenance import tool_evidence_provenance
+
 
 _ALLOWED_STATUS: tuple[str, ...] = (
     "completed",
@@ -61,10 +64,10 @@ class ToolExecutionRecord:
         if not isinstance(self.metadata, dict):
             raise TypeError("metadata must be a dictionary")
 
-        safe_arguments = _json_safe(self.arguments, field_name="arguments")
-        safe_output = _json_safe(self.output, field_name="output")
-        safe_error = _json_safe(self.error, field_name="error")
-        safe_metadata = _json_safe(self.metadata, field_name="metadata")
+        safe_arguments = _json_safe(redact_value(self.arguments), field_name="arguments")
+        safe_output = _json_safe(redact_value(self.output), field_name="output")
+        safe_error = _json_safe(redact_value(self.error), field_name="error")
+        safe_metadata = _json_safe(redact_value(self.metadata), field_name="metadata")
 
         if not isinstance(safe_arguments, dict):
             raise TypeError("arguments must be a JSON object")
@@ -81,6 +84,15 @@ class ToolExecutionRecord:
         if self.status != "completed" and self.error is None:
             raise ValueError("non-completed tool execution must contain an error")
 
+    @property
+    def provenance(self):
+        """Derive tool evidence lineage without changing the persistence schema."""
+        return tool_evidence_provenance(
+            task_id=self.task_id,
+            agent_role=self.agent_role,
+            execution_id=self.execution_id,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "execution_id": self.execution_id,
@@ -95,6 +107,10 @@ class ToolExecutionRecord:
             "error": deepcopy(self.error),
             "metadata": deepcopy(self.metadata),
         }
+
+    def to_context_dict(self) -> dict[str, Any]:
+        """Project the record into the stable Task.context representation."""
+        return self.to_dict()
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ToolExecutionRecord":

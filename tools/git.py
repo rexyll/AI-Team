@@ -1,7 +1,8 @@
 import shlex
 import subprocess
+from collections.abc import Mapping
 
-from security.workspace import resolve_workspace_path
+from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
 
 ALLOWED_GIT_COMMANDS = {
@@ -44,25 +45,38 @@ def _parse_git_command(command: str) -> list[str]:
     if not args:
         raise ValueError("git command must not be empty")
 
-    subcommand = args[0].lower()
+    normalized_args: list[str] = []
+    for token in args:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            token = token[1:-1]
+        normalized_args.append(token)
+
+    subcommand = normalized_args[0].lower()
     if subcommand not in ALLOWED_GIT_COMMANDS:
         raise PermissionError(
             f"Git subcommand is not allowed: {subcommand}"
         )
 
-    for token in args:
-        normalized = token.strip('"').lower()
-        if normalized in BLOCKED_TOKENS:
+    for token in normalized_args:
+        if token.lower() in BLOCKED_TOKENS:
             raise PermissionError(
-                f"Git option is not allowed: {normalized}"
+                f"Git option is not allowed: {token.lower()}"
             )
 
-    return args
+    return normalized_args
 
 
-def git_command(command: str, cwd: str) -> str:
-    """Run an allow-listed Git command inside the authorized workspace."""
-    working_directory = resolve_workspace_path(cwd)
+def git_command(
+    command: str,
+    cwd: str,
+    *,
+    sandbox: WorkspaceSandbox | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Run an allow-listed Git command inside an authorized workspace."""
+    working_directory = (
+        sandbox.resolve(cwd) if sandbox is not None else resolve_workspace_path(cwd)
+    )
     args = _parse_git_command(command)
 
     result = subprocess.run(
@@ -73,6 +87,7 @@ def git_command(command: str, cwd: str) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=dict(env) if env is not None else None,
     )
 
     output = result.stdout

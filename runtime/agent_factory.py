@@ -1,21 +1,56 @@
+import os
 from collections.abc import Mapping
 
+from agents.analyst import RequirementAnalystAgent
 from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
+from agents.doc_writer import DocWriterAgent
 from agents.planner import PlannerAgent
-from agents.reviewer import ReviewerAgent
 from agents.tester import TesterAgent
 
 from config.model import get_developer_count, resolve_developer_llm_spec, resolve_role_llm_spec
 from runtime.agent_config import AgentConfig
 from runtime.agent_router import AgentRouter
+from runtime.artifact_store import FilesystemArtifactStore
 from runtime.llm.provider import ProviderLLM
+from runtime.reviewer_reliability import create_reviewer_with_fallback
 
 AgentConfigMap = Mapping[str, AgentConfig]
 
+DEFAULT_ARTIFACT_MIN_CHARS = 16384
+
+PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer")
+
+
+def _developer_artifact_archive():
+    """Return (store, threshold) for large-output archiving, or (None, None).
+
+    Enabled by default with a 16 KiB threshold; the env variable
+    ``AI_TEAM_ARTIFACT_MIN_CHARS`` overrides the threshold and a value of 0
+    disables archiving (execution history then keeps full outputs as before).
+    """
+    raw = os.getenv("AI_TEAM_ARTIFACT_MIN_CHARS", "").strip()
+    if not raw:
+        threshold = DEFAULT_ARTIFACT_MIN_CHARS
+    else:
+        try:
+            threshold = int(raw)
+        except ValueError as exc:
+            raise ValueError("AI_TEAM_ARTIFACT_MIN_CHARS must be an integer") from exc
+        if threshold < 0:
+            raise ValueError("AI_TEAM_ARTIFACT_MIN_CHARS must be >= 0")
+    if threshold == 0:
+        return None, None
+    from security.workspace import PROJECT_ROOT
+
+    return FilesystemArtifactStore(PROJECT_ROOT / "artifacts"), threshold
+
 
 def _default_agent_configs() -> dict[str, AgentConfig]:
-    return {role: AgentConfig(role=role, model="") for role in ("architect", "developer", "tester", "reviewer", "planner")}
+    return {
+        role: AgentConfig(role=role, model="")
+        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer")
+    }
 
 
 def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
@@ -29,7 +64,7 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
             raise ValueError("Missing agent configurations: " + ", ".join(sorted(missing_roles)))
         effective_configs = {**default_configs, **configs}
 
-    supported_roles = {"architect", "developer", "tester", "reviewer", "planner"}
+    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer"}
     for role in supported_roles:
         config = effective_configs.get(role)
         if config is None:
@@ -41,18 +76,17 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
 
     router = AgentRouter()
     role_llms: dict[str, ProviderLLM] = {}
-    for role in ("architect", "tester", "reviewer", "planner"):
+    for role in PROJECT_ROLES:
         provider_name, model_id = resolve_role_llm_spec(role)
         role_llms[role] = ProviderLLM(model=model_id, provider_profile=provider_name)
 
+    router.register("analyst", RequirementAnalystAgent(effective_configs["analyst"], llm=role_llms["analyst"]))
     router.register("architect", ArchitectAgent(effective_configs["architect"], llm=role_llms["architect"]))
 
-    # Explicit AgentConfig callers are legacy/programmatic construction and
-    # must retain their exact config object. Environment-driven construction
-    # is the opt-in path for the multi-Developer pool.
     developer_count = 1 if configs is not None else get_developer_count()
     base_config = effective_configs["developer"]
     developer_agents: list[DeveloperAgent] = []
+    artifact_store, artifact_min_chars = _developer_artifact_archive()
 
     for index in range(1, developer_count + 1):
         provider_name, model_id = resolve_developer_llm_spec(index)
@@ -72,11 +106,17 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
             DeveloperAgent(
                 developer_config,
                 llm=ProviderLLM(model=model_id, provider_profile=provider_name),
+                artifact_store=artifact_store,
+                artifact_min_chars=artifact_min_chars,
             )
         )
 
     router.register_developer_pool(developer_agents)
     router.register("tester", TesterAgent(effective_configs["tester"], llm=role_llms["tester"]))
-    router.register("reviewer", ReviewerAgent(effective_configs["reviewer"], llm=role_llms["reviewer"]))
+    router.register(
+        "reviewer",
+        create_reviewer_with_fallback(effective_configs["reviewer"], role_llms["reviewer"]),
+    )
     router.register("planner", PlannerAgent(effective_configs["planner"], llm=role_llms["planner"]))
+    router.register("doc_writer", DocWriterAgent(effective_configs["doc_writer"], llm=role_llms["doc_writer"]))
     return router

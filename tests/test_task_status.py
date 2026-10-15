@@ -30,6 +30,7 @@ def test_task_status_values():
         ("running", "completed"),
         ("running", "failed"),
         ("review_pending", "reviewing"),
+        ("reviewing", "review_pending"),
         ("reviewing", "running"),
         ("reviewing", "completed"),
         ("reviewing", "failed"),
@@ -61,8 +62,6 @@ def test_valid_status_transitions(current, target):
 )
 def test_invalid_status_transitions(current, target):
     assert not can_transition(current, target)
-
-
 
 
 def test_normalize_status_from_string():
@@ -108,7 +107,8 @@ def test_terminal_failed_state_has_no_outgoing_transition():
         TaskStatus.FAILED,
         TaskStatus.RUNNING,
     )
-    
+
+
 def test_review_pending_can_return_to_running_after_tester_failure():
     assert can_transition(
         TaskStatus.REVIEW_PENDING,

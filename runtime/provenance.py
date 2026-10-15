@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+SOURCE_TYPES = frozenset({"tool_execution", "agent_feedback", "agent_result"})
+
+
+@dataclass(frozen=True)
+class EvidenceProvenance:
+    """Chain-of-custody metadata for evidence crossing agent boundaries."""
+
+    source_role: str
+    source_type: str
+    task_id: str
+    evidence_id: str
+    status: str = "observed"
+    parent_evidence_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("source_role", "source_type", "task_id", "evidence_id", "status"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.source_type not in SOURCE_TYPES:
+            raise ValueError(f"unsupported evidence source_type: {self.source_type}")
+        if self.parent_evidence_id is not None and (
+            not isinstance(self.parent_evidence_id, str) or not self.parent_evidence_id.strip()
+        ):
+            raise ValueError("parent_evidence_id must be a non-empty string or None")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_role": self.source_role,
+            "source_type": self.source_type,
+            "task_id": self.task_id,
+            "evidence_id": self.evidence_id,
+            "status": self.status,
+            "parent_evidence_id": self.parent_evidence_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "EvidenceProvenance":
+        if not isinstance(payload, dict):
+            raise TypeError("evidence provenance payload must be a dictionary")
+        required = ("source_role", "source_type", "task_id", "evidence_id")
+        missing = [key for key in required if key not in payload]
+        if missing:
+            raise ValueError("evidence provenance missing fields: " + ", ".join(missing))
+        return cls(
+            source_role=payload["source_role"],
+            source_type=payload["source_type"],
+            task_id=payload["task_id"],
+            evidence_id=payload["evidence_id"],
+            status=payload.get("status", "observed"),
+            parent_evidence_id=payload.get("parent_evidence_id"),
+        )
+
+
+def tool_evidence_provenance(
+    *, task_id: str, agent_role: str, execution_id: str, parent_evidence_id: str | None = None
+) -> EvidenceProvenance:
+    return EvidenceProvenance(
+        source_role=agent_role,
+        source_type="tool_execution",
+        task_id=task_id,
+        evidence_id=execution_id,
+        status="observed",
+        parent_evidence_id=parent_evidence_id,
+    )
+
+
+def agent_result_provenance(
+    *, task_id: str, agent_role: str, evidence_id: str | None = None, parent_evidence_id: str | None = None
+) -> EvidenceProvenance:
+    """Create the stable evidence root for one AgentResult boundary."""
+    return EvidenceProvenance(
+        source_role=agent_role,
+        source_type="agent_result",
+        task_id=task_id,
+        evidence_id=evidence_id or f"{agent_role}:{task_id}",
+        status="reported",
+        parent_evidence_id=parent_evidence_id,
+    )
+
+
+def agent_feedback_provenance(
+    *, task_id: str, agent_role: str, evidence_id: str, parent_evidence_id: str | None = None
+) -> EvidenceProvenance:
+    return EvidenceProvenance(
+        source_role=agent_role,
+        source_type="agent_feedback",
+        task_id=task_id,
+        evidence_id=evidence_id,
+        status="reported",
+        parent_evidence_id=parent_evidence_id,
+    )
+
+
+def provenance_from_value(value: Any) -> EvidenceProvenance | None:
+    """Extract explicit provenance, or synthesize an AgentResult root.
+
+    Explicit producer-supplied provenance always wins. A canonical AgentResult
+    without explicit provenance gets a stable agent-result evidence root so
+    downstream boundaries can preserve lineage without changing the legacy
+    result schema.
+
+    Objects exposing the project's canonical ``to_dict()`` contract are
+    accepted as values as well. This is intentionally generic to avoid a
+    runtime import cycle between provenance and AgentResult.
+    """
+    if isinstance(value, EvidenceProvenance):
+        return value
+
+    if not isinstance(value, dict):
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            try:
+                payload = to_dict()
+            except (TypeError, ValueError):
+                return None
+            if isinstance(payload, dict):
+                return provenance_from_value(payload)
+        return None
+
+    if all(key in value for key in ("source_role", "source_type", "task_id", "evidence_id")):
+        try:
+            return EvidenceProvenance.from_dict(value)
+        except (TypeError, ValueError):
+            pass
+
+    candidates = [value.get("provenance")]
+    data = value.get("data")
+    if isinstance(data, dict):
+        candidates.append(data.get("provenance"))
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            try:
+                return EvidenceProvenance.from_dict(candidate)
+            except (TypeError, ValueError):
+                continue
+
+    agent = value.get("agent")
+    task_id = value.get("task_id")
+    if isinstance(agent, str) and agent.strip() and isinstance(task_id, str) and task_id.strip():
+        return agent_result_provenance(task_id=task_id, agent_role=agent)
+    return None

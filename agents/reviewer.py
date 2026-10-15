@@ -5,12 +5,12 @@ import os
 from typing import Any
 
 from agents.base import BaseAgent
-
 from runtime.agent_context import AgentContext
 from runtime.agent_result import AgentResult
 from runtime.context_view import context_view
+from runtime.provenance import agent_feedback_provenance, provenance_from_value
 from runtime.task import Task
-
+from security.prompt_injection import untrusted_content
 
 SYSTEM_PROMPT = """
 你是一名专业的软件代码 Reviewer。
@@ -59,7 +59,6 @@ REVISION_REQUIRED
 3. 原因说明放在后续行，可使用中文。
 """
 
-
 DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS = 16000
 
 
@@ -76,125 +75,83 @@ def _truncate_text(value: Any, limit: int) -> str:
     text = value if isinstance(value, str) else str(value)
     if len(text) <= limit:
         return text
-
     marker = f"\n...[truncated {len(text) - limit} chars]...\n"
     if len(marker) >= limit:
         return text[:limit]
-
     head = (limit - len(marker)) // 2
     tail = limit - len(marker) - head
     return text[:head] + marker + text[-tail:]
 
 
 def _compact_developer_result(result: Any, limit: int) -> str:
-    """Keep review evidence while bounding large code/report payloads."""
+    """Keep review evidence while bounding large code/report payloads.
+
+    Developer results can contain complete test files or long command output.
+    The reviewer still receives the canonical metadata and high-value evidence
+    fields first; verbose report/code text is bounded with a head/tail marker.
+
+    Unknown top-level fields are retained as bounded supplemental evidence.
+    This is important because ``task_result`` is a role-authorized context
+    field: the compaction layer must not silently change its semantic content
+    merely because a producer uses a result shape that is not part of the
+    canonical AgentResult schema.
+    """
     if not isinstance(result, dict):
         return _truncate_text(result, limit)
-
     compact: dict[str, Any] = {}
     canonical_keys = {"status", "agent", "task_id", "message", "data"}
-
     for key in ("status", "agent", "task_id"):
         if key in result:
             compact[key] = result[key]
-
     message = result.get("message")
     if message:
         compact["message"] = _truncate_text(message, min(2000, limit))
-
     data = result.get("data")
     if isinstance(data, dict):
         compact_data: dict[str, Any] = {}
-
         for key in ("files_changed", "tests", "validation", "summary"):
             if key in data:
                 compact_data[key] = data[key]
-
         for key in ("implementation", "architecture", "report"):
             if key in data:
-                compact_data[key] = _truncate_text(
-                    data[key],
-                    min(6000, max(1000, limit // 3)),
-                )
-
+                compact_data[key] = _truncate_text(data[key], min(6000, max(1000, limit // 3)))
         for key, value in data.items():
             if key not in compact_data:
-                compact_data[key] = _truncate_text(
-                    value,
-                    min(2000, max(500, limit // 8)),
-                )
-
+                compact_data[key] = _truncate_text(value, min(2000, max(500, limit // 8)))
         compact["data"] = compact_data
     elif "data" in result:
         compact["data"] = _truncate_text(result["data"], min(4000, limit))
-
     for key, value in result.items():
         if key in canonical_keys:
             continue
-        compact[key] = _truncate_text(
-            value,
-            min(2000, max(500, limit // 8)),
-        )
-
-    return _truncate_text(
-        json.dumps(compact, ensure_ascii=False, indent=2, default=str),
-        limit,
-    )
+        compact[key] = _truncate_text(value, min(2000, max(500, limit // 8)))
+    return _truncate_text(json.dumps(compact, ensure_ascii=False, indent=2, default=str), limit)
 
 
 class ReviewerAgent(BaseAgent):
-
     @property
     def role(self) -> str:
         return "reviewer"
 
     def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
-            raise TypeError(
-                "ReviewerAgent.run() expects Task, "
-                f"got {type(task).__name__}"
-            )
-
+            raise TypeError("ReviewerAgent.run() expects Task, " f"got {type(task).__name__}")
         context = self.build_context(task)
         prompt = self._build_prompt(context)
-
-        result = self._generate(
-            prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
-
+        result = self._generate(prompt, system_prompt=SYSTEM_PROMPT)
         decision = self._parse_review_result(result)
-
-        data = self._build_result_data(
-            content=result,
-            decision=decision,
-            context=context,
-        )
-
-        return AgentResult(
-            status=decision,
-            agent=self.role,
-            task_id=context.task_id,
-            message=result,
-            data=data,
-        )
+        data = self._build_result_data(content=result, decision=decision, context=context)
+        return AgentResult(status=decision, agent=self.role, task_id=context.task_id, message=result, data=data)
 
     @staticmethod
     def _build_prompt(context: AgentContext) -> str:
         view = context_view(context, "reviewer")
-        developer_result = _compact_developer_result(
-            view["task_result"],
-            _positive_env_int(
-                "REVIEWER_MAX_DEVELOPER_RESULT_CHARS",
-                DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS,
-            ),
-        )
+        developer_result = _compact_developer_result(view["task_result"], _positive_env_int("REVIEWER_MAX_DEVELOPER_RESULT_CHARS", DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS))
         tester_feedback = _truncate_text(view["tester_feedback"], 8000)
         reviewer_feedback = _truncate_text(view["reviewer_feedback"], 6000)
         dependency_context = _truncate_text(view["dependency_context"], 8000)
         history = _truncate_text(view["history"], 4000)
         metadata = _truncate_text(view["metadata"], 4000)
-
         return f"""
 请审核下面的开发任务。
 
@@ -203,45 +160,45 @@ TASK
 ====================
 
 Task ID:
-{view['task_id']}
+{untrusted_content("task.id", view['task_id'])}
 
 Title:
-{view['task_title']}
+{untrusted_content("task.title", view['task_title'])}
 
 Description:
-{view['task_description']}
+{untrusted_content("task.description", view['task_description'])}
 
 ====================
 DEVELOPER RESULT (BOUNDED)
 ====================
 
-{developer_result}
+{untrusted_content("developer.result", developer_result)}
 
 ====================
 TESTER RESULT
 ====================
 
-{tester_feedback}
+{untrusted_content("tester.feedback", tester_feedback)}
 
 ====================
 PREVIOUS REVIEW RESULT
 ====================
 
-{reviewer_feedback}
+{untrusted_content("reviewer.feedback", reviewer_feedback)}
 
 ====================
 UPSTREAM CONTEXT
 ====================
 
-{dependency_context}
+{untrusted_content("dependency.context", dependency_context)}
 
 ====================
 EXECUTION CONTEXT
 ====================
 
-history={history}
-metadata={metadata}
-review_round={view['review_round']}
+history={untrusted_content("execution.history", history)}
+metadata={untrusted_content("task.metadata", metadata)}
+{untrusted_content("review.round", f"review_round={view['review_round']}")}
 
 ====================
 REVIEW REQUIREMENTS
@@ -285,34 +242,30 @@ REVISION_REQUIRED
 """
 
     @staticmethod
-    def _build_result_data(
-        *,
-        content: str,
-        decision: str,
-        context: AgentContext,
-    ) -> dict[str, Any]:
+    def _build_result_data(*, content: str, decision: str, context: AgentContext) -> dict[str, Any]:
         developer_result = context.task_result
         tester_result = context.tester_feedback
-
         developer_data: dict[str, Any] = {}
-
         if isinstance(developer_result, dict):
             data = developer_result.get("data", developer_result)
             if isinstance(data, dict):
                 developer_data = dict(data)
-
         tests = developer_data.get("tests", [])
         files_changed = developer_data.get("files_changed", [])
-
         if not isinstance(tests, list):
             tests = []
         if not isinstance(files_changed, list):
             files_changed = []
-
         tester_status = None
         if isinstance(tester_result, dict):
             tester_status = tester_result.get("status")
-
+        parent = provenance_from_value(tester_result)
+        provenance = agent_feedback_provenance(
+            task_id=context.task_id,
+            agent_role="reviewer",
+            evidence_id=f"reviewer:{context.task_id}:round:{context.review_round}",
+            parent_evidence_id=parent.evidence_id if parent else None,
+        )
         return {
             "summary": content.strip(),
             "decision": decision,
@@ -324,34 +277,22 @@ REVISION_REQUIRED
                 "files_changed_count": len(files_changed),
                 "tester_result_available": bool(tester_result),
             },
+            "provenance": provenance.to_dict(),
             "report": content,
         }
 
     @staticmethod
     def _parse_review_result(result: str) -> str:
         if not isinstance(result, str):
-            raise ValueError(
-                "Reviewer returned invalid decision. "
-                "Expected APPROVED or REVISION_REQUIRED."
-            )
-
+            raise ValueError("Reviewer returned invalid decision. Expected APPROVED or REVISION_REQUIRED.")
         text = result.strip().upper()
-
         if text.startswith("REVISION_REQUIRED"):
             return "revision"
-
         if text.startswith("APPROVED"):
             return "approved"
-
         if "REVISION_REQUIRED" in text:
             return "revision"
-
         if "APPROVED" in text:
             return "approved"
-
         response_head = text.replace("\n", " ")[:200]
-        raise ValueError(
-            "Reviewer returned invalid decision. "
-            "Expected APPROVED or REVISION_REQUIRED. "
-            f"Response head: {response_head!r}"
-        )
+        raise ValueError("Reviewer returned invalid decision. Expected APPROVED or REVISION_REQUIRED. " f"Response head: {response_head!r}")

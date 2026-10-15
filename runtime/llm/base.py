@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -15,15 +15,12 @@ class LLMToolCall:
 
 @dataclass(frozen=True)
 class LLMResponse:
-    """Provider-neutral completion result.
-
-    ``content`` carries assistant text; ``tool_calls`` lists requested tool
-    invocations. A turn typically produces one of the two, mirroring
-    tool-calling chat semantics across providers and mocks.
-    """
+    """Provider-neutral completion result plus optional usage telemetry."""
 
     content: str | None = None
     tool_calls: tuple[LLMToolCall, ...] = ()
+    usage: dict[str, int] = field(default_factory=dict)
+    latency_seconds: float | None = None
 
 
 class BaseLLM(ABC):
@@ -46,16 +43,7 @@ class BaseLLM(ABC):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
     ) -> LLMResponse:
-        """Tool-calling boundary used by agent execution loops.
-
-        The default implementation degrades gracefully to text-only
-        completion: the last user message is routed through
-        :meth:`generate` and no tool calls are returned. Provider-backed
-        implementations override this with native tool calling;
-        deterministic mocks may script tool-call turns. Subclasses that
-        only implement :meth:`generate` therefore stay compatible with
-        every agent without any code change.
-        """
+        """Tool-calling boundary used by agent execution loops."""
         prompt = ""
         for message in reversed(messages):
             if isinstance(message, dict) and message.get("role") == "user":

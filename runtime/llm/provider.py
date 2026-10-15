@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from config.model import get_provider_profile
 from runtime.llm.base import BaseLLM, LLMResponse, LLMToolCall
+from runtime.model_governance import ModelRoute, ModelUsage
+from runtime.model_usage import ModelUsageLedger
 
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
@@ -22,12 +25,41 @@ def _status_code_of(exc: BaseException) -> int | None:
     return None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    """Provider compatibility facts that affect protocol use, not task semantics."""
+
+    supports_standard_tool_continuation: bool = True
+
+
 class ProviderLLM(BaseLLM):
     """BaseLLM adapter for OpenAI-compatible provider clients.
 
     Provider and model selection is environment-driven. Tests and callers
     may inject a client directly; in that case no provider configuration is
     required because the client is already supplied by the caller.
+
+    When ``project_id`` and a ``usage_ledger`` are supplied, every provider
+    response is attributed to that project at this canonical invocation
+    boundary. Attribution is telemetry only; admission and budget enforcement
+    remain in ModelGovernance.
+
+    Provider compatibility is explicit. A provider that cannot consume the
+    standard ``assistant(tool_calls) -> tool -> assistant`` continuation may
+    declare ``<PROVIDER>_SUPPORTS_TOOL_CONTINUATION=false``. AI-Team then
+    rejects the continuation before the provider call instead of mutating the
+    conversation with synthetic user messages.
     """
 
     def __init__(
@@ -36,6 +68,8 @@ class ProviderLLM(BaseLLM):
         model: str | None = None,
         provider_profile: str | None = None,
         client_instance: Any = None,
+        project_id: str | None = None,
+        usage_ledger: ModelUsageLedger | None = None,
     ) -> None:
         if client_instance is not None and provider_profile is None:
             resolved_profile = "injected"
@@ -57,10 +91,23 @@ class ProviderLLM(BaseLLM):
 
         if not isinstance(resolved_model, str) or not resolved_model.strip():
             raise TypeError("ProviderLLM model must be a non-empty string")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be a non-empty string")
+        if usage_ledger is not None and not isinstance(usage_ledger, ModelUsageLedger):
+            raise TypeError("usage_ledger must be a ModelUsageLedger")
+        if project_id is None and usage_ledger is not None:
+            raise ValueError("project_id is required when usage_ledger is supplied")
 
         self.provider_profile = resolved_profile
         self.model = resolved_model
+        self.project_id = project_id.strip() if project_id is not None else None
+        self.usage_ledger = usage_ledger
         self._client: Any = client_instance
+        self.protocol_repairs = 0
+        capability_env = f"{self.provider_profile.upper()}_SUPPORTS_TOOL_CONTINUATION"
+        self.capabilities = ProviderCapabilities(
+            supports_standard_tool_continuation=_env_bool(capability_env, True)
+        )
 
     @property
     def client(self) -> Any:
@@ -115,6 +162,219 @@ class ProviderLLM(BaseLLM):
         text = str(content)
         return "" if not text.strip() else text
 
+    @staticmethod
+    def _usage_of(response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {}
+
+        def value(name: str) -> int:
+            raw = usage.get(name, 0) if isinstance(usage, dict) else getattr(usage, name, 0)
+            try:
+                return max(0, int(raw or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        prompt_tokens = value("prompt_tokens")
+        completion_tokens = value("completion_tokens")
+        total_tokens = value("total_tokens")
+        if not total_tokens:
+            total_tokens = prompt_tokens + completion_tokens
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def _attribute_usage(self, response: Any) -> None:
+        if self.project_id is None or self.usage_ledger is None:
+            return
+        usage = self._usage_of(response)
+        self.usage_ledger.record(
+            self.project_id,
+            ModelUsage(
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                llm_calls=1,
+            ),
+            route=ModelRoute(self.provider_profile, self.model),
+        )
+
+    @staticmethod
+    def _message_diagnostic(message: Any) -> dict[str, Any]:
+        if not isinstance(message, dict):
+            return {"role": None, "content_chars": 0, "tool_call_ids": ()}
+        raw_content = message.get("content")
+        content_chars = len(str(raw_content)) if raw_content is not None else 0
+        tool_calls = message.get("tool_calls") or ()
+        tool_call_ids: list[str] = []
+        tool_names: list[str] = []
+        if isinstance(tool_calls, (list, tuple)):
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                call_id = call.get("id")
+                if isinstance(call_id, str):
+                    tool_call_ids.append(call_id)
+                function = call.get("function")
+                if isinstance(function, dict) and isinstance(function.get("name"), str):
+                    tool_names.append(function["name"])
+        return {
+            "role": message.get("role"),
+            "content_chars": content_chars,
+            "tool_call_ids": tuple(tool_call_ids),
+            "tool_names": tuple(tool_names),
+            "tool_call_id": message.get("tool_call_id"),
+        }
+
+    def _log_request_diagnostic(self, kwargs: dict[str, Any], exc: BaseException) -> None:
+        if os.getenv("AGNES_REQUEST_DIAGNOSTICS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return
+        if self.provider_profile != "agnes":
+            return
+        messages = kwargs.get("messages")
+        safe_messages = [self._message_diagnostic(message) for message in messages] if isinstance(messages, list) else []
+        print(
+            "[LLM DIAGNOSTIC] "
+            f"provider={self.provider_profile} model={self.model} "
+            f"message_count={len(safe_messages)} "
+            f"roles={[item['role'] for item in safe_messages]} "
+            f"last_messages={safe_messages[-5:]} "
+            f"tools_count={len(kwargs.get('tools') or ())} "
+            f"tool_choice={kwargs.get('tool_choice')} "
+            f"error={type(exc).__name__}: {exc}"
+        )
+
+    @staticmethod
+    def _is_tool_continuation(messages: list[dict[str, Any]]) -> bool:
+        return any(
+            isinstance(message, dict) and message.get("role") == "tool"
+            for message in messages
+        )
+
+    @staticmethod
+    def _first_incomplete_tool_turn(messages: list[dict[str, Any]]) -> int | None:
+        """Index of the earliest assistant turn with unanswered tool calls.
+
+        The OpenAI tool-continuation protocol requires every ``tool_calls``
+        declaration to be answered by the tool messages that immediately
+        follow it. A turn whose declarations lack their responses makes the
+        whole request invalid; providers reject it before the model runs.
+        """
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            raw_calls = message.get("tool_calls") or []
+            call_ids = {
+                call.get("id")
+                for call in raw_calls
+                if isinstance(call, dict) and call.get("id") is not None
+            }
+            if not call_ids:
+                continue
+            answered: set[Any] = set()
+            for later in messages[index + 1:]:
+                if not isinstance(later, dict) or later.get("role") != "tool":
+                    break
+                answered.add(later.get("tool_call_id"))
+            if any(call_id not in answered for call_id in call_ids):
+                return index
+        return None
+
+    @staticmethod
+    def _answered_call_ids(messages: list[dict[str, Any]], index: int) -> set[Any]:
+        """Call ids answered by the tool messages that follow message ``index``."""
+        answered: set[Any] = set()
+        for later in messages[index + 1:]:
+            if not isinstance(later, dict) or later.get("role") != "tool":
+                break
+            answered.add(later.get("tool_call_id"))
+        return answered
+
+    def _repair_tool_continuation(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Make the conversation satisfy the tool-continuation protocol.
+
+        Only provably-broken fragments are removed; no content is synthesized:
+        - unanswered tool-call declarations are trimmed from their assistant
+          message (the call never executed, so re-issuing it is honest);
+        - assistant messages left with neither content nor declarations, and
+          tool responses whose declaration was trimmed away, are dropped.
+        Everything else - including the full executed tool history - survives,
+        so the model keeps its context and re-plans from real evidence.
+        """
+        repaired = [dict(message) for message in messages]
+        changed = False
+
+        # Pass 1: trim declarations that their following tool block never
+        # answered. A declaration without a response means the call never
+        # executed; removing it is the honest, protocol-valid description.
+        for index, message in enumerate(repaired):
+            if message.get("role") != "assistant":
+                continue
+            raw_calls = message.get("tool_calls") or []
+            if not raw_calls:
+                continue
+            answered = self._answered_call_ids(repaired, index)
+            kept = [
+                call
+                for call in raw_calls
+                if isinstance(call, dict) and call.get("id") in answered
+            ]
+            if len(kept) == len(raw_calls):
+                continue
+            changed = True
+            content = message.get("content")
+            if kept:
+                message["tool_calls"] = kept
+            elif isinstance(content, str) and content.strip():
+                message.pop("tool_calls", None)
+            else:
+                message["__drop__"] = True
+
+        # Pass 2: drop assistant messages emptied by pass 1 and tool responses
+        # that no longer have a directly preceding declaration.
+        rebuilt: list[dict[str, Any]] = []
+        declared_for_turn: set[Any] = set()
+        for message in repaired:
+            if message.pop("__drop__", None):
+                changed = True
+                declared_for_turn = set()
+                continue
+            role = message.get("role")
+            if role == "assistant":
+                declared_for_turn = {
+                    call.get("id")
+                    for call in (message.get("tool_calls") or [])
+                    if isinstance(call, dict)
+                }
+                rebuilt.append(message)
+            elif role == "tool":
+                if message.get("tool_call_id") in declared_for_turn:
+                    rebuilt.append(message)
+                else:
+                    changed = True
+            else:
+                rebuilt.append(message)
+
+        if changed:
+            self.protocol_repairs += 1
+            print(
+                f"[LLM] {self.provider_profile}/{self.model} "
+                "repaired incomplete tool continuation "
+                f"({len(rebuilt)}/{len(messages)} messages kept)"
+            )
+        return rebuilt
+
+    def _require_tool_continuation_support(self, messages: list[dict[str, Any]]) -> None:
+        if not self._is_tool_continuation(messages):
+            return
+        if self.capabilities.supports_standard_tool_continuation:
+            return
+        raise RuntimeError(
+            f"Provider '{self.provider_profile}' is configured without standard tool "
+            "continuation support; refusing to alter conversation semantics"
+        )
+
     def _post_chat(self, **kwargs: Any):
         max_attempts = self._max_attempts()
         http_attempt = 0
@@ -127,6 +387,7 @@ class ProviderLLM(BaseLLM):
                 if not self._has_content_or_tool_calls(response):
                     empty_attempt += 1
                     if empty_attempt >= max_attempts:
+                        self._attribute_usage(response)
                         return response
                     wait = self._backoff_seconds(empty_attempt, None)
                     print(
@@ -136,9 +397,11 @@ class ProviderLLM(BaseLLM):
                     time.sleep(wait)
                     continue
 
+                self._attribute_usage(response)
                 return response
 
             except Exception as exc:
+                self._log_request_diagnostic(kwargs, exc)
                 code = _status_code_of(exc)
                 http_attempt += 1
                 if code not in RETRYABLE_STATUS_CODES or http_attempt >= max_attempts:
@@ -186,15 +449,21 @@ class ProviderLLM(BaseLLM):
         if not isinstance(messages, list) or not messages:
             raise TypeError("ProviderLLM messages must be a non-empty list")
 
+        wire_messages = [dict(message) for message in messages]
+        wire_messages = self._repair_tool_continuation(wire_messages)
+        self._require_tool_continuation_support(wire_messages)
+
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": wire_messages,
         }
         if tools:
             kwargs["tools"] = list(tools)
             kwargs["tool_choice"] = tool_choice
 
+        started = time.perf_counter()
         response = self._post_chat(**kwargs)
+        latency_seconds = time.perf_counter() - started
         message = response.choices[0].message
         raw_tool_calls = getattr(message, "tool_calls", None) or []
         tool_calls = tuple(
@@ -208,4 +477,6 @@ class ProviderLLM(BaseLLM):
         return LLMResponse(
             content=self._normalized_content(message.content),
             tool_calls=tool_calls,
+            usage=self._usage_of(response),
+            latency_seconds=latency_seconds,
         )

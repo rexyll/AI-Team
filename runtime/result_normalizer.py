@@ -9,10 +9,9 @@ def normalize_agent_result(
 ) -> AgentResult:
     """Normalize an Agent result and optionally validate its execution identity.
 
-    ``expected_agent`` and ``expected_task_id`` are optional so existing
-    callers keep their legacy behavior. Runtime orchestration code can provide
-    them at stage boundaries to reject results produced for a different Agent
-    or task.
+    Normalization is intentionally side-effect free. Workflow stage code owns
+    any trusted evidence attestation so direct stage APIs retain the legacy
+    AgentResult payload contract while gate boundaries can enforce provenance.
     """
     if isinstance(result, AgentResult):
         normalized = result

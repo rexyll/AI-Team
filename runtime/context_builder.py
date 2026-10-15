@@ -6,6 +6,8 @@ from typing import Any
 from runtime.agent_context import AgentContext
 from runtime.legacy_dependency_bridge import LegacyDependencyBridge
 from runtime.task import Task
+from runtime.task_checkpoint import build_task_checkpoint_summary
+from security.secrets import redact_value
 
 
 class ContextBuilder:
@@ -59,22 +61,22 @@ class ContextBuilder:
             status=task.status,
             review_round=task.review_round,
             dependencies=list(dependencies.keys()),
-            dependency_context=dependencies,
-            task_result=deepcopy(task.result),
+            dependency_context=redact_value(dependencies),
+            task_result=redact_value(deepcopy(task.result)),
             tester_feedback=(
-                deepcopy(tester_feedback)
+                redact_value(deepcopy(tester_feedback))
                 if tester_feedback is not None
                 else {}
             ),
             reviewer_feedback=(
-                deepcopy(reviewer_feedback)
+                redact_value(deepcopy(reviewer_feedback))
                 if reviewer_feedback is not None
                 else {}
             ),
-            history=self._build_history(task),
-            test_history=self._build_test_history(task),
-            review_history=self._build_review_history(task),
-            metadata=self._build_metadata(task),
+            history=redact_value(self._build_history(task)),
+            test_history=redact_value(self._build_test_history(task)),
+            review_history=redact_value(self._build_review_history(task)),
+            metadata=redact_value(self._build_metadata(task, role=context_role)),
         )
 
     def _build_dependency_context(self, task: Task) -> dict[str, Any]:
@@ -107,19 +109,20 @@ class ContextBuilder:
         return deepcopy(getattr(task, "review_history", []))
 
     @staticmethod
-    def _build_metadata(task: Task) -> dict[str, Any]:
+    def _build_metadata(task: Task, *, role: str | None = None) -> dict[str, Any]:
         task_context = getattr(task, "context", {})
 
         if not isinstance(task_context, dict):
-            return {}
+            task_context = {}
 
         reserved = {
             "dependencies",
             "tester_feedback",
             "reviewer_feedback",
+            "tool_execution_history",
         }
 
-        return deepcopy({
+        metadata = deepcopy({
             key: value
             for key, value in task_context.items()
             if key not in reserved
@@ -128,6 +131,30 @@ class ContextBuilder:
                 and {"title", "role", "result"}.issubset(value)
             )
         })
+
+        if role == "developer":
+            result = getattr(task, "result", {})
+            if isinstance(result, dict):
+                data = result.get("data", result)
+                if isinstance(data, dict):
+                    telemetry = data.get("tool_loop_telemetry", [])
+                    changed_files = data.get("files_changed", [])
+                    command_results = data.get("tests", [])
+                    if isinstance(telemetry, list) and (
+                        telemetry or changed_files or command_results
+                    ):
+                        checkpoint = build_task_checkpoint_summary(
+                            task_id=task.id,
+                            status=task.status,
+                            telemetry=telemetry,
+                            changed_files=changed_files,
+                            command_results=command_results,
+                            dependency_context={},
+                            task_result={},
+                        )
+                        metadata["task_checkpoint"] = checkpoint.to_dict()
+
+        return metadata
 
     @staticmethod
     def _validate_task(task: Task) -> None:
@@ -142,13 +169,7 @@ def build_task_context(
     task: Task,
     all_tasks: dict[str, Task],
 ) -> dict[str, Any] | list[str]:
-    """Backward-compatible functional API.
-
-    Historically Workflow stored ``[]`` for tasks with no declared
-    dependencies. Preserve that legacy shape at this compatibility boundary,
-    while tasks that declare dependencies continue to expose the structured
-    dependency mapping used by context-flow consumers.
-    """
+    """Backward-compatible functional API."""
     if not task.dependencies:
         return []
     return LegacyDependencyBridge(all_tasks).build(task)

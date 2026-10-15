@@ -33,6 +33,12 @@ The full agent/provider import chain requires two declared third-party dependenc
 pip install -r requirements.txt
 ```
 
+The local MCP bridge has a separate dependency set so the core runtime does not acquire the MCP SDK unnecessarily:
+
+```powershell
+pip install -r requirements-mcp.txt
+```
+
 `requirements.txt` pins the versions validated by the local development environment (`openai`, `python-dotenv`). Contract tests themselves stay network-independent through mock injection; `config/model.py` imports both packages and resolves the shared client lazily on first provider use. See `docs/production_configuration.md` for the full configuration checklist.
 
 Verify the interpreter:
@@ -118,50 +124,29 @@ When custom configurations are supplied, `architect`, `developer`, `tester`, and
 
 Do not register two agents for the same role. `AgentRouter` rejects duplicate roles and validates role consistency when the agent exposes a `role` attribute.
 
-## 7. LLM provider and configuration contract
-
-The canonical environment-based provider configuration is documented in `docs/production_configuration.md`. The validated, side-effect-free configuration snapshot is exposed by `config.configuration.load_configuration()`.
-
-```python
-from config.configuration import load_configuration
-
-configuration = load_configuration()
-print(configuration.role("developer"))
-print(configuration.provider("agnes"))
-```
-
-`load_configuration()` resolves and validates the complete effective configuration without creating live clients or making network requests. It returns an immutable `LLMConfiguration` containing provider profiles, role bindings, and the configured Developer count. Invalid or incomplete effective configuration raises `ConfigurationError` before client creation.
-
-Resolution follows these rules:
-
-1. `{ROLE}_PROVIDER` overrides `DEFAULT_PROVIDER`.
-2. `{ROLE}_MODEL` overrides the bound provider's default model.
-3. `DEFAULT_MODEL` is the final model fallback.
-4. Developer instance configuration uses `DEVELOPER_N_*` before shared `DEVELOPER_*`, then shared defaults.
-
-Use `configuration_precedence()` when tooling needs the documented precedence contract programmatically. Configuration loading remains network-free; actual provider clients continue to be created lazily by `config.model` when a completion is requested.
-
-## 8. LLM provider and mock execution
+## 7. LLM provider and mock execution
 
 LLM integration is intentionally behind the agent/LLM abstraction. Production integrations should inject the provider through the existing runtime contracts rather than making network calls directly from workflow orchestration code.
 
 The contract suite includes deterministic mock LLM/agent integration tests. Use those mocks for local tests and regression work so tests remain network-independent and repeatable.
 
-## 9. Tools, permissions, and workspace sandbox
+## 8. Tools, permissions, and workspace sandbox
 
 Tool execution is subject to the existing tool contract, permission policy, and workspace sandbox boundaries. A tool must not be treated as an unrestricted shell or filesystem API.
 
-When adding a tool:
+When adding an Agent-visible tool:
 
 1. Define its schema and argument validation.
-2. Register it through the existing tool registry contract.
+2. Register it through the existing Agent tool registry contract.
 3. Apply the required permission policy.
 4. Keep workspace access inside the configured sandbox boundary.
 5. Add contract tests for invalid arguments and denied access.
 
+The `git_command` primitive is intentionally **host-owned**. It remains part of the complete tool contract for compatibility and schema validation, but it is not exposed through `TOOL_REGISTRY` to Agents. Host Git operations must go through `runtime.host_git.HostGitOperationService`, which validates the authorized workspace, repository root, operation vocabulary, paths, revisions, and commit message before invoking the underlying Git primitive.
+
 Security behavior is part of the production contract; do not bypass these layers in examples.
 
-## 10. Persistence and recovery
+## 9. Persistence and recovery
 
 Workflow events are represented by immutable `WorkflowEvent` values and can be kept in a `WorkflowEventLog` with an optional durable persistence sink.
 
@@ -203,7 +188,7 @@ query = WorkflowEventQueryService.from_persisted_project(
 
 Query and projection are read-only. They must not write to the event store or mutate runtime state.
 
-## 11. Canonical runtime lifecycle
+## 10. Canonical runtime lifecycle
 
 The current canonical workflow lifecycle is event-driven and must not be inferred from older examples. A simple Developer task whose Reviewer approves on the first review can produce:
 
@@ -215,9 +200,19 @@ review_started
 reviewer_approved
 ```
 
-Performance contracts count events produced by this real lifecycle rather than adding artificial events.
-
 Retry, revision, approval, persistence, projection, and recovery semantics are covered by the contract tests described in `DevPlan.md`.
+
+## 11. Local MCP bridge service (external)
+
+The local MCP bridge that lets cloud-based LLM hosts access an authorized
+local folder is an **independent third-party service** and is no longer part
+of this repository. It lives in its own project (`../web_host_bridge` next to
+this repository) with its own documentation, tests, and configuration
+(`WEB_HOST_BRIDGE_*` environment variables). AI-Team retains no dependency on
+it, and the service has no dependency on AI-Team.
+
+The AI-Team production readiness gate no longer includes an MCP section; the
+service runs its own test suite and release gate in its own repository.
 
 ## 12. Development workflow
 

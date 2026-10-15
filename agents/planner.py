@@ -15,9 +15,7 @@ from runtime.task_validator import validate_plan
 from agents.base import BaseAgent
 from runtime.task import Task
 
-
 logger = logging.getLogger(__name__)
-
 
 SYSTEM_PROMPT = """
 你是一名专业的软件项目规划师（Planner）。
@@ -35,6 +33,10 @@ SYSTEM_PROMPT = """
 用户需求中的显式约束必须逐条落实，不得省略或改写，尤其是输出目录、文件路径、命名、技术栈和阶段顺序。
 与目录/路径相关的约束必须写入第一个实现类任务的 description 中。
 拆解完成后必须逐条核对需求原文，确认没有遗漏显式约束。
+
+如果提示中包含"需求分析师草案"部分：它仅供参考，不是用户原文。
+草案中的任何目录/路径/技术栈信息都不得视为用户显式约束，更不得出现在你声明的
+路径约束中；目录与路径约束只能来自用户原文。
 
 角色职责：
 - architect：设计结构与接口规范，不产出业务代码。
@@ -71,18 +73,14 @@ SYSTEM_PROMPT = """
 
 MAX_PLAN_RETRIES = 2
 
-
 @dataclass(frozen=True)
 class PlannerAttempt:
-    """Diagnostic record for one Planner generation/validation attempt."""
-
     attempt: int
     response_length: int
     error_type: str | None
     error: str | None
     stage: str
     success: bool
-
 
 def _extract_json_object(response: str) -> str:
     response = response.strip()
@@ -126,7 +124,6 @@ def _extract_json_object(response: str) -> str:
                 return response[start:index + 1]
     raise ValueError("Planner 返回内容包含不完整的 JSON 对象。")
 
-
 def _parse_plan_response(response: str) -> dict[str, Any]:
     if not isinstance(response, str) or not response.strip():
         raise ValueError("Planner 返回为空响应")
@@ -140,7 +137,6 @@ def _parse_plan_response(response: str) -> dict[str, Any]:
     validate_plan(plan)
     return plan
 
-
 def _classify_validation_error(error: Exception) -> str:
     message = str(error).lower()
     if "json" in message or "对象" in message or "object" in message:
@@ -150,7 +146,6 @@ def _classify_validation_error(error: Exception) -> str:
     if "depend" in message or "circular" in message or "cycle" in message:
         return "dependency"
     return "validation"
-
 
 def _build_repair_prompt(requirement: str, invalid_response: str, error: Exception, attempt: int) -> str:
     error_kind = _classify_validation_error(error)
@@ -173,7 +168,6 @@ def _build_repair_prompt(requirement: str, invalid_response: str, error: Excepti
 只输出最终 JSON Object，不要 Markdown 或解释文字。
 """
 
-
 def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
     required_dirs = extract_required_paths(requirement)
     if not required_dirs:
@@ -185,84 +179,42 @@ def _enforce_requirement_paths(requirement: str, plan: dict) -> dict:
         print(f"[Planner] 路径约束已由模型逐任务落实，无需注入: {required_dirs}")
     return plan
 
-
-def create_plan(
-    requirement: str,
-    *,
-    llm: BaseLLM | None = None,
-    max_retries: int | None = None,
-    metrics: LLMMetrics | None = None,
-) -> dict:
-    """Generate a validated plan with bounded, diagnostic self-correction."""
+def create_plan(requirement: str, *, llm: BaseLLM | None = None, max_retries: int | None = None, metrics: LLMMetrics | None = None, requirement_analysis: str | None = None) -> dict:
     if llm is not None and not isinstance(llm, BaseLLM):
         raise TypeError("create_plan llm must implement BaseLLM")
     if not isinstance(requirement, str) or not requirement.strip():
         raise ValueError("Planner requirement cannot be empty")
+    if requirement_analysis is not None and not isinstance(requirement_analysis, str):
+        raise TypeError("requirement_analysis must be a string or None")
     retry_budget = MAX_PLAN_RETRIES if max_retries is None else max_retries
     if not isinstance(retry_budget, int) or retry_budget < 0:
         raise ValueError("max_retries must be a non-negative integer")
-
     prompt = f"请根据下面的软件需求制定开发计划：\n\n{requirement}"
     compactor = ContextCompactor()
     attempts: list[PlannerAttempt] = []
     last_error: Exception | None = None
     last_response = ""
-
     for attempt in range(retry_budget + 1):
-        current_prompt = prompt if attempt == 0 else _build_repair_prompt(
-            requirement,
-            last_response,
-            last_error or ValueError("unknown validation error"),
-            attempt,
-        )
-        bounded_prompt, bounded_system, stats = compactor.compact_prompt(
-            current_prompt,
-            system_prompt=SYSTEM_PROMPT,
-        )
-
+        current_prompt = prompt if attempt == 0 else _build_repair_prompt(requirement, last_response, last_error or ValueError("unknown validation error"), attempt)
+        bounded_prompt, bounded_system, stats = compactor.compact_prompt(current_prompt, system_prompt=SYSTEM_PROMPT)
         started = perf_counter()
         try:
             if llm is not None:
-                response = llm.generate(
-                    bounded_prompt,
-                    system_prompt=bounded_system,
-                )
+                response = llm.generate(bounded_prompt, system_prompt=bounded_system)
             else:
-                response = ask_ai(
-                    prompt=bounded_prompt,
-                    system_prompt=bounded_system,
-                )
+                response = ask_ai(prompt=bounded_prompt, system_prompt=bounded_system)
         except Exception as exc:
             if metrics is not None:
-                metrics.record_llm_call(
-                    prompt_chars=stats.compacted_chars,
-                    input_tokens=stats.compacted_tokens,
-                    elapsed_seconds=perf_counter() - started,
-                )
+                metrics.record_llm_call(prompt_chars=stats.compacted_chars, input_tokens=stats.compacted_tokens, elapsed_seconds=perf_counter() - started)
                 metrics.finish()
-            attempts.append(
-                PlannerAttempt(
-                    attempt + 1,
-                    0,
-                    type(exc).__name__,
-                    str(exc),
-                    "generation",
-                    False,
-                )
-            )
+            attempts.append(PlannerAttempt(attempt + 1, 0, type(exc).__name__, str(exc), "generation", False))
             last_error = exc
             last_response = ""
             logger.warning("Planner attempt %d generation failed: %s", attempt + 1, exc)
             continue
-
         if metrics is not None:
-            metrics.record_llm_call(
-                prompt_chars=stats.compacted_chars,
-                input_tokens=stats.compacted_tokens,
-                elapsed_seconds=perf_counter() - started,
-            )
+            metrics.record_llm_call(prompt_chars=stats.compacted_chars, input_tokens=stats.compacted_tokens, elapsed_seconds=perf_counter() - started)
             metrics.finish()
-
         if not isinstance(response, str):
             response = str(response or "")
         last_response = response
@@ -276,21 +228,21 @@ def create_plan(
             last_error = exc
             attempts.append(PlannerAttempt(attempt + 1, len(response), type(exc).__name__, str(exc), _classify_validation_error(exc), False))
             logger.warning("Planner attempt %d validation failed: type=%s error=%s response_chars=%d", attempt + 1, _classify_validation_error(exc), exc, len(response))
-
-    diagnostics = "; ".join(
-        f"attempt={item.attempt}, stage={item.stage}, error_type={item.error_type}, error={item.error!r}, response_chars={item.response_length}"
-        for item in attempts
-    )
+    diagnostics = "; ".join(f"attempt={item.attempt}, stage={item.stage}, error_type={item.error_type}, error={item.error!r}, response_chars={item.response_length}" for item in attempts)
     raise ValueError("Planner 在多次尝试后仍无法生成合法计划。\n" f"attempts={len(attempts)}; diagnostics: {diagnostics}") from last_error
-
 
 class PlannerAgent(BaseAgent):
     @property
     def role(self) -> str:
         return "planner"
-
     def run(self, task: Task):
         if not isinstance(task, Task):
             raise TypeError("PlannerAgent.run() expects Task, " f"got {type(task).__name__}")
-        plan = create_plan(task.description, llm=self.llm, metrics=self.llm_metrics)
+        requirement_analysis = task.context.get("requirement_analysis")
+        plan = create_plan(
+            task.description,
+            llm=self.llm,
+            metrics=self.llm_metrics,
+            requirement_analysis=requirement_analysis if isinstance(requirement_analysis, str) else None,
+        )
         return {"status": "planner_completed", "agent": self.role, "task_id": task.id, "plan": plan}

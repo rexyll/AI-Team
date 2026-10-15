@@ -138,6 +138,8 @@ def test_persisted_continue_does_not_call_planner(tmp_path):
 
     class Router:
         def get_agent(self, role):
+            if role in ("analyst", "doc_writer"):
+                return None
             raise AssertionError("planner must not be invoked during persisted continue")
 
     project = ProjectOrchestrator(

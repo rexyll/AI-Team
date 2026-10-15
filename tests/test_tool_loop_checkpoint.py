@@ -1,0 +1,60 @@
+from runtime.tool_loop_checkpoint import build_tool_loop_checkpoint
+
+
+def _telemetry(*categories: str):
+    items = []
+    for index, category in enumerate(categories, start=1):
+        items.append(
+            {
+                "execution_id": f"CALL-{index}",
+                "tool_name": "read_file",
+                "arguments_hash": f"args-{index}",
+                "result_hash": f"result-{index}",
+                "result_chars": 100 + index,
+                "retained_result_chars": 80 + index,
+                "result_truncated": index % 2 == 0,
+                "category": category,
+                "duplicate_of": "CALL-1" if category == "exact_duplicate" else None,
+                "retry_of": "CALL-1" if category == "retry" else None,
+            }
+        )
+    return items
+
+
+def test_checkpoint_is_compact_and_contains_decision_relevant_state():
+    checkpoint = build_tool_loop_checkpoint(
+        _telemetry("exploration", "execution", "exact_duplicate", "verification"),
+        changed_files=["runtime/task.py", "runtime/task.py", "tests/test_task.py"],
+        command_results=[{"command": "pytest -q", "result": "passed"}],
+    )
+
+    assert checkpoint is not None
+    assert "TOOL LOOP CHECKPOINT" in checkpoint
+    assert "calls=4 duplicates=1 retries=0" in checkpoint
+    assert "duplicate_ratio=0.250" in checkpoint
+    assert "categories=exact_duplicate:1, execution:1, exploration:1, verification:1" in checkpoint
+    assert "recent_duplicate_tools=read_file" in checkpoint
+    assert "recent_actions=CALL-2:read_file:args-2:execution | CALL-3:read_file:args-3:exact_duplicate | CALL-4:read_file:args-4:verification" in checkpoint
+    assert "recent_evidence=CALL-2:hash=result-2:chars=102:retained=82:truncated=true:status=fresh" in checkpoint
+    assert "CALL-3:hash=result-3:chars=103:retained=83:truncated=false:status=duplicate" in checkpoint
+    assert "changed_files=runtime/task.py, tests/test_task.py" in checkpoint
+    assert "test_or_command_results=1" in checkpoint
+    assert "last_command=pytest -q" in checkpoint
+    assert "verification_calls=1 execution_calls=1" in checkpoint
+    assert "Do not repeat exploration" in checkpoint
+    assert "recorded result" in checkpoint
+    assert "Duplicate-call rate is elevated" in checkpoint
+
+
+def test_checkpoint_does_not_flag_low_duplicate_rate_as_elevated():
+    checkpoint = build_tool_loop_checkpoint(
+        _telemetry("exploration", "execution", "verification", "exact_duplicate", "exploration", "execution", "verification", "exploration")
+    )
+
+    assert checkpoint is not None
+    assert "duplicate_ratio=0.125" in checkpoint
+    assert "Duplicate-call rate is elevated" not in checkpoint
+
+
+def test_empty_telemetry_does_not_create_noise():
+    assert build_tool_loop_checkpoint([]) is None

@@ -21,6 +21,14 @@ class ToolError:
     message: str
     details: dict[str, Any] | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "category": self.category,
+            "message": self.message,
+            "details": self.details,
+        }
+
 
 class ToolExecutionError(RuntimeError):
     """Base exception for failures that occur while executing a Tool."""
@@ -54,6 +62,16 @@ def classify_tool_exception(exc: BaseException) -> ToolError:
             "Tool arguments are invalid",
         )
 
+    # Terminal allow-list denials are our own policy text (never tracebacks or
+    # OS error details), so the bounded message is safe and actionable for the
+    # agent that issued the command.
+    if exc.__class__.__name__ == "TerminalPolicyError":
+        return ToolError(
+            "TOOL_PERMISSION_DENIED",
+            PERMISSION,
+            _safe_message(exc),
+        )
+
     # WorkspaceSandbox currently raises PermissionError for containment
     # failures. Keep that implementation detail out of the public contract.
     if isinstance(exc, PermissionError) and "outside workspace" in str(exc).lower():
@@ -65,5 +83,15 @@ def classify_tool_exception(exc: BaseException) -> ToolError:
 
     if isinstance(exc, ToolExecutionError):
         return ToolError("TOOL_EXECUTION_FAILED", RUNTIME, _safe_message(exc))
+
+    # Missing workspace paths are our own boundary messages ("Path not found:
+    # <authorized path>") and tell the agent exactly why its lookup missed.
+    if isinstance(exc, FileNotFoundError):
+        return ToolError("TOOL_EXECUTION_FAILED", RUNTIME, _safe_message(exc))
+
+    # A raw timeout (e.g. the terminal tool's process timeout) is a distinct,
+    # machine-readable category even though it carries no provider details.
+    if isinstance(exc, TimeoutError):
+        return ToolError("TOOL_TIMEOUT", TIMEOUT, "Tool execution timed out")
 
     return ToolError("TOOL_EXECUTION_FAILED", UNKNOWN, "Tool execution failed")
