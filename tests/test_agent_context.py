@@ -409,6 +409,7 @@ def test_agent_context_to_dict_returns_snapshot():
         "tester_feedback": {
             "status": "passed",
         },
+        "qa_feedback": {},
         "reviewer_feedback": {
             "status": "approved",
         },

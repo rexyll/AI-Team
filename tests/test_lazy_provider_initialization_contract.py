@@ -20,8 +20,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_without_key(code: str) -> subprocess.CompletedProcess:
-    """Run ``code`` in a fresh interpreter with AGNES_API_KEY stripped."""
-    env = {key: value for key, value in os.environ.items() if key != "AGNES_API_KEY"}
+    """Run ``code`` in a fresh interpreter with every AGNES key variant stripped.
+
+    The rotation feature accepts numbered keys (``AGNES_API_KEY1``...), so a
+    subprocess that keeps them would legitimately still be configured.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("AGNES_API_KEY")
+    }
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=str(ROOT),
@@ -60,9 +68,12 @@ def test_get_client_fails_only_on_use_without_key() -> None:
     # before first use - exactly the boundary this contract guards.
     code = (
         "import os\n"
-        "os.environ.pop('AGNES_API_KEY', None)\n"
+        "def _pop_keys():\n"
+        "    for name in [v for v in os.environ if v.startswith('AGNES_API_KEY')]:\n"
+        "        os.environ.pop(name, None)\n"
+        "_pop_keys()\n"
         "import config.model as m\n"
-        "os.environ.pop('AGNES_API_KEY', None)\n"
+        "_pop_keys()\n"
         "try:\n"
         "    m.get_client()\n"
         "except RuntimeError as exc:\n"

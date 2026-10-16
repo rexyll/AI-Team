@@ -92,7 +92,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
         completed_tasks = 1
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             captured["router"] = agent_router
 
         def create_plan(self, requirement):
@@ -107,7 +107,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
             captured["executed_task_manager"] = task_manager
             return FakeProjectResult()
 
-    def fake_create_agent_router():
+    def fake_create_agent_router(**kwargs):
         router = FakeRouter()
         captured["created_router"] = router
         return router
@@ -115,7 +115,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
     monkeypatch.setattr(main, "create_agent_router", fake_create_agent_router)
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
 
-    task_manager, result = main.run_project("开发一个个人记账软件")
+    task_manager, result, cost_summary = main.run_project("开发一个个人记账软件")
 
     assert isinstance(task_manager, FakeTaskManager)
     assert isinstance(result, FakeProjectResult)
@@ -132,7 +132,7 @@ def test_main_executes_requirement(monkeypatch, capsys):
         completed_tasks = 2
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             self.agent_router = agent_router
             self.deliverable_dir = deliverable_dir
             self.clarifications = clarifications
@@ -150,7 +150,7 @@ def test_main_executes_requirement(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "开发个人记账软件"])
 
@@ -184,7 +184,7 @@ def test_main_supports_machine_readable_json_output(monkeypatch, capsys):
             }
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             pass
 
         def create_plan(self, requirement):
@@ -199,16 +199,46 @@ def test_main_supports_machine_readable_json_output(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--output", "json"])
 
-    assert main.main() == 0
+    # A failed project exits non-zero even without gate flags; the machine
+    # readable payload is still printed before the exit code is decided.
+    assert main.main() == 1
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["result"]["status"] == "failed"
     assert payload["result"]["failed_tasks"] == ["TASK-002"]
     assert payload["tasks"][1]["error"] == "boom"
+
+
+def test_failed_project_exits_nonzero_without_gate_flags(monkeypatch, capsys):
+    class FakeProjectResult:
+        success = False
+        status = "failed"
+        total_tasks = 1
+        completed_tasks = 0
+
+    class FakeProjectOrchestrator:
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
+            pass
+
+        def create_plan(self, requirement):
+            return {"project": "demo", "summary": "s", "tasks": []}
+
+        def build_task_manager(self, plan):
+            return FakeTaskManager([FakeTask("TASK-001", "failed", "developer", "boom", "boom")])
+
+        def execute(self, task_manager):
+            return FakeProjectResult()
+
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
+    monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "demo"])
+
+    assert main.main() == 1
+    assert "success=False" in capsys.readouterr().out
 
 
 def test_main_returns_error_when_project_fails(monkeypatch, capsys):
@@ -259,7 +289,7 @@ def test_strict_acceptance_gate_fails_closed(monkeypatch, capsys):
             return [FakeTask()]
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             pass
 
         def create_plan(self, requirement):
@@ -271,7 +301,7 @@ def test_strict_acceptance_gate_fails_closed(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--strict-acceptance"])
 
@@ -306,7 +336,7 @@ def test_analyze_only_writes_specification_worksheet(tmp_path, monkeypatch):
         __import__("runtime.agent_config", fromlist=["AgentConfig"]).AgentConfig(role="analyst", model=""),
         llm=_LLM(),
     ))
-    monkeypatch.setattr(main, "create_agent_router", lambda: router)
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: router)
     monkeypatch.setattr(main.sys, "argv", [
         "main.py", "统计词频", "--analyze-only",
         "--analysis-output", str(tmp_path / "spec.md"),
@@ -353,7 +383,7 @@ def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
             return []
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             delivered["clarifications"] = clarifications
 
         def create_plan(self, requirement):
@@ -365,7 +395,7 @@ def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    def fake_create_agent_router():
+    def fake_create_agent_router(**kwargs):
         import runtime.agent_config as agent_config
         from runtime.agent_router import AgentRouter as RealRouter
         from agents.analyst import RequirementAnalystAgent
@@ -384,7 +414,7 @@ def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
 
     def run_project_stub(requirement, **kwargs):
         delivered["clarifications"] = kwargs.get("clarifications")
-        return FakeTaskManager(), FakeProjectResult()
+        return FakeTaskManager(), FakeProjectResult(), None
 
     monkeypatch.setattr(main, "run_project", run_project_stub)
     answers_recorded: dict = {}
@@ -432,7 +462,7 @@ def test_resume_session_completes_after_answers_saved(tmp_path, monkeypatch):
     captured: dict = {}
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             captured["clarifications"] = clarifications
 
         def create_plan(self, requirement):

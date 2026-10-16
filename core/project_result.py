@@ -25,6 +25,7 @@ class ProjectResult:
     # Deterministic requirement-acceptance verdict from the delivery phase
     # ("passed"/"failed"); None when the delivery phase did not run.
     acceptance_verdict: str | None = None
+    static_gate_verdict: str | None = None
 
     @classmethod
     def from_task_manager(
@@ -128,10 +129,19 @@ class ProjectResult:
         if not all(isinstance(item, str) for item in completed_task_ids):
             raise ValueError("completed_task_ids must contain strings")
 
+        acceptance_verdict = payload.get("acceptance_verdict")
+        if acceptance_verdict not in (None, "passed", "failed"):
+            raise ValueError("invalid acceptance_verdict")
+        static_gate_verdict = payload.get("static_gate_verdict")
+        if static_gate_verdict not in (None, "passed", "failed", "unverified"):
+            raise ValueError("invalid static_gate_verdict")
+
         return cls(
             project=project,
             success=success,
             status=status,
+            acceptance_verdict=acceptance_verdict,
+            static_gate_verdict=static_gate_verdict,
             total_tasks=total_tasks,
             completed_tasks=completed_tasks,
             failed_tasks=tuple(failed_tasks),
@@ -142,7 +152,7 @@ class ProjectResult:
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-friendly, provider-independent representation."""
 
-        return {
+        payload = {
             "project": self.project,
             "success": self.success,
             "status": self.status,
@@ -153,3 +163,6 @@ class ProjectResult:
             "completed_task_ids": list(self.completed_task_ids),
             "acceptance_verdict": self.acceptance_verdict,
         }
+        if self.static_gate_verdict is not None:
+            payload["static_gate_verdict"] = self.static_gate_verdict
+        return payload

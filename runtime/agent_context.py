@@ -17,6 +17,7 @@ class AgentContext:
     dependency_context: dict[str, Any] = field(default_factory=dict)
     task_result: dict[str, Any] = field(default_factory=dict)
     tester_feedback: dict[str, Any] = field(default_factory=dict)
+    qa_feedback: dict[str, Any] = field(default_factory=dict)
     reviewer_feedback: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     test_history: list[dict[str, Any]] = field(default_factory=list)
@@ -57,6 +58,10 @@ class AgentContext:
             raise ValueError(
                 "AgentContext tester_feedback must be a dictionary"
             )
+        if not isinstance(self.qa_feedback, dict):
+            raise ValueError(
+                "AgentContext qa_feedback must be a dictionary"
+            )
         if not isinstance(self.reviewer_feedback, dict):
             raise ValueError(
                 "AgentContext reviewer_feedback must be a dictionary"
@@ -86,6 +91,7 @@ class AgentContext:
         self.dependency_context = deepcopy(self.dependency_context)
         self.task_result = deepcopy(self.task_result)
         self.tester_feedback = deepcopy(self.tester_feedback)
+        self.qa_feedback = deepcopy(self.qa_feedback)
         self.reviewer_feedback = deepcopy(self.reviewer_feedback)
         self.history = deepcopy(self.history)
         self.test_history = deepcopy(self.test_history)
@@ -109,6 +115,7 @@ class AgentContext:
             "dependencies": deepcopy(self.dependencies),
             "task_result": deepcopy(self.task_result),
             "tester_feedback": deepcopy(self.tester_feedback),
+            "qa_feedback": deepcopy(self.qa_feedback),
             "reviewer_feedback": deepcopy(self.reviewer_feedback),
             "history": deepcopy(self.history),
             "metadata": deepcopy(self.metadata),
@@ -155,6 +162,7 @@ class AgentContext:
             dependency_context=context.get("dependency_context", {}),
             task_result=context.get("task_result", {}),
             tester_feedback=context.get("tester_feedback", {}),
+            qa_feedback=context.get("qa_feedback", {}),
             reviewer_feedback=context.get("reviewer_feedback", {}),
             history=context.get("history", []),
             test_history=context.get("test_history", []),

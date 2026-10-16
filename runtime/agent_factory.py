@@ -6,6 +6,7 @@ from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
 from agents.doc_writer import DocWriterAgent
 from agents.planner import PlannerAgent
+from agents.qa import QAAdversarialAgent
 from agents.tester import TesterAgent
 
 from config.model import get_developer_count, resolve_developer_llm_spec, resolve_role_llm_spec
@@ -13,13 +14,14 @@ from runtime.agent_config import AgentConfig
 from runtime.agent_router import AgentRouter
 from runtime.artifact_store import FilesystemArtifactStore
 from runtime.llm.provider import ProviderLLM
+from runtime.model_usage import ModelUsageLedger
 from runtime.reviewer_reliability import create_reviewer_with_fallback
 
 AgentConfigMap = Mapping[str, AgentConfig]
 
 DEFAULT_ARTIFACT_MIN_CHARS = 16384
 
-PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer")
+PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
 
 
 def _developer_artifact_archive():
@@ -49,11 +51,16 @@ def _developer_artifact_archive():
 def _default_agent_configs() -> dict[str, AgentConfig]:
     return {
         role: AgentConfig(role=role, model="")
-        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer")
+        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
     }
 
 
-def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
+def create_agent_router(
+    configs: AgentConfigMap | None = None,
+    *,
+    project_id: str | None = None,
+    usage_ledger: ModelUsageLedger | None = None,
+) -> AgentRouter:
     default_configs = _default_agent_configs()
     if configs is None:
         effective_configs = default_configs
@@ -63,6 +70,9 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         if missing_roles:
             raise ValueError("Missing agent configurations: " + ", ".join(sorted(missing_roles)))
         effective_configs = {**default_configs, **configs}
+
+    if usage_ledger is not None and not project_id:
+        raise ValueError("project_id is required when usage_ledger is supplied")
 
     supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer"}
     for role in supported_roles:
@@ -76,9 +86,14 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
 
     router = AgentRouter()
     role_llms: dict[str, ProviderLLM] = {}
+    ledger_kwargs = (
+        {"project_id": project_id, "usage_ledger": usage_ledger}
+        if usage_ledger is not None and project_id
+        else {}
+    )
     for role in PROJECT_ROLES:
         provider_name, model_id = resolve_role_llm_spec(role)
-        role_llms[role] = ProviderLLM(model=model_id, provider_profile=provider_name)
+        role_llms[role] = ProviderLLM(model=model_id, provider_profile=provider_name, **ledger_kwargs)
 
     router.register("analyst", RequirementAnalystAgent(effective_configs["analyst"], llm=role_llms["analyst"]))
     router.register("architect", ArchitectAgent(effective_configs["architect"], llm=role_llms["architect"]))
@@ -105,7 +120,7 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         developer_agents.append(
             DeveloperAgent(
                 developer_config,
-                llm=ProviderLLM(model=model_id, provider_profile=provider_name),
+                llm=ProviderLLM(model=model_id, provider_profile=provider_name, **ledger_kwargs),
                 artifact_store=artifact_store,
                 artifact_min_chars=artifact_min_chars,
             )
@@ -118,5 +133,6 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         create_reviewer_with_fallback(effective_configs["reviewer"], role_llms["reviewer"]),
     )
     router.register("planner", PlannerAgent(effective_configs["planner"], llm=role_llms["planner"]))
+    router.register("qa", QAAdversarialAgent(effective_configs["qa"], llm=role_llms["qa"]))
     router.register("doc_writer", DocWriterAgent(effective_configs["doc_writer"], llm=role_llms["doc_writer"]))
     return router

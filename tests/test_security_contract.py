@@ -141,3 +141,15 @@ def test_git_rejects_shell_metacharacters_before_execution():
     ):
         with pytest.raises(PermissionError):
             git_command(command, ".")
+
+
+def test_git_tag_and_init_allowlist_keeps_escape_options_blocked():
+    # tag/init entered the allowlist for release anchoring; escape hatches stay closed.
+    for command in (
+        "tag -C C:\\secret",
+        "tag --upload-pack evil",
+        "init --template=/evil",
+        "init --separate-git-dir C:\\secret",
+    ):
+        with pytest.raises(PermissionError):
+            git_command(command, ".")

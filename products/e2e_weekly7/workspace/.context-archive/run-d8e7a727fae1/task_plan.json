@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "frozen_at": "2026-09-26T04:05:17.961602Z",
+  "reason": "initial plan freeze",
+  "plan_hash": "85b0b4ebfd51129c318b82be36737322346e94b0c4af44551491ec6c1ba9177a",
+  "entries": [
+    {
+      "task_id": "TASK-001",
+      "role": "architect",
+      "title": "项目架构设计",
+      "dependencies": [],
+      "developer_slot": null,
+      "status": "completed"
+    },
+    {
+      "task_id": "TASK-002",
+      "role": "developer",
+      "title": "命令行接口与项目脚手架",
+      "dependencies": [
+        "TASK-001"
+      ],
+      "developer_slot": 0,
+      "status": "failed"
+    },
+    {
+      "task_id": "TASK-003",
+      "role": "developer",
+      "title": "CSV读取与解析模块",
+      "dependencies": [
+        "TASK-002"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-004",
+      "role": "developer",
+      "title": "单条记录校验模块",
+      "dependencies": [
+        "TASK-003"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-005",
+      "role": "developer",
+      "title": "重复报销检测模块",
+      "dependencies": [
+        "TASK-004"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-006",
+      "role": "developer",
+      "title": "类别月度限额校验模块",
+      "dependencies": [
+        "TASK-005"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-007",
+      "role": "developer",
+      "title": "Markdown汇总报表生成",
+      "dependencies": [
+        "TASK-006"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-008",
+      "role": "developer",
+      "title": "JSON机器可读输出",
+      "dependencies": [
+        "TASK-007"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-009",
+      "role": "developer",
+      "title": "性能优化与验证",
+      "dependencies": [
+        "TASK-008"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-010",
+      "role": "developer",
+      "title": "自动化测试编写",
+      "dependencies": [
+        "TASK-009"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-011",
+      "role": "tester",
+      "title": "测试执行与审查",
+      "dependencies": [
+        "TASK-010"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-012",
+      "role": "developer",
+      "title": "README.md使用文档",
+      "dependencies": [
+        "TASK-011"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    },
+    {
+      "task_id": "TASK-013",
+      "role": "reviewer",
+      "title": "最终审核与验收",
+      "dependencies": [
+        "TASK-012"
+      ],
+      "developer_slot": null,
+      "status": "planned"
+    }
+  ]
+}

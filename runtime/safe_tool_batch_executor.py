@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import inspect
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
@@ -50,6 +51,13 @@ def execute_safe_tool_batch(
         return executor(name, arguments)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(run_one, call) for call in tool_calls]
+        # Batch workers run on fresh threads whose contextvars would NOT
+        # carry the caller's context-scoped workspace sandbox (isolated
+        # developer leases). Submit each call under a copy of the caller's
+        # context so tool path resolution stays inside the caller's lease.
+        futures = [
+            pool.submit(contextvars.copy_context().run, run_one, call)
+            for call in tool_calls
+        ]
         results = [future.result() for future in futures]
     return decision, results

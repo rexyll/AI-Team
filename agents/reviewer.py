@@ -51,6 +51,23 @@ REVISION_REQUIRED
 
 并说明具体原因。
 
+修订阈值（决定性规则，防止把建议当缺陷）：
+
+1. 只有当问题同时满足以下两个条件时，才允许 REVISION_REQUIRED：
+   a) 你依据实际证据确认问题成立（不是疑似、不是推测）；
+   b) 问题属于以下之一：必须级任务需求未实现或实现错误、
+      测试证据缺失或与报告矛盾、明显正确性缺陷、安全问题、
+      代码无法运行。
+2. 以下情况一律不构成修订理由，应判 APPROVED 并在原因中列为建议：
+   - QA 的【疑似】级或建议性发现（它们本来就是供你权衡的输入）；
+   - 「可以补充更多测试/边界/文档」类的增强建议；
+   - 风格、命名、组织方式偏好；
+   - 没有证据支撑的猜测。
+3. 每一条修订理由都必须可执行：问题 → 涉及的文件/符号 → 具体修改指令。
+   列不出具体修改指令的修订请求无效，此时应判 APPROVED 并附建议。
+4. 默认取向：证据不明确时选择 APPROVED，把未确认的顾虑写入建议，交由
+   交付报告与验收环节处理；不要为了显得严格而把建议升级成返工。
+
 硬性格式要求（违反会导致判定无效）：
 
 1. 输出的第一行必须只包含英文单词 APPROVED 或 REVISION_REQUIRED，
@@ -148,6 +165,7 @@ class ReviewerAgent(BaseAgent):
         view = context_view(context, "reviewer")
         developer_result = _compact_developer_result(view["task_result"], _positive_env_int("REVIEWER_MAX_DEVELOPER_RESULT_CHARS", DEFAULT_REVIEWER_MAX_DEVELOPER_RESULT_CHARS))
         tester_feedback = _truncate_text(view["tester_feedback"], 8000)
+        qa_feedback = _truncate_text(view.get("qa_feedback") or {}, 6000)
         reviewer_feedback = _truncate_text(view["reviewer_feedback"], 6000)
         dependency_context = _truncate_text(view["dependency_context"], 8000)
         history = _truncate_text(view["history"], 4000)
@@ -181,6 +199,12 @@ TESTER RESULT
 {untrusted_content("tester.feedback", tester_feedback)}
 
 ====================
+QA ADVERSARIAL FINDINGS (advisory, may be empty)
+====================
+
+{untrusted_content("qa.feedback", qa_feedback)}
+
+====================
 PREVIOUS REVIEW RESULT
 ====================
 
@@ -211,8 +235,9 @@ REVIEW REQUIREMENTS
 3. 是否存在明显代码问题
 4. 是否有实际测试证据
 5. Tester 的结论是否合理
-6. 是否存在安全问题
-7. 是否存在明显遗漏
+6. QA 对抗审查发现的问题是否成立（建议性输入，由你权衡，不自动否决）
+7. 是否存在安全问题
+8. 是否存在明显遗漏
 8. 是否存在未完成内容
 9. 是否需要 Developer 返工
 
@@ -224,8 +249,13 @@ REVIEW REQUIREMENTS
 - Tester 的结果必须纳入审核判断。
 - 如果 Tester FAILED，通常不应该 APPROVED。
 - 如果 Tester PASSED，也必须检查 Developer 是否真正满足任务要求。
+- QA 对抗审查是建议性输入：【疑似】级发现不满足修订阈值，
+  不得作为 REVISION_REQUIRED 的理由；确有价值的部分在结论中
+  写成建议。
 - 不要声称执行了没有执行的测试。
 - 不要修改代码。
+- 修订阈值以系统提示中的「修订阈值」规则为准：无证据支持的或
+  建议性的问题一律 APPROVED + 建议说明。
 - DEVELOPER RESULT 可能因为上下文预算而被截断；截断标记表示省略了
   非核心的长文本，不代表测试证据本身被删除。应优先依据 files_changed、tests、
   validation、Tester 结论以及任务要求做判断。

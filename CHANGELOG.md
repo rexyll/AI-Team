@@ -9,6 +9,49 @@ commit SHA as evidence.
 Reliability and observability increments after the Phase 18 acceptance,
 driven by live single- and multi-developer end-to-end runs.
 
+### Changed
+
+- **Isolated developer workspaces** (`runtime/developer_workspace.py`): every
+  developer task runs against its own copy of the project workspace (bound
+  via a context-scoped sandbox override in `security/workspace.py`), so
+  parallel developers can no longer touch the same live files. On completion
+  a deterministic three-way merge applies only the lease's changed/added/
+  deleted files; a path modified on both sides is a loud
+  `WorkspaceMergeConflict`, not a silent overwrite. Failed work is discarded
+  whole.
+- **Shared context archive** (`runtime/context_archive.py`): every terminal
+  task writes its full durable record (result, feedback, tool history, merge
+  report) into `.context-archive/<project>/`; later tasks receive the index
+  in their prompt and can read any record with `read_file`.
+- **Frozen task plan manifest** (`runtime/task_plan_manifest.py`):
+  `task_plan.json`/`task_plan.md` record every node's role, dispatch
+  (developer slot) and status with a structural hash; execution verifies the
+  live graph against the freeze and a drifted graph is a hard error.
+  Recovery REPLAN and customer changes re-freeze explicitly as a new
+  version.
+- **Deterministic recovery seed** (`runtime/recovery_seed.py`): when the
+  progress guard trips, the retry round inlines the current contents of the
+  files the previous round touched instead of letting the model re-read
+  them, mechanically removing the re-read loop incentive.
+- **Developer rework protocol** (`agents/developer.py`): revision, tester-
+  failure and guard-retry rounds now inject a mandatory rework protocol into
+  the developer prompt — first action must target the feedback, degenerate
+  patterns observed in live runs (repeated identical read-only calls,
+  `python -c`/`dir`/shell chaining) are explicitly banned with their allowed
+  alternatives, and the generic "explore the workspace first" invitation is
+  replaced during rework. Guard-retry feedback text names the concrete
+  recovery steps.
+- **Multi-key round-robin per provider** (`config/model.py`): numbered API
+  keys (`<PREFIX>_API_KEY1`, `_API_KEY2`, ...) join the bare key in a
+  thread-safe rotation applied per chat call, spreading per-key rate limits
+  across the pool; duplicate values collapse to a single key and retried
+  calls land on the next key. The lazy-initialization contract now treats
+  all key variants as one pool.
+- **CLI exit code now reflects project success**: a failed project exits 1
+  even without `--static-gate`/`--strict-acceptance` (previously exit 0
+  unless a gate verdict failed). Gate flags keep their stricter semantics;
+  they only add conditions on top of the success baseline.
+
 ### Added
 
 - Delivery capability upgrade: a **Requirement Analyst** role normalizes
@@ -36,6 +79,37 @@ driven by live single- and multi-developer end-to-end runs.
   delivered) with an I/O-injectable terminal prompt loop and JSON
   persistence; `main.py --interactive` analyzes, prompts, saves, and
   continues into delivery, `--resume-session` finishes a paused session.
+- **Requirement change loop** (`runtime/change_request.py`): `--save-state`
+  captures a reusable project snapshot; `--apply-change FILE --from-state DIR
+  --save-state NEW_DIR` performs quality-checked Analyst impact analysis,
+  validated re-planning, incremental execution and delivery. Completed task
+  definitions and evidence remain immutable; rework requires fresh task IDs.
+  Source snapshots are retained, accepted changes are recorded, and static
+  gates are inherited. See `docs/requirement_changes.md` for boundaries.
+- **File/directory requirement input** (`--requirement-input PATH`): the
+  requirement can now be supplied as a UTF-8 text file or a directory whose
+  `.md`/`.markdown`/`.txt` files are merged deterministically (path order,
+  per-file headers, hidden/tool files and symlinks skipped, 120k-character
+  budget enforced) — no requirement string on the command line.
+- **Cost report** (`runtime/cost_report.py`): the usage ledger is now wired
+  through the agent factory into every ProviderLLM call and surfaced at
+  delivery as `docs/cost_report.md` plus a `cost` section in `--output json`
+  results. Rates load from `AI_TEAM_COST_RATES_JSON`; unpriced routes are
+  reported explicitly rather than dropped or silently counted as zero.
+- **QA adversarial agent** (`agents/qa.py`): a new independent quality role
+  that hunts for what tests miss (boundaries, attack surfaces, requirement
+  misreadings) between Tester and Reviewer. Advisory by design — findings ride
+  into the Reviewer prompt as `qa_feedback` and never block the workflow; a
+  QA execution error degrades to skipped. Registered for all providers via
+  the config role table (`QA_PROVIDER`/`QA_MODEL`).
+- **Static quality gate** (`runtime/static_gate.py`, `--static-gate`): offline
+  ruff/mypy checks plus pip-audit dependency vulnerability scanning run before
+  packaging; failed or unverified gates block the release bundle and flip the
+  project result (exit code 1), with the verdict persisted on ProjectResult.
+- **Deliverable release anchor** (`runtime/release_anchor.py`): gated+accepted
+  deliveries are committed through the host Git boundary and tagged as
+  annotated `release/<project>-<semver>` tags (idempotent); the git allowlist
+  gained tag/init with inline `--flag=value` injection blocked.
 - **Deployment bundle** (`runtime/deployment.py`): the delivery package now
   includes `install.ps1` / `install.sh` bootstrap installers, a Dockerfile
   template, and a deterministic smoke verification that runs the

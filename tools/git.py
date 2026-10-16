@@ -14,6 +14,8 @@ ALLOWED_GIT_COMMANDS = {
     "rev-parse",
     "add",
     "commit",
+    "tag",
+    "init",
 }
 
 BLOCKED_TOKENS = {
@@ -25,6 +27,13 @@ BLOCKED_TOKENS = {
     "-C",
     "--upload-pack",
     "--receive-pack",
+    "--template",
+    "--separate-git-dir",
+    "--shared",
+    "--reference",
+    "--reference-if-able",
+    "--bare",
+    "--object-format",
 }
 
 SHELL_METACHARACTERS = {"&", "|", ";", "<", ">", "`"}
@@ -58,9 +67,12 @@ def _parse_git_command(command: str) -> list[str]:
         )
 
     for token in normalized_args:
-        if token.lower() in BLOCKED_TOKENS:
+        lowered = token.lower()
+        # Block both "--flag value" and the inline "--flag=value" spellings.
+        candidate = lowered.split("=", 1)[0] if "=" in lowered else lowered
+        if lowered in BLOCKED_TOKENS or candidate in BLOCKED_TOKENS:
             raise PermissionError(
-                f"Git option is not allowed: {token.lower()}"
+                f"Git option is not allowed: {lowered}"
             )
 
     return normalized_args

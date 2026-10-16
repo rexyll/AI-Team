@@ -25,6 +25,9 @@ from runtime.safe_tool_batch import classify_safe_tool_batch
 from runtime.safe_tool_batch_executor import execute_safe_tool_batch
 from runtime.developer_tool_invocation import DeveloperToolInvocationAdapter
 from runtime.agent_result import AgentResult
+from runtime.context_archive import ContextArchive
+from runtime.recovery_seed import SEED_MAX_FILES, build_recovery_seed
+from security.workspace import resolve_workspace_path
 
 MAX_TOOL_ITERATIONS = 50
 TOOL_LOOP_CHECKPOINT_INTERVAL = DEFAULT_CHECKPOINT_INTERVAL
@@ -90,6 +93,21 @@ run_command 禁止 shell 元字符（; & | < > ` $()）和 python -c 内联代�
 class DeveloperAgent(BaseAgent):
     DEFAULT_ARTIFACT_MIN_CHARS = 16384
 
+    REWORK_PROTOCOL = """
+====================
+返工守则（本节为强制执行协议，优先级高于其余通用指引）
+====================
+本轮是返工轮。上一轮的具体问题见上方反馈；先读懂它，再动手。
+
+1. 第一步必须是与反馈直接相关的行动：读取被点名的文件并实施修改。禁止先做一轮与反馈无关的目录浏览或全库扫描。
+2. 工具纪律（违反会被立即终止）：
+   - 禁止 python -c、dir、ls、cat、echo 等终端命令；禁止 shell 链式、管道与重定向。
+   - 查看文件用 read_file / list_files；写入用 write_file；执行用 python <脚本> 或 python -m pytest <测试路径>。
+   - 需要多步逻辑时，先用 write_file 写成 .py 脚本，再用 python 运行该脚本。
+3. 每个工具调用必须服务于反馈指出的具体问题。禁止重复发出上一轮已发出且结果未变的调用；连续重复同一调用会被进度守卫立即终止本轮。
+4. 修改完成后立即用 python -m pytest <测试路径> 复跑测试，用新证据说话；报告必须逐条回应反馈，说明每条意见如何解决。
+"""
+
     def __init__(
         self,
         config: AgentConfig | None = None,
@@ -139,6 +157,37 @@ class DeveloperAgent(BaseAgent):
         if view["reviewer_feedback"]:
             context_text += "\n====================\nPREVIOUS REVIEW FEEDBACK\n====================\n\n以下是上一轮 Reviewer 给出的修改意见。\n本轮必须认真处理这些意见，并在最终结果中说明如何解决。\n\n"
             context_text += json.dumps(view["reviewer_feedback"], ensure_ascii=False, indent=2)
+        rework = (
+            bool(view["reviewer_feedback"])
+            or bool(view["tester_feedback"])
+            or view["review_round"] > 0
+        )
+        metadata = view["metadata"] if isinstance(view["metadata"], dict) else {}
+        archive_index = metadata.get("context_archive_index")
+        if isinstance(archive_index, list) and archive_index:
+            context_text += ContextArchive.render_index(archive_index)
+        recovery_seed = metadata.get("recovery_seed")
+        if isinstance(recovery_seed, str) and recovery_seed.strip():
+            context_text += recovery_seed
+        execution_requirement = """
+====================
+EXECUTION REQUIREMENT
+====================
+请完成当前开发任务。
+开始工作前先检查工作区并阅读相关代码。
+完成修改后运行相关测试。如果测试失败，请继续分析和修复。
+最终给出简洁的开发结果报告。
+报告必须包含：1. 完成内容 2. 修改文件 3. 测试命令 4. 测试结果 5. 遗留问题
+"""
+        if rework:
+            context_text += self.REWORK_PROTOCOL
+            # The generic "explore the workspace first" invitation is what a
+            # degenerate revision round turns into repeated list_files calls;
+            # in rework rounds it must demand action on the feedback instead.
+            execution_requirement = execution_requirement.replace(
+                "开始工作前先检查工作区并阅读相关代码。",
+                "这是返工轮：不要泛泛地重新检查工作区，直接按上方返工守则行动。",
+            )
         prompt = f"""
 ====================
 CURRENT TASK
@@ -160,21 +209,41 @@ Execution History:
 Metadata:
 {view['metadata']}
 {context_text}
-====================
-EXECUTION REQUIREMENT
-====================
-请完成当前开发任务。
-开始工作前先检查工作区并阅读相关代码。
-完成修改后运行相关测试。如果测试失败，请继续分析和修复。
-最终给出简洁的开发结果报告。
-报告必须包含：1. 完成内容 2. 修改文件 3. 测试命令 4. 测试结果 5. 遗留问题
+{execution_requirement}
 """
         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+
+    def _absorb_task_extras(self, task: Task, context: AgentContext) -> None:
+        """Move task-scoped wiring into the prompt-visible metadata.
+
+        Two sources: the shared archive index (injected by the orchestrator)
+        and the recovery checkpoint left by a guard-retried previous round.
+        The checkpoint is consumed here (pop) so a seed is built exactly once
+        per retry round; its file contents are read through the active
+        workspace sandbox, which the orchestrator bound to this task's lease.
+        """
+        archive_index = task.context.get("context_archive_index")
+        if isinstance(archive_index, list):
+            context.metadata["context_archive_index"] = archive_index
+        checkpoint = task.context.pop("recovery_checkpoint", None)
+        if not (isinstance(checkpoint, dict) and checkpoint.get("reason")):
+            return
+        entries: list[tuple[str, str | None]] = []
+        for path in (checkpoint.get("paths") or [])[:SEED_MAX_FILES]:
+            try:
+                content = resolve_workspace_path(str(path)).read_text(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, TypeError):
+                content = None
+            entries.append((str(path), content))
+        context.metadata["recovery_seed"] = build_recovery_seed(
+            str(checkpoint["reason"]), entries
+        )
 
     def run(self, task: Task) -> AgentResult:
         if not isinstance(task, Task):
             raise TypeError("DeveloperAgent.run() expects Task, " f"got {type(task).__name__}")
         context = self.build_context(task)
+        self._absorb_task_extras(task, context)
         messages = self._build_messages(context)
         persisted_history = task.context.get("tool_execution_history")
         if persisted_history is None:

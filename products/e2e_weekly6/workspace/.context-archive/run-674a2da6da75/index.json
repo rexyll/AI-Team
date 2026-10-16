@@ -1,0 +1,12 @@
+{
+  "tasks": [
+    {
+      "task_id": "TASK-002",
+      "role": "developer",
+      "title": "CSV 读取与解析模块实现（REQ-001）",
+      "status": "failed",
+      "changed_files": 0,
+      "summary": "\n\n---\n\n## 开发结果报告\n\n### 1. 完成内容\n实现 CSV 读取与解析模块（REQ-001），包括：\n- `parse_csv(text)` — 解析 CSV 文本，支持 UTF-8 BOM\n- `parse_csv_file(path)` — 从文件读取并解析，自动剥离 BOM\n- 校验必需列：`date`, `employee`, `category`, `amount`, `c"
+    }
+  ]
+}

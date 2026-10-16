@@ -17,6 +17,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from runtime.agent_result import AgentResult
+from runtime.recovery_seed import collect_history_paths
 
 MAX_REVIEW_ROUNDS = 3
 MAX_REVIEWER_RECOVERY_ATTEMPTS = 1
@@ -167,7 +168,12 @@ class TaskWorkflow:
     def _agent(self, role: str, fallback=None):
         get_agent = getattr(self.agent_router, "get_agent", None)
         if callable(get_agent):
-            agent = get_agent(role)
+            try:
+                agent = get_agent(role)
+            except KeyError:
+                # Some router fakes index a literal role map; an unknown role
+                # means "not registered", not a crash.
+                return fallback
             if agent is not None:
                 return agent
         return fallback
@@ -188,6 +194,37 @@ class TaskWorkflow:
     @property
     def reviewer(self):
         return self._agent("reviewer", self._reviewer)
+
+    @property
+    def qa_agent(self):
+        return self._agent("qa")
+
+    def _run_qa_adversarial_review(self, task: Task) -> None:
+        """Adversarial QA pass between tester and reviewer (advisory only).
+
+        The QA agent hunts for what the tests missed; its findings are stored
+        as ``qa_feedback`` for the Reviewer to weigh. The QA stage never
+        transitions the task or blocks the workflow — the Reviewer stays the
+        sole gate. A QA execution error degrades to "skipped", never a
+        failure, because an absent opinion must not fail a verified product.
+        """
+        qa = self.qa_agent
+        if qa is None:
+            return
+        try:
+            raw_result = qa.run(task)
+            result = normalize_agent_result(raw_result)
+        except Exception as exc:
+            self._emit_event("qa_skipped", task, payload={"reason": type(exc).__name__})
+            print(f"[Gate] {task.id}: qa=skipped ({type(exc).__name__})")
+            return
+        verdict = ""
+        if result.data and isinstance(result.data, dict):
+            verdict = str(result.data.get("verdict", ""))
+        self.task_manager.set_feedback(task.id, "qa", result.to_dict())
+        self._emit_event("qa_completed", task, payload={"verdict": verdict or "unknown"})
+        verdict_head = (result.message or "").replace("\n", " ")[:120]
+        print(f"[Gate] {task.id}: qa={verdict or result.status} | {verdict_head}")
 
     def _checkpoint(self) -> None:
         if self._state_change_hook is None:
@@ -330,11 +367,20 @@ class TaskWorkflow:
                         "decision": "retry",
                         "summary": (
                             f"上一轮被进度守卫拦截：{reason}。"
-                            "请调整策略，避免重复无进展的调用。"
+                            "请立即按返工守则行动：直接修改相关文件，用允许的工具命令"
+                            "（write_file / python -m pytest）完成修复并收集新证据；"
+                            "禁止重复上一轮结果未变的调用。"
                         ),
                     },
                 )
                 self._emit_event("developer_guard_retry", task, payload={"round": round_index, "reason": reason})
+                # Deterministic recovery seed (proposal 2): hand the retry
+                # round the list of files the previous round touched so the
+                # agent can inline their contents instead of re-reading them.
+                task.context["recovery_checkpoint"] = {
+                    "reason": reason,
+                    "paths": collect_history_paths(task.context.get("tool_execution_history")),
+                }
                 self._checkpoint()
                 print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: guard retry with feedback")
                 continue
@@ -371,6 +417,7 @@ class TaskWorkflow:
                 self._emit_event("tester_skipped", task, payload={"status": task.status})
                 self._checkpoint()
                 print(f"[Gate] {task.id} round {round_index}/{self.max_review_rounds}: tester=skipped")
+            qa_outcome = self._run_qa_adversarial_review(task)
             self._emit_event("review_started", task, payload={"status": task.status})
             review_outcome = self._run_gate_with_invalid_tolerance(lambda: self._run_reviewer(task), stage="reviewer")
             self._attest_stage_feedback(review_outcome, stage="reviewer")

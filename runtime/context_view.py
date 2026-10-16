@@ -44,6 +44,15 @@ CONTEXT_ACCESS_POLICY: dict[str, frozenset[str]] = {
             "task_result",
         }
     ),
+    "qa": frozenset(
+        {
+            "task_id",
+            "task_title",
+            "task_description",
+            "task_result",
+            "tester_feedback",
+        }
+    ),
     "reviewer": frozenset(
         {
             "task_id",
@@ -52,6 +61,7 @@ CONTEXT_ACCESS_POLICY: dict[str, frozenset[str]] = {
             "task_result",
             "tester_feedback",
             "reviewer_feedback",
+            "qa_feedback",
             "dependency_context",
             "history",
             "metadata",

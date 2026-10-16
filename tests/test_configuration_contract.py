@@ -19,7 +19,7 @@ def test_configuration_resolves_all_roles_without_creating_clients(monkeypatch):
     config = load_configuration()
 
     assert [item.role for item in config.roles] == [
-        "planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer"
+        "planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer", "qa"
     ]
     assert config.role("developer").provider == "agnes"
     assert config.role("developer").model == "model-default"

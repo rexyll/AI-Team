@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from pathlib import Path
 
 
@@ -5,6 +6,31 @@ PROJECT_ROOT = (
     Path(__file__).resolve().parent.parent.parent
     / "projects"
 ).resolve()
+
+
+# Thread-local sandbox override for isolated developer workspaces. Parallel
+# developer tasks run on distinct ThreadPoolExecutor threads, each with its
+# own context, so a lease holder can retarget every tool's path resolution
+# without touching the process-wide default sandbox. Unset (None) means all
+# resolution flows through DEFAULT_SANDBOX exactly as before.
+_ACTIVE_SANDBOX: ContextVar["WorkspaceSandbox | None"] = ContextVar(
+    "active_workspace_sandbox", default=None
+)
+
+
+def get_active_sandbox() -> "WorkspaceSandbox | None":
+    """Return the context-scoped sandbox override, or None when unset."""
+    return _ACTIVE_SANDBOX.get()
+
+
+def set_active_sandbox(sandbox: "WorkspaceSandbox | None"):
+    """Bind a sandbox override to the current execution context."""
+    return _ACTIVE_SANDBOX.set(sandbox)
+
+
+def reset_active_sandbox(token) -> None:
+    """Restore the previous context-scoped sandbox binding."""
+    _ACTIVE_SANDBOX.reset(token)
 
 
 class WorkspaceSandbox:
@@ -32,6 +58,18 @@ class WorkspaceSandbox:
                 for part in folded_prefix.replace("\\", "/").split("/")
                 if part
             )
+
+    def retarget(self, root: Path | str) -> "WorkspaceSandbox":
+        """Return a sandbox at a new root carrying this sandbox's folding.
+
+        Isolated developer leases must preserve the mandated-directory
+        folding of the main sandbox: without it, a model that writes the
+        literal mandated prefix ("workspace/pkg/...") would nest files one
+        level deeper inside its lease than in the main workspace, and the
+        merge would restore that nesting.
+        """
+        prefix = "/".join(self.folded_prefix) if self.folded_prefix else None
+        return WorkspaceSandbox(root, folded_prefix=prefix)
 
     def _strip_folded_prefix(self, candidate: Path) -> Path:
         if not self.folded_prefix:
@@ -130,6 +168,11 @@ def get_default_workspace_root() -> Path:
     return DEFAULT_SANDBOX.root
 
 
+def get_default_workspace_sandbox() -> WorkspaceSandbox:
+    """Return the current default sandbox object (folding included)."""
+    return DEFAULT_SANDBOX
+
+
 def anchor_workspace_root(base: str | Path, mandated_dir: str) -> Path:
     """Return the sandbox root that anchors a mandated output directory.
 
@@ -172,4 +215,7 @@ def mandated_folded_prefix(mandated_dir: str) -> str | None:
 def resolve_workspace_path(path: str | Path) -> Path:
     """Resolve a path and ensure it stays inside the authorized workspace."""
 
+    active = _ACTIVE_SANDBOX.get()
+    if active is not None:
+        return active.resolve(path)
     return DEFAULT_SANDBOX.resolve(path)

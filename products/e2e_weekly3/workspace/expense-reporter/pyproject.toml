@@ -1,0 +1,12 @@
+[project]
+name = "expense-reporter"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+expense-reporter = "expense_reporter.main:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends._legacy:_Backend"

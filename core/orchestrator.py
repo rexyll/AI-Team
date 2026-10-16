@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,16 @@ from runtime.failure_classification import FailureClass, classify_failure
 from runtime.failure_recovery_executor import FailureRecoveryExecutor, RecoveryIntent
 from runtime.failure_recovery_policy import RecoveryAction, decide_recovery
 from runtime.recovery_replan_coordinator import RecoveryReplanCoordinator
+from runtime.context_archive import ContextArchive, build_task_archive_record
+from runtime.developer_workspace import DeveloperWorkspaceManager, WorkspaceMergeConflict
+from runtime.task_plan_manifest import TaskPlanManifest
+from security.workspace import (
+    WorkspaceSandbox,
+    get_default_workspace_root,
+    get_default_workspace_sandbox,
+    reset_active_sandbox,
+    set_active_sandbox,
+)
 from runtime.resource_execution import ResourceExecutionCoordinator
 from runtime.resource_governor import ResourceGovernor, ResourceLimits
 from runtime.retry_policy import FailureKind
@@ -36,6 +47,13 @@ class _OrchestratorWorkflowEventLog(WorkflowEventLog):
         return self._delegate.append_if_absent(event)
 
 
+@dataclass(frozen=True)
+class _PlanSupport:
+    manifest: TaskPlanManifest
+    archive: ContextArchive
+    manager: DeveloperWorkspaceManager | None
+
+
 class Orchestrator:
     """Schedule tasks and delegate per-task execution to the proper workflow."""
     def __init__(self, task_manager: TaskManager, agent_router: AgentRouter, max_workers: int = 4,
@@ -43,10 +61,14 @@ class Orchestrator:
                  workflow_event_log: WorkflowEventLog | None = None, project_id: str | None = None,
                  replan_planner: Callable[[str], dict[str, Any]] | None = None,
                  recovery_classifier: Callable[[BaseException], FailureClass] | None = None,
-                 resource_governor: ResourceGovernor | None = None):
+                 resource_governor: ResourceGovernor | None = None,
+                 workspace_isolation: bool = False):
         if workflow_event_log is not None and not isinstance(workflow_event_log, WorkflowEventLog): raise TypeError("workflow_event_log must be a WorkflowEventLog or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()): raise ValueError("project_id must be a non-empty string or None")
         if recovery_classifier is not None and not callable(recovery_classifier): raise TypeError("recovery_classifier must be callable or None")
+        if not isinstance(workspace_isolation, bool): raise TypeError("workspace_isolation must be a bool")
+        self.workspace_isolation = workspace_isolation
+        self._plan_support_bundle: _PlanSupport | None = None
         if resource_governor is not None and not isinstance(resource_governor, ResourceGovernor): raise TypeError("resource_governor must be a ResourceGovernor or None")
         self.task_manager = task_manager; self.agent_router = agent_router; self.task_executor = TaskLayerExecutor(max_workers=max_workers)
         self.failure_classifier = failure_classifier or self._default_failure_classifier; self.recovery_classifier = recovery_classifier
@@ -95,6 +117,7 @@ class Orchestrator:
         return self._failure_class_for_kind(failure_kind)
     def run(self) -> None:
         print("\n" + "=" * 60); print("AI TEAM START"); print("=" * 60)
+        if self.workspace_isolation: self._freeze_or_verify_task_plan()
         while not self.task_manager.is_finished():
             ready_tasks = self._get_executable_tasks()
             if not ready_tasks: self._handle_no_ready_tasks(); break
@@ -141,6 +164,112 @@ class Orchestrator:
         normalized_execution_id = execution_id.strip() if isinstance(execution_id, str) and execution_id.strip() else str(uuid4())
         self._execute_task(task, execution_id=normalized_execution_id)
         return self.task_manager.get_task(task.id)
+    def _plan_support(self) -> _PlanSupport:
+        """Lazily bind plan/archive/workspace support to the live sandbox root."""
+        if self._plan_support_bundle is None:
+            root = get_default_workspace_root()
+            namespace = self._project_id or f"run-{uuid4().hex[:12]}"
+            manager = DeveloperWorkspaceManager(root) if self.workspace_isolation else None
+            self._plan_support_bundle = _PlanSupport(
+                manifest=TaskPlanManifest(root, namespace),
+                archive=ContextArchive(root, namespace),
+                manager=manager,
+            )
+        return self._plan_support_bundle
+
+    def _freeze_or_verify_task_plan(self) -> None:
+        support = self._plan_support()
+        tasks = self.task_manager.get_all_tasks()
+        if support.manifest.load() is None:
+            support.manifest.freeze(tasks, reason="initial plan freeze")
+            print(f"[TaskPlan] 任务计划已冻结: {support.manifest.path}")
+        else:
+            support.manifest.verify(tasks)
+            print("[TaskPlan] 任务计划校验通过（与冻结清单一致）")
+
+    def refreeze_task_plan(self, *, reason: str) -> None:
+        """Explicitly re-freeze the plan after a legitimate graph change."""
+        support = self._plan_support()
+        support.manifest.freeze(self.task_manager.get_all_tasks(), reason=reason)
+
+    def _developer_slot(self, developer) -> int:
+        get_developers = getattr(self.agent_router, "get_developers", None)
+        if callable(get_developers):
+            pool = get_developers()
+            if developer in pool:
+                return pool.index(developer)
+        return 0
+
+    def _record_plan_dispatch(self, task, developer) -> None:
+        if not self.workspace_isolation:
+            return
+        self._plan_support().manifest.record_dispatch(task.id, self._developer_slot(developer))
+
+    def _record_plan_completion(self, task) -> None:
+        if not self.workspace_isolation:
+            return
+        self._plan_support().manifest.record_completion(task.id, task.status)
+
+    def _inject_archive_index(self, task) -> None:
+        if not self.workspace_isolation:
+            return
+        index = self._plan_support().archive.index_summary()
+        if index:
+            task.context["context_archive_index"] = index
+
+    def _record_archive(self, task, developer, merge_report) -> None:
+        if not self.workspace_isolation:
+            return
+        record = build_task_archive_record(
+            task.to_dict(),
+            developer_slot=self._developer_slot(developer),
+            merge_report=merge_report.to_dict() if merge_report is not None else None,
+        )
+        try:
+            self._plan_support().archive.record_task(record)
+        except (OSError, ValueError) as exc:
+            # Archiving is a durability feature, not a delivery gate: record
+            # the failure loudly but never invalidate finished work for it.
+            print(f"[Archive] 任务档案写入失败（不阻断）: {exc}")
+
+    def _run_developer_task(self, task, developer, execution_id: str) -> None:
+        """Run the developer gate inside an isolated workspace lease."""
+        support = self._plan_support()
+        lease = support.manager.issue(task.id) if support.manager is not None else None
+        token = None
+        lease_sandbox = None
+        if lease is not None:
+            # Preserve the main sandbox's mandated-directory folding so the
+            # model's writes land at the same relative depth as in main.
+            lease_sandbox = get_default_workspace_sandbox().retarget(lease.root)
+            token = set_active_sandbox(lease_sandbox)
+        try:
+            workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer, execution_id=execution_id)
+            workflow.execute(task.id, execution_id=execution_id)
+        except BaseException:
+            if lease is not None:
+                support.manager.discard(lease)
+            raise
+        finally:
+            if token is not None:
+                reset_active_sandbox(token)
+        if lease is None:
+            self._record_plan_completion(task)
+            return
+        if task.status == "completed":
+            try:
+                report = support.manager.merge(lease)
+            except WorkspaceMergeConflict:
+                support.manager.discard(lease)
+                self._record_archive(task, developer, None)
+                raise
+            support.manager.discard(lease)
+            self._record_archive(task, developer, report)
+        else:
+            support.manager.discard(lease)
+            self._record_archive(task, developer, None)
+        self._record_plan_completion(task)
+
     def _execute_task(self, task, *, execution_id: str | None = None) -> None:
         print("\n" + "-" * 60); print(f"{task.id} | {task.role} | {task.title}"); print("-" * 60)
         active_execution_id = execution_id or task.context.get("execution_id") or str(uuid4())
@@ -151,9 +280,12 @@ class Orchestrator:
             if task.role == "developer":
                 developer = self._select_developer(task); identity = self._developer_identity(developer); task.context["developer_assignment"] = identity
                 self._emit_event("developer_assigned", task, payload=identity | {"execution_id": active_execution_id})
-                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer, execution_id=active_execution_id); workflow.execute(task.id, execution_id=active_execution_id)
+                self._record_plan_dispatch(task, developer)
+                self._inject_archive_index(task)
+                self._run_developer_task(task, developer, active_execution_id)
             else:
                 agent = self.agent_router.get_agent(task.role); result = agent.run(task); self.task_manager.mark_completed(task.id, result); self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
+                self._record_plan_completion(task)
             if task.role != "developer": self._persist_state_checkpoint()
             print(f"[Completed] {task.id} ({task.status})")
         except _CheckpointFailure: raise
@@ -181,6 +313,8 @@ class Orchestrator:
             payload = {"status": live_task.status, "attempt": outcome.result.attempt, "task_count": len(outcome.replacement.tasks)}
             if isinstance(active_execution_id, str) and active_execution_id.strip(): payload["execution_id"] = active_execution_id
             self._emit_event("task_replanned", live_task, payload=payload)
+            if self.workspace_isolation:
+                self.refreeze_task_plan(reason="recovery replan")
             return True
         return False
     def _handle_no_ready_tasks(self) -> None:

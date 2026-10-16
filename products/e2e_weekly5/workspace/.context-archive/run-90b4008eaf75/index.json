@@ -1,0 +1,12 @@
+{
+  "tasks": [
+    {
+      "task_id": "TASK-002",
+      "role": "developer",
+      "title": "实现 CSV 读取与解析模块",
+      "status": "failed",
+      "changed_files": 0,
+      "summary": ""
+    }
+  ]
+}

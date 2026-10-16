@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+
+from runtime.static_gate import write_static_report
 from typing import Any, Callable
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -19,6 +22,8 @@ from agents.analyst import run_quality_checked_analysis
 from runtime.delivery_manifest import write_delivery_manifest
 from runtime.deployment import create_deployment_bundle
 from runtime.plan_builder import PlanBuilder
+from runtime.release_anchor import create_release_anchor
+from runtime.cost_report import build_cost_report, write_cost_report
 from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
 from runtime.task_manager import TaskManager
@@ -29,6 +34,12 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
 from security.workspace import WorkspaceSandbox, resolve_workspace_path
+
+
+def _EMPTY_COST_REGISTRY():
+    from runtime.model_cost import ModelCostRateRegistry
+
+    return ModelCostRateRegistry()
 
 
 class ProjectOrchestrator:
@@ -49,6 +60,11 @@ class ProjectOrchestrator:
         deliverable_dir: str | None = None,
         sandbox: "WorkspaceSandbox | None" = None,
         clarifications: str | None = None,
+        static_gate: Callable[[Path], dict[str, Any]] | None = None,
+        release_anchor: Callable[..., dict[str, Any]] | None = None,
+        usage_ledger: Any = None,
+        cost_rate_registry: Any = None,
+        workspace_isolation: bool = True,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -69,6 +85,7 @@ class ProjectOrchestrator:
         if clarifications is not None and not isinstance(clarifications, str):
             raise TypeError("clarifications must be a string or None")
         self.agent_router = agent_router
+        self.workspace_isolation = workspace_isolation
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
         self.last_plan: dict[str, Any] | None = None
@@ -80,6 +97,16 @@ class ProjectOrchestrator:
         self.deliverable_dir = deliverable_dir.strip().strip("/") if deliverable_dir else None
         self.sandbox = sandbox
         self.clarifications = clarifications
+        if static_gate is not None and not callable(static_gate):
+            raise TypeError("static_gate must be callable or None")
+        self.static_gate = static_gate
+        if release_anchor is not None and not callable(release_anchor):
+            raise TypeError("release_anchor must be callable or None")
+        self.release_anchor = release_anchor
+        self.usage_ledger = usage_ledger
+        self._cost_project_id = project_id
+        self.cost_rate_registry = cost_rate_registry
+        self.last_cost_report: Any = None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -94,9 +121,12 @@ class ProjectOrchestrator:
     def workflow_event_persistence(self) -> WorkflowEventPersistenceAdapter | None:
         return self._workflow_event_persistence
 
-    @staticmethod
-    def _default_orchestrator_factory(task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
-        return Orchestrator(task_manager=task_manager, agent_router=agent_router)
+    def _default_orchestrator_factory(self, task_manager: TaskManager, agent_router: AgentRouter) -> Orchestrator:
+        return Orchestrator(
+            task_manager=task_manager,
+            agent_router=agent_router,
+            workspace_isolation=self.workspace_isolation,
+        )
 
     def _ensure_workflow_event_log(self) -> WorkflowEventLog | None:
         if self._workflow_event_log is None and self._workflow_event_persistence is not None:
@@ -242,17 +272,27 @@ class ProjectOrchestrator:
                 project_name = value
         result = ProjectResult.from_task_manager(task_manager, project=project_name)
         delivery = self._run_delivery_phase(task_manager, project=project_name)
+        gate_status = None
+        if self.static_gate is not None or (delivery is not None and "static_gate" in delivery):
+            gate_status = (delivery or {}).get("static_gate", {}).get("status", "unverified")
         if delivery is not None and delivery.get("acceptance") is not None:
             result = ProjectResult(
                 project=result.project,
-                success=result.success,
-                status=result.status,
+                success=result.success and gate_status in (None, "passed"),
+                status=result.status if gate_status in (None, "passed") else "failed",
                 total_tasks=result.total_tasks,
                 completed_tasks=result.completed_tasks,
                 failed_tasks=result.failed_tasks,
                 blocked_tasks=result.blocked_tasks,
                 completed_task_ids=result.completed_task_ids,
                 acceptance_verdict=delivery["acceptance"]["verdict"],
+                static_gate_verdict=gate_status,
+            )
+        elif gate_status is not None:
+            result = replace(
+                result, static_gate_verdict=gate_status,
+                success=result.success and gate_status == "passed",
+                status=result.status if gate_status == "passed" else "failed",
             )
         self.last_result = result
         return result
@@ -305,8 +345,22 @@ class ProjectOrchestrator:
         else:
             manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
         docs_root = (self.deliverable_dir or ".") + "/docs"
-        manifest_path = write_delivery_manifest(manifest_root, project=project)
+        gate = self.static_gate(manifest_root) if self.static_gate else None
+        if gate is not None:
+            write_static_report(manifest_root, gate)
+        if self.usage_ledger is not None and self._cost_project_id:
+            try:
+                report = build_cost_report(
+                    self.usage_ledger, self.cost_rate_registry or _EMPTY_COST_REGISTRY(),
+                    project_id=self._cost_project_id,
+                )
+                write_cost_report(manifest_root, report, project=project)
+                self.last_cost_report = report
+                print(f"[Delivery] 成本报告 ${report.total_cost_usd:.4f} ({report.total_llm_calls()} 次调用) -> docs/cost_report.md")
+            except Exception as exc:
+                print(f"[Delivery] 成本报告生成失败（不影响交付）: {type(exc).__name__}: {exc}")
         acceptance = self._run_acceptance_phase(manifest_root, project=project)
+        manifest_path = write_delivery_manifest(manifest_root, project=project)
         delivery = {
             "docs_root": docs_root,
             "docs": docs,
@@ -315,6 +369,12 @@ class ProjectOrchestrator:
         }
         self.last_delivery = delivery
         self.last_acceptance = acceptance
+        if gate is not None:
+            delivery["static_gate"] = gate
+            delivery["release_ready"] = gate["status"] == "passed"
+            if gate["status"] != "passed":
+                self._emit_project_event("project.delivery_blocked", payload={"static_gate": gate["status"]})
+                return delivery
         payload = {
             "docs_root": docs_root,
             "manifest": str(manifest_path),
@@ -340,7 +400,24 @@ class ProjectOrchestrator:
             "checksum": bundle["checksum"],
         }
         delivery["smoke"] = bundle["smoke"]
-        print(f"[Delivery] 交付包 {bundle['bundle']} ({bundle['files']} 文件, 冒烟 {bundle['smoke']['status']}){verdict_note}")
+        release_note = ""
+        gate_ok = gate is None or gate["status"] == "passed"
+        acceptance_ok = acceptance is None or acceptance["verdict"] == "passed"
+        if self.release_anchor and gate_ok and acceptance_ok:
+            version = (self.last_plan or {}).get("version") or "1.0.0"
+            try:
+                anchor = create_release_anchor(
+                    manifest_root,
+                    deliverable_dir=".",
+                    project=project or "ai-team-delivery",
+                    version=version,
+                )
+                delivery["release_anchor"] = anchor
+                release_note = f"，发布锚点 {anchor['tag']}"
+            except (ValueError, OSError) as exc:
+                delivery["release_anchor"] = {"error": str(exc)}
+                release_note = "，发布锚点失败（不影响交付包）"
+        print(f"[Delivery] 交付包 {bundle['bundle']} ({bundle['files']} 文件, 冒烟 {bundle['smoke']['status']}){verdict_note}{release_note}")
         return delivery
 
     def _run_acceptance_phase(self, manifest_root: Path, *, project: str | None) -> dict[str, Any] | None:

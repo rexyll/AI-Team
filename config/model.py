@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-SUPPORTED_ROLES: tuple[str, ...] = ("planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer")
+SUPPORTED_ROLES: tuple[str, ...] = ("planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer", "qa")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,61 @@ class ProviderProfile:
 
     def api_key(self) -> str | None:
         return os.getenv(self.api_key_env)
+
+    def api_keys(self) -> list[str]:
+        """All configured API keys for this provider, rotation-ordered.
+
+        The bare ``<PREFIX>_API_KEY`` comes first, then numbered keys
+        ``<PREFIX>_API_KEY1``, ``_API_KEY2``, ... in numeric order. Duplicate
+        values collapse: a repeated key adds no separate rate-limit budget,
+        so three copies of one key behave as a single key rather than
+        pretending to rotate.
+        """
+        prefix = self.api_key_env[: -len("_API_KEY")]
+        pattern = re.compile(rf"^{re.escape(prefix)}_API_KEY(\d+)$")
+        numbered: list[tuple[int, str]] = []
+        for variable, value in os.environ.items():
+            match = pattern.match(variable)
+            if match and value.strip():
+                numbered.append((int(match.group(1)), value.strip()))
+        keys: list[str] = []
+        bare = (os.getenv(self.api_key_env) or "").strip()
+        if bare:
+            keys.append(bare)
+        for _, value in sorted(numbered):
+            if value not in keys:
+                keys.append(value)
+        return keys
+
+
+class RotatingAPIKeyClient:
+    """Thread-safe round-robin facade over one OpenAI client per API key.
+
+    The runtime only speaks the Chat Completions surface, so rotation is
+    applied per ``chat.completions.create`` call: consecutive calls land on
+    consecutive keys, spreading per-key request rate limits, and a retried
+    call (429 backoff) naturally lands on the next key.
+    """
+
+    def __init__(self, clients: list[Any]) -> None:
+        if not clients:
+            raise ValueError("RotatingAPIKeyClient requires at least one client")
+        self._clients = list(clients)
+        self._lock = threading.Lock()
+        self._index = 0
+
+    def _next_client(self) -> Any:
+        with self._lock:
+            client = self._clients[self._index % len(self._clients)]
+            self._index += 1
+            return client
+
+    @property
+    def chat(self) -> Any:
+        return self._next_client().chat
+
+    def key_count(self) -> int:
+        return len(self._clients)
 
 
 def declared_provider_names() -> list[str]:
@@ -93,10 +149,15 @@ def get_client_for(profile_name: str | None = None):
     profile = get_provider_profile(profile_name)
     cached = _CLIENTS.get(profile.name)
     if cached is None:
-        api_key = profile.api_key()
-        if not api_key:
+        keys = profile.api_keys()
+        if not keys:
             raise RuntimeError(f"{profile.api_key_env} is not configured")
-        cached = OpenAI(api_key=api_key, base_url=profile.base_url)
+        if len(keys) == 1:
+            cached = OpenAI(api_key=keys[0], base_url=profile.base_url)
+        else:
+            cached = RotatingAPIKeyClient(
+                [OpenAI(api_key=key, base_url=profile.base_url) for key in keys]
+            )
         _CLIENTS[profile.name] = cached
     return cached
 
