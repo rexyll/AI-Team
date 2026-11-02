@@ -4,12 +4,14 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from agents.analyst import run_quality_checked_analysis
 from runtime.clarification_session import ClarificationSession, prompt_for_answers
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 from runtime.dashboard_cli import write_dashboard
+from runtime.model_usage import ModelUsageLedger
 from runtime.plan_constraints import extract_required_paths
 from security.workspace import PROJECT_ROOT, set_default_workspace_root
 
@@ -227,7 +229,10 @@ def run_project(
     else:
         set_default_workspace_root(base)
 
-    router = create_agent_router()
+    router = create_agent_router(
+        usage_ledger=(usage_ledger := ModelUsageLedger()),
+        usage_project_id=(usage_project_id := f"run-{uuid4()}"),
+    )
     deliverable_dir = mandated_dirs[0].rsplit("/", 1)[-1] if mandated_dirs else None
     project_orchestrator = ProjectOrchestrator(
         agent_router=router,
@@ -236,6 +241,8 @@ def run_project(
         release_requested=release or auto_release,
         release_version=release_version,
         auto_release=auto_release,
+        usage_ledger=usage_ledger,
+        usage_project_id=usage_project_id,
     )
     plan = project_orchestrator.create_plan(requirement)
     task_manager = project_orchestrator.build_task_manager(plan)

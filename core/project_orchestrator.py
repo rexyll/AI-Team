@@ -28,6 +28,7 @@ from runtime.integration_verification import (
     run_static_quality_gate,
 )
 from runtime.host_git import HostGitOperationService
+from runtime.model_usage import ModelUsageLedger
 from runtime.release import ReleaseRequest, perform_release
 from runtime.plan_builder import PlanBuilder
 from runtime.project_persistence import ProjectPersistenceAdapter
@@ -65,6 +66,8 @@ class ProjectOrchestrator:
         release_requested: bool = False,
         release_version: str | None = None,
         auto_release: bool = False,
+        usage_ledger: ModelUsageLedger | None = None,
+        usage_project_id: str | None = None,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -92,6 +95,14 @@ class ProjectOrchestrator:
             raise ValueError("release_version must be a non-empty string or None")
         if not isinstance(auto_release, bool):
             raise TypeError("auto_release must be a bool")
+        if usage_ledger is not None and not isinstance(usage_ledger, ModelUsageLedger):
+            raise TypeError("usage_ledger must be a ModelUsageLedger or None")
+        if usage_project_id is not None and (
+            not isinstance(usage_project_id, str) or not usage_project_id.strip()
+        ):
+            raise ValueError("usage_project_id must be a non-empty string or None")
+        if usage_project_id is not None and usage_ledger is None:
+            raise ValueError("usage_ledger is required when usage_project_id is supplied")
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
@@ -107,6 +118,8 @@ class ProjectOrchestrator:
         self.release_requested = release_requested
         self.release_version = release_version.strip() if release_version else None
         self.auto_release = auto_release
+        self.usage_ledger = usage_ledger
+        self.usage_project_id = usage_project_id
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -312,6 +325,7 @@ class ProjectOrchestrator:
         if integration is None or integration["status"] != "failed":
             qa = self._run_qa_phase(manifest_root, integration)
         dependency_scan = scan_deliverable_dependencies(manifest_root)
+        usage = self._usage_report()
         delivery_task = Task(
             id=self.DELIVERY_TASK_ID,
             title="生成交付文档与交付清单",
@@ -331,6 +345,7 @@ class ProjectOrchestrator:
         if qa is not None:
             delivery_task.context["qa_evidence"] = self._qa_evidence_digest(qa)
         delivery_task.context["dependency_scan"] = dependency_scan
+        delivery_task.context["usage_report"] = usage
         outcome = doc_writer.run(delivery_task)
         docs: Any = None
         if isinstance(outcome, AgentResult):
@@ -355,6 +370,7 @@ class ProjectOrchestrator:
             "integration": integration,
             "qa": qa,
             "dependency_scan": dependency_scan,
+            "usage": usage,
             "release": None,
         }
         self.last_delivery = delivery
@@ -386,6 +402,8 @@ class ProjectOrchestrator:
             payload["integration_rounds"] = integration["rounds"]
         if qa is not None:
             payload["qa_verdict"] = qa.get("verdict")
+        if usage is not None:
+            payload["llm_calls"] = usage.get("llm_calls")
         if release is not None:
             payload["release_status"] = release.get("status")
         self._emit_project_event(
@@ -743,6 +761,22 @@ class ProjectOrchestrator:
             raise ValueError(f"environment variable {name} must be positive: {raw!r}")
         return value
 
+    def _usage_report(self) -> dict[str, Any] | None:
+        """Observed model usage for this run, attributed through the ledger.
+
+        Cost estimation needs configured cost rates; without them the report
+        states token/call totals and honestly records the missing estimate.
+        """
+        if self.usage_ledger is None or not self.usage_project_id:
+            return None
+        usage = self.usage_ledger.usage_for(self.usage_project_id)
+        return {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "llm_calls": usage.llm_calls,
+            "cost_usd": None,
+        }
+
     def _run_release_phase(self, manifest_root: Path, delivery: dict[str, Any], *, project: str | None) -> dict[str, Any] | None:
         """Version, release notes, host-owned git anchor and release log.
 
@@ -778,6 +812,7 @@ class ProjectOrchestrator:
             "acceptance": delivery.get("acceptance"),
             "integration": integration_summary,
             "qa": {"verdict": (delivery.get("qa") or {}).get("verdict")},
+            "usage": delivery.get("usage"),
             "docs": [
                 doc.get("document") for doc in delivery.get("docs", []) if isinstance(doc, dict)
             ],

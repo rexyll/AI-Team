@@ -211,6 +211,12 @@ def build_release_notes(
     qa = context.get("qa")
     if isinstance(qa, dict) and qa.get("verdict"):
         lines.append(f"- QA 对抗测试：{qa.get('verdict')}")
+    usage = context.get("usage")
+    if isinstance(usage, dict) and usage.get("llm_calls") is not None:
+        lines.append(
+            f"- 模型用量：输入 {usage.get('input_tokens', 0)} tokens，"
+            f"输出 {usage.get('output_tokens', 0)} tokens（{usage.get('llm_calls', 0)} 次调用）"
+        )
     lines.append("")
     lines.append("## 交付内容")
     docs = context.get("docs") or []

@@ -253,6 +253,18 @@ class DocWriterAgent(BaseAgent):
                 dep_lines.append(f"- 漏洞库查询: {lookup.get('status')}（{lookup.get('reason')}）")
             sections.append("==== 依赖清单与扫描 ====\n" + "\n".join(dep_lines))
 
+        usage = task.context.get("usage_report")
+        if isinstance(usage, dict) and usage.get("llm_calls") is not None:
+            sections.append(
+                "==== 模型用量与成本 ====\n"
+                + "\n".join([
+                    f"- LLM 调用次数: {usage.get('llm_calls', 0)}",
+                    f"- 输入 tokens: {usage.get('input_tokens', 0)}",
+                    f"- 输出 tokens: {usage.get('output_tokens', 0)}",
+                    "- 成本估算: 未配置费率，未估算",
+                ])
+            )
+
         if not sections:
             sections.append("(无项目上下文)")
         return "\n\n".join(sections)

@@ -14,6 +14,7 @@ from runtime.agent_config import AgentConfig
 from runtime.agent_router import AgentRouter
 from runtime.artifact_store import FilesystemArtifactStore
 from runtime.llm.provider import ProviderLLM
+from runtime.model_usage import ModelUsageLedger
 from runtime.reviewer_reliability import create_reviewer_with_fallback
 
 AgentConfigMap = Mapping[str, AgentConfig]
@@ -54,7 +55,12 @@ def _default_agent_configs() -> dict[str, AgentConfig]:
     }
 
 
-def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
+def create_agent_router(
+    configs: AgentConfigMap | None = None,
+    *,
+    usage_ledger: ModelUsageLedger | None = None,
+    usage_project_id: str | None = None,
+) -> AgentRouter:
     default_configs = _default_agent_configs()
     if configs is None:
         effective_configs = default_configs
@@ -75,11 +81,31 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         if config.role != role:
             raise ValueError(f"AgentConfig role mismatch: expected '{role}', got '{config.role}'")
 
+    if usage_ledger is not None and not isinstance(usage_ledger, ModelUsageLedger):
+        raise TypeError("usage_ledger must be a ModelUsageLedger or None")
+    if usage_project_id is not None and (
+        not isinstance(usage_project_id, str) or not usage_project_id.strip()
+    ):
+        raise ValueError("usage_project_id must be a non-empty string or None")
+    if usage_project_id is not None and usage_ledger is None:
+        raise ValueError("usage_ledger is required when usage_project_id is supplied")
+
+    def _build_role_llm(provider_name: str, model_id: str) -> ProviderLLM:
+        """Build the role LLM, wiring usage attribution when a ledger is given."""
+        if usage_ledger is None:
+            return ProviderLLM(model=model_id, provider_profile=provider_name)
+        return ProviderLLM(
+            model=model_id,
+            provider_profile=provider_name,
+            usage_ledger=usage_ledger,
+            project_id=usage_project_id,
+        )
+
     router = AgentRouter()
     role_llms: dict[str, ProviderLLM] = {}
     for role in PROJECT_ROLES:
         provider_name, model_id = resolve_role_llm_spec(role)
-        role_llms[role] = ProviderLLM(model=model_id, provider_profile=provider_name)
+        role_llms[role] = _build_role_llm(provider_name, model_id)
 
     router.register("analyst", RequirementAnalystAgent(effective_configs["analyst"], llm=role_llms["analyst"]))
     router.register("architect", ArchitectAgent(effective_configs["architect"], llm=role_llms["architect"]))
@@ -106,7 +132,7 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
         developer_agents.append(
             DeveloperAgent(
                 developer_config,
-                llm=ProviderLLM(model=model_id, provider_profile=provider_name),
+                llm=_build_role_llm(provider_name, model_id),
                 artifact_store=artifact_store,
                 artifact_min_chars=artifact_min_chars,
             )

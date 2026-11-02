@@ -107,7 +107,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
             captured["executed_task_manager"] = task_manager
             return FakeProjectResult()
 
-    def fake_create_agent_router():
+    def fake_create_agent_router(**kwargs):
         router = FakeRouter()
         captured["created_router"] = router
         return router
@@ -150,7 +150,7 @@ def test_main_executes_requirement(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "开发个人记账软件"])
 
@@ -199,7 +199,7 @@ def test_main_supports_machine_readable_json_output(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--output", "json"])
 
@@ -271,7 +271,7 @@ def test_strict_acceptance_gate_fails_closed(monkeypatch, capsys):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    monkeypatch.setattr(main, "create_agent_router", lambda: object())
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: object())
     monkeypatch.setattr(main, "ProjectOrchestrator", FakeProjectOrchestrator)
     monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--strict-acceptance"])
 
@@ -306,7 +306,7 @@ def test_analyze_only_writes_specification_worksheet(tmp_path, monkeypatch):
         __import__("runtime.agent_config", fromlist=["AgentConfig"]).AgentConfig(role="analyst", model=""),
         llm=_LLM(),
     ))
-    monkeypatch.setattr(main, "create_agent_router", lambda: router)
+    monkeypatch.setattr(main, "create_agent_router", lambda **kwargs: router)
     monkeypatch.setattr(main.sys, "argv", [
         "main.py", "统计词频", "--analyze-only",
         "--analysis-output", str(tmp_path / "spec.md"),
@@ -365,7 +365,7 @@ def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
         def execute(self, task_manager):
             return FakeProjectResult()
 
-    def fake_create_agent_router():
+    def fake_create_agent_router(**kwargs):
         import runtime.agent_config as agent_config
         from runtime.agent_router import AgentRouter as RealRouter
         from agents.analyst import RequirementAnalystAgent
