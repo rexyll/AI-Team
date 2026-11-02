@@ -89,7 +89,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 ### P1 质量独立性（完整性审计建议 1/3/5）
 
 - [x] **T5 静态质量门禁**（2026-11-02 完成，提交 e20022a：ruff 强制（钉死 E9/F63/F7/F82 破坏性规则集，不含风格项；--no-cache），mypy 默认关闭（AI_TEAM_STATIC_MYPY=1 开启，默认记录、AI_TEAM_STATIC_MYPY_ENFORCE=1 强制）；静态失败与套件失败共用同一修复回流；全量回归 2093 passed）
-- [ ] **T6 QA 对抗测试角色**（role=`qa`）：设计要点——复用 Developer 工具循环机制但换 QA 系统 prompt（读+执行能力，WRITE 限制在 QA 证据文件）；产品级 QA 阶段在集成通过后、文档前执行一次对抗验证（边界/异常输入/并发），产出 QA_PASSED/QA_FAILED + 证据；QA_FAILED 如实上报并门禁发布（不阻断打包）；涉及 ROLE_CAPABILITIES/SUPPORTED_ROLES/agent_factory 注册。
+- [x] **T6 QA 对抗测试角色**（2026-11-02 完成，提交见执行记录：agents/qa.py 自有有界工具循环（BaseAgent 能力过滤 + ToolInvocationService role=qa）；qa 角色 = READ+EXECUTE（无 WRITE，产品文件不可经工具边界修改）；产品级 QA 阶段在集成通过后、文档前执行一次；QA_FAILED 如实上报并门禁发布（不阻断打包）；QA 证据入测试报告与发布说明）
 - [ ] **T7 依赖漏洞扫描**：SBOM 生成 + pip-audit（遵守网络出口策略，离线优先）。
 
 ### P2 项目管理（完整性审计建议 4/5）
@@ -114,3 +114,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-02 | T3 发布阶段（semver/notes/git 锚点/审批门） | 完成；全量回归 2084 passed | 提交 `2b7abcc` |
 | 2026-11-02 | T4 文档与计划同步 | 完成；文档契约 + 全量回归绿 | 提交 `33e4880` |
 | 2026-11-02 | T5 静态质量门禁 | 完成；全量回归 2093 passed | 提交 `e20022a` |
+| 2026-11-02 | T6 QA 对抗测试角色 | 完成；全量回归 2101 passed + 安全回归 221 passed | 本次提交 |

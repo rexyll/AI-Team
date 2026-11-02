@@ -6,6 +6,7 @@ from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
 from agents.doc_writer import DocWriterAgent
 from agents.planner import PlannerAgent
+from agents.qa import QAAgent
 from agents.tester import TesterAgent
 
 from config.model import get_developer_count, resolve_developer_llm_spec, resolve_role_llm_spec
@@ -19,7 +20,7 @@ AgentConfigMap = Mapping[str, AgentConfig]
 
 DEFAULT_ARTIFACT_MIN_CHARS = 16384
 
-PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer")
+PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
 
 
 def _developer_artifact_archive():
@@ -49,7 +50,7 @@ def _developer_artifact_archive():
 def _default_agent_configs() -> dict[str, AgentConfig]:
     return {
         role: AgentConfig(role=role, model="")
-        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer")
+        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
     }
 
 
@@ -64,7 +65,7 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
             raise ValueError("Missing agent configurations: " + ", ".join(sorted(missing_roles)))
         effective_configs = {**default_configs, **configs}
 
-    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer"}
+    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa"}
     for role in supported_roles:
         config = effective_configs.get(role)
         if config is None:
@@ -119,4 +120,5 @@ def create_agent_router(configs: AgentConfigMap | None = None) -> AgentRouter:
     )
     router.register("planner", PlannerAgent(effective_configs["planner"], llm=role_llms["planner"]))
     router.register("doc_writer", DocWriterAgent(effective_configs["doc_writer"], llm=role_llms["doc_writer"]))
+    router.register("qa", QAAgent(effective_configs["qa"], llm=role_llms["qa"]))
     return router

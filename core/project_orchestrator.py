@@ -17,6 +17,7 @@ from runtime.acceptance import (
 from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
+from agents.qa import parse_qa_verdict
 from runtime.delivery_manifest import write_delivery_manifest
 from runtime.deployment import create_deployment_bundle
 from runtime.integration_verification import (
@@ -47,6 +48,7 @@ class ProjectOrchestrator:
     PLANNER_TASK_ID = "PLAN-001"
     ANALYST_TASK_ID = "REQ-ANALYSIS"
     DELIVERY_TASK_ID = "DELIVERY-001"
+    QA_TASK_ID = "QA-001"
 
     def __init__(
         self,
@@ -305,6 +307,9 @@ class ProjectOrchestrator:
         else:
             manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
         integration = self._run_integration_phase(manifest_root)
+        qa: dict[str, Any] | None = None
+        if integration is None or integration["status"] != "failed":
+            qa = self._run_qa_phase(manifest_root, integration)
         delivery_task = Task(
             id=self.DELIVERY_TASK_ID,
             title="生成交付文档与交付清单",
@@ -321,6 +326,8 @@ class ProjectOrchestrator:
         delivery_task.context["task_digest"] = self._task_digest(task_manager)
         if integration is not None:
             delivery_task.context["integration_evidence"] = self._integration_evidence_digest(integration)
+        if qa is not None:
+            delivery_task.context["qa_evidence"] = self._qa_evidence_digest(qa)
         outcome = doc_writer.run(delivery_task)
         docs: Any = None
         if isinstance(outcome, AgentResult):
@@ -343,6 +350,7 @@ class ProjectOrchestrator:
             "manifest": None,
             "acceptance": acceptance,
             "integration": integration,
+            "qa": qa,
             "release": None,
         }
         self.last_delivery = delivery
@@ -350,8 +358,13 @@ class ProjectOrchestrator:
         verdict_note = f"，验收 {acceptance['verdict'].upper()}" if acceptance else ""
         release: dict[str, Any] | None = None
         if self.release_requested and (integration is None or integration["status"] != "failed"):
-            release = self._run_release_phase(manifest_root, delivery, project=project)
-            delivery["release"] = release
+            if qa is not None and qa.get("verdict") == "QA_FAILED":
+                delivery["release"] = {"status": "blocked", "reason": "QA verdict is QA_FAILED"}
+                self._emit_project_event("project.release_blocked", payload={"reason": "qa_failed"})
+                print("[Release] QA 对抗测试未通过（QA_FAILED），发布已门禁")
+            else:
+                release = self._run_release_phase(manifest_root, delivery, project=project)
+                delivery["release"] = release
         # The manifest is written after the release phase so RELEASE_NOTES.md
         # and release_log.json are part of the checksummed deliverable set.
         manifest_path = write_delivery_manifest(manifest_root, project=project)
@@ -367,6 +380,8 @@ class ProjectOrchestrator:
         if integration is not None:
             payload["integration_status"] = integration["status"]
             payload["integration_rounds"] = integration["rounds"]
+        if qa is not None:
+            payload["qa_verdict"] = qa.get("verdict")
         if release is not None:
             payload["release_status"] = release.get("status")
         self._emit_project_event(
@@ -626,6 +641,81 @@ class ProjectOrchestrator:
             }
         return digest
 
+    def _run_qa_phase(self, manifest_root: Path, integration: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Product-level adversarial QA, independent from the developers.
+
+        Runs once after the integration gate and before documentation. No-op
+        when no qa agent is registered. The QA verdict never invalidates the
+        finished product; a QA_FAILED verdict blocks the release honestly
+        while packaging still proceeds.
+        """
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        qa_agent = get_agent("qa") if callable(get_agent) else None
+        if qa_agent is None:
+            return None
+        files = sorted(
+            path.relative_to(manifest_root).as_posix()
+            for path in manifest_root.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts and not path.name.endswith(".pyc")
+        )[:100]
+        integration_summary: dict[str, Any] | None = None
+        if isinstance(integration, dict):
+            suite = integration.get("suite")
+            integration_summary = {
+                "status": integration.get("status"),
+                "summary": suite.get("summary") if isinstance(suite, dict) else None,
+            }
+        qa_task = Task(
+            id=self.QA_TASK_ID,
+            title="产品级对抗测试（QA）",
+            description=(
+                "以对抗方式验证交付物：边界与非法输入、异常路径、重复与交错执行、"
+                "文档一致性与稳定性。最终结论第一行输出 QA_PASSED 或 QA_FAILED。"
+            ),
+            role="qa",
+            status="ready",
+        )
+        qa_task.context["deliverable_dir"] = self.deliverable_dir or "."
+        qa_task.context["product_summary"] = (self.last_requirement_analysis or "")[:2000]
+        qa_task.context["integration_summary"] = integration_summary
+        qa_task.context["files"] = files
+        try:
+            outcome = qa_agent.run(qa_task)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._emit_project_event(
+                "project.qa_completed",
+                payload={"verdict": "unknown", "status": "error", "error": error},
+            )
+            print(f"[QA] 对抗测试执行失败：{error}")
+            return {"verdict": "unknown", "status": "error", "error": error}
+        message = getattr(outcome, "message", "")
+        data = getattr(outcome, "data", None)
+        qa_data = data.get("qa") if isinstance(data, dict) and isinstance(data.get("qa"), dict) else {}
+        verdict = qa_data.get("verdict") or parse_qa_verdict(str(message or ""))
+        status = getattr(outcome, "status", "completed")
+        record = {
+            "verdict": verdict,
+            "status": str(status),
+            "message_head": str(message or "")[:1500],
+        }
+        self._emit_project_event(
+            "project.qa_completed",
+            payload={"verdict": verdict, "status": str(status)},
+        )
+        print(f"[QA] 对抗测试结论：{str(verdict).upper()}")
+        return record
+
+    @staticmethod
+    def _qa_evidence_digest(qa: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(qa, dict):
+            return None
+        return {
+            "verdict": qa.get("verdict"),
+            "status": qa.get("status"),
+            "message_head": str(qa.get("message_head") or "")[:1200],
+        }
+
     @staticmethod
     def _env_int(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -683,6 +773,7 @@ class ProjectOrchestrator:
             "requirement_entries": requirement_entries,
             "acceptance": delivery.get("acceptance"),
             "integration": integration_summary,
+            "qa": {"verdict": (delivery.get("qa") or {}).get("verdict")},
             "docs": [
                 doc.get("document") for doc in delivery.get("docs", []) if isinstance(doc, dict)
             ],

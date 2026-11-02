@@ -208,6 +208,9 @@ def build_release_notes(
             lines.append(f"- 静态质量门禁：{static_status}")
     else:
         lines.append("- 无集成回归证据")
+    qa = context.get("qa")
+    if isinstance(qa, dict) and qa.get("verdict"):
+        lines.append(f"- QA 对抗测试：{qa.get('verdict')}")
     lines.append("")
     lines.append("## 交付内容")
     docs = context.get("docs") or []

@@ -26,6 +26,10 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     "architect": frozenset({READ}),
     "developer": frozenset({READ, WRITE, EXECUTE}),
     "tester": frozenset({READ, EXECUTE}),
+    # Adversarial QA is read+execute like the tester: independent break-the-
+    # product verification without any WRITE capability, so product files
+    # cannot be modified through the tool boundary.
+    "qa": frozenset({READ, EXECUTE}),
     "reviewer": frozenset({READ}),
     "planner": frozenset(),
     # The analyst works purely on the LLM level and holds no tool surface.

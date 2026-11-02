@@ -87,7 +87,9 @@ DOC_SPECS: tuple[tuple[str, str, str], ...] = (
         "汇总测试策略、测试环境、每个测试命令与实际结果（以测试证据为准，逐条列出）、"
         "各 REQ 编号与测试证据的映射、集成联调与全量回归结果"
         "（引用『集成回归验证（产品级）』上下文章节：状态、命令、结果统计与失败用例；"
-        "没有集成证据时必须写明'无集成回归证据'）、缺陷与遗留问题、测试结论。"
+        "没有集成证据时必须写明'无集成回归证据'）、QA 对抗测试结论"
+        "（引用『QA 对抗测试』上下文章节：判定与用例证据；没有 QA 证据时写明'无 QA 对抗测试证据'）、"
+        "缺陷与遗留问题、测试结论。"
         "没有证据的项目必须写明'无证据'。",
     ),
     (
@@ -223,6 +225,17 @@ class DocWriterAgent(BaseAgent):
                 if tail:
                     lines.append("- 输出摘录:\n" + tail)
             sections.append("==== 集成回归验证（产品级） ====\n" + "\n".join(lines))
+
+        qa = task.context.get("qa_evidence")
+        if isinstance(qa, dict):
+            qa_lines = [
+                f"- 判定: {qa.get('verdict', 'unknown')}",
+                f"- 状态: {qa.get('status', 'unknown')}",
+            ]
+            head = str(qa.get("message_head") or "").strip()
+            if head:
+                qa_lines.append("- 用例证据摘录:\n" + head)
+            sections.append("==== QA 对抗测试 ====\n" + "\n".join(qa_lines))
 
         if not sections:
             sections.append("(无项目上下文)")
