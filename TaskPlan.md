@@ -96,7 +96,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - [x] **T8 成本报告**（2026-11-02 完成，提交见执行记录：ModelUsageLedger 接入真实 ProviderLLM 工厂路径（per-run ledger + run-scoped project key）；用量汇总进 delivery 记录、交付文档『模型用量与成本』章节与发布说明；费率未配置时如实标注未估算成本）
 - [x] **T9 需求变更回流**（2026-11-02 完成，提交见执行记录：--change-request 文件 → Analyst 权威修订通道（customer.change_request 围栏 + CHG-xxx 受理规则）→ 修订后规格重规划为全新任务图；analyze-only 同样支持；残留：持久化项目的增量续跑（只重跑受影响任务）待后续节点）
-- [ ] **T10 版本规划/里程碑**：多需求场景的 Release/迭代概念与优先级排序。
+- [ ] **T10 版本规划/里程碑**：设计要点——基于 T3 的 per-delivery semver 与 release_log.json，增加多需求批量入口（如 --requirements-file，逐个需求串行交付、各自版本号、共享发布计划）；多项目并行可评估 multi_project_scheduler 复用；交付物版本列表汇总视图（跨 release_log 聚合）
 
 ### P3 组织记忆与交付后（完整性审计建议 6/7，OpenClaw heartbeat/memory 借鉴）
 
@@ -117,4 +117,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-02 | T6 QA 对抗测试角色 | 完成；全量回归 2101 passed + 安全回归 221 passed | 提交 `77589b0` |
 | 2026-11-02 | T7 依赖漏洞扫描（离线 SBOM） | 完成；全量回归 2105 passed | 提交 `d889b20` |
 | 2026-11-02 | T8 成本报告（用量归因→文档） | 完成；全量回归 2110 passed | 提交 `6fb76bd` |
-| 2026-11-02 | T9 需求变更受理（CHG 修订→重规划） | 完成；全量回归 2118 passed | 本次提交 |
+| 2026-11-02 | T9 需求变更受理（CHG 修订→重规划） | 完成；全量回归 2118 passed | 提交 `0b6a9be` |
