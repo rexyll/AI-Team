@@ -321,6 +321,35 @@ def test_release_phase_skipped_when_integration_failed(tmp_path: Path):
     assert delivery["package"] is None
 
 
+STATIC_BUG_TODO = "MESSAGE = 'ok'\n\nif False:\n    print(MISSING_NAME)\n"
+
+
+def test_static_gate_failure_triggers_rework_round(tmp_path: Path):
+    # The suite alone would pass: the ruff-enforced undefined name drives the round.
+    developer = _DeveloperStub(tmp_path / "e2e_flat", initial=STATIC_BUG_TODO, rework_fixes=True)
+
+    delivery = _run_project(tmp_path, developer)[1]
+
+    integration = delivery["integration"]
+    assert integration["status"] == "passed"
+    assert integration["rounds"] == 1
+    assert integration["static"]["status"] == "passed"
+    assert "static" in developer.rework_calls[0].context["integration_failure"]
+    assert delivery["package"] is not None
+
+
+def test_static_gate_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "0")
+    developer = _DeveloperStub(tmp_path / "e2e_flat", initial=STATIC_BUG_TODO, rework_fixes=False)
+
+    delivery = _run_project(tmp_path, developer)[1]
+
+    integration = delivery["integration"]
+    assert integration["status"] == "passed"
+    assert integration["rounds"] == 0
+    assert integration["static"] is None
+
+
 def test_invalid_round_configuration_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "-1")
     developer = _DeveloperStub(tmp_path / "e2e_flat", initial=GOOD_TODO, rework_fixes=False)

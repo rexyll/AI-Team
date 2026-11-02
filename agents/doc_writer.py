@@ -202,6 +202,13 @@ class DocWriterAgent(BaseAgent):
                 f"- 状态: {integration.get('status', 'unknown')}",
                 f"- 修复轮次: {integration.get('rounds', 0)}",
             ]
+            static = integration.get("static")
+            if isinstance(static, dict):
+                lines.append(f"- 静态质量门禁: {static.get('status', 'unknown')}")
+                for name, record in (static.get("tools") or {}).items():
+                    if isinstance(record, dict):
+                        mode = "强制" if record.get("enforced") else "记录"
+                        lines.append(f"  - {name}: {record.get('status', 'unknown')}（{mode}）")
             suite = integration.get("suite")
             if isinstance(suite, dict):
                 lines.append(f"- 命令: {suite.get('command') or '-'}")

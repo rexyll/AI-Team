@@ -203,6 +203,9 @@ def build_release_notes(
         lines.append(
             f"- 状态：{integration.get('status')}；修复轮次：{integration.get('rounds', 0)}{counts}"
         )
+        static_status = integration.get("static_status")
+        if static_status:
+            lines.append(f"- 静态质量门禁：{static_status}")
     else:
         lines.append("- 无集成回归证据")
     lines.append("")

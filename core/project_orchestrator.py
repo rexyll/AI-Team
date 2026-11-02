@@ -19,7 +19,12 @@ from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
 from runtime.delivery_manifest import write_delivery_manifest
 from runtime.deployment import create_deployment_bundle
-from runtime.integration_verification import DEFAULT_INTEGRATION_TIMEOUT, run_integration_suite
+from runtime.integration_verification import (
+    DEFAULT_INTEGRATION_TIMEOUT,
+    DEFAULT_STATIC_TIMEOUT,
+    run_integration_suite,
+    run_static_quality_gate,
+)
 from runtime.host_git import HostGitOperationService
 from runtime.release import ReleaseRequest, perform_release
 from runtime.plan_builder import PlanBuilder
@@ -433,70 +438,138 @@ class ProjectOrchestrator:
     def _run_integration_phase(self, manifest_root: Path) -> dict[str, Any]:
         """Product-level integration & regression gate with bounded rework.
 
-        Runs the deliverable's full test suite from a fresh copy. On failure,
-        developer rework tasks (carrying the fenced failure evidence) execute
-        through the canonical TaskWorkflow, then the suite runs again. Rounds
-        are bounded by AI_TEAM_INTEGRATION_MAX_ROUNDS (default 2, 0 disables
-        rework but still runs the suite once); exhaustion is reported
-        honestly as FAILED and gates packaging. A deliverable without test
-        files yields a skipped record so the documentation can state the
-        absence of regression evidence.
+        Each evaluation runs the deliverable's full test suite from a fresh
+        copy plus the deterministic static-quality gate (ruff enforced;
+        mypy opt-in). A failure in either feeds developer rework tasks
+        (carrying fenced failure evidence) through the canonical
+        TaskWorkflow, then both run again. Rounds are bounded by
+        AI_TEAM_INTEGRATION_MAX_ROUNDS (default 2, 0 disables rework but
+        still evaluates once); exhaustion is reported honestly as FAILED
+        and gates packaging. A deliverable without test files yields a
+        skipped suite record so the documentation can state the absence of
+        regression evidence; the static gate (AI_TEAM_STATIC_GATE, default
+        on) still applies.
         """
         timeout = self._env_float("AI_TEAM_INTEGRATION_TIMEOUT", DEFAULT_INTEGRATION_TIMEOUT)
         max_rounds = self._env_int("AI_TEAM_INTEGRATION_MAX_ROUNDS", 2)
         if max_rounds < 0:
             raise ValueError("AI_TEAM_INTEGRATION_MAX_ROUNDS must be >= 0")
-        suite = run_integration_suite(manifest_root, timeout=timeout)
+        static_enabled = self._env_int("AI_TEAM_STATIC_GATE", 1) == 1
+        run_mypy = self._env_int("AI_TEAM_STATIC_MYPY", 0) == 1
+        enforce_mypy = self._env_int("AI_TEAM_STATIC_MYPY_ENFORCE", 0) == 1
+        static_timeout = self._env_float("AI_TEAM_STATIC_TIMEOUT", DEFAULT_STATIC_TIMEOUT)
+
+        def evaluate() -> tuple[dict[str, Any], dict[str, Any] | None]:
+            suite = run_integration_suite(manifest_root, timeout=timeout)
+            static = (
+                run_static_quality_gate(
+                    manifest_root,
+                    timeout=static_timeout,
+                    run_mypy=run_mypy,
+                    enforce_mypy=enforce_mypy,
+                )
+                if static_enabled
+                else None
+            )
+            return suite, static
+
+        def failed(static: dict[str, Any] | None) -> bool:
+            return static is not None and static.get("status") == "failed"
+
+        suite, static = evaluate()
         self._emit_project_event(
             "project.integration_started",
-            payload={"status": suite["status"], "test_files": len(suite.get("test_files") or [])},
+            payload={
+                "status": suite["status"],
+                "test_files": len(suite.get("test_files") or []),
+                "static_status": static.get("status") if static is not None else None,
+            },
         )
-        if suite["status"] != "failed":
+        if suite["status"] != "failed" and not failed(static):
             self._emit_project_event(
                 "project.integration_completed",
-                payload={"status": suite["status"], "rounds": 0, "summary": suite.get("summary")},
+                payload={
+                    "status": suite["status"],
+                    "rounds": 0,
+                    "summary": suite.get("summary"),
+                    "static_status": static.get("status") if static is not None else None,
+                },
             )
             note = "（交付物无测试文件）" if suite["status"] == "skipped" else ""
             print(f"[Integration] 集成回归 {suite['status'].upper()}{note}（{suite.get('command') or '-'}）")
-            return {"status": suite["status"], "rounds": 0, "rework_rounds": [], "suite": suite}
+            return {
+                "status": suite["status"],
+                "rounds": 0,
+                "rework_rounds": [],
+                "suite": suite,
+                "static": static,
+            }
 
         rework_rounds: list[dict[str, Any]] = []
         for round_no in range(1, max_rounds + 1):
-            rework_rounds.append(self._run_rework_round(suite, round_no))
-            suite = run_integration_suite(manifest_root, timeout=timeout)
-            if suite["status"] != "failed":
+            rework_rounds.append(self._run_rework_round(suite, round_no, static=static))
+            suite, static = evaluate()
+            if suite["status"] != "failed" and not failed(static):
                 break
+        final_status = (
+            "failed"
+            if suite["status"] == "failed" or failed(static)
+            else suite["status"]
+        )
         payload = {
-            "status": suite["status"],
+            "status": final_status,
             "rounds": len(rework_rounds),
             "summary": suite.get("summary"),
+            "static_status": static.get("status") if static is not None else None,
         }
-        if suite["status"] == "failed":
+        if final_status == "failed":
             self._emit_project_event("project.integration_failed", payload=payload)
             print(f"[Integration] 集成回归 FAILED（{len(rework_rounds)} 轮修复后仍未通过）")
         else:
             self._emit_project_event("project.integration_completed", payload=payload)
             print(f"[Integration] 集成回归 PASSED（第 {len(rework_rounds)} 轮修复后通过）")
-        return {"status": suite["status"], "rounds": len(rework_rounds), "rework_rounds": rework_rounds, "suite": suite}
+        return {
+            "status": final_status,
+            "rounds": len(rework_rounds),
+            "rework_rounds": rework_rounds,
+            "suite": suite,
+            "static": static,
+        }
 
-    def _run_rework_round(self, suite: dict[str, Any], round_no: int) -> dict[str, Any]:
+    def _run_rework_round(self, suite: dict[str, Any], round_no: int, *, static: dict[str, Any] | None = None) -> dict[str, Any]:
         """One bounded rework round through the canonical developer workflow.
 
-        The rework task carries the fenced suite-failure evidence and executes
-        through the same TaskWorkflow as product tasks (developer tool loop +
-        tester + reviewer gates). Suite re-execution afterwards is the only
-        pass/fail authority; rework exceptions are recorded as evidence.
+        The rework task carries the fenced suite-failure (and static-gate)
+        evidence and executes through the same TaskWorkflow as product tasks
+        (developer tool loop + tester + reviewer gates). Suite and static
+        re-evaluation afterwards is the only pass/fail authority; rework
+        exceptions are recorded as evidence.
         """
-        evidence = {
+        evidence: dict[str, Any] = {
             "command": suite.get("command") or "",
             "exit_code": suite.get("exit_code"),
             "summary": suite.get("summary"),
             "failed_tests": suite.get("failed_tests") or [],
             "output_tail": (suite.get("output_tail") or "")[-2500:],
         }
+        static_failed = False
+        if static is not None:
+            static_failed = static.get("status") == "failed"
+            evidence["static"] = {
+                "status": static.get("status"),
+                "tools": {
+                    name: {
+                        "status": record.get("status"),
+                        "enforced": record.get("enforced"),
+                        "output_tail": (record.get("output_tail") or "")[-1200:],
+                    }
+                    for name, record in (static.get("tools") or {}).items()
+                },
+            }
         deliverable = self.deliverable_dir or "工作区根目录"
+        static_note = "静态质量门禁存在未通过的强制项，请一并修复。" if static_failed else ""
         description = (
-            f"产品级集成回归测试失败（第 {round_no} 轮修复）。交付目录: {deliverable}。"
+            f"产品级集成回归测试失败（第 {round_no} 轮修复）。交付目录: {deliverable}。{static_note}"
             f"请先在该目录内复现失败（运行下方证据中的测试命令），修复缺陷后重跑完整测试套件直到通过。"
             f"所有修改必须限制在交付目录内；不得删除或弱化测试断言来让测试通过。\n\n"
             + untrusted_content("integration.failure", evidence)
@@ -540,6 +613,16 @@ class ProjectOrchestrator:
                 "summary": suite.get("summary"),
                 "failed_tests": (suite.get("failed_tests") or [])[:10],
                 "output_tail": (suite.get("output_tail") or "")[-2000:],
+            }
+        static = integration.get("static")
+        if isinstance(static, dict):
+            digest["static"] = {
+                "status": static.get("status"),
+                "tools": {
+                    name: {"status": record.get("status"), "enforced": record.get("enforced")}
+                    for name, record in (static.get("tools") or {}).items()
+                    if isinstance(record, dict)
+                },
             }
         return digest
 
@@ -586,10 +669,12 @@ class ProjectOrchestrator:
         integration_summary: dict[str, Any] | None = None
         if isinstance(integration, dict):
             suite = integration.get("suite")
+            static = integration.get("static")
             integration_summary = {
                 "status": integration.get("status"),
                 "rounds": integration.get("rounds", 0),
                 "summary": suite.get("summary") if isinstance(suite, dict) else None,
+                "static_status": static.get("status") if isinstance(static, dict) else None,
             }
         result = self.last_result
         context: dict[str, Any] = {

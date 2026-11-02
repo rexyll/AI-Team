@@ -15,17 +15,31 @@ passes through.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from runtime.deployment import find_test_files, stage_deliverable_copy
 
 DEFAULT_INTEGRATION_TIMEOUT = 300.0
+DEFAULT_STATIC_TIMEOUT = 120.0
+# Conservative "broken code" rule set, pinned explicitly so gate semantics
+# stay deterministic across ruff versions: syntax errors (E9), invalid
+# comparisons/asserts (F63), undefined names (F82) — never style rules.
+_STATIC_TOOL_ARGS = {
+    "ruff": ["check", ".", "--select", "E9,F63,F7,F82", "--no-cache"],
+    "mypy": [
+        "--ignore-missing-imports",
+        "--cache-dir",
+        str(Path(tempfile.gettempdir()) / "ai-team-mypy-cache"),
+    ],
+}
 
 _SUMMARY_LINE = re.compile(r"^\s*(?P<counts>.+?)(?:, )? in (?P<seconds>\d+(?:\.\d+)?)s\s*$")
 _COUNT_TOKEN = re.compile(r"(\d+) (passed|failed|errors?|skipped|xpassed|xfailed)\b")
@@ -155,4 +169,78 @@ def run_integration_suite(
         "summary": parse_pytest_summary(output),
         "failed_tests": extract_failed_tests(output),
         "output_tail": tail[-4000:],
+    }
+
+
+def run_static_quality_gate(
+    deliverable_root: str | Path,
+    *,
+    python: str = sys.executable,
+    timeout: float = DEFAULT_STATIC_TIMEOUT,
+    run_mypy: bool = False,
+    enforce_mypy: bool = False,
+    tools: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Run deterministic static checks (ruff, optionally mypy) on the deliverable.
+
+    ruff is enforced with a pinned conservative "broken code" rule set
+    (E9/F63/F7/F82: syntax errors, invalid comparisons, undefined names —
+    never style rules); mypy is opt-in (``run_mypy``) and recorded-only
+    unless ``enforce_mypy`` is set. A tool that is not installed is reported
+    as ``unavailable`` and never fails the gate — the evidence states what
+    was actually checked.
+    """
+    root = Path(deliverable_root)
+    if not root.is_dir():
+        return {"status": "skipped", "reason": "deliverable root does not exist", "tools": {}}
+    if not any(root.rglob("*.py")):
+        return {"status": "skipped", "reason": "no python files", "tools": {}}
+    gates: list[tuple[str, list[str], bool]]
+    if tools is not None:
+        enforced_by = {"ruff": True, "mypy": enforce_mypy}
+        gates = [
+            (name, _STATIC_TOOL_ARGS.get(name, ["."]), enforced_by.get(name, False))
+            for name in tools
+        ]
+    else:
+        gates = [("ruff", _STATIC_TOOL_ARGS["ruff"], True)]
+        if run_mypy:
+            gates.append(("mypy", _STATIC_TOOL_ARGS["mypy"], enforce_mypy))
+    tool_records: dict[str, Any] = {}
+    for name, args, enforced in gates:
+        if importlib.util.find_spec(name) is None:
+            tool_records[name] = {"status": "unavailable", "enforced": enforced}
+            continue
+        try:
+            completed = subprocess.run(
+                [python, "-m", name, *args],
+                cwd=str(root),
+                capture_output=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            tool_records[name] = {
+                "status": "failed" if enforced else "recorded",
+                "reason": f"{name} timed out after {timeout} seconds",
+                "enforced": enforced,
+            }
+            continue
+        output = (completed.stdout or b"").decode("utf-8", errors="replace")
+        errors = (completed.stderr or b"").decode("utf-8", errors="replace")
+        tail = output + ("\n[stderr]\n" + errors if errors.strip() else "")
+        tool_records[name] = {
+            "status": "passed" if completed.returncode == 0 else "failed",
+            "exit_code": completed.returncode,
+            "enforced": enforced,
+            "output_tail": tail[-2000:],
+        }
+    enforced_failures = [
+        name
+        for name, record in tool_records.items()
+        if record.get("status") == "failed" and record.get("enforced")
+    ]
+    return {
+        "status": "failed" if enforced_failures else "passed",
+        "tools": tool_records,
+        "reason": None,
     }
