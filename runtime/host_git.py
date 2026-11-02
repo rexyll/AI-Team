@@ -17,6 +17,8 @@ GitOperation = Literal[
     "rev-parse",
     "add",
     "commit",
+    "init",
+    "tag",
 ]
 
 
@@ -34,7 +36,8 @@ class GitOperationRequest:
 
     def __post_init__(self) -> None:
         if self.operation not in {
-            "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit"
+            "status", "diff", "log", "show", "branch", "rev-parse", "add", "commit",
+            "init", "tag",
         }:
             raise ValueError(f"Unsupported Git operation: {self.operation!r}")
         if not isinstance(self.workspace, str) or not self.workspace.strip():
@@ -64,7 +67,10 @@ class HostGitOperationService:
             raise TypeError("request must be a GitOperationRequest")
 
         workspace = self._sandbox.require_directory(request.workspace)
-        self._require_repository(workspace, env=env)
+        if request.operation != "init":
+            # Only the release anchor may create a repository; every other
+            # semantic operation requires an existing one.
+            self._require_repository(workspace, env=env)
 
         if request.operation == "status":
             return self._git("status --short", workspace, env=env)
@@ -82,6 +88,10 @@ class HostGitOperationService:
             return self._add(request, workspace, env=env)
         if request.operation == "commit":
             return self._commit(request, workspace, env=env)
+        if request.operation == "init":
+            return self._git("init", workspace, env=env)
+        if request.operation == "tag":
+            return self._tag(request, workspace, env=env)
         raise AssertionError(f"unhandled Git operation: {request.operation}")
 
     def status(self, workspace: str, *, env: Mapping[str, str] | None = None) -> str:
@@ -107,6 +117,41 @@ class HostGitOperationService:
 
     def commit(self, workspace: str, message: str, *, env: Mapping[str, str] | None = None) -> str:
         return self.execute(GitOperationRequest("commit", workspace, message=message), env=env)
+
+    def is_repository(self, workspace: str, *, env: Mapping[str, str] | None = None) -> bool:
+        """Check whether the workspace is inside an existing Git repository."""
+        try:
+            self._require_repository(self._sandbox.require_directory(workspace), env=env)
+        except ValueError:
+            return False
+        return True
+
+    def init(self, workspace: str, *, env: Mapping[str, str] | None = None) -> str:
+        """Create a Git repository in the workspace (release-anchor semantics)."""
+        return self.execute(GitOperationRequest("init", workspace), env=env)
+
+    def tag(
+        self,
+        workspace: str,
+        name: str,
+        *,
+        message: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        """Create a lightweight or annotated tag on HEAD."""
+        return self.execute(
+            GitOperationRequest("tag", workspace, message=message or "", revision=name), env=env
+        )
+
+    def head_commit(self, workspace: str, *, env: Mapping[str, str] | None = None) -> str:
+        """Return the HEAD commit SHA."""
+        result = self.execute(GitOperationRequest("rev-parse", workspace, revision="HEAD"), env=env)
+        if not result.startswith("exit_code=0\n"):
+            raise ValueError("HEAD commit SHA is unavailable")
+        lines = result.splitlines()
+        if len(lines) < 2 or not lines[1].strip():
+            raise ValueError("HEAD commit SHA could not be parsed")
+        return lines[1].strip()
 
     def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         if env is None:
@@ -151,6 +196,33 @@ class HostGitOperationService:
         if "\n" in message or "\r" in message:
             raise ValueError("commit message must be single-line")
         return self._git(f"commit -m {self._quote(message)}", workspace, env=env)
+
+    def _tag(self, request: GitOperationRequest, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
+        name = self._validate_tag_name(request.revision)
+        message = request.message.strip()
+        if message:
+            if "\n" in message or "\r" in message:
+                raise ValueError("tag message must be single-line")
+            return self._git(
+                f"tag -a {self._quote(name)} -m {self._quote(message)}", workspace, env=env
+            )
+        return self._git(f"tag {self._quote(name)}", workspace, env=env)
+
+    @staticmethod
+    def _validate_tag_name(name: str) -> str:
+        value = name.strip()
+        if not value:
+            raise ValueError("tag name must be non-empty")
+        if value.startswith("-"):
+            raise ValueError("tag name must not start with '-'")
+        forbidden = set("&|;<>`~^:?*[]\\\"'") | {"\n", "\r", "\t", " "}
+        if any(char in forbidden for char in value):
+            raise ValueError(f"tag name contains forbidden characters: {value!r}")
+        if ".." in value or value.endswith("."):
+            raise ValueError(f"tag name contains an invalid dot sequence: {value!r}")
+        if value.startswith("/") or value.endswith("/") or "//" in value:
+            raise ValueError(f"tag name contains an invalid slash sequence: {value!r}")
+        return value
 
     @staticmethod
     def _revision(revision: str) -> str:

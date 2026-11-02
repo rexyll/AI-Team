@@ -26,7 +26,10 @@ def _service(tmp_path: Path, monkeypatch):
 
 def test_host_service_exposes_only_semantic_git_operations():
     assert "command" not in GitOperationRequest.__dataclass_fields__
-    for method in ("status", "diff", "log", "show", "branch", "rev_parse", "add", "commit"):
+    for method in (
+        "status", "diff", "log", "show", "branch", "rev_parse", "add", "commit",
+        "init", "tag", "is_repository", "head_commit",
+    ):
         assert callable(getattr(HostGitOperationService, method))
 
 
@@ -84,3 +87,55 @@ def test_revision_rejects_option_injection(tmp_path, monkeypatch):
     service, workspace, _ = _service(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="must not start"):
         service.show(str(workspace), revision="--output=/tmp/x")
+
+
+def test_init_bypasses_repository_requirement(tmp_path, monkeypatch):
+    service, workspace, calls = _service(tmp_path, monkeypatch)
+
+    service.init(str(workspace))
+
+    assert calls[-1][0:2] == ("init", str(workspace))
+
+
+def test_is_repository_reflects_rev_parse_outcome(tmp_path, monkeypatch):
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    assert service.is_repository(str(workspace)) is True
+
+    def failing_git(command: str, cwd: str, *, sandbox=None) -> str:
+        if command == "rev-parse --show-toplevel":
+            return "exit_code=128\nfatal: not a git repository\n"
+        return "exit_code=0\nok\n"
+
+    monkeypatch.setattr("runtime.host_git.git_tool.git_command", failing_git)
+    assert service.is_repository(str(workspace)) is False
+
+
+def test_tag_annotated_and_lightweight_forms(tmp_path, monkeypatch):
+    service, workspace, calls = _service(tmp_path, monkeypatch)
+
+    service.tag(str(workspace), "v1.0.0", message="release 1.0.0")
+    service.tag(str(workspace), "v0.9.0")
+
+    tag_commands = [command for command, _, _ in calls if command.startswith("tag")]
+    assert tag_commands == ['tag -a "v1.0.0" -m "release 1.0.0"', 'tag "v0.9.0"']
+
+
+def test_tag_rejects_unsafe_names(tmp_path, monkeypatch):
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    for bad in ("-x", "v 1", "v~1", "v^1", "v:1", "v?1", "v*1", "v..1", "v1.", ""):
+        with pytest.raises(ValueError):
+            service.tag(str(workspace), bad)
+
+
+def test_head_commit_parses_sha(tmp_path, monkeypatch):
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+
+    def sha_git(command: str, cwd: str, *, sandbox=None) -> str:
+        if command == "rev-parse --show-toplevel":
+            return f"exit_code=0\n{workspace}\n"
+        if command == "rev-parse HEAD":
+            return "exit_code=0\nabc123def4567890abc123def4567890abc12345\n"
+        return "exit_code=0\nok\n"
+
+    monkeypatch.setattr("runtime.host_git.git_tool.git_command", sha_git)
+    assert service.head_commit(str(workspace)) == "abc123def4567890abc123def4567890abc12345"

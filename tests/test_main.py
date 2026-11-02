@@ -92,7 +92,7 @@ def test_run_project_creates_project_orchestrator(monkeypatch):
         completed_tasks = 1
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             captured["router"] = agent_router
 
         def create_plan(self, requirement):
@@ -132,7 +132,7 @@ def test_main_executes_requirement(monkeypatch, capsys):
         completed_tasks = 2
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             self.agent_router = agent_router
             self.deliverable_dir = deliverable_dir
             self.clarifications = clarifications
@@ -184,7 +184,7 @@ def test_main_supports_machine_readable_json_output(monkeypatch, capsys):
             }
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             pass
 
         def create_plan(self, requirement):
@@ -259,7 +259,7 @@ def test_strict_acceptance_gate_fails_closed(monkeypatch, capsys):
             return [FakeTask()]
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             pass
 
         def create_plan(self, requirement):
@@ -353,7 +353,7 @@ def test_interactive_session_prompts_then_delivers(tmp_path, monkeypatch):
             return []
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             delivered["clarifications"] = clarifications
 
         def create_plan(self, requirement):
@@ -432,7 +432,7 @@ def test_resume_session_completes_after_answers_saved(tmp_path, monkeypatch):
     captured: dict = {}
 
     class FakeProjectOrchestrator:
-        def __init__(self, agent_router, deliverable_dir=None, clarifications=None):
+        def __init__(self, agent_router, deliverable_dir=None, clarifications=None, **kwargs):
             captured["clarifications"] = clarifications
 
         def create_plan(self, requirement):

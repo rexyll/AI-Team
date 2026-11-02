@@ -14,6 +14,8 @@ ALLOWED_GIT_COMMANDS = {
     "rev-parse",
     "add",
     "commit",
+    "init",
+    "tag",
 }
 
 BLOCKED_TOKENS = {

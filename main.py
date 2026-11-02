@@ -78,6 +78,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to a UTF-8 text file with customer answers to the analyst's open questions. Answers are treated as authoritative and integrated into the requirement specification.",
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Run the release phase after a successful delivery: resolve the version, write release notes, anchor the deliverable in its own git repository (init/commit/tag) and record the release log. The release asks for confirmation unless --auto-release is given.",
+    )
+    parser.add_argument(
+        "--release-version",
+        metavar="VERSION",
+        default=None,
+        help="Explicit release version (MAJOR.MINOR.PATCH semver). Defaults to an automatic patch bump of the last recorded release.",
+    )
+    parser.add_argument(
+        "--auto-release",
+        action="store_true",
+        help="Skip the release confirmation prompt (implies --release).",
+    )
     return parser
 
 
@@ -185,6 +201,9 @@ def run_project(
     projects_base: str | None = None,
     clarifications: str | None = None,
     strict_acceptance: bool = False,
+    release: bool = False,
+    release_version: str | None = None,
+    auto_release: bool = False,
 ):
     if not isinstance(requirement, str):
         raise TypeError("requirement must be a string")
@@ -214,6 +233,9 @@ def run_project(
         agent_router=router,
         deliverable_dir=deliverable_dir,
         clarifications=clarifications,
+        release_requested=release or auto_release,
+        release_version=release_version,
+        auto_release=auto_release,
     )
     plan = project_orchestrator.create_plan(requirement)
     task_manager = project_orchestrator.build_task_manager(plan)
@@ -291,6 +313,9 @@ def main() -> int:
             projects_base=args.projects_base,
             clarifications=clarifications,
             strict_acceptance=args.strict_acceptance,
+            release=args.release,
+            release_version=args.release_version,
+            auto_release=args.auto_release,
         )
         if args.dashboard:
             project_id = None

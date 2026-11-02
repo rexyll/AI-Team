@@ -78,7 +78,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - [x] **T2 测试报告证据链增强**（2026-11-02 完成：DocWriter context 新增 integration_evidence，test_report.md 撰写要求新增『集成联调与全量回归』章节；证据传递由 tests/test_integration_phase_orchestrator.py::test_integration_passes_first_round_and_evidence_reaches_docs 契约覆盖）
   - DocWriter context 增加集成/回归证据块；`test_report.md` 撰写要求增加「集成联调」「全量回归」章节（含命令与结果）。
   - 验收：契约测试验证证据传递与文档要求生效。
-- [ ] **T3 发布阶段（Release Phase）**
+- [x] **T3 发布阶段（Release Phase）**（2026-11-02 实现：runtime/release.py + HostGitOperationService 新增 init/tag/is_repository/head_commit 语义 + ProjectOrchestrator 接线（release 在 manifest 之前、打包门禁之后）+ main.py --release/--release-version/--auto-release；验收：tests/test_release_phase.py 9 passed + tests/test_host_git.py 扩展契约 + 编排器级发布锚点测试；待全量回归确认）
   - 新增 `runtime/release.py`：semver 版本号（显式 `--release-version` 优先，缺省按交付历史递增）、`RELEASE_NOTES.md`（确定性拼接 REQ 清单/测试结论/验收判定）、交付物 git 锚点（扩展 `HostGitOperationService` 增加 `init`/`tag` 语义，host-owned）、发布记录 `release_log.json`。
   - 审批门（借鉴 OpenClaw 三级审批）：打包与验证自动执行；**发布提交默认暂停等待确认**，`--auto-release` 显式越过；CLI 透传 `--release`/`--release-version`/`--auto-release`。
   - 验收：单测覆盖版本号规则、notes 生成、git 锚点、审批门两条路径；全量回归绿。

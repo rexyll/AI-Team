@@ -9,6 +9,7 @@ test report can carry it.
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -262,6 +263,62 @@ def test_suite_skips_when_deliverable_has_no_tests(tmp_path: Path):
     assert integration["suite"]["reason"] == "no test files found"
     # Packaging proceeds; the absence of evidence is recorded, not hidden.
     assert delivery["package"] is not None
+
+
+def test_release_phase_anchors_delivered_product_and_package_carries_notes(tmp_path: Path):
+    developer = _DeveloperStub(tmp_path / "e2e_flat", initial=GOOD_TODO, rework_fixes=False)
+    doc_llm = _FixedTextLLM("# 测试结果报告\n\nREQ-001 已实现，集成回归证据见下。\n")
+    orchestrator = ProjectOrchestrator(
+        agent_router=_router(tmp_path, developer, doc_llm),
+        deliverable_dir="e2e_flat",
+        sandbox=WorkspaceSandbox(tmp_path),
+        release_requested=True,
+        auto_release=True,
+    )
+    plan = orchestrator.create_plan("开发一个待办事项 CLI 工具")
+    task_manager = orchestrator.build_task_manager(plan)
+    orchestrator.execute(task_manager)
+
+    delivery = orchestrator.last_delivery
+    release = delivery["release"]
+    assert release["status"] == "released"
+    assert release["tag"] == "v0.1.0"
+    assert len(release["commit"]) == 40
+    assert release["package"]["checksum"]
+    # The checksummed manifest lists the release artifacts; the package carries them.
+    manifest_text = (tmp_path / "e2e_flat" / "DELIVERY_MANIFEST.md").read_text(encoding="utf-8")
+    assert "RELEASE_NOTES.md" in manifest_text
+    assert "release_log.json" in manifest_text
+    with zipfile.ZipFile(delivery["package"]["archive"]) as bundle_zip:
+        members = set(bundle_zip.namelist())
+    assert {"RELEASE_NOTES.md", "release_log.json"} <= members
+
+
+def test_release_phase_skipped_without_release_request(tmp_path: Path):
+    developer = _DeveloperStub(tmp_path / "e2e_flat", initial=GOOD_TODO, rework_fixes=False)
+
+    delivery = _run_project(tmp_path, developer)[1]
+
+    assert delivery["release"] is None
+
+
+def test_release_phase_skipped_when_integration_failed(tmp_path: Path):
+    developer = _DeveloperStub(tmp_path / "e2e_flat", initial=BROKEN_TODO, rework_fixes=False)
+    doc_llm = _FixedTextLLM("# 测试结果报告\n\n回归失败。\n")
+    orchestrator = ProjectOrchestrator(
+        agent_router=_router(tmp_path, developer, doc_llm),
+        deliverable_dir="e2e_flat",
+        sandbox=WorkspaceSandbox(tmp_path),
+        release_requested=True,
+        auto_release=True,
+    )
+    plan = orchestrator.create_plan("开发一个待办事项 CLI 工具")
+    orchestrator.execute(orchestrator.build_task_manager(plan))
+
+    delivery = orchestrator.last_delivery
+    assert delivery["integration"]["status"] == "failed"
+    assert delivery["release"] is None
+    assert delivery["package"] is None
 
 
 def test_invalid_round_configuration_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -20,6 +20,8 @@ from agents.analyst import run_quality_checked_analysis
 from runtime.delivery_manifest import write_delivery_manifest
 from runtime.deployment import create_deployment_bundle
 from runtime.integration_verification import DEFAULT_INTEGRATION_TIMEOUT, run_integration_suite
+from runtime.host_git import HostGitOperationService
+from runtime.release import ReleaseRequest, perform_release
 from runtime.plan_builder import PlanBuilder
 from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
@@ -52,6 +54,9 @@ class ProjectOrchestrator:
         deliverable_dir: str | None = None,
         sandbox: "WorkspaceSandbox | None" = None,
         clarifications: str | None = None,
+        release_requested: bool = False,
+        release_version: str | None = None,
+        auto_release: bool = False,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -71,6 +76,14 @@ class ProjectOrchestrator:
             raise ValueError("deliverable_dir must be a non-empty string or None")
         if clarifications is not None and not isinstance(clarifications, str):
             raise TypeError("clarifications must be a string or None")
+        if not isinstance(release_requested, bool):
+            raise TypeError("release_requested must be a bool")
+        if release_version is not None and (
+            not isinstance(release_version, str) or not release_version.strip()
+        ):
+            raise ValueError("release_version must be a non-empty string or None")
+        if not isinstance(auto_release, bool):
+            raise TypeError("auto_release must be a bool")
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
@@ -83,6 +96,9 @@ class ProjectOrchestrator:
         self.deliverable_dir = deliverable_dir.strip().strip("/") if deliverable_dir else None
         self.sandbox = sandbox
         self.clarifications = clarifications
+        self.release_requested = release_requested
+        self.release_version = release_version.strip() if release_version else None
+        self.auto_release = auto_release
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -315,17 +331,26 @@ class ProjectOrchestrator:
             self._emit_project_event("project.delivery_skipped", payload={"reason": "doc_writer did not complete"})
             return None
         docs_root = (self.deliverable_dir or ".") + "/docs"
-        manifest_path = write_delivery_manifest(manifest_root, project=project)
         acceptance = self._run_acceptance_phase(manifest_root, project=project)
         delivery = {
             "docs_root": docs_root,
             "docs": docs,
-            "manifest": str(manifest_path),
+            "manifest": None,
             "acceptance": acceptance,
             "integration": integration,
+            "release": None,
         }
         self.last_delivery = delivery
         self.last_acceptance = acceptance
+        verdict_note = f"，验收 {acceptance['verdict'].upper()}" if acceptance else ""
+        release: dict[str, Any] | None = None
+        if self.release_requested and (integration is None or integration["status"] != "failed"):
+            release = self._run_release_phase(manifest_root, delivery, project=project)
+            delivery["release"] = release
+        # The manifest is written after the release phase so RELEASE_NOTES.md
+        # and release_log.json are part of the checksummed deliverable set.
+        manifest_path = write_delivery_manifest(manifest_root, project=project)
+        delivery["manifest"] = str(manifest_path)
         payload = {
             "docs_root": docs_root,
             "manifest": str(manifest_path),
@@ -337,6 +362,8 @@ class ProjectOrchestrator:
         if integration is not None:
             payload["integration_status"] = integration["status"]
             payload["integration_rounds"] = integration["rounds"]
+        if release is not None:
+            payload["release_status"] = release.get("status")
         self._emit_project_event(
             "project.delivery_completed",
             payload=payload,
@@ -360,6 +387,8 @@ class ProjectOrchestrator:
             "files": bundle["files"],
             "checksum": bundle["checksum"],
         }
+        if release is not None and release.get("status") == "released":
+            release["package"] = {"archive": bundle["bundle"], "checksum": bundle["checksum"]}
         delivery["smoke"] = bundle["smoke"]
         print(f"[Delivery] 交付包 {bundle['bundle']} ({bundle['files']} 文件, 冒烟 {bundle['smoke']['status']}){verdict_note}")
         return delivery
@@ -536,6 +565,83 @@ class ProjectOrchestrator:
         if value <= 0:
             raise ValueError(f"environment variable {name} must be positive: {raw!r}")
         return value
+
+    def _run_release_phase(self, manifest_root: Path, delivery: dict[str, Any], *, project: str | None) -> dict[str, Any] | None:
+        """Version, release notes, host-owned git anchor and release log.
+
+        Runs after acceptance and before the manifest/packaging so the release
+        artifacts are part of the checksummed deliverable set. The release
+        never invalidates the finished product: deterministic failures are
+        recorded honestly via project.release_failed.
+        """
+        try:
+            parsed_entries = parse_requirement_entries(self.last_requirement_analysis or "")
+        except ValueError:
+            parsed_entries = []
+        requirement_entries = [
+            {"id": entry.req_id, "title": entry.title or "", "priority": entry.priority or "未标注"}
+            for entry in parsed_entries
+        ]
+        integration = delivery.get("integration")
+        integration_summary: dict[str, Any] | None = None
+        if isinstance(integration, dict):
+            suite = integration.get("suite")
+            integration_summary = {
+                "status": integration.get("status"),
+                "rounds": integration.get("rounds", 0),
+                "summary": suite.get("summary") if isinstance(suite, dict) else None,
+            }
+        result = self.last_result
+        context: dict[str, Any] = {
+            "project": project,
+            "deliverable_dir": self.deliverable_dir or ".",
+            "requirement_entries": requirement_entries,
+            "acceptance": delivery.get("acceptance"),
+            "integration": integration_summary,
+            "docs": [
+                doc.get("document") for doc in delivery.get("docs", []) if isinstance(doc, dict)
+            ],
+            "task_stats": {
+                "total": getattr(result, "total_tasks", None),
+                "completed": getattr(result, "completed_tasks", None),
+            },
+        }
+        request = ReleaseRequest(
+            deliverable_root=str(manifest_root),
+            project=project,
+            version=self.release_version,
+            auto_release=self.auto_release,
+        )
+        try:
+            outcome = perform_release(
+                request,
+                git_service=HostGitOperationService(sandbox=self.sandbox),
+                context=context,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._emit_project_event("project.release_failed", payload={"error": error})
+            print(f"[Release] 发布失败：{error}")
+            return {"status": "failed", "error": error}
+        if outcome.get("status") == "released":
+            self._emit_project_event(
+                "project.release_completed",
+                payload={key: outcome.get(key) for key in ("version", "tag", "commit")},
+            )
+            print(
+                f"[Release] 已发布 {outcome.get('tag')}"
+                f"（commit {str(outcome.get('commit'))[:12]}，锚点=交付目录 git 仓库）"
+            )
+        else:
+            self._emit_project_event(
+                "project.release_pending",
+                payload={"version": outcome.get("version"), "reason": outcome.get("reason")},
+            )
+            print(
+                f"[Release] 发布待确认 v{outcome.get('version')}"
+                f"（未写发布记录；--auto-release 可跳过确认）"
+            )
+        return outcome
 
     def _task_digest(self, task_manager: TaskManager) -> list[dict[str, Any]]:
         digest: list[dict[str, Any]] = []
