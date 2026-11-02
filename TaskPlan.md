@@ -67,15 +67,15 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 ### P0 全流程断点补齐（本轮核心）
 
-- [ ] **T0 仓库卫生**
+- [x] **T0 仓库卫生**（2026-11-02 完成，提交 60e2610）
   - 删除 `runtime/task_manager.py.bak`；处理 `docs/visio/` 未纳管；移除/重写 `integration/test_real_team.py` 乱码遗留。
   - 验收：`git status` 干净、全量回归绿。
-- [ ] **T1 集成联调与回归验证阶段（Integration & Regression Phase）**
+- [x] **T1 集成联调与回归验证阶段（Integration & Regression Phase）**（2026-11-02 实现：runtime/integration_verification.py + ProjectOrchestrator 接线 + REWORK 回流轮；验收：tests/test_integration_verification.py 8 passed + tests/test_integration_phase_orchestrator.py 6 passed + 交付/打包/文档既有契约 32 passed）
   - 新增 `runtime/integration_verification.py`：确定性执行交付物全量测试套件（复用/抽取 `run_smoke_verification` 的隔离副本机制），产出结构化证据（通过率、失败明细、命令、耗时）。
   - 失败回流：构建 rework 任务（developer 角色 + 失败证据上下文）注入任务图（复用 `TaskManager.replace_task_graph` / recovery_replan 机制），重执行后再回归，轮次上限可配（默认 2），超限判 FAILED 并如实上报。
   - 接线：`ProjectOrchestrator._run_delivery_phase` 中 DocWriter **之前**执行（先集成回归、后写报告、再打包）；事件 `project.integration_started/completed/failed`。
   - 验收：mock 全链路覆盖三种路径（一次通过 / 修复后通过 / 轮次耗尽失败）；聚焦测试 + 全量回归绿。
-- [ ] **T2 测试报告证据链增强**
+- [x] **T2 测试报告证据链增强**（2026-11-02 完成：DocWriter context 新增 integration_evidence，test_report.md 撰写要求新增『集成联调与全量回归』章节；证据传递由 tests/test_integration_phase_orchestrator.py::test_integration_passes_first_round_and_evidence_reaches_docs 契约覆盖）
   - DocWriter context 增加集成/回归证据块；`test_report.md` 撰写要求增加「集成联调」「全量回归」章节（含命令与结果）。
   - 验收：契约测试验证证据传递与文档要求生效。
 - [ ] **T3 发布阶段（Release Phase）**

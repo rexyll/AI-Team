@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -18,6 +19,7 @@ from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
 from runtime.delivery_manifest import write_delivery_manifest
 from runtime.deployment import create_deployment_bundle
+from runtime.integration_verification import DEFAULT_INTEGRATION_TIMEOUT, run_integration_suite
 from runtime.plan_builder import PlanBuilder
 from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.task import Task
@@ -28,6 +30,7 @@ from runtime.tool_execution_history import ToolExecutionHistory
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
+from security.prompt_injection import untrusted_content
 from security.workspace import WorkspaceSandbox, resolve_workspace_path
 
 
@@ -258,13 +261,17 @@ class ProjectOrchestrator:
         return result
 
     def _run_delivery_phase(self, task_manager: TaskManager, *, project: str | None) -> dict[str, Any] | None:
-        """Produce the standard document set and the delivery manifest.
+        """Produce the integration evidence, document set and delivery manifest.
 
-        Runs after every product task: a DocWriter turns the whole-project
-        context (requirement analysis, plan, per-task reports and test
-        evidence) into the standard documents inside the sandbox, then a
-        deterministic manifest lists every deliverable file with checksums.
-        No-op when no doc_writer is registered.
+        Runs after every product task. First the product-level integration &
+        regression suite executes on the finished deliverable (with a bounded
+        developer-rework loop on failure); then a DocWriter turns the
+        whole-project context (requirement analysis, plan, per-task reports,
+        test and integration evidence) into the standard documents inside the
+        sandbox, and a deterministic manifest lists every deliverable file
+        with checksums. Packaging is gated on the integration verdict: a red
+        suite is reported honestly and never packaged. No-op when no
+        doc_writer is registered.
         """
         get_agent = getattr(self.agent_router, "get_agent", None)
         doc_writer = get_agent("doc_writer") if callable(get_agent) else None
@@ -272,6 +279,11 @@ class ProjectOrchestrator:
             return None
         if self.sandbox is not None and hasattr(doc_writer, "sandbox"):
             doc_writer.sandbox = self.sandbox
+        if self.sandbox is not None:
+            manifest_root = self.sandbox.resolve(self.deliverable_dir or ".")
+        else:
+            manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
+        integration = self._run_integration_phase(manifest_root)
         delivery_task = Task(
             id=self.DELIVERY_TASK_ID,
             title="生成交付文档与交付清单",
@@ -286,6 +298,8 @@ class ProjectOrchestrator:
             "summary": (self.last_plan or {}).get("summary", ""),
         }
         delivery_task.context["task_digest"] = self._task_digest(task_manager)
+        if integration is not None:
+            delivery_task.context["integration_evidence"] = self._integration_evidence_digest(integration)
         outcome = doc_writer.run(delivery_task)
         docs: Any = None
         if isinstance(outcome, AgentResult):
@@ -300,10 +314,6 @@ class ProjectOrchestrator:
             print("[Delivery] 文档生成未完成，交付清单已跳过")
             self._emit_project_event("project.delivery_skipped", payload={"reason": "doc_writer did not complete"})
             return None
-        if self.sandbox is not None:
-            manifest_root = self.sandbox.resolve(self.deliverable_dir or ".")
-        else:
-            manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
         docs_root = (self.deliverable_dir or ".") + "/docs"
         manifest_path = write_delivery_manifest(manifest_root, project=project)
         acceptance = self._run_acceptance_phase(manifest_root, project=project)
@@ -312,6 +322,7 @@ class ProjectOrchestrator:
             "docs": docs,
             "manifest": str(manifest_path),
             "acceptance": acceptance,
+            "integration": integration,
         }
         self.last_delivery = delivery
         self.last_acceptance = acceptance
@@ -323,11 +334,21 @@ class ProjectOrchestrator:
         if acceptance is not None:
             payload["acceptance_verdict"] = acceptance["verdict"]
             self._emit_project_event("project.acceptance_completed", payload=acceptance)
+        if integration is not None:
+            payload["integration_status"] = integration["status"]
+            payload["integration_rounds"] = integration["rounds"]
         self._emit_project_event(
             "project.delivery_completed",
             payload=payload,
         )
         verdict_note = f"，验收 {acceptance['verdict'].upper()}" if acceptance else ""
+        if integration is not None and integration["status"] == "failed":
+            # A red regression suite is reported honestly and never packaged:
+            # shipping a broken deliverable is not a delivery.
+            delivery["package"] = None
+            delivery["smoke"] = None
+            print(f"[Delivery] 集成回归未通过（{integration['rounds']} 轮修复后仍失败），已跳过打包{verdict_note}")
+            return delivery
         bundle = create_deployment_bundle(
             manifest_root,
             output_dir=manifest_root.parent if manifest_root.parent != manifest_root else None,
@@ -379,6 +400,142 @@ class ProjectOrchestrator:
             "total_requirements": verdict["total_requirements"],
             "report": str(report_path),
         }
+
+    def _run_integration_phase(self, manifest_root: Path) -> dict[str, Any]:
+        """Product-level integration & regression gate with bounded rework.
+
+        Runs the deliverable's full test suite from a fresh copy. On failure,
+        developer rework tasks (carrying the fenced failure evidence) execute
+        through the canonical TaskWorkflow, then the suite runs again. Rounds
+        are bounded by AI_TEAM_INTEGRATION_MAX_ROUNDS (default 2, 0 disables
+        rework but still runs the suite once); exhaustion is reported
+        honestly as FAILED and gates packaging. A deliverable without test
+        files yields a skipped record so the documentation can state the
+        absence of regression evidence.
+        """
+        timeout = self._env_float("AI_TEAM_INTEGRATION_TIMEOUT", DEFAULT_INTEGRATION_TIMEOUT)
+        max_rounds = self._env_int("AI_TEAM_INTEGRATION_MAX_ROUNDS", 2)
+        if max_rounds < 0:
+            raise ValueError("AI_TEAM_INTEGRATION_MAX_ROUNDS must be >= 0")
+        suite = run_integration_suite(manifest_root, timeout=timeout)
+        self._emit_project_event(
+            "project.integration_started",
+            payload={"status": suite["status"], "test_files": len(suite.get("test_files") or [])},
+        )
+        if suite["status"] != "failed":
+            self._emit_project_event(
+                "project.integration_completed",
+                payload={"status": suite["status"], "rounds": 0, "summary": suite.get("summary")},
+            )
+            note = "（交付物无测试文件）" if suite["status"] == "skipped" else ""
+            print(f"[Integration] 集成回归 {suite['status'].upper()}{note}（{suite.get('command') or '-'}）")
+            return {"status": suite["status"], "rounds": 0, "rework_rounds": [], "suite": suite}
+
+        rework_rounds: list[dict[str, Any]] = []
+        for round_no in range(1, max_rounds + 1):
+            rework_rounds.append(self._run_rework_round(suite, round_no))
+            suite = run_integration_suite(manifest_root, timeout=timeout)
+            if suite["status"] != "failed":
+                break
+        payload = {
+            "status": suite["status"],
+            "rounds": len(rework_rounds),
+            "summary": suite.get("summary"),
+        }
+        if suite["status"] == "failed":
+            self._emit_project_event("project.integration_failed", payload=payload)
+            print(f"[Integration] 集成回归 FAILED（{len(rework_rounds)} 轮修复后仍未通过）")
+        else:
+            self._emit_project_event("project.integration_completed", payload=payload)
+            print(f"[Integration] 集成回归 PASSED（第 {len(rework_rounds)} 轮修复后通过）")
+        return {"status": suite["status"], "rounds": len(rework_rounds), "rework_rounds": rework_rounds, "suite": suite}
+
+    def _run_rework_round(self, suite: dict[str, Any], round_no: int) -> dict[str, Any]:
+        """One bounded rework round through the canonical developer workflow.
+
+        The rework task carries the fenced suite-failure evidence and executes
+        through the same TaskWorkflow as product tasks (developer tool loop +
+        tester + reviewer gates). Suite re-execution afterwards is the only
+        pass/fail authority; rework exceptions are recorded as evidence.
+        """
+        evidence = {
+            "command": suite.get("command") or "",
+            "exit_code": suite.get("exit_code"),
+            "summary": suite.get("summary"),
+            "failed_tests": suite.get("failed_tests") or [],
+            "output_tail": (suite.get("output_tail") or "")[-2500:],
+        }
+        deliverable = self.deliverable_dir or "工作区根目录"
+        description = (
+            f"产品级集成回归测试失败（第 {round_no} 轮修复）。交付目录: {deliverable}。"
+            f"请先在该目录内复现失败（运行下方证据中的测试命令），修复缺陷后重跑完整测试套件直到通过。"
+            f"所有修改必须限制在交付目录内；不得删除或弱化测试断言来让测试通过。\n\n"
+            + untrusted_content("integration.failure", evidence)
+        )
+        task = Task(
+            id=f"REWORK-{round_no:03d}",
+            title=f"集成回归修复（第 {round_no} 轮）",
+            description=description,
+            role="developer",
+            status="ready",
+        )
+        task.context["integration_failure"] = evidence
+        rework_manager = TaskManager([task])
+        rework_orchestrator = self.create_orchestrator(rework_manager)
+        log = self._ensure_workflow_event_log()
+        if log is not None:
+            project_id = self._resolved_project_id()
+            if isinstance(project_id, str) and project_id.strip():
+                rework_orchestrator.set_workflow_event_log(log, project_id=project_id)
+        error: str | None = None
+        try:
+            rework_orchestrator.execute_task(task.id)
+        except Exception as exc:  # a failed rework round is evidence, not a crash
+            error = f"{type(exc).__name__}: {exc}"
+        rework_task = rework_manager.get_task(task.id)
+        return {"round": round_no, "task_id": task.id, "status": str(rework_task.status), "error": error}
+
+    @staticmethod
+    def _integration_evidence_digest(integration: dict[str, Any]) -> dict[str, Any]:
+        """Compact the integration record for the DocWriter context."""
+        suite = integration.get("suite")
+        digest: dict[str, Any] = {
+            "status": integration.get("status"),
+            "rounds": integration.get("rounds", 0),
+        }
+        if isinstance(suite, dict):
+            digest["suite"] = {
+                "command": suite.get("command"),
+                "exit_code": suite.get("exit_code"),
+                "duration_seconds": suite.get("duration_seconds"),
+                "summary": suite.get("summary"),
+                "failed_tests": (suite.get("failed_tests") or [])[:10],
+                "output_tail": (suite.get("output_tail") or "")[-2000:],
+            }
+        return digest
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise ValueError(f"environment variable {name} must be an integer: {raw!r}") from exc
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"environment variable {name} must be a number: {raw!r}") from exc
+        if value <= 0:
+            raise ValueError(f"environment variable {name} must be positive: {raw!r}")
+        return value
 
     def _task_digest(self, task_manager: TaskManager) -> list[dict[str, Any]]:
         digest: list[dict[str, Any]] = []

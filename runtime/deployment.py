@@ -137,6 +137,25 @@ CMD ["python", "{entry}"]
 """
 
 
+def stage_deliverable_copy(deliverable_root: str | Path) -> Path:
+    """Copy every deliverable ``*.py`` file into a fresh temp staging directory.
+
+    Shared by the packaging smoke and the integration/regression suite so both
+    exercise the deployed layout rather than the authoring workspace. The
+    caller owns the returned directory and is responsible for cleaning it up.
+    """
+    root = Path(deliverable_root)
+    staging = Path(tempfile.mkdtemp(prefix="ai-team-deliverable-"))
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root)
+        if _excluded(rel) or "__pycache__" in rel.parts:
+            continue
+        target = staging / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    return staging
+
+
 def run_smoke_verification(
     deliverable_root: str | Path,
     *,
@@ -153,20 +172,7 @@ def run_smoke_verification(
     if not test_files:
         return {"status": "skipped", "reason": "no test files found", "exit_code": None}
 
-    smoke_dir = Path(tempfile.mkdtemp(prefix="ai-team-smoke-"))
-    for test_file in test_files:
-        target = smoke_dir / test_file
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(root / test_file, target)
-    # Runtime modules imported by the tests travel with them.
-    for path in root.rglob("*.py"):
-        rel = path.relative_to(root)
-        if _excluded(rel):
-            continue
-        target = smoke_dir / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
-
+    smoke_dir = stage_deliverable_copy(root)
     command = [python, "-m", "pytest", *test_files, "-q"]
     try:
         completed = subprocess.run(

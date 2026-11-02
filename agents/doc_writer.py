@@ -85,7 +85,9 @@ DOC_SPECS: tuple[tuple[str, str, str], ...] = (
         "test_report.md",
         "测试结果报告",
         "汇总测试策略、测试环境、每个测试命令与实际结果（以测试证据为准，逐条列出）、"
-        "各 REQ 编号与测试证据的映射、缺陷与遗留问题、测试结论。"
+        "各 REQ 编号与测试证据的映射、集成联调与全量回归结果"
+        "（引用『集成回归验证（产品级）』上下文章节：状态、命令、结果统计与失败用例；"
+        "没有集成证据时必须写明'无集成回归证据'）、缺陷与遗留问题、测试结论。"
         "没有证据的项目必须写明'无证据'。",
     ),
     (
@@ -193,6 +195,27 @@ class DocWriterAgent(BaseAgent):
                 blocks.append(block)
             if blocks:
                 sections.append("==== 任务实现与测试证据 ====\n" + "\n\n".join(blocks))
+
+        integration = task.context.get("integration_evidence")
+        if isinstance(integration, dict):
+            lines = [
+                f"- 状态: {integration.get('status', 'unknown')}",
+                f"- 修复轮次: {integration.get('rounds', 0)}",
+            ]
+            suite = integration.get("suite")
+            if isinstance(suite, dict):
+                lines.append(f"- 命令: {suite.get('command') or '-'}")
+                summary = suite.get("summary")
+                if isinstance(summary, dict) and summary:
+                    counts = ", ".join(f"{value} {name}" for name, value in summary.items())
+                    lines.append(f"- 结果统计: {counts}")
+                failed = suite.get("failed_tests") or []
+                if failed:
+                    lines.append("- 失败用例: " + ", ".join(str(name) for name in failed))
+                tail = str(suite.get("output_tail") or "").strip()
+                if tail:
+                    lines.append("- 输出摘录:\n" + tail)
+            sections.append("==== 集成回归验证（产品级） ====\n" + "\n".join(lines))
 
         if not sections:
             sections.append("(无项目上下文)")
