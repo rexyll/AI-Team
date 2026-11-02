@@ -81,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a UTF-8 text file with customer answers to the analyst's open questions. Answers are treated as authoritative and integrated into the requirement specification.",
     )
     parser.add_argument(
+        "--change-request",
+        metavar="PATH",
+        default=None,
+        help="Path to a UTF-8 text file with the customer's change request. The analyst accepts it as an authoritative revision (CHG-xxx amendments) and re-plans the delivery around the amended specification.",
+    )
+    parser.add_argument(
         "--release",
         action="store_true",
         help="Run the release phase after a successful delivery: resolve the version, write release notes, anchor the deliverable in its own git repository (init/commit/tag) and record the release log. The release asks for confirmation unless --auto-release is given.",
@@ -99,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_analysis_only(requirement: str, *, clarifications: str | None = None, output_path: str = "requirement_analysis.md"):
+def run_analysis_only(requirement: str, *, clarifications: str | None = None, change_request: str | None = None, output_path: str = "requirement_analysis.md"):
     """Run only the requirement analysis and persist the draft specification.
 
     The file doubles as the clarification worksheet: the customer appends
@@ -110,7 +116,12 @@ def run_analysis_only(requirement: str, *, clarifications: str | None = None, ou
     analyst = router.get_agent("analyst")
     if analyst is None:
         raise ValueError("No analyst agent is registered")
-    result = run_quality_checked_analysis(analyst, requirement=requirement, clarifications=clarifications)
+    result = run_quality_checked_analysis(
+        analyst,
+        requirement=requirement,
+        clarifications=clarifications,
+        change_request=change_request,
+    )
     answers_template = (
         "（请逐条回答上方【待确认问题】；答复后运行："
         'python main.py "<原需求>" --clarifications ' + output_path + " 启动完整交付。）"
@@ -185,12 +196,21 @@ def run_interactive_session(
 
 def read_clarifications(path: str | None) -> str | None:
     """Load customer clarification answers from a UTF-8 text file."""
+    return _read_utf8_document(path, empty_message="clarifications file cannot be empty")
+
+
+def read_change_request(path: str | None) -> str | None:
+    """Load the customer's change request from a UTF-8 text file."""
+    return _read_utf8_document(path, empty_message="change request file cannot be empty")
+
+
+def _read_utf8_document(path: str | None, *, empty_message: str) -> str | None:
     if path is None:
         return None
-    clarifications = Path(path).read_text(encoding="utf-8")
-    if not clarifications.strip():
-        raise ValueError("clarifications file cannot be empty")
-    return clarifications
+    document = Path(path).read_text(encoding="utf-8")
+    if not document.strip():
+        raise ValueError(empty_message)
+    return document
 
 
 class AcceptanceGateError(RuntimeError):
@@ -202,6 +222,7 @@ def run_project(
     *,
     projects_base: str | None = None,
     clarifications: str | None = None,
+    change_request: str | None = None,
     strict_acceptance: bool = False,
     release: bool = False,
     release_version: str | None = None,
@@ -238,6 +259,7 @@ def run_project(
         agent_router=router,
         deliverable_dir=deliverable_dir,
         clarifications=clarifications,
+        change_request=change_request,
         release_requested=release or auto_release,
         release_version=release_version,
         auto_release=auto_release,
@@ -306,6 +328,7 @@ def main() -> int:
         result, output = run_analysis_only(
             args.requirement,
             clarifications=read_clarifications(args.clarifications),
+            change_request=read_change_request(args.change_request),
             output_path=args.analysis_output,
         )
         quality = result.data.get("quality") or {}
@@ -315,10 +338,12 @@ def main() -> int:
 
     try:
         clarifications = read_clarifications(args.clarifications)
+        change_request = read_change_request(args.change_request)
         task_manager, result = run_project(
             args.requirement,
             projects_base=args.projects_base,
             clarifications=clarifications,
+            change_request=change_request,
             strict_acceptance=args.strict_acceptance,
             release=args.release,
             release_version=args.release_version,

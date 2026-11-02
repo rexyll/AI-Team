@@ -63,6 +63,7 @@ class ProjectOrchestrator:
         deliverable_dir: str | None = None,
         sandbox: "WorkspaceSandbox | None" = None,
         clarifications: str | None = None,
+        change_request: str | None = None,
         release_requested: bool = False,
         release_version: str | None = None,
         auto_release: bool = False,
@@ -87,6 +88,8 @@ class ProjectOrchestrator:
             raise ValueError("deliverable_dir must be a non-empty string or None")
         if clarifications is not None and not isinstance(clarifications, str):
             raise TypeError("clarifications must be a string or None")
+        if change_request is not None and not isinstance(change_request, str):
+            raise TypeError("change_request must be a string or None")
         if not isinstance(release_requested, bool):
             raise TypeError("release_requested must be a bool")
         if release_version is not None and (
@@ -115,6 +118,7 @@ class ProjectOrchestrator:
         self.deliverable_dir = deliverable_dir.strip().strip("/") if deliverable_dir else None
         self.sandbox = sandbox
         self.clarifications = clarifications
+        self.change_request = change_request
         self.release_requested = release_requested
         self.release_version = release_version.strip() if release_version else None
         self.auto_release = auto_release
@@ -233,6 +237,7 @@ class ProjectOrchestrator:
             analyst,
             requirement=requirement,
             clarifications=self.clarifications or None,
+            change_request=self.change_request or None,
         )
         analysis = result.message
         if not isinstance(analysis, str) or not analysis.strip():

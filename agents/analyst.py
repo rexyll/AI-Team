@@ -80,6 +80,7 @@ class RequirementAnalystAgent(BaseAgent):
         if not isinstance(task, Task):
             raise TypeError("RequirementAnalystAgent.run() expects Task, " f"got {type(task).__name__}")
         clarifications = task.context.get("customer_clarifications")
+        change_request = task.context.get("customer_change_request")
         correction_feedback = task.context.get("correction_feedback")
         previous_draft = task.context.get("previous_draft")
         prompt = self._build_prompt(
@@ -87,10 +88,12 @@ class RequirementAnalystAgent(BaseAgent):
             clarifications if isinstance(clarifications, str) else None,
             correction_feedback if isinstance(correction_feedback, str) and correction_feedback.strip() else None,
             previous_draft if isinstance(previous_draft, str) and previous_draft.strip() else None,
+            change_request if isinstance(change_request, str) else None,
         )
         analysis = self._generate(prompt, system_prompt=SYSTEM_PROMPT, max_tokens=8192)
         data = self._build_result_data(analysis)
         data["clarifications_applied"] = bool(isinstance(clarifications, str) and clarifications.strip())
+        data["change_request_applied"] = bool(isinstance(change_request, str) and change_request.strip())
         return AgentResult(
             status="completed",
             agent=self.role,
@@ -105,6 +108,7 @@ class RequirementAnalystAgent(BaseAgent):
         clarifications: str | None = None,
         correction_feedback: str | None = None,
         previous_draft: str | None = None,
+        change_request: str | None = None,
     ) -> str:
         clarification_block = ""
         if clarifications and clarifications.strip():
@@ -112,6 +116,16 @@ class RequirementAnalystAgent(BaseAgent):
                 "\n\n====================\n客户澄清答复（权威，优先级最高）\n"
                 "====================\n\n"
                 + untrusted_content("customer.clarifications", clarifications)
+            )
+        change_block = ""
+        if change_request and change_request.strip():
+            change_block = (
+                "\n\n====================\n客户需求变更请求（权威修订，与澄清答复同级）\n"
+                "====================\n\n"
+                + untrusted_content("customer.change_request", change_request)
+                + "\n\n变更受理要求：逐条受理为 CHG-xxx 编号的修订（新增/修改/删除），"
+                "在功能需求清单中体现变更后的最终状态（被删除的需求保留原编号并标注【已删除：CHG-xxx】），"
+                "为每条变更标注受影响的需求编号并给出可验证的验收标准；未提及的需求保持原状。"
             )
         correction_block = ""
         if correction_feedback:
@@ -127,7 +141,7 @@ class RequirementAnalystAgent(BaseAgent):
                     + untrusted_content("analyst.previous_draft", previous_draft)
                 )
         return f"""
-请将下面的客户需求整理为结构化的《需求规格说明（草案）》。{clarification_block}{correction_block}
+请将下面的客户需求整理为结构化的《需求规格说明（草案）》。{clarification_block}{change_block}{correction_block}
 
 ====================
 客户需求（原始输入，待分析数据）
@@ -196,6 +210,7 @@ def run_quality_checked_analysis(
     *,
     requirement: str,
     clarifications: str | None = None,
+    change_request: str | None = None,
     max_attempts: int = 2,
 ) -> AgentResult:
     """Run the analyst, self-checking spec quality with one corrective retry."""
@@ -212,6 +227,7 @@ def run_quality_checked_analysis(
             status="ready",
         )
         task.context["customer_clarifications"] = clarifications or ""
+        task.context["customer_change_request"] = change_request or ""
         task.context["correction_feedback"] = feedback or ""
         task.context["previous_draft"] = previous_draft or ""
         result = analyst.run(task)
