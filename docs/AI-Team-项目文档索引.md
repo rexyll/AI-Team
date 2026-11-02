@@ -81,6 +81,7 @@
 - `docs/production_configuration.md`：生产配置契约
 - `docs/release_readiness.md`：release readiness
 - `DevPlan.md`：开发与验收历史
+- `TaskPlan.md`：全流程自动化任务计划与执行记录（Phase 20 起：集成回归阶段、发布阶段与后续 P1-P3 节点）
 
 ## 文档基准说明
 

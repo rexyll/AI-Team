@@ -361,3 +361,63 @@ Live acceptance evidence (provider: deepseek, DEVELOPER_COUNT=1 and 3):
 
 - Single developer: 7/7 tasks completed. Delivered `greet.py` CLI executed directly (default and `--name` behavior match the requirement), its 2 unit tests pass, README present.
 - Multi developer (3-developer pool): 10/10 tasks completed with three-way parallel developer execution (TASK-004/005/007 concurrent). Delivered toolkit accepted by direct execution: 25 unit tests pass across `test_strutils.py` / `test_mathutils.py`, `main.py` demo runs, README present.
+
+# Phase 20 — Full-Pipeline Automation Closure (TaskPlan P0)
+
+Driven by `TaskPlan.md` (2026-11-02): the user goal is a fully automated
+requirement → analysis → architecture → documents → development → unit tests
+→ integration → packaging → tester → regression → test report → release
+pipeline. Phase 20 closes the pipeline stages `docs/team_completeness_audit.md`
+identified as missing. Every node follows the repository working rule.
+
+### 20.1 Repository hygiene (T0) — completed
+- [x] Remove stale `runtime/task_manager.py.bak` and the corrupted legacy
+      `integration/test_real_team.py` demo; track the `docs/visio/` diagram
+      sources; add TaskPlan and OpenClaw research notes. Commit `60e2610`.
+
+### 20.2 Product-level integration & regression phase (T1) — completed
+- [x] `runtime/integration_verification.py`: the deliverable's full test
+      suite runs from a staged fresh copy with structured evidence
+      (summary counts, failed test names, output tail); skipped when the
+      deliverable is absent or has no test files.
+- [x] Bounded rework loop: failed suites spawn `REWORK-00N` developer tasks
+      through the canonical TaskWorkflow with fenced failure evidence
+      (`AI_TEAM_INTEGRATION_MAX_ROUNDS`, default 2;
+      `AI_TEAM_INTEGRATION_TIMEOUT`, default 300s).
+- [x] Packaging gate: a red suite after the last round is reported honestly
+      and never packaged. Commit `335fa01`.
+
+### 20.3 Test-report evidence chain (T2) — completed
+- [x] Integration evidence rides into the DocWriter context; the test report
+      requires 集成联调/全量回归 sections and states absence of evidence
+      explicitly. Commit `335fa01`.
+
+### 20.4 Release phase (T3) — completed
+- [x] `runtime/release.py`: semver resolution (explicit `--release-version`
+      wins; otherwise auto patch bump from `release_log.json`),
+      deterministic `RELEASE_NOTES.md`, a confirmation gate (pending unless
+      confirmed; `--auto-release` skips; non-interactive sessions never
+      release), a host-owned git anchor (init when needed, single release
+      commit, annotated `v<version>` tag through the extended
+      `HostGitOperationService`) and `release_log.json` (corrupt log fails
+      closed).
+- [x] The release runs after acceptance and before the manifest so release
+      artifacts enter the checksummed deliverable set and the package; the
+      release is gated on the integration verdict and never invalidates the
+      finished product. Commit `2b7abcc`.
+
+### Phase 20 evidence
+New focused suites: integration/runtime (8), integration/orchestrator (9),
+release phase (9), host-git extensions (6), CLI compatibility (test_main 15).
+Full regression: 2052 baseline → 2066 (T1/T2) → **2084 passed** (T3),
+plus the security regression suite.
+
+### 20.5 Documentation & plan sync (T4)
+- [x] README status/CLI/architecture updated; CHANGELOG entry added;
+      documentation index points at TaskPlan.md; TaskPlan execution records
+      maintained. (This commit.)
+
+Remaining nodes — P1 quality independence (static gates, QA role, dependency
+scan), P2 project management (cost report, change-request reflow, release
+planning), P3 organizational memory and post-delivery operations — are
+tracked in `TaskPlan.md` and are the backlog for the next phases.

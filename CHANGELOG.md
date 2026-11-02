@@ -4,6 +4,38 @@ All notable changes to the AI-Team runtime are documented here. Development
 follows the node discipline in `DevPlan.md`; every accepted node carries a
 commit SHA as evidence.
 
+## Unreleased — TaskPlan P0 (2026-11-02)
+
+### Added
+
+- **Product-level integration & regression phase**: after all product tasks,
+  the deliverable's full test suite runs from a staged fresh copy with
+  structured evidence (summary counts, failed test names, output tail);
+  failures feed bounded developer-rework rounds (`REWORK-00N`) through the
+  canonical TaskWorkflow with fenced failure evidence; a red suite after the
+  last round is reported honestly and packaging is skipped
+  (`AI_TEAM_INTEGRATION_MAX_ROUNDS`, default 2;
+  `AI_TEAM_INTEGRATION_TIMEOUT`, default 300s).
+- **Test-report evidence chain**: integration/regression evidence rides into
+  the DocWriter context; `test_report.md` now requires 集成联调/全量回归
+  sections and states absence of evidence explicitly.
+- **Release phase** (`--release`, `--release-version`, `--auto-release`):
+  semver version resolution (explicit version wins; otherwise an automatic
+  patch bump from `release_log.json`), deterministic `RELEASE_NOTES.md`, a
+  confirmation gate (pending unless confirmed; `--auto-release` skips;
+  non-interactive sessions never release), a host-owned git anchor (init
+  when needed, single release commit, annotated `v<version>` tag through the
+  extended `HostGitOperationService`) and a `release_log.json` whose corrupt
+  state fails closed. Release artifacts enter the checksummed manifest and
+  the deployment package; the release is gated on the integration verdict
+  and never invalidates the finished product.
+
+### Changed
+
+- Repository hygiene: removed stale `runtime/task_manager.py.bak` and the
+  corrupted legacy `integration/test_real_team.py` demo; `docs/visio/`
+  diagram sources are now tracked.
+
 ## v0.9.1 (2026-09-06)
 
 Reliability and observability increments after the Phase 18 acceptance,

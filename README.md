@@ -1,14 +1,14 @@
-﻿# AI Development Team
+# AI Development Team
 
 AI-powered software development team.
 
 ## Current status
 
-**Phase 18 — Production Architecture Consolidation** is the current development phase on the `feature/reviewer-reliability-fallback` branch. Phases 0–17 have completed their planned acceptance work. Phase 18 consolidates the canonical Tool Invocation boundary, runtime state/persistence semantics, measured Developer tool-loop efficiency work, and host-controlled Tool / Agent / Workflow plugin extension boundaries.
+**Phase 20 — Full-Pipeline Automation Closure** is the current development phase on `main`, tracked in [`TaskPlan.md`](TaskPlan.md). Phases 0–19 completed their planned acceptance work (see [`DevPlan.md`](DevPlan.md)); Phase 20 closes the remaining pipeline stages so a single requirement runs end to end: requirement → analysis → architecture → development → unit tests → **product-level integration & regression (bounded rework)** → packaging → **release (semver, release notes, git anchor)**.
 
 The current development branch is:
 
-`feature/reviewer-reliability-fallback`
+`main`
 
 The Phase 18 production-readiness gate is:
 
@@ -51,6 +51,14 @@ For machine-readable automation output:
 python main.py "Build a small personal expense tracker" --output json
 ```
 
+To run the release phase after a successful delivery (semver version,
+release notes, deliverable git anchor, release log; the confirmation prompt
+is skipped with `--auto-release`):
+
+```powershell
+python main.py "Build a small personal expense tracker" --release --auto-release
+```
+
 For the complete setup, configuration, persistence/recovery, security boundaries, and canonical workflow lifecycle guide, see [`docs/setup.md`](docs/setup.md).
 
 For the CLI contract, see [`docs/cli_reference.md`](docs/cli_reference.md).
@@ -76,6 +84,8 @@ Seven specialized agents form a closed development loop:
 - Tester Agent — test-evidence review with TEST_PASSED / TEST_FAILED verdicts
 - Reviewer Agent — final approval gate (APPROVED / REVISION_REQUIRED)
 - Doc Writer Agent — standard delivery document set (requirements / design / test report / deployment guide / user manual) plus a checksummed delivery manifest
+
+The project-level pipeline closes the loop: Analyst → Planner → Developer pool with per-task Tester/Reviewer gates → **product-level integration & regression suite (bounded rework rounds; a red suite is reported honestly and never packaged)** → DocWriter document set → deterministic acceptance → **release phase (version, notes, git anchor, release log)** → checksummed manifest → deployment package with smoke verification.
 
 The current runtime separates Agent routing, task orchestration, workflow lifecycle, durable workflow-event persistence, read-only projection, and operational query boundaries.
 

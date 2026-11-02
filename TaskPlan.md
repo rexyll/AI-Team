@@ -82,7 +82,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 新增 `runtime/release.py`：semver 版本号（显式 `--release-version` 优先，缺省按交付历史递增）、`RELEASE_NOTES.md`（确定性拼接 REQ 清单/测试结论/验收判定）、交付物 git 锚点（扩展 `HostGitOperationService` 增加 `init`/`tag` 语义，host-owned）、发布记录 `release_log.json`。
   - 审批门（借鉴 OpenClaw 三级审批）：打包与验证自动执行；**发布提交默认暂停等待确认**，`--auto-release` 显式越过；CLI 透传 `--release`/`--release-version`/`--auto-release`。
   - 验收：单测覆盖版本号规则、notes 生成、git 锚点、审批门两条路径；全量回归绿。
-- [ ] **T4 文档与计划同步**
+- [x] **T4 文档与计划同步**（2026-11-02 完成：DevPlan 追加 Phase 20 记录、README 状态/CLI/架构更新、CHANGELOG 补录、文档索引指向 TaskPlan.md）
   - DevPlan 追加 Phase 20 记录（指向本 TaskPlan）；README/`docs/AI-Team-项目文档索引.md` 更新管线全景（含集成/回归/发布阶段）；`CHANGELOG.md` 补录本阶段变更。
   - 验收：文档契约测试（`test_documentation_setup_contract.py` 等）保持绿。
 
@@ -109,3 +109,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 日期 | 节点 | 结果 | 证据 |
 |------|------|------|------|
 | 2026-11-02 | 梳理 + TaskPlan 建立 | 完成（P0-P3 节点定义） | 本文件 |
+| 2026-11-02 | T0 仓库卫生 | 完成 | 提交 `60e2610` |
+| 2026-11-02 | T1 集成联调与回归阶段 + T2 测试报告证据链 | 完成；全量回归 2066 passed | 提交 `335fa01` |
+| 2026-11-02 | T3 发布阶段（semver/notes/git 锚点/审批门） | 完成；全量回归 2084 passed | 提交 `2b7abcc` |
+| 2026-11-02 | T4 文档与计划同步 | 完成；文档契约 + 全量回归绿 | 本次提交 |
