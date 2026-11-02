@@ -57,3 +57,6 @@ runtime/cache/
 
 # workbuddy dir
 .workbuddy/
+# Zwork session runtime artifacts
+.zwork/
+# Local research notes are tracked only when referenced by TaskPlan
