@@ -237,6 +237,22 @@ class DocWriterAgent(BaseAgent):
                 qa_lines.append("- 用例证据摘录:\n" + head)
             sections.append("==== QA 对抗测试 ====\n" + "\n".join(qa_lines))
 
+        dependency_scan = task.context.get("dependency_scan")
+        if isinstance(dependency_scan, dict) and dependency_scan.get("status") == "completed":
+            dep_lines: list[str] = []
+            if dependency_scan.get("requirements_file"):
+                dep_lines.append("- 声明依赖: " + (", ".join(dependency_scan.get("declared") or []) or "（无）"))
+                unpinned = dependency_scan.get("unpinned") or []
+                if unpinned:
+                    dep_lines.append("- 未钉死版本: " + ", ".join(str(name) for name in unpinned))
+            undeclared = dependency_scan.get("undeclared_imports") or []
+            if undeclared:
+                dep_lines.append("- 未声明的第三方导入: " + ", ".join(str(name) for name in undeclared))
+            lookup = dependency_scan.get("vulnerability_lookup")
+            if isinstance(lookup, dict):
+                dep_lines.append(f"- 漏洞库查询: {lookup.get('status')}（{lookup.get('reason')}）")
+            sections.append("==== 依赖清单与扫描 ====\n" + "\n".join(dep_lines))
+
         if not sections:
             sections.append("(无项目上下文)")
         return "\n\n".join(sections)

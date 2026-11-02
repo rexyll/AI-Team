@@ -179,6 +179,9 @@ def test_qa_phase_passes_and_evidence_reaches_docs(tmp_path: Path):
     # The doc writer received the QA evidence section.
     doc_writer = orchestrator.agent_router.get_agent("doc_writer")
     assert any("QA 对抗测试" in prompt for prompt in doc_writer.llm.prompts)
+    # The offline dependency SBOM is part of the delivery record.
+    assert delivery["dependency_scan"]["status"] == "completed"
+    assert isinstance(delivery["dependency_scan"]["undeclared_imports"], list)
     assert delivery["package"] is not None
 
 

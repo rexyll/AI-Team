@@ -14,6 +14,7 @@ from runtime.acceptance import (
     parse_requirement_entries,
     write_acceptance_report,
 )
+from runtime.dependency_scan import scan_deliverable_dependencies
 from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
@@ -310,6 +311,7 @@ class ProjectOrchestrator:
         qa: dict[str, Any] | None = None
         if integration is None or integration["status"] != "failed":
             qa = self._run_qa_phase(manifest_root, integration)
+        dependency_scan = scan_deliverable_dependencies(manifest_root)
         delivery_task = Task(
             id=self.DELIVERY_TASK_ID,
             title="生成交付文档与交付清单",
@@ -328,6 +330,7 @@ class ProjectOrchestrator:
             delivery_task.context["integration_evidence"] = self._integration_evidence_digest(integration)
         if qa is not None:
             delivery_task.context["qa_evidence"] = self._qa_evidence_digest(qa)
+        delivery_task.context["dependency_scan"] = dependency_scan
         outcome = doc_writer.run(delivery_task)
         docs: Any = None
         if isinstance(outcome, AgentResult):
@@ -351,6 +354,7 @@ class ProjectOrchestrator:
             "acceptance": acceptance,
             "integration": integration,
             "qa": qa,
+            "dependency_scan": dependency_scan,
             "release": None,
         }
         self.last_delivery = delivery
