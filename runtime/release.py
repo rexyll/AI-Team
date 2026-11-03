@@ -176,8 +176,13 @@ def build_release_notes(
         f"- 发布时间：{created_at}",
         f"- 交付目录：{context.get('deliverable_dir') or '.'}",
         "",
-        "## 需求与验收",
     ]
+    milestone = context.get("milestone")
+    if isinstance(milestone, str) and milestone.strip():
+        lines.insert(3, f"- 里程碑：{milestone.strip()}")
+    lines.extend([
+        "## 需求与验收",
+    ])
     entries = context.get("requirement_entries") or []
     if entries:
         lines.append("### 需求清单")
@@ -296,6 +301,7 @@ def perform_release(
         "integration_status": integration.get("status") if isinstance(integration, dict) else None,
         "integration_rounds": integration.get("rounds", 0) if isinstance(integration, dict) else 0,
         "deliverable_dir": context.get("deliverable_dir") or ".",
+        "milestone": context.get("milestone"),
     }
     released.append(entry)
     log_path = root / RELEASE_LOG_FILENAME
