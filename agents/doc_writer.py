@@ -79,7 +79,8 @@ DOC_SPECS: tuple[tuple[str, str, str], ...] = (
         "设计文档",
         "描述总体架构、模块划分与职责、关键接口/数据结构、目录结构、"
         "关键技术决策及理由，并说明每个模块实现了哪些 REQ 编号。"
-        "以 Architect 的架构设计与 Developer 的实现报告为依据。",
+        "以 Architect 的架构设计与 Developer 的实现报告为依据；"
+        "若存在『UI/UX 设计规范』章节，说明页面/视图、交互状态与设计令牌如何落地。",
     ),
     (
         "test_report.md",
@@ -183,6 +184,15 @@ class DocWriterAgent(BaseAgent):
         if isinstance(plan_summary, dict):
             lines = [f"- 项目: {plan_summary.get('project', '')}", f"- 摘要: {plan_summary.get('summary', '')}"]
             sections.append("==== 项目规划 ====\n" + "\n".join(lines))
+
+        ui_ux = task.context.get("ui_ux_spec")
+        if isinstance(ui_ux, dict) and str(ui_ux.get("spec") or "").strip():
+            lines = []
+            project_type = str(ui_ux.get("project_type") or "").strip()
+            if project_type:
+                lines.append(f"- 项目类型: {project_type}")
+            lines.append(str(ui_ux.get("spec")).strip())
+            sections.append("==== UI/UX 设计规范 ====\n" + "\n".join(lines))
 
         task_digest = task.context.get("task_digest")
         if isinstance(task_digest, list):

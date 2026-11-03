@@ -456,7 +456,31 @@ plus the security regression suite.
   `delivery.knowledge` and never invalidates the delivery.
 - [x] Focused suite: `tests/test_knowledge_base.py` (10 tests).
 
+### 20.8 Project-type gated UI/UX & specialist roles (T12) — completed
+- [x] `runtime/project_type.py`: keyword-only project classification
+  (`web` / `desktop` / `mobile` / `api` / `data` / `cli` / `library` /
+  `general`) over the customer requirement (weight 2) reinforced by the
+  analyst draft and plan text (weight 1). Ties keep a fixed priority; the
+  matched signals are recorded for audit. No LLM call, fully deterministic.
+- [x] `agents/ui_ux.py`: tool-less UI/UX designer (information architecture,
+  layout, interaction states, design tokens, responsive breakpoints,
+  WCAG 2.1 AA, usability acceptance criteria). Role is registered in the
+  factory, validated in plans, projected read-only in the context view and
+  granted zero runtime capabilities.
+- [x] Plan augmentation: only when the profile requires an interface AND the
+  runtime registers `ui_ux`, a `UX-001` task (depending on the architecture
+  tasks) is injected and interface-bearing developer tasks gain it as a
+  dependency. Otherwise the plan is untouched; a model-emitted `ui_ux` task
+  is downgraded to `architect` so the graph stays executable.
+- [x] Developer skill matching: profile-enabled specialists
+  (frontend/backend/data/desktop/mobile/CLI) are matched per task from task
+  text, recorded in `task.context["developer_specialist"]`, and rendered as
+  a trusted focus block in the Developer prompt; unmatched tasks stay generic.
+- [x] The UI/UX specification reaches the DocWriter context and the design
+  document requirements; the plan schema and workflow graph are unchanged.
+- [x] Focused suite: `tests/test_specialist_roles.py` (18 tests).
+
 Phase 20 nodes T5–T9 (static quality gate, QA role, dependency SBOM, cost
 report, change-request reflow) are recorded in `TaskPlan.md`. The remaining
-P3 backlog — UI/UX and specialized developer roles, post-delivery
-monitoring/defect reflow — is tracked in `TaskPlan.md`.
+P3 backlog — post-delivery monitoring/defect reflow — is tracked in
+`TaskPlan.md`.

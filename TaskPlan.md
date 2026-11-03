@@ -102,7 +102,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - [x] **T11 跨项目知识库**（2026-11-03 完成：`runtime/knowledge_base.py` 确定性提取 模式/坑/规范（验收缺口与警告、集成失败或返工、静态门禁失败、QA_FAILED、依赖声明问题、发布锚点；绿色交付生成基线模式）；条目 id 哈希（项目+类型+标题）保证重复提取幂等；单文件原子存储 + 进程锁，损坏即 fail-closed；按 类型/标签/角色/关键词 过滤加载（坑优先、新者优先、有界）；分析提示词与 DocWriter 上下文以不可信围栏注入并声明历史不得覆盖客户当前需求；交付后自动回流知识资产；CLI `--knowledge-base/--knowledge-query/--knowledge-list/--knowledge-extract`；验收：tests/test_knowledge_base.py 10 passed）
   - 历史交付模式/坑/规范沉淀为可加载资产。
-- [ ] **T12 UI/UX 与专项开发角色**：按项目类型启用。
+- [x] **T12 UI/UX 与专项开发角色**（2026-11-03 完成：`runtime/project_type.py` 纯关键词确定性项目剖面（web/desktop/mobile/API/data/CLI/library/general，需求文本权重 2、分析/计划权重 1，记录命中信号），剖面决定启用角色；`agents/ui_ux.py` 零工具设计角色（信息架构/布局/交互状态/设计令牌/响应式/WCAG/可用性验收标准），仅当剖面需要界面且运行时已注册该角色时，确定性注入 `UX-001`（依赖架构任务）并让界面相关 Developer 任务依赖它，否则计划不变（模型误产的 ui_ux 降级为 architect 以保证可执行）；Developer 按任务文本匹配剖面启用的专项技能（frontend/backend/data/desktop/mobile/CLI），专用提示词注入，未命中保持通用；UI/UX 规范进入 DocWriter 上下文与设计文档要求；验收：tests/test_specialist_roles.py 18 passed + 全量 2166 passed）
+  - 按项目类型启用，而非所有项目都跑设计/专项角色；不改计划 schema 与工作流图。
 - [ ] **T13 交付后监控/缺陷回流**：监控接入、缺陷→热修任务→重新打包的标准化流程。
 
 ## 三、执行记录
@@ -121,3 +122,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-02 | T9 需求变更受理（CHG 修订→重规划） | 完成；全量回归 2118 passed | 提交 `0b6a9be` |
 | 2026-11-03 | T10 版本规划/里程碑（批量计划/里程碑/版本汇总） | 完成；全量回归 2138 passed（venv Scripts 在 PATH 时；含 test_release_plan 20），裸调用 .venv\Scripts\python.exe 时 2 条 run_command 用例因 `python` 解析到 Windows 商店占位符失败（环境差异，非本次改动） | 本提交 |
 | 2026-11-03 | T11 跨项目知识库（确定性沉淀/过滤加载/CLI/交付后回流） | 完成；聚焦 tests/test_knowledge_base.py 10 passed；全量回归 2148 passed | 本提交 |
+| 2026-11-03 | T12 UI/UX 与专项开发角色（确定性项目剖面/按类型启用/设计任务注入/专项技能匹配） | 完成；聚焦 tests/test_specialist_roles.py 18 passed；全量回归 2166 passed；静态门禁 E9/F63/F7/F82 通过 | 本变更（工作区，待提交） |

@@ -8,6 +8,7 @@ from agents.doc_writer import DocWriterAgent
 from agents.planner import PlannerAgent
 from agents.qa import QAAgent
 from agents.tester import TesterAgent
+from agents.ui_ux import UIDesignerAgent
 
 from config.model import get_developer_count, resolve_developer_llm_spec, resolve_role_llm_spec
 from runtime.agent_config import AgentConfig
@@ -21,7 +22,7 @@ AgentConfigMap = Mapping[str, AgentConfig]
 
 DEFAULT_ARTIFACT_MIN_CHARS = 16384
 
-PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
+PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux")
 
 
 def _developer_artifact_archive():
@@ -51,7 +52,7 @@ def _developer_artifact_archive():
 def _default_agent_configs() -> dict[str, AgentConfig]:
     return {
         role: AgentConfig(role=role, model="")
-        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa")
+        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux")
     }
 
 
@@ -71,7 +72,7 @@ def create_agent_router(
             raise ValueError("Missing agent configurations: " + ", ".join(sorted(missing_roles)))
         effective_configs = {**default_configs, **configs}
 
-    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa"}
+    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux"}
     for role in supported_roles:
         config = effective_configs.get(role)
         if config is None:
@@ -147,4 +148,5 @@ def create_agent_router(
     router.register("planner", PlannerAgent(effective_configs["planner"], llm=role_llms["planner"]))
     router.register("doc_writer", DocWriterAgent(effective_configs["doc_writer"], llm=role_llms["doc_writer"]))
     router.register("qa", QAAgent(effective_configs["qa"], llm=role_llms["qa"]))
+    router.register("ui_ux", UIDesignerAgent(effective_configs["ui_ux"], llm=role_llms["ui_ux"]))
     return router

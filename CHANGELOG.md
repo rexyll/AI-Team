@@ -4,6 +4,38 @@ All notable changes to the AI-Team runtime are documented here. Development
 follows the node discipline in `DevPlan.md`; every accepted node carries a
 commit SHA as evidence.
 
+## Unreleased — TaskPlan P3: project-type gated UI/UX & specialist roles (2026-11-03)
+
+### Added
+
+- **Deterministic project profile** (`runtime/project_type.py`): keyword-only
+  classification (web / desktop / mobile / API / data / CLI / library /
+  general) over the customer requirement, reinforced by the analyst draft and
+  plan text (requirement weighted heavier). Same input always yields the same
+  profile; the matched signals are recorded for audit. No LLM call.
+- **UI/UX design role** (`agents/ui_ux.py`, role `ui_ux`): tool-less designer
+  that produces an implementable specification (view inventory, layout,
+  interaction states, design tokens, responsive breakpoints, WCAG 2.1 AA,
+  usability acceptance criteria). Enabled only when the profile requires a
+  visible interface and the runtime registers the agent; otherwise the plan is
+  left untouched (or a model-emitted `ui_ux` task is downgraded to architecture)
+  so the graph stays executable.
+- **Plan augmentation**: when enabled, a `UX-001` design task is injected
+  deterministically (depending on the architecture tasks), and interface-bearing
+  developer tasks gain it as a dependency before implementation. The UI/UX
+  specification reaches the DocWriter context (`UI/UX 设计规范`) and the
+  design document requirements; delivery docs therefore cover interface design.
+- **Developer specialist skill matching**: project-type-enabled specialists
+  (frontend / backend / data / desktop / mobile / CLI) are matched per
+  developer task from task text and recorded in
+  `task.context["developer_specialist"]`; the Developer prompt receives the
+  corresponding focus block. Unmatched tasks keep the generic Developer prompt
+  (no overclaiming).
+- **Role plumbing**: `ui_ux` added to supported/model roles, agent factory,
+  context access policy (read-only designer projection), task validation and the
+  runtime capability policy with **zero tool capabilities** (design work can
+  never modify product files or run commands).
+
 ## Unreleased — TaskPlan P3: cross-project knowledge base (2026-11-03)
 
 ### Added

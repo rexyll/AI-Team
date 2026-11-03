@@ -5,6 +5,7 @@ from typing import Any
 
 from tools.registry import TOOL_REGISTRY, TOOLS
 from agents.base import BaseAgent
+from runtime.agent_config import AgentConfig
 from runtime.artifact_store import FilesystemArtifactStore
 from runtime.llm.base import BaseLLM
 from runtime.task import Task
@@ -25,6 +26,7 @@ from runtime.safe_tool_batch import classify_safe_tool_batch
 from runtime.safe_tool_batch_executor import execute_safe_tool_batch
 from runtime.developer_tool_invocation import DeveloperToolInvocationAdapter
 from runtime.agent_result import AgentResult
+from runtime.project_type import SPECIALIST_LABELS, specialist_prompt
 
 MAX_TOOL_ITERATIONS = 50
 TOOL_LOOP_CHECKPOINT_INTERVAL = DEFAULT_CHECKPOINT_INTERVAL
@@ -139,6 +141,19 @@ class DeveloperAgent(BaseAgent):
         if view["reviewer_feedback"]:
             context_text += "\n====================\nPREVIOUS REVIEW FEEDBACK\n====================\n\n以下是上一轮 Reviewer 给出的修改意见。\n本轮必须认真处理这些意见，并在最终结果中说明如何解决。\n\n"
             context_text += json.dumps(view["reviewer_feedback"], ensure_ascii=False, indent=2)
+        # T12: project-type skill matching. The orchestrator records the
+        # matched specialist in task metadata; the focus block is our own
+        # trusted text, never model output.
+        specialist_block = ""
+        metadata = view["metadata"]
+        raw_specialist = metadata.get("developer_specialist") if isinstance(metadata, dict) else None
+        if isinstance(raw_specialist, str):
+            overlay = specialist_prompt(raw_specialist)
+            if overlay:
+                label = SPECIALIST_LABELS.get(raw_specialist, raw_specialist)
+                specialist_block = (
+                    f"\n====================\nSPECIALIST FOCUS（{label}）\n====================\n\n{overlay}\n"
+                )
         prompt = f"""
 ====================
 CURRENT TASK
@@ -160,6 +175,7 @@ Execution History:
 Metadata:
 {view['metadata']}
 {context_text}
+{specialist_block}
 ====================
 EXECUTION REQUIREMENT
 ====================

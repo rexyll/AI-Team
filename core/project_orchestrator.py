@@ -38,6 +38,12 @@ from runtime.model_usage import ModelUsageLedger
 from runtime.release import ReleaseRequest, perform_release
 from runtime.plan_builder import PlanBuilder
 from runtime.project_persistence import ProjectPersistenceAdapter
+from runtime.project_type import (
+    ProjectProfile,
+    apply_project_profile,
+    classify_task_specialist,
+    detect_project_profile,
+)
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from runtime.task_validator import validate_plan
@@ -132,6 +138,7 @@ class ProjectOrchestrator:
         self.last_task_manager: TaskManager | None = None
         self.last_result: ProjectResult | None = None
         self.last_requirement_analysis: str | None = None
+        self.last_project_profile: ProjectProfile | None = None
         self.last_delivery: dict[str, Any] | None = None
         self.last_acceptance: dict[str, Any] | None = None
         self.deliverable_dir = deliverable_dir.strip().strip("/") if deliverable_dir else None
@@ -220,6 +227,14 @@ class ProjectOrchestrator:
         if self._workflow_event_log is not None and self._workflow_event_persistence is not None:
             self._workflow_event_log.set_persistence_sink(self._workflow_event_persistence)
 
+    def _ui_ux_available(self) -> bool:
+        """Whether the runtime has a registered ui_ux design agent."""
+        has_agent = getattr(self.agent_router, "has_agent", None)
+        if callable(has_agent):
+            return bool(has_agent("ui_ux"))
+        agents = getattr(self.agent_router, "agents", None)
+        return isinstance(agents, dict) and agents.get("ui_ux") is not None
+
     def create_plan(self, requirement: str) -> dict[str, Any]:
         if not isinstance(requirement, str):
             raise TypeError("requirement must be a string")
@@ -242,6 +257,26 @@ class ProjectOrchestrator:
         if not isinstance(plan, dict):
             raise ValueError("PlannerAgent result does not contain a valid plan")
         validate_plan(plan)
+        # T12: the project profile - deterministic, derived from the customer
+        # requirement (reinforced by the analysis and plan text) - decides
+        # whether a UI/UX design task is enabled for this project.
+        profile = detect_project_profile(requirement, self.last_requirement_analysis or "", plan)
+        self.last_project_profile = profile
+        ui_ux_available = self._ui_ux_available()
+        augmented = apply_project_profile(plan, profile, ui_ux_enabled=ui_ux_available)
+        if augmented is not plan:
+            validate_plan(augmented)
+            plan = augmented
+        enabled_specialists = [
+            item
+            for item in profile.specialists
+            if item != "ui_ux" or ui_ux_available
+        ]
+        if enabled_specialists:
+            print(
+                f"[Profile] 项目类型 {profile.project_type}，启用专项角色："
+                + "、".join(enabled_specialists)
+            )
         self.last_plan = plan
         return plan
 
@@ -280,6 +315,21 @@ class ProjectOrchestrator:
         if not isinstance(plan, dict):
             raise TypeError("plan must be a dictionary")
         task_manager = self.plan_builder.build_task_manager(plan)
+        # T12: record the project type and match developer tasks to the
+        # specialists enabled by the profile. Only task metadata changes;
+        # the plan schema and workflow graph stay untouched.
+        if self.last_project_profile is not None:
+            profile = self.last_project_profile
+            for task in task_manager.get_all_tasks():
+                task.context["project_type"] = profile.project_type
+                if task.role == "developer":
+                    specialist = classify_task_specialist(
+                        title=task.title,
+                        description=task.description,
+                        profile=profile,
+                    )
+                    if specialist is not None:
+                        task.context["developer_specialist"] = specialist
         self.last_task_manager = task_manager
         return task_manager
 
@@ -368,6 +418,9 @@ class ProjectOrchestrator:
             "summary": (self.last_plan or {}).get("summary", ""),
         }
         delivery_task.context["task_digest"] = self._task_digest(task_manager)
+        ui_ux_spec = self._ui_ux_spec_digest(task_manager)
+        if ui_ux_spec is not None:
+            delivery_task.context["ui_ux_spec"] = ui_ux_spec
         if integration is not None:
             delivery_task.context["integration_evidence"] = self._integration_evidence_digest(integration)
         if qa is not None:
@@ -948,6 +1001,28 @@ class ProjectOrchestrator:
                 f"（未写发布记录；--auto-release 可跳过确认）"
             )
         return outcome
+
+    @staticmethod
+    def _ui_ux_spec_digest(task_manager: TaskManager) -> dict[str, Any] | None:
+        """Completed UI/UX specification for the DocWriter (None when absent)."""
+        for task in task_manager.get_all_tasks():
+            if task.role != "ui_ux" or str(task.status) != "completed":
+                continue
+            payload = task.result
+            message = ""
+            if isinstance(payload, dict):
+                message = str(payload.get("message") or payload.get("summary") or "")
+            elif payload is not None:
+                message = str(payload)
+            if not message.strip():
+                continue
+            project_type = task.context.get("project_type")
+            return {
+                "task_id": task.id,
+                "project_type": project_type if isinstance(project_type, str) else "",
+                "spec": message[:6000],
+            }
+        return None
 
     def _task_digest(self, task_manager: TaskManager) -> list[dict[str, Any]]:
         digest: list[dict[str, Any]] = []

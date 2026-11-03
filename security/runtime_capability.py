@@ -34,6 +34,9 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     "planner": frozenset(),
     # The analyst works purely on the LLM level and holds no tool surface.
     "analyst": frozenset(),
+    # UI/UX design is a product-level reasoning role: no tool surface at all,
+    # so design work can never modify product files or run commands.
+    "ui_ux": frozenset(),
     # The documentation writer reads project context and writes documents,
     # but never executes commands in the workspace.
     "doc_writer": frozenset({READ, WRITE}),

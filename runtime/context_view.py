@@ -19,6 +19,20 @@ CONTEXT_ACCESS_POLICY: dict[str, frozenset[str]] = {
             "metadata",
         }
     ),
+    "ui_ux": frozenset(
+        {
+            "task_id",
+            "task_title",
+            "task_description",
+            "role",
+            "status",
+            "dependencies",
+            "dependency_context",
+            "task_result",
+            "history",
+            "metadata",
+        }
+    ),
     "developer": frozenset(
         {
             "task_id",

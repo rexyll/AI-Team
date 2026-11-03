@@ -98,17 +98,19 @@ Reference examples are under `examples/` and are deterministic, provider-indepen
 
 ## Architecture
 
-Seven specialized agents form a closed development loop:
+Nine specialized agents form a closed development loop:
 
 - Analyst Agent — normalizes requirements of any clarity into a structured draft spec (REQ ids, acceptance criteria, explicit assumptions, open questions)
 - Planner Agent — requirement decomposition and task graph
 - Architect Agent — structure and interface design
-- Developer Agent — implementation, test authoring, and fixes
+- Developer Agent — implementation, test authoring, and fixes; skills are matched per task from the project profile (frontend / backend / data / desktop / mobile / CLI focus blocks)
 - Tester Agent — test-evidence review with TEST_PASSED / TEST_FAILED verdicts
 - Reviewer Agent — final approval gate (APPROVED / REVISION_REQUIRED)
+- QA Agent — product-level adversarial verification after integration; `QA_FAILED` blocks release but never packaging
+- UI/UX Designer Agent — information architecture, layout, interaction states, design tokens and accessibility; enabled only when the detected project profile requires a visible interface (web / desktop / mobile or explicit interface signals)
 - Doc Writer Agent — standard delivery document set (requirements / design / test report / deployment guide / user manual) plus a checksummed delivery manifest
 
-The project-level pipeline closes the loop: Analyst → Planner → Developer pool with per-task Tester/Reviewer gates → **product-level integration & regression suite (bounded rework rounds; a red suite is reported honestly and never packaged)** → DocWriter document set → deterministic acceptance → **release phase (version, notes, git anchor, release log)** → checksummed manifest → deployment package with smoke verification.
+The project-level pipeline closes the loop: Analyst → **deterministic project profile (project type + UI/UX + developer specialties)** → Planner → optional UI/UX design task before interface work → Developer pool with per-task Tester/Reviewer gates → **product-level integration & regression suite (bounded rework rounds; a red suite is reported honestly and never packaged)** → **product-level adversarial QA** → DocWriter document set → deterministic acceptance → **release phase (version, notes, git anchor, release log)** → checksummed manifest → deployment package with smoke verification.
 
 The current runtime separates Agent routing, task orchestration, workflow lifecycle, durable workflow-event persistence, read-only projection, and operational query boundaries.
 

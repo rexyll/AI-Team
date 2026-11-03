@@ -12,7 +12,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-SUPPORTED_ROLES: tuple[str, ...] = ("planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer", "qa")
+SUPPORTED_ROLES: tuple[str, ...] = ("planner", "architect", "developer", "tester", "reviewer", "analyst", "doc_writer", "qa", "ui_ux")
 
 
 @dataclass(frozen=True)

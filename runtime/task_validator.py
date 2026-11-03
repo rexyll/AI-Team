@@ -8,6 +8,9 @@ VALID_ROLES = {
     "developer",
     "tester",
     "reviewer",
+    # UI/UX design: a product-level, tool-less role enabled only for projects
+    # whose profile requires a visible interface (T12).
+    "ui_ux",
 }
 
 PLAN_REQUIRED_FIELDS = {
