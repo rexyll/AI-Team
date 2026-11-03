@@ -27,6 +27,12 @@ from runtime.integration_verification import (
     run_integration_suite,
     run_static_quality_gate,
 )
+from runtime.knowledge_base import (
+    DEFAULT_KNOWLEDGE_LIMIT,
+    KnowledgeBase,
+    build_knowledge_prompt,
+    extract_delivery_knowledge,
+)
 from runtime.host_git import HostGitOperationService
 from runtime.model_usage import ModelUsageLedger
 from runtime.release import ReleaseRequest, perform_release
@@ -67,8 +73,11 @@ class ProjectOrchestrator:
         release_requested: bool = False,
         release_version: str | None = None,
         auto_release: bool = False,
+        milestone: str | None = None,
         usage_ledger: ModelUsageLedger | None = None,
         usage_project_id: str | None = None,
+        knowledge_base: str | None = None,
+        knowledge_query: str | None = None,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -98,6 +107,10 @@ class ProjectOrchestrator:
             raise ValueError("release_version must be a non-empty string or None")
         if not isinstance(auto_release, bool):
             raise TypeError("auto_release must be a bool")
+        if milestone is not None and (
+            not isinstance(milestone, str) or not milestone.strip()
+        ):
+            raise ValueError("milestone must be a non-empty string or None")
         if usage_ledger is not None and not isinstance(usage_ledger, ModelUsageLedger):
             raise TypeError("usage_ledger must be a ModelUsageLedger or None")
         if usage_project_id is not None and (
@@ -106,6 +119,12 @@ class ProjectOrchestrator:
             raise ValueError("usage_project_id must be a non-empty string or None")
         if usage_project_id is not None and usage_ledger is None:
             raise ValueError("usage_ledger is required when usage_project_id is supplied")
+        if knowledge_base is not None and (
+            not isinstance(knowledge_base, str) or not knowledge_base.strip()
+        ):
+            raise ValueError("knowledge_base must be a non-empty string or None")
+        if knowledge_query is not None and not isinstance(knowledge_query, str):
+            raise TypeError("knowledge_query must be a string or None")
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
@@ -122,8 +141,11 @@ class ProjectOrchestrator:
         self.release_requested = release_requested
         self.release_version = release_version.strip() if release_version else None
         self.auto_release = auto_release
+        self.milestone = milestone.strip() if milestone else None
         self.usage_ledger = usage_ledger
         self.usage_project_id = usage_project_id
+        self.knowledge_base = knowledge_base.strip() if knowledge_base else None
+        self.knowledge_query = knowledge_query.strip() if knowledge_query else None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -238,6 +260,7 @@ class ProjectOrchestrator:
             requirement=requirement,
             clarifications=self.clarifications or None,
             change_request=self.change_request or None,
+            knowledge=self._knowledge_prompt(roles=("analyst",)) or None,
         )
         analysis = result.message
         if not isinstance(analysis, str) or not analysis.strip():
@@ -351,6 +374,9 @@ class ProjectOrchestrator:
             delivery_task.context["qa_evidence"] = self._qa_evidence_digest(qa)
         delivery_task.context["dependency_scan"] = dependency_scan
         delivery_task.context["usage_report"] = usage
+        knowledge_assets = self._knowledge_prompt(roles=("doc_writer",))
+        if knowledge_assets:
+            delivery_task.context["knowledge_assets"] = knowledge_assets
         outcome = doc_writer.run(delivery_task)
         docs: Any = None
         if isinstance(outcome, AgentResult):
@@ -369,6 +395,7 @@ class ProjectOrchestrator:
         acceptance = self._run_acceptance_phase(manifest_root, project=project)
         delivery = {
             "docs_root": docs_root,
+            "deliverable_root": str(manifest_root),
             "docs": docs,
             "manifest": None,
             "acceptance": acceptance,
@@ -392,6 +419,10 @@ class ProjectOrchestrator:
                 delivery["release"] = release
         # The manifest is written after the release phase so RELEASE_NOTES.md
         # and release_log.json are part of the checksummed deliverable set.
+        # Knowledge extraction runs last so it can record release facts.
+        knowledge = self._persist_knowledge(delivery, project=project)
+        if knowledge is not None:
+            delivery["knowledge"] = knowledge
         manifest_path = write_delivery_manifest(manifest_root, project=project)
         delivery["manifest"] = str(manifest_path)
         payload = {
@@ -411,6 +442,11 @@ class ProjectOrchestrator:
             payload["llm_calls"] = usage.get("llm_calls")
         if release is not None:
             payload["release_status"] = release.get("status")
+        if delivery.get("knowledge") is not None:
+            payload["knowledge"] = {
+                key: delivery["knowledge"].get(key)
+                for key in ("status", "added", "duplicates", "total")
+            }
         self._emit_project_event(
             "project.delivery_completed",
             payload=payload,
@@ -766,6 +802,55 @@ class ProjectOrchestrator:
             raise ValueError(f"environment variable {name} must be positive: {raw!r}")
         return value
 
+    def _knowledge_prompt(self, *, roles: tuple[str, ...]) -> str:
+        """Load role-relevant historical knowledge for a prompt context.
+
+        Returns an empty string when the knowledge base is disabled or has no
+        matching asset. A corrupt knowledge file fails closed here, before any
+        analysis or delivery work is spent.
+        """
+        if self.knowledge_base is None:
+            return ""
+        return build_knowledge_prompt(
+            self.knowledge_base,
+            roles=roles,
+            query=self.knowledge_query,
+            limit=DEFAULT_KNOWLEDGE_LIMIT,
+        )
+
+    def _persist_knowledge(
+        self,
+        delivery: dict[str, Any],
+        *,
+        project: str | None,
+    ) -> dict[str, Any] | None:
+        """Extract this delivery's lessons into the cross-project knowledge base.
+
+        The knowledge base is a cross-project aid, never part of the delivered
+        product: extraction failures are recorded honestly and never invalidate
+        the finished delivery.
+        """
+        if self.knowledge_base is None:
+            return None
+        try:
+            entries = extract_delivery_knowledge(delivery, project=project or "ai-team-delivery")
+            counts = KnowledgeBase(self.knowledge_base).add(entries)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._emit_project_event("project.knowledge_failed", payload={"error": error})
+            print(f"[Knowledge] 知识资产沉淀失败：{error}")
+            return {"status": "failed", "error": error}
+        if counts["added"]:
+            self._emit_project_event(
+                "project.knowledge_extracted",
+                payload=counts,
+            )
+            print(
+                f"[Knowledge] 已沉淀 {counts['added']} 条知识资产"
+                f"（去重 {counts['duplicates']}，累计 {counts['total']}）"
+            )
+        return {"status": "completed", **counts}
+
     def _usage_report(self) -> dict[str, Any] | None:
         """Observed model usage for this run, attributed through the ledger.
 
@@ -813,6 +898,7 @@ class ProjectOrchestrator:
         context: dict[str, Any] = {
             "project": project,
             "deliverable_dir": self.deliverable_dir or ".",
+            "milestone": self.milestone,
             "requirement_entries": requirement_entries,
             "acceptance": delivery.get("acceptance"),
             "integration": integration_summary,

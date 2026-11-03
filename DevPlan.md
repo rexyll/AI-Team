@@ -417,7 +417,46 @@ plus the security regression suite.
       documentation index points at TaskPlan.md; TaskPlan execution records
       maintained. (This commit.)
 
-Remaining nodes — P1 quality independence (static gates, QA role, dependency
-scan), P2 project management (cost report, change-request reflow, release
-planning), P3 organizational memory and post-delivery operations — are
-tracked in `TaskPlan.md` and are the backlog for the next phases.
+### 20.6 Milestone release planning (T10) — completed
+- [x] `runtime/release_plan.py`: deterministic Markdown plan parsing
+      (`## 里程碑 ...` / `### 需求 ...`, optional `[vX.Y.Z]` per requirement)
+      with fail-closed validation (empty body, missing milestone, repeated
+      milestone, invalid version), a shared plan/outcome document renderer and
+      a cross-deliverable `release_log.json` history aggregation (bounded
+      depth, hidden/runtime caches pruned, corrupt logs fail closed).
+- [x] `main.py`: `--requirements-file` delivers each requirement sequentially
+      as a full delivery with its own version; a failure stops the batch, the
+      remaining entries are recorded as `skipped`, and the shared plan
+      (`--release-plan-output`, default `release_plan.md`) is always written.
+      `--milestone` labels single deliveries; `--release-history [PATH]` is a
+      read-only merged version view (text or `--output json`).
+- [x] Milestone labels flow through release notes and `release_log.json`;
+      `delivery` exposes `deliverable_root` for auditable plan outcomes.
+- [x] Focused suite: `tests/test_release_plan.py` (20 tests).
+
+### 20.7 Cross-project knowledge base (T11) — completed
+- [x] `runtime/knowledge_base.py`: deterministic extraction of patterns /
+  pitfalls / conventions from delivery evidence (acceptance gaps and warnings,
+  integration failure or rework rounds, static-gate failures, `QA_FAILED`,
+  dependency declaration findings, release anchors); a green delivery yields
+  the baseline pattern. Entry ids hash (project, kind, title), so re-extraction
+  is idempotent.
+- [x] Store: a single JSON file (directory paths resolve to
+  `<dir>/knowledge_base.json`), atomic writes under a process lock, corrupt
+  files fail closed; filtered loading by kind/tag/role/keyword with a bounded,
+  deterministic order (pitfalls first, newest first).
+- [x] Injection seams: role-filtered assets are fenced as untrusted history in
+  the analyst prompt and the DocWriter context; the analyst is instructed that
+  history never overrides the current customer requirement. Knowledge is
+  extracted after acceptance/integration/QA/release and before the manifest.
+- [x] CLI: `--knowledge-base PATH`, `--knowledge-query TEXT`,
+  `--knowledge-list [PATH]` (read-only, text/JSON) and
+  `--knowledge-extract PATH` (backfill from `release_log.json` /
+  `docs/acceptance_report.md`); a write failure is recorded in
+  `delivery.knowledge` and never invalidates the delivery.
+- [x] Focused suite: `tests/test_knowledge_base.py` (10 tests).
+
+Phase 20 nodes T5–T9 (static quality gate, QA role, dependency SBOM, cost
+report, change-request reflow) are recorded in `TaskPlan.md`. The remaining
+P3 backlog — UI/UX and specialized developer roles, post-delivery
+monitoring/defect reflow — is tracked in `TaskPlan.md`.

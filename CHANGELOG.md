@@ -4,6 +4,52 @@ All notable changes to the AI-Team runtime are documented here. Development
 follows the node discipline in `DevPlan.md`; every accepted node carries a
 commit SHA as evidence.
 
+## Unreleased — TaskPlan P3: cross-project knowledge base (2026-11-03)
+
+### Added
+
+- **Cross-project knowledge base** (`runtime/knowledge_base.py`): deterministic
+  extraction of reusable assets from delivery evidence — pitfalls (acceptance
+  gaps/warnings, integration failure or rework, static-gate failures,
+  `QA_FAILED`, unpinned or undeclared dependencies), conventions (pinned
+  dependency declarations, semver + git tag + release anchors) and patterns
+  (the green delivery baseline). Entry identity is a hash of
+  (project, kind, title) so re-extraction deduplicates; the store is a single
+  atomic JSON file guarded by a process lock, and corrupt files fail closed.
+- **Filtered loading**: entries carry tags, roles and timestamps; search filters
+  by kind/tag/role/keyword with a bounded limit and a deterministic ordering
+  (newest pitfalls first). Rendered assets are injected as fenced untrusted
+  context into the analyst prompt (`历史交付经验`) and the DocWriter context
+  (`跨项目知识资产`), with explicit rules that history never overrides the
+  customer's current requirement.
+- **CLI**: `--knowledge-base PATH` enables load + post-delivery extraction,
+  `--knowledge-query TEXT` filters assets, `--knowledge-list [PATH]` is a
+  read-only store view (text or `--output json`), and
+  `--knowledge-extract PATH` backfills from an existing deliverable
+  (`release_log.json` / `docs/acceptance_report.md`).
+- **Honest failure handling**: a knowledge write failure is recorded in
+  `delivery.knowledge` (`status: failed`, error) and emits
+  `project.knowledge_failed`; it never invalidates the finished delivery.
+
+## Unreleased — TaskPlan P2: release planning (2026-11-03)
+
+### Added
+
+- **Milestone release plans** (`--requirements-file`): a UTF-8 Markdown plan
+  (`## 里程碑 ...` / `### 需求 ...`, optional `[vX.Y.Z]` per requirement) is
+  delivered sequentially, one full delivery and release version per
+  requirement. A failure stops the batch, records the remaining requirements
+  as `skipped`, and still writes the shared plan document
+  (`--release-plan-output`, default `release_plan.md`) with status, acceptance
+  verdict, version/tag, deliverable root and error per entry.
+- **Milestone labels** (`--milestone` for single deliveries; inherited from the
+  plan for batch entries): carried into `RELEASE_NOTES.md`, `release_log.json`
+  and the shared plan document.
+- **Release history view** (`--release-history [PATH]`): read-only aggregation
+  of every `release_log.json` under a base directory (bounded depth, hidden and
+  runtime-cache directories pruned), available as a Markdown table or JSON;
+  a corrupt log fails closed.
+
 ## Unreleased — TaskPlan P0 (2026-11-02)
 
 ### Added

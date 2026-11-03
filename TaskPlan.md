@@ -96,11 +96,12 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - [x] **T8 成本报告**（2026-11-02 完成，提交见执行记录：ModelUsageLedger 接入真实 ProviderLLM 工厂路径（per-run ledger + run-scoped project key）；用量汇总进 delivery 记录、交付文档『模型用量与成本』章节与发布说明；费率未配置时如实标注未估算成本）
 - [x] **T9 需求变更回流**（2026-11-02 完成，提交见执行记录：--change-request 文件 → Analyst 权威修订通道（customer.change_request 围栏 + CHG-xxx 受理规则）→ 修订后规格重规划为全新任务图；analyze-only 同样支持；残留：持久化项目的增量续跑（只重跑受影响任务）待后续节点）
-- [ ] **T10 版本规划/里程碑**：设计要点——基于 T3 的 per-delivery semver 与 release_log.json，增加多需求批量入口（如 --requirements-file，逐个需求串行交付、各自版本号、共享发布计划）；多项目并行可评估 multi_project_scheduler 复用；交付物版本列表汇总视图（跨 release_log 聚合）
+- [x] **T10 版本规划/里程碑**（2026-11-03 完成：`runtime/release_plan.py` 里程碑计划解析 + 共享 plan 文档 + 跨交付物 release_log 汇总；`--requirements-file` 串行逐需求完整交付且各自版本号、失败即停并如实标记 skipped、共享 plan 必写；`--milestone` 里程碑标签入发布说明与 release_log；`--release-history [PATH]` 只读版本汇总视图（text/json）；验收：test_release_plan.py 20 passed + 全量 2138 passed）：设计要点——基于 T3 的 per-delivery semver 与 release_log.json，增加多需求批量入口（如 --requirements-file，逐个需求串行交付、各自版本号、共享发布计划）；多项目并行可评估 multi_project_scheduler 复用（本轮采用确定性串行，并行留待后续评估）；交付物版本列表汇总视图（跨 release_log 聚合）
 
 ### P3 组织记忆与交付后（完整性审计建议 6/7，OpenClaw heartbeat/memory 借鉴）
 
-- [ ] **T11 跨项目知识库**：历史交付模式/坑/规范沉淀为可加载资产。
+- [x] **T11 跨项目知识库**（2026-11-03 完成：`runtime/knowledge_base.py` 确定性提取 模式/坑/规范（验收缺口与警告、集成失败或返工、静态门禁失败、QA_FAILED、依赖声明问题、发布锚点；绿色交付生成基线模式）；条目 id 哈希（项目+类型+标题）保证重复提取幂等；单文件原子存储 + 进程锁，损坏即 fail-closed；按 类型/标签/角色/关键词 过滤加载（坑优先、新者优先、有界）；分析提示词与 DocWriter 上下文以不可信围栏注入并声明历史不得覆盖客户当前需求；交付后自动回流知识资产；CLI `--knowledge-base/--knowledge-query/--knowledge-list/--knowledge-extract`；验收：tests/test_knowledge_base.py 10 passed）
+  - 历史交付模式/坑/规范沉淀为可加载资产。
 - [ ] **T12 UI/UX 与专项开发角色**：按项目类型启用。
 - [ ] **T13 交付后监控/缺陷回流**：监控接入、缺陷→热修任务→重新打包的标准化流程。
 
@@ -118,3 +119,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-02 | T7 依赖漏洞扫描（离线 SBOM） | 完成；全量回归 2105 passed | 提交 `d889b20` |
 | 2026-11-02 | T8 成本报告（用量归因→文档） | 完成；全量回归 2110 passed | 提交 `6fb76bd` |
 | 2026-11-02 | T9 需求变更受理（CHG 修订→重规划） | 完成；全量回归 2118 passed | 提交 `0b6a9be` |
+| 2026-11-03 | T10 版本规划/里程碑（批量计划/里程碑/版本汇总） | 完成；全量回归 2138 passed（venv Scripts 在 PATH 时；含 test_release_plan 20），裸调用 .venv\Scripts\python.exe 时 2 条 run_command 用例因 `python` 解析到 Windows 商店占位符失败（环境差异，非本次改动） | 本提交 |
+| 2026-11-03 | T11 跨项目知识库（确定性沉淀/过滤加载/CLI/交付后回流） | 完成；聚焦 tests/test_knowledge_base.py 10 passed；全量回归 2148 passed | 本提交 |

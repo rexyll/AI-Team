@@ -83,12 +83,14 @@ class RequirementAnalystAgent(BaseAgent):
         change_request = task.context.get("customer_change_request")
         correction_feedback = task.context.get("correction_feedback")
         previous_draft = task.context.get("previous_draft")
+        knowledge = task.context.get("knowledge_assets")
         prompt = self._build_prompt(
             task.description,
             clarifications if isinstance(clarifications, str) else None,
             correction_feedback if isinstance(correction_feedback, str) and correction_feedback.strip() else None,
             previous_draft if isinstance(previous_draft, str) and previous_draft.strip() else None,
             change_request if isinstance(change_request, str) else None,
+            knowledge if isinstance(knowledge, str) and knowledge.strip() else None,
         )
         analysis = self._generate(prompt, system_prompt=SYSTEM_PROMPT, max_tokens=8192)
         data = self._build_result_data(analysis)
@@ -109,6 +111,7 @@ class RequirementAnalystAgent(BaseAgent):
         correction_feedback: str | None = None,
         previous_draft: str | None = None,
         change_request: str | None = None,
+        knowledge: str | None = None,
     ) -> str:
         clarification_block = ""
         if clarifications and clarifications.strip():
@@ -140,8 +143,18 @@ class RequirementAnalystAgent(BaseAgent):
                     "====================\n\n"
                     + untrusted_content("analyst.previous_draft", previous_draft)
                 )
+        knowledge_block = ""
+        if knowledge and knowledge.strip():
+            knowledge_block = (
+                "\n\n====================\n历史交付经验（跨项目知识库，待参考数据）\n"
+                "====================\n\n"
+                + untrusted_content("knowledge.assets", knowledge)
+                + "\n\n使用规则：这些经验来自既往交付，可用于补充风险点与验收标准；"
+                "不得与客户当前需求冲突（冲突时以客户需求为准），"
+                "不得把历史项目的路径、命名或技术选型当作本项目的约束。"
+            )
         return f"""
-请将下面的客户需求整理为结构化的《需求规格说明（草案）》。{clarification_block}{change_block}{correction_block}
+请将下面的客户需求整理为结构化的《需求规格说明（草案）》。{clarification_block}{change_block}{knowledge_block}{correction_block}
 
 ====================
 客户需求（原始输入，待分析数据）
@@ -211,6 +224,7 @@ def run_quality_checked_analysis(
     requirement: str,
     clarifications: str | None = None,
     change_request: str | None = None,
+    knowledge: str | None = None,
     max_attempts: int = 2,
 ) -> AgentResult:
     """Run the analyst, self-checking spec quality with one corrective retry."""
@@ -228,6 +242,7 @@ def run_quality_checked_analysis(
         )
         task.context["customer_clarifications"] = clarifications or ""
         task.context["customer_change_request"] = change_request or ""
+        task.context["knowledge_assets"] = knowledge or ""
         task.context["correction_feedback"] = feedback or ""
         task.context["previous_draft"] = previous_draft or ""
         result = analyst.run(task)

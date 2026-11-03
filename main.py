@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any, Callable
 from uuid import uuid4
 
 from agents.analyst import run_quality_checked_analysis
@@ -11,12 +12,27 @@ from runtime.clarification_session import ClarificationSession, prompt_for_answe
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 from runtime.dashboard_cli import write_dashboard
+from runtime.knowledge_base import (
+    DEFAULT_KNOWLEDGE_LIMIT,
+    KnowledgeBase,
+    build_knowledge_prompt,
+    extract_deliverable_knowledge,
+    render_knowledge_list,
+)
 from runtime.model_usage import ModelUsageLedger
 from runtime.plan_constraints import extract_required_paths
+from runtime.release_plan import (
+    collect_release_history,
+    load_release_plan_file,
+    plan_summary,
+    render_release_history,
+    write_release_plan,
+)
 from security.workspace import PROJECT_ROOT, set_default_workspace_root
 
 
 CLI_OUTPUT_MODES = ("text", "json")
+DEFAULT_KNOWLEDGE_BASE = "knowledge"
 
 
 def _ensure_log_safe_streams() -> None:
@@ -102,10 +118,107 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the release confirmation prompt (implies --release).",
     )
+    parser.add_argument(
+        "--milestone",
+        metavar="NAME",
+        default=None,
+        help="Milestone label for a single delivery; recorded in RELEASE_NOTES.md and release_log.json.",
+    )
+    parser.add_argument(
+        "--requirements-file",
+        metavar="PATH",
+        default=None,
+        help="Run a milestone release plan: a UTF-8 Markdown file with '## 里程碑 ...' sections and '### 需求 ...' entries delivered sequentially, one version per delivery, plus a shared plan document.",
+    )
+    parser.add_argument(
+        "--release-plan-output",
+        metavar="PATH",
+        default="release_plan.md",
+        help="Where --requirements-file writes the shared plan/outcome document (default: release_plan.md).",
+    )
+    parser.add_argument(
+        "--release-history",
+        nargs="?",
+        const="",
+        metavar="PATH",
+        default=None,
+        help="Read-only: aggregate every release_log.json under PATH (default: projects base) and print the version history, then exit.",
+    )
+    parser.add_argument(
+        "--knowledge-base",
+        metavar="PATH",
+        default=None,
+        help="Cross-project knowledge base location (a .json file or a directory). When enabled, matching historical lessons are loaded into the analyst/doc-writer context and this delivery's lessons are extracted into the store.",
+    )
+    parser.add_argument(
+        "--knowledge-query",
+        metavar="TEXT",
+        default=None,
+        help="Keywords used to select which knowledge assets are loaded (default: load by kind/role priority).",
+    )
+    parser.add_argument(
+        "--knowledge-list",
+        nargs="?",
+        const="",
+        metavar="PATH",
+        default=None,
+        help="Read-only: list the knowledge assets stored at PATH (a .json file or a directory; default: knowledge/) and exit.",
+    )
+    parser.add_argument(
+        "--knowledge-extract",
+        metavar="PATH",
+        default=None,
+        help="Read-only: extract knowledge from an existing deliverable directory (release_log.json / docs/acceptance_report.md) and merge it into --knowledge-base, then exit.",
+    )
     return parser
 
 
-def run_analysis_only(requirement: str, *, clarifications: str | None = None, change_request: str | None = None, output_path: str = "requirement_analysis.md"):
+def load_knowledge_prompt(
+    path: str | None,
+    *,
+    roles: tuple[str, ...] | None = None,
+    query: str | None = None,
+) -> str:
+    """Load role-relevant knowledge assets for a prompt, or '' when disabled."""
+    return build_knowledge_prompt(path, roles=roles, query=query, limit=DEFAULT_KNOWLEDGE_LIMIT)
+
+
+def print_knowledge_list(path: str, *, query: str | None = None, output: str = "text") -> int:
+    """Print every stored knowledge asset (optionally keyword-filtered)."""
+    store = KnowledgeBase(path)
+    entries = store.search(query=query, limit=None)
+    if output == "json":
+        print(json.dumps(
+            {
+                "knowledge_base": str(store.path),
+                "entries": [entry.to_dict() for entry in entries],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ))
+    else:
+        print(render_knowledge_list(entries))
+        print(f"[Knowledge] 来源: {store.path}，共 {len(entries)} 条知识资产")
+    return 0
+
+
+def run_knowledge_extract(source: str, *, knowledge_base: str) -> dict[str, Any]:
+    """Extract knowledge from an existing deliverable into the knowledge base."""
+    entries = extract_deliverable_knowledge(source)
+    store = KnowledgeBase(knowledge_base)
+    counts = store.add(entries)
+    return {"source": source, "knowledge_base": str(store.path), **counts}
+
+
+def run_analysis_only(
+    requirement: str,
+    *,
+    clarifications: str | None = None,
+    change_request: str | None = None,
+    output_path: str = "requirement_analysis.md",
+    knowledge_base: str | None = None,
+    knowledge_query: str | None = None,
+):
     """Run only the requirement analysis and persist the draft specification.
 
     The file doubles as the clarification worksheet: the customer appends
@@ -116,11 +229,15 @@ def run_analysis_only(requirement: str, *, clarifications: str | None = None, ch
     analyst = router.get_agent("analyst")
     if analyst is None:
         raise ValueError("No analyst agent is registered")
+    knowledge = load_knowledge_prompt(
+        knowledge_base, roles=("analyst",), query=knowledge_query
+    )
     result = run_quality_checked_analysis(
         analyst,
         requirement=requirement,
         clarifications=clarifications,
         change_request=change_request,
+        knowledge=knowledge or None,
     )
     answers_template = (
         "（请逐条回答上方【待确认问题】；答复后运行："
@@ -227,6 +344,10 @@ def run_project(
     release: bool = False,
     release_version: str | None = None,
     auto_release: bool = False,
+    milestone: str | None = None,
+    knowledge_base: str | None = None,
+    knowledge_query: str | None = None,
+    on_delivery: Callable[[dict | None], None] | None = None,
 ):
     if not isinstance(requirement, str):
         raise TypeError("requirement must be a string")
@@ -263,18 +384,134 @@ def run_project(
         release_requested=release or auto_release,
         release_version=release_version,
         auto_release=auto_release,
+        milestone=milestone,
         usage_ledger=usage_ledger,
         usage_project_id=usage_project_id,
+        knowledge_base=knowledge_base,
+        knowledge_query=knowledge_query,
     )
     plan = project_orchestrator.create_plan(requirement)
     task_manager = project_orchestrator.build_task_manager(plan)
     result = project_orchestrator.execute(task_manager)
+    if on_delivery is not None:
+        on_delivery(getattr(project_orchestrator, "last_delivery", None))
     if strict_acceptance and getattr(result, "acceptance_verdict", None) == "failed":
         report = (getattr(project_orchestrator, "last_acceptance", None) or {}).get("report")
         raise AcceptanceGateError(
             f"验收结论为 FAILED；验收报告: {report or '未知'}"
         )
     return task_manager, result
+
+
+def run_release_plan(
+    plan,
+    *,
+    projects_base: str | None = None,
+    release: bool = False,
+    auto_release: bool = False,
+    strict_acceptance: bool = False,
+    plan_output: str = "release_plan.md",
+    knowledge_base: str | None = None,
+    knowledge_query: str | None = None,
+    runner: Callable[..., tuple] | None = None,
+    now: Any = None,
+    verbose: bool = True,
+):
+    """Deliver a milestone plan's requirements sequentially, then write the plan.
+
+    Every requirement is a full delivery on its own (its own analysis, task
+    graph, tests, integration, packaging and version). A failure stops the
+    batch - remaining requirements are recorded as ``skipped`` and the shared
+    plan document is still written so the partial result is auditable.
+    Returns ``(outcomes, plan_path)``.
+    """
+    if not callable(runner) and runner is not None:
+        raise TypeError("runner must be callable or None")
+    run_one = runner or run_project
+    outcomes: list[dict[str, Any]] = []
+    total = len(plan.entries)
+
+    for entry in plan.entries:
+        if verbose:
+            print(f"[Plan] {entry.index}/{total} 里程碑 {entry.milestone} · {entry.title}")
+        delivery: dict[str, Any] | None = None
+
+        def observe(payload: dict[str, Any] | None) -> None:
+            nonlocal delivery
+            delivery = payload
+
+        status = "completed"
+        acceptance_verdict = None
+        error = None
+        run_kwargs: dict[str, Any] = {
+            "projects_base": projects_base,
+            "release": release or auto_release,
+            "release_version": entry.version,
+            "auto_release": auto_release,
+            "strict_acceptance": strict_acceptance,
+            "milestone": entry.milestone,
+            "on_delivery": observe,
+        }
+        # Only pass knowledge options when enabled so custom runners keep the
+        # documented minimal call signature.
+        if knowledge_base is not None:
+            run_kwargs["knowledge_base"] = knowledge_base
+        if knowledge_query is not None:
+            run_kwargs["knowledge_query"] = knowledge_query
+        try:
+            _, result = run_one(entry.requirement, **run_kwargs)
+            acceptance_verdict = getattr(result, "acceptance_verdict", None)
+            if not getattr(result, "success", False):
+                status = "failed"
+                error = f"delivery did not succeed (status={getattr(result, 'status', 'unknown')})"
+        except Exception as exc:
+            status = "failed"
+            error = f"{type(exc).__name__}: {exc}"
+        outcomes.append(
+            {
+                "index": entry.index,
+                "milestone": entry.milestone,
+                "title": entry.title,
+                "status": status,
+                "acceptance_verdict": acceptance_verdict,
+                "release": (delivery or {}).get("release"),
+                "deliverable_root": (delivery or {}).get("deliverable_root"),
+                "error": error,
+            }
+        )
+        if status == "failed":
+            if verbose:
+                print(f"[Plan] 需求 {entry.index} 失败，停止后续交付：{error}")
+            break
+
+    for entry in plan.entries[len(outcomes):]:
+        outcomes.append(
+            {
+                "index": entry.index,
+                "milestone": entry.milestone,
+                "title": entry.title,
+                "status": "skipped",
+                "acceptance_verdict": None,
+                "release": None,
+                "deliverable_root": None,
+                "error": "previous requirement failed",
+            }
+        )
+    path = write_release_plan(plan, outcomes, plan_output, now=now)
+    if verbose:
+        print(f"[Plan] 共享发布计划已写入: {path}")
+    return outcomes, path
+
+
+def print_release_history(root: str, *, output: str = "text") -> int:
+    """Print the aggregated release history for a deliverable base directory."""
+    records = collect_release_history(root)
+    if output == "json":
+        print(json.dumps({"root": root, "releases": records}, ensure_ascii=False, sort_keys=True))
+    else:
+        print(render_release_history(records))
+        print(f"[Release-History] 来源目录: {root}，共 {len(records)} 条发布记录")
+    return 0
 
 
 def _json_result(task_manager, result) -> str:
@@ -307,8 +544,121 @@ def main() -> int:
     _ensure_log_safe_streams()
     parser = build_parser()
     args = parser.parse_args()
-    if args.requirement is None and not (args.interactive or args.resume_session):
+    if args.requirement is None and not (
+        args.interactive
+        or args.resume_session
+        or args.requirements_file
+        or args.release_history is not None
+        or args.knowledge_list is not None
+        or args.knowledge_extract is not None
+    ):
         parser.error("the following arguments are required: requirement")
+
+    if args.release_history is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+        ):
+            parser.error("--release-history is read-only and cannot be combined with a delivery request")
+        root = args.release_history or args.projects_base or str(PROJECT_ROOT)
+        try:
+            return print_release_history(root, output=args.output)
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+
+    if args.knowledge_list is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.knowledge_extract is not None
+        ):
+            parser.error("--knowledge-list is read-only and cannot be combined with a delivery request")
+        store_path = args.knowledge_list or args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
+        try:
+            return print_knowledge_list(
+                store_path, query=args.knowledge_query, output=args.output
+            )
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+
+    if args.knowledge_extract is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+        ):
+            parser.error("--knowledge-extract cannot be combined with a delivery request")
+        store_path = args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
+        try:
+            outcome = run_knowledge_extract(args.knowledge_extract, knowledge_base=store_path)
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(outcome, ensure_ascii=False, sort_keys=True))
+        else:
+            print(
+                f"[Knowledge] 从 {outcome['source']} 提取知识资产："
+                f"新增 {outcome['added']}，去重 {outcome['duplicates']}，累计 {outcome['total']}"
+                f"（存储: {outcome['knowledge_base']}）"
+            )
+        return 0
+
+    if args.requirements_file:
+        if args.requirement is not None:
+            parser.error("--requirements-file and a positional requirement are mutually exclusive")
+        if args.interactive or args.resume_session or args.analyze_only:
+            parser.error("--requirements-file cannot be combined with --interactive/--resume-session/--analyze-only")
+        if args.release_version:
+            parser.error("--release-version cannot be combined with --requirements-file; pin versions per requirement with [vX.Y.Z]")
+        if args.milestone:
+            parser.error("--milestone only applies to a single requirement; use '## 里程碑' sections in the plan file")
+        if args.clarifications or args.change_request:
+            parser.error("--clarifications/--change-request cannot be combined with --requirements-file")
+        try:
+            plan = load_release_plan_file(args.requirements_file)
+            outcomes, plan_path = run_release_plan(
+                plan,
+                projects_base=args.projects_base,
+                release=args.release or args.auto_release,
+                auto_release=args.auto_release,
+                strict_acceptance=args.strict_acceptance,
+                plan_output=args.release_plan_output,
+                knowledge_base=args.knowledge_base,
+                knowledge_query=args.knowledge_query,
+                verbose=args.output != "json",
+            )
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(
+                {
+                    "plan": str(plan_path),
+                    "plan_meta": plan_summary(plan),
+                    "outcomes": outcomes,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ))
+        else:
+            completed = sum(1 for outcome in outcomes if outcome["status"] == "completed")
+            print()
+            print("PLAN RESULT")
+            print(f"completed={completed}/{len(outcomes)} plan={plan_path}")
+        return 0 if all(outcome["status"] == "completed" for outcome in outcomes) else 1
 
     if args.interactive or args.resume_session:
         task_manager, result, session = run_interactive_session(
@@ -330,6 +680,8 @@ def main() -> int:
             clarifications=read_clarifications(args.clarifications),
             change_request=read_change_request(args.change_request),
             output_path=args.analysis_output,
+            knowledge_base=args.knowledge_base,
+            knowledge_query=args.knowledge_query,
         )
         quality = result.data.get("quality") or {}
         print(f"[Analysis] 需求规格草案已写入: {output} (attempts={result.data.get('attempts')}, quality_ok={quality.get('ok')})")
@@ -348,6 +700,9 @@ def main() -> int:
             release=args.release,
             release_version=args.release_version,
             auto_release=args.auto_release,
+            milestone=args.milestone,
+            knowledge_base=args.knowledge_base,
+            knowledge_query=args.knowledge_query,
         )
         if args.dashboard:
             project_id = None

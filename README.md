@@ -59,6 +59,29 @@ is skipped with `--auto-release`):
 python main.py "Build a small personal expense tracker" --release --auto-release
 ```
 
+To deliver a milestone plan (multiple requirements, sequential deliveries, one
+version per delivery, and a shared `release_plan.md` outcome document):
+
+```powershell
+python main.py --requirements-file requirements_plan.md --release --auto-release
+```
+
+To inspect the merged version history across every deliverable:
+
+```powershell
+python main.py --release-history
+```
+
+To reuse lessons from earlier deliveries (historical patterns, pitfalls and
+conventions load into requirement analysis and delivery documentation; new
+lessons are extracted into the store after each delivery):
+
+```powershell
+python main.py "Build a small personal expense tracker" --knowledge-base knowledge
+python main.py --knowledge-list knowledge
+python main.py --knowledge-extract F:\workspace\projects\some_delivery --knowledge-base knowledge
+```
+
 For the complete setup, configuration, persistence/recovery, security boundaries, and canonical workflow lifecycle guide, see [`docs/setup.md`](docs/setup.md).
 
 For the CLI contract, see [`docs/cli_reference.md`](docs/cli_reference.md).

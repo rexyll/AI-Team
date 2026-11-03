@@ -265,6 +265,10 @@ class DocWriterAgent(BaseAgent):
                 ])
             )
 
+        knowledge = task.context.get("knowledge_assets")
+        if isinstance(knowledge, str) and knowledge.strip():
+            sections.append("==== 跨项目知识资产（历史交付沉淀） ====\n" + knowledge)
+
         if not sections:
             sections.append("(无项目上下文)")
         return "\n\n".join(sections)
