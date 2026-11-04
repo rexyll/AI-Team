@@ -480,7 +480,31 @@ plus the security regression suite.
   document requirements; the plan schema and workflow graph are unchanged.
 - [x] Focused suite: `tests/test_specialist_roles.py` (18 tests).
 
+### 20.9 Post-delivery monitoring & defect reflow (T13) — completed
+- [x] `runtime/monitoring.py`: the deliverable ships a deterministic
+  `monitoring/health_contract.json` + `MONITORING.md` (written after release and
+  before the manifest, so both are checksummed and packaged). Probes cover the
+  release anchor, manifest integrity (SHA-256 of every listed file) and the
+  regression suite from an isolated copy; the contract states honestly that no
+  cloud APM/alerting channel is integrated.
+- [x] Heartbeat: `python main.py --monitor-check PATH` writes
+  `monitoring/status.json` (`healthy` / `degraded` / `failed`) and exits non-zero
+  for any non-healthy state; `--output json` is machine-readable.
+- [x] `runtime/defect_reflow.py`: strict Markdown defect intake
+  (`## 缺陷 DEF-001 标题`; 严重级别/描述 required, 影响版本/复现步骤 optional),
+  fail-closed validation (duplicate ids, unknown fields, invalid severity,
+  affected version absent from release history), and a deterministic hotfix
+  plan (fix + independent verification per defect, plus review) with
+  `hotfix_request.md` (`CHG-xxx`) and `docs/defect_report.md`.
+- [x] `core/hotfix_runner.py` + CLI `--hotfix-project / --defect-intake /
+  --hotfix-version`: reuses the existing pipeline for integration regression,
+  QA, patch release on the same git anchor, manifest and repackaging; outcomes
+  are reported as `FIXED` / `PENDING` / `FAILED` (never silently assumed).
+- [x] Focused suites: `tests/test_defect_reflow.py` (18 tests),
+  `tests/test_monitoring.py` (8 tests) plus the orchestrator delivery contract
+  assertions (38 focused tests total).
+
 Phase 20 nodes T5–T9 (static quality gate, QA role, dependency SBOM, cost
-report, change-request reflow) are recorded in `TaskPlan.md`. The remaining
-P3 backlog — post-delivery monitoring/defect reflow — is tracked in
-`TaskPlan.md`.
+report, change-request reflow) are recorded in `TaskPlan.md`; P3 (T11–T13) is
+now closed. Remaining external integration (real deployment targets/cloud APM)
+is documented as a limitation rather than simulated.

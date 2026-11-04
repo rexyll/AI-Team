@@ -191,6 +191,16 @@ def test_integration_passes_first_round_and_evidence_reaches_docs(tmp_path: Path
     assert delivery["package"] is not None
     doc_writer = orchestrator.agent_router.get_agent("doc_writer")
     assert any("集成回归验证（产品级）" in prompt for prompt in doc_writer.llm.prompts)
+    # The deliverable ships with a monitoring contract, before the manifest.
+    assert delivery["monitoring"]["status"] == "configured"
+    assert delivery["monitoring"]["probes"] == [
+        "release_anchor",
+        "manifest_integrity",
+        "smoke_suite",
+    ]
+    manifest_text = (tmp_path / "e2e_flat" / "DELIVERY_MANIFEST.md").read_text(encoding="utf-8")
+    assert "monitoring/health_contract.json" in manifest_text
+    assert "MONITORING.md" in manifest_text
 
 
 def test_failed_suite_is_fixed_by_one_rework_round(tmp_path: Path):
@@ -289,9 +299,10 @@ def test_release_phase_anchors_delivered_product_and_package_carries_notes(tmp_p
     manifest_text = (tmp_path / "e2e_flat" / "DELIVERY_MANIFEST.md").read_text(encoding="utf-8")
     assert "RELEASE_NOTES.md" in manifest_text
     assert "release_log.json" in manifest_text
+    assert "monitoring/health_contract.json" in manifest_text
     with zipfile.ZipFile(delivery["package"]["archive"]) as bundle_zip:
         members = set(bundle_zip.namelist())
-    assert {"RELEASE_NOTES.md", "release_log.json"} <= members
+    assert {"RELEASE_NOTES.md", "release_log.json", "MONITORING.md"} <= members
 
 
 def test_release_phase_skipped_without_release_request(tmp_path: Path):

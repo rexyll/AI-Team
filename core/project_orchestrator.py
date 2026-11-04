@@ -35,6 +35,7 @@ from runtime.knowledge_base import (
 )
 from runtime.host_git import HostGitOperationService
 from runtime.model_usage import ModelUsageLedger
+from runtime.monitoring import write_monitoring_contract
 from runtime.release import ReleaseRequest, perform_release
 from runtime.plan_builder import PlanBuilder
 from runtime.project_persistence import ProjectPersistenceAdapter
@@ -457,6 +458,7 @@ class ProjectOrchestrator:
             "dependency_scan": dependency_scan,
             "usage": usage,
             "release": None,
+            "monitoring": None,
         }
         self.last_delivery = delivery
         self.last_acceptance = acceptance
@@ -470,6 +472,12 @@ class ProjectOrchestrator:
             else:
                 release = self._run_release_phase(manifest_root, delivery, project=project)
                 delivery["release"] = release
+        # Post-delivery monitoring: the deliverable ships with a deterministic
+        # health contract and heartbeat guide. Written before the manifest so
+        # both are part of the checksummed deliverable set.
+        delivery["monitoring"] = self._run_monitoring_phase(
+            manifest_root, project=project, release=release
+        )
         # The manifest is written after the release phase so RELEASE_NOTES.md
         # and release_log.json are part of the checksummed deliverable set.
         # Knowledge extraction runs last so it can record release facts.
@@ -495,6 +503,8 @@ class ProjectOrchestrator:
             payload["llm_calls"] = usage.get("llm_calls")
         if release is not None:
             payload["release_status"] = release.get("status")
+        if delivery.get("monitoring") is not None:
+            payload["monitoring_status"] = delivery["monitoring"].get("status")
         if delivery.get("knowledge") is not None:
             payload["knowledge"] = {
                 key: delivery["knowledge"].get(key)
@@ -1048,6 +1058,40 @@ class ProjectOrchestrator:
                 "test_evidence_count": len(tests),
             })
         return digest
+
+    def _run_monitoring_phase(
+        self,
+        manifest_root: Path,
+        *,
+        project: str | None,
+        release: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Attach the post-delivery monitoring contract to the deliverable.
+
+        The contract only records what the heartbeat can verify offline (release
+        anchor, manifest integrity, regression suite); no cloud APM is claimed.
+        A monitoring write failure never invalidates the product.
+        """
+        try:
+            outcome = write_monitoring_contract(
+                manifest_root,
+                project=project or "ai-team-delivery",
+                release=release,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._emit_project_event("project.monitoring_failed", payload={"error": error})
+            print(f"[Monitoring] 监控契约写入失败：{error}")
+            return {"status": "failed", "error": error}
+        self._emit_project_event(
+            "project.monitoring_configured",
+            payload={"contract": outcome.get("contract"), "probes": outcome.get("probes")},
+        )
+        print(
+            f"[Monitoring] 已写入监控契约 {outcome.get('contract')}"
+            f"（探针：{', '.join(outcome.get('probes') or [])}）"
+        )
+        return outcome
 
     def resume(self, task_manager: TaskManager | None = None) -> ProjectResult:
         manager = task_manager if task_manager is not None else self.last_task_manager

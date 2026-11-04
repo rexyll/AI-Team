@@ -72,6 +72,27 @@ To inspect the merged version history across every deliverable:
 python main.py --release-history
 ```
 
+After a delivery ships, run its deterministic monitoring heartbeat (verifies the
+release anchor, manifest checksums and regression suite; exits non-zero when
+unhealthy). The deliverable also carries `MONITORING.md` and
+`monitoring/health_contract.json`:
+
+```powershell
+python main.py --monitor-check F:\workspace\projects\some_delivery
+```
+
+To route customer defects back into a released deliverable (validated defect
+intake -> hotfix tasks -> integration regression -> patch release -> repackage):
+
+```powershell
+python main.py --hotfix-project F:\workspace\projects\some_delivery --defect-intake defects.md --auto-release
+```
+
+The defect file uses `## 缺陷 DEF-001 标题` sections with `严重级别` and
+`描述` (plus optional `影响版本` / `复现步骤`); the outcome is written to
+`docs/defect_report.md` and the same defects are also expressed as
+`hotfix_request.md` (`CHG-xxx`) for the regular change-request path.
+
 To reuse lessons from earlier deliveries (historical patterns, pitfalls and
 conventions load into requirement analysis and delivery documentation; new
 lessons are extracted into the store after each delivery):

@@ -104,7 +104,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 历史交付模式/坑/规范沉淀为可加载资产。
 - [x] **T12 UI/UX 与专项开发角色**（2026-11-03 完成：`runtime/project_type.py` 纯关键词确定性项目剖面（web/desktop/mobile/API/data/CLI/library/general，需求文本权重 2、分析/计划权重 1，记录命中信号），剖面决定启用角色；`agents/ui_ux.py` 零工具设计角色（信息架构/布局/交互状态/设计令牌/响应式/WCAG/可用性验收标准），仅当剖面需要界面且运行时已注册该角色时，确定性注入 `UX-001`（依赖架构任务）并让界面相关 Developer 任务依赖它，否则计划不变（模型误产的 ui_ux 降级为 architect 以保证可执行）；Developer 按任务文本匹配剖面启用的专项技能（frontend/backend/data/desktop/mobile/CLI），专用提示词注入，未命中保持通用；UI/UX 规范进入 DocWriter 上下文与设计文档要求；验收：tests/test_specialist_roles.py 18 passed + 全量 2166 passed）
   - 按项目类型启用，而非所有项目都跑设计/专项角色；不改计划 schema 与工作流图。
-- [ ] **T13 交付后监控/缺陷回流**：监控接入、缺陷→热修任务→重新打包的标准化流程。
+- [x] **T13 交付后监控/缺陷回流**（2026-11-04 完成：`runtime/monitoring.py` 在发布后、清单前写入 `monitoring/health_contract.json` + `MONITORING.md`，契约只声明可离线验证的探针（发布锚点/清单完整性/回归套件），并如实标注未接入云 APM；`python main.py --monitor-check PATH` 心跳自检，写入 `monitoring/status.json`，healthy/degraded/failed 三态且非 healthy 退出码 1；`runtime/defect_reflow.py` 解析确定性缺陷清单（`## 缺陷 DEF-001 标题` + 严重级别/描述/影响版本/复现步骤，严格校验重复编号、未知字段、非法严重级别与不在发布历史中的版本），生成 `hotfix_request.md`（CHG-xxx，可复用变更通道）与 `docs/defect_report.md`（缺陷→热修任务→版本映射）；`core/hotfix_runner.py` + CLI `--hotfix-project/--defect-intake/--hotfix-version` 直接复用既有执行管线（集成回归/QA/补丁发布/清单/重新打包），结果 fixed/pending/failed 如实入报告；验收：tests/test_defect_reflow.py + tests/test_monitoring.py + 编排器契约 38 passed）
+  - 监控无外部部署环境时以交付物自检契约落地，不伪造云监控接入；缺陷回流要求已有发布基线，失败不静默放行。
 
 ## 三、执行记录
 
@@ -123,3 +124,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-03 | T10 版本规划/里程碑（批量计划/里程碑/版本汇总） | 完成；全量回归 2138 passed（venv Scripts 在 PATH 时；含 test_release_plan 20），裸调用 .venv\Scripts\python.exe 时 2 条 run_command 用例因 `python` 解析到 Windows 商店占位符失败（环境差异，非本次改动） | 本提交 |
 | 2026-11-03 | T11 跨项目知识库（确定性沉淀/过滤加载/CLI/交付后回流） | 完成；聚焦 tests/test_knowledge_base.py 10 passed；全量回归 2148 passed | 本提交 |
 | 2026-11-03 | T12 UI/UX 与专项开发角色（确定性项目剖面/按类型启用/设计任务注入/专项技能匹配） | 完成；聚焦 tests/test_specialist_roles.py 18 passed；全量回归 2166 passed；静态门禁 E9/F63/F7/F82 通过 | 本变更（工作区，待提交） |
+| 2026-11-04 | T13 交付后监控/缺陷回流（健康契约+心跳自检/缺陷清单→热修任务→重新打包） | 完成；聚焦 tests/test_defect_reflow.py + tests/test_monitoring.py + 编排器契约 38 passed；静态门禁 E9/F63/F7/F82 通过；全量回归 2193 passed | 本变更（工作区，待提交） |

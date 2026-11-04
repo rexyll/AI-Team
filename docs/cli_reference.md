@@ -37,6 +37,21 @@ python main.py "<project requirement>"
   deliverable directory (`release_log.json` and
   `docs/acceptance_report.md`) into `--knowledge-base` (default `knowledge/`),
   then exit.
+- `--monitor-check <path>` — run the delivered post-delivery heartbeat (release
+  anchor, manifest SHA-256 integrity, regression suite), write
+  `monitoring/status.json`, then exit. Exits non-zero unless the status is
+  `healthy`; `--output json` prints the full report.
+- `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
+  `--defect-intake`; runs hotfix tasks through integration regression, QA, a
+  patch release and repackaging on the same deliverable.
+- `--defect-intake <path>` — UTF-8 Markdown defect list for
+  `--hotfix-project`.
+- `--hotfix-version <semver>` — optional explicit hotfix version (defaults to a
+  patch bump of the last release).
+
+`--hotfix-project` is a standalone defect-reflow run: it cannot be combined with
+a positional requirement, `--requirements-file`, `--change-request`,
+`--clarifications`, `--milestone`, `--release-version` or a read-only mode.
 
 Examples:
 
@@ -133,6 +148,41 @@ python main.py --knowledge-extract F:\workspace\projects\ledger --knowledge-base
 A corrupt knowledge file fails closed; a failure to write new lessons during a
 delivery is recorded in `delivery.knowledge` and never invalidates the finished
 product.
+
+## Post-delivery monitoring and defect reflow
+
+Every delivery writes `monitoring/health_contract.json` and `MONITORING.md`
+after the release (before the manifest, so both are checksummed and packaged).
+The contract declares only offline-verifiable probes and states that no cloud
+APM/alerting channel is integrated:
+
+```powershell
+# heartbeat (cron/Task Scheduler friendly: non-zero exit = alert)
+python main.py --monitor-check F:\workspace\projects\ledger
+python main.py --monitor-check F:\workspace\projects\ledger --output json
+```
+
+Customer defects use a strict Markdown intake; `## 缺陷 DEF-001 标题` starts a
+defect, `严重级别` and `描述` are required, `影响版本` / `复现步骤` are optional:
+
+```markdown
+## 缺陷 DEF-001 登录后立即退出
+- 严重级别: 严重
+- 影响版本: v0.1.0
+- 描述: 输入正确凭据后进程退出。
+- 复现步骤: 运行 login 命令，输入 admin/admin。
+```
+
+```powershell
+# hotfix: defects -> fix/verify tasks -> integration regression -> patch release -> repackage
+python main.py --hotfix-project F:\workspace\projects\ledger --defect-intake defects.md --auto-release
+```
+
+The flow requires a released baseline (`release_log.json`), rejects duplicate
+ids, unknown fields, invalid severities and affected versions absent from the
+release history, and writes `docs/defect_report.md` (`FIXED` / `PENDING` /
+`FAILED`) plus `hotfix_request.md` (`CHG-xxx`, usable with `--change-request`).
+
 
 ## JSON output
 

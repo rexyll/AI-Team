@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from agents.analyst import run_quality_checked_analysis
 from runtime.clarification_session import ClarificationSession, prompt_for_answers
+from core.hotfix_runner import run_hotfix
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 from runtime.dashboard_cli import write_dashboard
@@ -20,6 +21,7 @@ from runtime.knowledge_base import (
     render_knowledge_list,
 )
 from runtime.model_usage import ModelUsageLedger
+from runtime.monitoring import render_health_report, run_health_checks
 from runtime.plan_constraints import extract_required_paths
 from runtime.release_plan import (
     collect_release_history,
@@ -170,6 +172,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Read-only: extract knowledge from an existing deliverable directory (release_log.json / docs/acceptance_report.md) and merge it into --knowledge-base, then exit.",
     )
+    parser.add_argument(
+        "--monitor-check",
+        metavar="PATH",
+        default=None,
+        help="Run the post-delivery monitoring heartbeat on an existing deliverable directory and exit non-zero when the deliverable is unhealthy.",
+    )
+    parser.add_argument(
+        "--hotfix-project",
+        metavar="PATH",
+        default=None,
+        help="Existing released deliverable directory to hotfix. Requires --defect-intake: the defects become hotfix tasks, then integration regression, a patch release and repackaging run on the same deliverable.",
+    )
+    parser.add_argument(
+        "--defect-intake",
+        metavar="PATH",
+        default=None,
+        help="UTF-8 Markdown defect list for --hotfix-project ('## 缺陷 DEF-001 标题' sections with 严重级别/描述/影响版本/复现步骤).",
+    )
+    parser.add_argument(
+        "--hotfix-version",
+        metavar="VERSION",
+        default=None,
+        help="Explicit hotfix version (MAJOR.MINOR.PATCH). Defaults to an automatic patch bump of the last release.",
+    )
     return parser
 
 
@@ -319,6 +345,21 @@ def read_clarifications(path: str | None) -> str | None:
 def read_change_request(path: str | None) -> str | None:
     """Load the customer's change request from a UTF-8 text file."""
     return _read_utf8_document(path, empty_message="change request file cannot be empty")
+
+
+def read_defect_intake(path: str | None) -> str | None:
+    """Load the customer's defect list from a UTF-8 Markdown file."""
+    return _read_utf8_document(path, empty_message="defect intake file cannot be empty")
+
+
+def run_monitor_check(path: str, *, output: str = "text") -> int:
+    """Run the post-delivery heartbeat; non-healthy deliverables exit non-zero."""
+    report = run_health_checks(path)
+    if output == "json":
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    else:
+        print(render_health_report(report))
+    return 0 if report["status"] == "healthy" else 1
 
 
 def _read_utf8_document(path: str | None, *, empty_message: str) -> str | None:
@@ -551,8 +592,29 @@ def main() -> int:
         or args.release_history is not None
         or args.knowledge_list is not None
         or args.knowledge_extract is not None
+        or args.monitor_check is not None
+        or args.hotfix_project is not None
     ):
         parser.error("the following arguments are required: requirement")
+
+    if args.monitor_check is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
+        ):
+            parser.error("--monitor-check is read-only and cannot be combined with a delivery request")
+        try:
+            return run_monitor_check(args.monitor_check, output=args.output)
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
 
     if args.release_history is not None:
         if (
@@ -563,6 +625,9 @@ def main() -> int:
             or args.analyze_only
             or args.knowledge_list is not None
             or args.knowledge_extract is not None
+            or args.monitor_check is not None
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
         ):
             parser.error("--release-history is read-only and cannot be combined with a delivery request")
         root = args.release_history or args.projects_base or str(PROJECT_ROOT)
@@ -580,6 +645,8 @@ def main() -> int:
             or args.resume_session
             or args.analyze_only
             or args.knowledge_extract is not None
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
         ):
             parser.error("--knowledge-list is read-only and cannot be combined with a delivery request")
         store_path = args.knowledge_list or args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
@@ -598,6 +665,8 @@ def main() -> int:
             or args.interactive
             or args.resume_session
             or args.analyze_only
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
         ):
             parser.error("--knowledge-extract cannot be combined with a delivery request")
         store_path = args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
@@ -615,6 +684,82 @@ def main() -> int:
                 f"（存储: {outcome['knowledge_base']}）"
             )
         return 0
+
+    if args.hotfix_project is not None or args.defect_intake is not None:
+        if args.hotfix_project is None:
+            parser.error("--defect-intake requires --hotfix-project")
+        if args.defect_intake is None:
+            parser.error("--hotfix-project requires --defect-intake")
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+            or args.clarifications
+            or args.change_request
+            or args.milestone
+            or args.release_version
+            or args.strict_acceptance
+        ):
+            parser.error(
+                "--hotfix-project is a standalone defect-reflow run and cannot be "
+                "combined with a delivery request or --release-version"
+            )
+        try:
+            intake = read_defect_intake(args.defect_intake)
+            router = create_agent_router(
+                usage_ledger=ModelUsageLedger(),
+                usage_project_id=f"hotfix-{uuid4()}",
+            )
+            outcome = run_hotfix(
+                router,
+                args.hotfix_project,
+                intake,
+                hotfix_version=args.hotfix_version,
+                auto_release=args.auto_release,
+                knowledge_base=args.knowledge_base,
+                knowledge_query=args.knowledge_query,
+            )
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        delivery = outcome.get("delivery") if isinstance(outcome.get("delivery"), dict) else {}
+        package = delivery.get("package") if isinstance(delivery.get("package"), dict) else {}
+        if args.output == "json":
+            print(json.dumps(
+                {
+                    "status": outcome["status"],
+                    "reason": outcome["reason"],
+                    "version": outcome["version"],
+                    "baseline_version": outcome["baseline_version"],
+                    "target_version": outcome["target_version"],
+                    "defects": [defect["id"] for defect in outcome["defects"]],
+                    "report": outcome["report"],
+                    "change_request": outcome["change_request"],
+                    "package": package.get("archive"),
+                    "tasks": [
+                        {"id": task.id, "status": task.status, "role": task.role}
+                        for task in outcome["task_manager"].get_all_tasks()
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ))
+        else:
+            reason = f"（{outcome['reason']}）" if outcome["reason"] else ""
+            print(
+                f"[Hotfix] 缺陷回流 v{outcome['baseline_version']} -> "
+                f"v{outcome['target_version']}：{len(outcome['defects'])} 个缺陷"
+            )
+            print(f"[Hotfix] 状态: {outcome['status']}{reason}")
+            print(f"[Hotfix] 缺陷报告: {outcome['report']}")
+            print(f"[Hotfix] 变更请求: {outcome['change_request']}")
+            if package.get("archive"):
+                print(f"[Hotfix] 交付包: {package['archive']}")
+        return 0 if outcome["status"] == "fixed" else 1
 
     if args.requirements_file:
         if args.requirement is not None:

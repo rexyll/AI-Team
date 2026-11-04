@@ -4,6 +4,35 @@ All notable changes to the AI-Team runtime are documented here. Development
 follows the node discipline in `DevPlan.md`; every accepted node carries a
 commit SHA as evidence.
 
+## Unreleased — TaskPlan P3: post-delivery monitoring & defect reflow (2026-11-04)
+
+### Added
+
+- **Monitoring contract** (`runtime/monitoring.py`): after a delivery (and
+  before the manifest), the deliverable receives `monitoring/health_contract.json`
+  and `MONITORING.md`. The contract declares only offline-verifiable probes —
+  release anchor (`release_log.json` version/tag/commit), manifest integrity
+  (every checksummed file exists and its SHA-256 matches), and the regression
+  suite run from an isolated copy — and states honestly that no cloud APM /
+  alerting channel is integrated (there is no deployment target environment).
+- **Heartbeat** (`python main.py --monitor-check PATH`): runs the probes,
+  writes `monitoring/status.json` with `healthy` / `degraded` / `failed` and
+  exits non-zero for anything other than healthy, so cron or Task Scheduler can
+  use the exit code as the alerting signal. `--output json` is machine-readable.
+- **Defect intake & hotfix reflow** (`runtime/defect_reflow.py`): deterministic
+  Markdown parsing (`## 缺陷 DEF-001 标题` with required severity/description
+  and optional affected version/reproduction), fail-closed validation (duplicate
+  ids, unknown fields, invalid severity, affected version not in release
+  history), and generation of a validated hotfix plan (one fix + one
+  verification task per defect, plus review) and `hotfix_request.md`
+  (`CHG-xxx`, reusable through `--change-request`).
+- **Standardized repackage flow** (`core/hotfix_runner.py`, CLI
+  `--hotfix-project PATH --defect-intake PATH [--hotfix-version V]`): reuses
+  the existing pipeline for integration regression, QA, patch release on the
+  same git anchor, manifest and repackaging. Outcomes are recorded honestly in
+  `docs/defect_report.md` as `FIXED` / `PENDING` / `FAILED`; `--auto-release`
+  controls the release confirmation gate.
+
 ## Unreleased — TaskPlan P3: project-type gated UI/UX & specialist roles (2026-11-03)
 
 ### Added
