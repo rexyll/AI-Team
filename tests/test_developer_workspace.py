@@ -22,6 +22,15 @@ from security.workspace import resolve_workspace_path, workspace_scope
 
 
 
+
+def _crash_lease_owner(root: str, ready, hold, result_queue) -> None:
+    manager = DeveloperWorkspaceManager(root)
+    lease = manager.issue("TASK-CRASHED")
+    result_queue.put(str(lease.root))
+    ready.set()
+    hold.wait(30)
+
+
 def _cross_process_merge_worker(root: str, task_id: str, value: str, ready, start, results) -> None:
     manager = DeveloperWorkspaceManager(root)
     lease = manager.issue(task_id)
@@ -179,6 +188,37 @@ def test_workspace_managers_serialize_cross_process_merges(tmp_path: Path) -> No
                 worker.join()
     assert outcomes == ["conflict", "merged"]
     assert (root / "shared.txt").read_text(encoding="utf-8") in {"A", "B"}
+
+
+
+def test_workspace_manager_recovers_lease_after_owner_process_is_terminated(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    context = multiprocessing.get_context("spawn")
+    ready, hold = context.Event(), context.Event()
+    result_queue = context.Queue()
+    worker = context.Process(
+        target=_crash_lease_owner,
+        args=(str(root), ready, hold, result_queue),
+    )
+    worker.start()
+    try:
+        assert ready.wait(15)
+        lease_root = Path(result_queue.get(timeout=15))
+        assert lease_root.is_dir()
+        worker.terminate()
+        worker.join(timeout=15)
+        assert not worker.is_alive()
+
+        manager = DeveloperWorkspaceManager(root)
+
+        assert not lease_root.exists()
+        assert not manager._metadata_path(lease_root).exists()
+    finally:
+        hold.set()
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=15)
 
 
 def test_workspace_manager_recovers_dead_process_leases(tmp_path: Path) -> None:
