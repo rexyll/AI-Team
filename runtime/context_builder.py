@@ -121,6 +121,7 @@ class ContextBuilder:
             "reviewer_feedback",
             "tool_execution_history",
             "workspace_root",
+            "workspace_folded_prefix",
             "workspace_merge",
             "workspace_discarded",
         }
