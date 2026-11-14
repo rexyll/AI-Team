@@ -61,12 +61,13 @@ run independently, including on a fresh staged copy.
 
 Developer task leases have a separate opt-in setup switch: `AI_TEAM_TASK_ENVIRONMENTS=1`.
 It provisions only the install action before the Developer workflow, inside the
-task's private lease. The per-task venv, `node_modules` and package caches are
-discarded with that lease and never merged into the canonical source tree.
+task's private lease. Python `.venv`, Node `node_modules` and pip/npm caches under
+`.ai-team-cache` are lease-local, discarded with that lease, and never merged
+into the canonical source tree. Shared cache reuse is intentionally deferred.
 The adapter selection variable `AI_TEAM_PROJECT_ADAPTER` is shared by both
 flows.
 
-CI evidence: [run 43598452950](https://github.com/rexyll/AI-Team/actions/runs/43598452950) passed both jobs. Linux regression: 2,273 passed / 10 skipped; security regression: 233 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising build/test/smoke and verifying a deliberately failing compile is reported as failed. The orchestrator-level test uses a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
+CI evidence: [run 43599217740](https://github.com/rexyll/AI-Team/actions/runs/43599217740) passed both jobs. Linux regression: 2,280 passed / 10 skipped; security regression: 233 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising lease-local venv install, build/test/smoke/package and a deliberately failing test to verify non-zero exit propagation. The orchestrator-level tests use a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
 
 ## Security and execution boundaries
 
