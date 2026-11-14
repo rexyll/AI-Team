@@ -1,4 +1,7 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Iterator
 
 
 PROJECT_ROOT = (
@@ -92,6 +95,26 @@ class WorkspaceSandbox:
 
 
 DEFAULT_SANDBOX = WorkspaceSandbox()
+_ACTIVE_SANDBOX: ContextVar[WorkspaceSandbox | None] = ContextVar(
+    "ai_team_active_workspace_sandbox", default=None
+)
+
+
+@contextmanager
+def workspace_scope(root: str | Path, *, folded_prefix: str | None = None) -> Iterator[WorkspaceSandbox]:
+    """Bind filesystem tools to a task-local workspace for one execution."""
+    sandbox = WorkspaceSandbox(root, folded_prefix=folded_prefix)
+    token = _ACTIVE_SANDBOX.set(sandbox)
+    try:
+        yield sandbox
+    finally:
+        _ACTIVE_SANDBOX.reset(token)
+
+
+def get_active_workspace_root() -> Path:
+    """Return the task-local root, falling back to the process default."""
+    active = _ACTIVE_SANDBOX.get()
+    return active.root if active is not None else DEFAULT_SANDBOX.root
 
 
 def set_default_workspace_root(
@@ -172,4 +195,5 @@ def mandated_folded_prefix(mandated_dir: str) -> str | None:
 def resolve_workspace_path(path: str | Path) -> Path:
     """Resolve a path and ensure it stays inside the authorized workspace."""
 
-    return DEFAULT_SANDBOX.resolve(path)
+    active = _ACTIVE_SANDBOX.get()
+    return (active or DEFAULT_SANDBOX).resolve(path)
