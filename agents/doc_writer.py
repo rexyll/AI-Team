@@ -19,10 +19,12 @@ subject to workspace containment.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 from agents.base import BaseAgent
+from runtime.acceptance import parse_requirement_entries
 from runtime.agent_result import AgentResult
 from runtime.task import Task
 from security.prompt_injection import untrusted_content
@@ -65,6 +67,24 @@ def _doc_prompt(title: str, instruction: str, context_block: str) -> str:
 
 直接输出该文档的完整 Markdown 正文，不要额外解释。
 """
+
+
+ACCEPTANCE_SPEC_SYSTEM_PROMPT = """
+你是可执行验收测试映射生成器。只能输出符合 JSON schema 的 JSON 对象，不得输出 Markdown 代码围栏或解释。
+只允许使用输入中列出的 REQ 编号和 JUnit selector。不得编造测试用例、命令或执行结果。
+"""
+
+
+def _acceptance_spec_prompt(analysis: str, test_cases: list[dict]) -> str:
+    return (
+        "根据需求规格与实际集成测试运行结果，生成 acceptance_tests.json 内容。\\n"
+        "格式：{\\\"schema_version\\\":1,\\\"tests\\\":[{\\\"test_id\\\":\\\"AT-001\\\","
+        "\\\"requirement_id\\\":\\\"REQ-001\\\",\\\"selector\\\":\\\"module::test_name\\\"}]}。\\n"
+        "为每条必须级 REQ 尽可能关联一个或多个真正覆盖它的已执行测试；无法确认时不要猜测，留空映射。"
+        "selector 必须逐字取自提供的 JUnit selector 列表。test_id 从 AT-001 开始且不得重复。\\n\\n"
+        "需求规格：\\n" + analysis + "\\n\\n实际 JUnit 测试用例：\\n"
+        + json.dumps(test_cases, ensure_ascii=False, indent=2)
+    )
 
 
 DOC_SPECS: tuple[tuple[str, str, str], ...] = (
@@ -157,12 +177,86 @@ class DocWriterAgent(BaseAgent):
                 "filename": filename,
                 "chars": str(len(content)),
             })
+        acceptance_spec_record: dict[str, str] = {"status": "skipped"}
+        analysis = task.context.get("requirement_analysis")
+        integration = task.context.get("integration_evidence")
+        suite = integration.get("suite") if isinstance(integration, dict) else None
+        if isinstance(analysis, str) and parse_requirement_entries(analysis):
+            spec_relative = f"{docs_root}/acceptance_tests.json"
+            existing_spec = (
+                self.sandbox.resolve(spec_relative)
+                if self.sandbox is not None
+                else resolve_workspace_path(spec_relative)
+            )
+            if existing_spec.is_file():
+                acceptance_spec_record = {"status": "preserved", "path": str(existing_spec)}
+            else:
+                test_cases = suite.get("test_cases", []) if isinstance(suite, dict) else []
+                allowed_selectors = {
+                    item.get("selector")
+                    for item in test_cases
+                    if isinstance(item, dict) and isinstance(item.get("selector"), str)
+                }
+                try:
+                    raw_spec = self._generate(
+                        _acceptance_spec_prompt(analysis, test_cases if isinstance(test_cases, list) else []),
+                        system_prompt=ACCEPTANCE_SPEC_SYSTEM_PROMPT,
+                        max_tokens=4096,
+                    )
+                    payload = json.loads(raw_spec)
+                    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+                        raise ValueError("schema_version must be 1")
+                    tests = payload.get("tests")
+                    if not isinstance(tests, list):
+                        raise ValueError("tests must be a list")
+                    allowed_requirements = {entry.req_id for entry in parse_requirement_entries(analysis)}
+                    seen_ids: set[str] = set()
+                    validated: list[dict[str, str]] = []
+                    for item in tests:
+                        if not isinstance(item, dict):
+                            raise ValueError("each test mapping must be an object")
+                        test_id = item.get("test_id")
+                        requirement_id = item.get("requirement_id")
+                        selector = item.get("selector")
+                        if (
+                            not isinstance(test_id, str) or not test_id.startswith("AT-")
+                            or test_id in seen_ids
+                            or requirement_id not in allowed_requirements
+                            or selector not in allowed_selectors
+                        ):
+                            raise ValueError("test mapping contains an unknown id or unobserved selector")
+                        seen_ids.add(test_id)
+                        validated.append({
+                            "test_id": test_id,
+                            "requirement_id": requirement_id,
+                            "selector": selector,
+                        })
+                    content = json.dumps(
+                        {"schema_version": 1, "tests": validated},
+                        ensure_ascii=False,
+                        indent=2,
+                    ) + "\\n"
+                    target = self._write_document(spec_relative, content)
+                    acceptance_spec_record = {
+                        "status": "generated",
+                        "path": str(target),
+                        "test_count": str(len(validated)),
+                    }
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    acceptance_spec_record = {
+                        "status": "invalid",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
         return AgentResult(
             status="completed",
             agent=self.role,
             task_id=task.id,
             message=f"已生成 {len(written)} 份交付文档至 {docs_root}/",
-            data={"docs": written, "docs_root": docs_root},
+            data={
+                "docs": written,
+                "docs_root": docs_root,
+                "acceptance_spec": acceptance_spec_record,
+            },
         )
 
     @staticmethod
@@ -231,6 +325,14 @@ class DocWriterAgent(BaseAgent):
                 failed = suite.get("failed_tests") or []
                 if failed:
                     lines.append("- 失败用例: " + ", ".join(str(name) for name in failed))
+                test_cases = suite.get("test_cases") or []
+                if test_cases:
+                    lines.append("- JUnit 测试 selector 与实际状态:")
+                    for case in test_cases:
+                        if isinstance(case, dict):
+                            lines.append(
+                                f"  - {case.get('selector')}: {case.get('status')}"
+                            )
                 tail = str(suite.get("output_tail") or "").strip()
                 if tail:
                     lines.append("- 输出摘录:\n" + tail)
