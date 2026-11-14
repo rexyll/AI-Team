@@ -244,7 +244,7 @@ class ProjectAdapterRegistry:
 class ProjectAdapterExecutor:
     """Execute adapter plans only through the canonical tool invocation service."""
 
-    _EXIT_CODE = re.compile(r"^exit_code=(-?\\d+)\\s*$", re.MULTILINE)
+    _EXIT_CODE = re.compile(r"^exit_code=(-?\d+)\s*$", re.MULTILINE)
 
     def __init__(self, invocation_service) -> None:
         if not callable(getattr(invocation_service, "invoke", None)):
