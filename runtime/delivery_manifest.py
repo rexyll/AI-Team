@@ -19,6 +19,9 @@ EXCLUDED_DIRECTORIES = frozenset({
     ".venv",
     ".git",
     "node_modules",
+    ".ai-team-cache",
+    ".ai-team-workspaces",
+    ".ai-team-dev-workspaces",
     ".mypy_cache",
     ".ruff_cache",
 })
