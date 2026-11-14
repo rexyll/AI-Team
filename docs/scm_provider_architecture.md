@@ -6,6 +6,12 @@
 
 `runtime/github_scm_provider.py` implements the GitHub REST adapter. `GitHubRESTTransport` requires a host-injected token and uses HTTPS, repository-scoped endpoints, a fixed API version and sanitized errors. Tests inject a fake transport; they do not contact GitHub.
 
+## Project orchestration integration
+
+`runtime.ProjectOrchestrator` accepts an optional host-created `SCMService` together with an explicit repository and pull-request number. When configured, the delivery phase performs read-only observation after product integration verification and records the PR head SHA, PR state, CI result and latest review result in the delivery task context as `scm_observation`.
+
+This observation is informational and fail-closed: only an open, unmerged PR with successful CI and an approved review is labeled `ready`; pending/unknown/failing evidence is `blocked`; transport/provider exceptions are recorded as `unavailable` with the exception type only. It never creates a branch, pushes, creates/updates a PR or merges. SCM configuration is opt-in, so projects without it retain their existing behavior. Write operations remain explicit host actions requiring one-use approvals.
+
 ## Write approval
 
 Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A merge approval is additionally bound to the exact PR head SHA observed during preflight, so branch movement after approval invalidates the approval. The GitHub merge request also sends that expected SHA in the API body, letting GitHub reject a head change between preflight and merge (TOCTOU protection). A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
