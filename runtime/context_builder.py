@@ -124,6 +124,7 @@ class ContextBuilder:
             "workspace_folded_prefix",
             "workspace_merge",
             "workspace_discarded",
+            "workspace_environment",
         }
 
         metadata = deepcopy({
