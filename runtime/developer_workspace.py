@@ -148,7 +148,7 @@ class DeveloperWorkspaceManager:
         ) as handle:
             temporary = Path(handle.name)
             json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
-            handle.write("\\n")
+            handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         try:
