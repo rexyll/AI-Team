@@ -21,7 +21,7 @@ pip install -r requirements.txt
 - `openai==3.1.0`
 - `python-dotenv==1.2.3`
 
-These are required because `config/model.py` imports both packages unconditionally. Contract tests themselves stay network-independent through mock injection (see §3).
+These are required because `config/model.py` imports both packages unconditionally. For tests and CI, install the separate development toolchain as well: `pip install -r requirements-dev.txt` (currently includes pytest). The supported CI/runtime matrix is Python 3.14; Python 3.13 is intentionally excluded because the codebase relies on PEP 649. Contract tests themselves stay network-independent through mock injection (see §3).
 
 ## 3. Provider configuration (multi-provider, per-role)
 
