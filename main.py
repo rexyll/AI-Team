@@ -492,8 +492,12 @@ def run_project_revision(
         usage_ledger=(usage_ledger := ModelUsageLedger()),
         usage_project_id=(usage_project_id := f"revise-{uuid4()}"),
     )
+    scm_runtime = create_github_scm_runtime()
     project_orchestrator = ProjectOrchestrator(
         agent_router=router,
+        scm_service=scm_runtime.service if scm_runtime else None,
+        scm_repository=scm_runtime.repository if scm_runtime else None,
+        scm_pull_request_number=scm_runtime.pull_request_number if scm_runtime else None,
         deliverable_dir=deliverable_dir,
         change_request=change_request,
         release_requested=release or auto_release,
