@@ -196,6 +196,9 @@ class GitHubSCMProvider:
             str(item.get("state") or "").lower()
             for item in statuses if isinstance(item, dict)
         ]
+        combined_state = combined.get("state") if isinstance(combined, dict) else None
+        if isinstance(combined_state, str) and combined_state:
+            state_values.append(combined_state.lower())
         if any(value in {"failure", "failed", "error"} for value in conclusions + state_values):
             status = "failure"
         elif any(value not in {"success", "neutral", "skipped"} for value in conclusions) or any(
