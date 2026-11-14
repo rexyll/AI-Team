@@ -135,7 +135,7 @@ class GitHubSCMProvider:
         output = self._git.push(local_repository, branch=branch, commit_sha=expected_head_sha)
         first_line = output.splitlines()[0] if output else ""
         if first_line != "exit_code=0":
-            raise GitHubAPIError("git push failed: " + output[-1200:])
+            raise GitHubAPIError("git push failed; host output is intentionally redacted")
         return {"status": "pushed", "repository": repository, "branch": branch}
 
     def create_or_update_pull_request(
