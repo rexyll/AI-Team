@@ -12,6 +12,32 @@
 
 This observation is informational and fail-closed: only an open, unmerged PR with successful CI and an approved review is labeled `ready`; pending/unknown/failing evidence is `blocked`; transport/provider exceptions are recorded as `unavailable` with the exception type only. It never creates a branch, pushes, creates/updates a PR or merges. SCM configuration is opt-in, so projects without it retain their existing behavior. Write operations remain explicit host actions requiring one-use approvals.
 
+## Host credential configuration
+
+The CLI creates the GitHub SCM runtime only when all three host environment
+variables are present:
+
+- `AI_TEAM_GITHUB_TOKEN`: a fine-grained GitHub token supplied by the host.
+- `AI_TEAM_GITHUB_REPOSITORY`: the explicit `owner/name` repository.
+- `AI_TEAM_GITHUB_PULL_REQUEST`: a positive pull-request number.
+
+No variables means SCM observation is disabled and existing delivery behavior
+is preserved. A partial repository/PR pair or a missing token fails closed with
+a configuration error. The token is injected directly into
+`GitHubRESTTransport`; it is not a CLI argument, ProjectOrchestrator argument,
+Agent tool, task-context field, or serialized runtime field. Do not place it in
+source control, requirement text, command-line arguments, or project documents.
+Use the host's secret manager/environment injection and grant only the minimum
+repository permissions required for read-only PR/check/review observation.
+Write operations remain unavailable to Agents and still require a separate
+one-use host approval through `SCMService`.
+
+The factory is `runtime/github_scm_config.py:create_github_scm_runtime`.
+It validates repository and PR configuration before constructing a provider.
+Invalid/expired credentials or insufficient permissions surface as unavailable
+SCM evidence; they are never interpreted as a successful check. GitHub error
+details are sanitized to prevent an echoed credential from appearing in errors.
+
 ## Write approval
 
 Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A merge approval is additionally bound to the exact PR head SHA observed during preflight, so branch movement after approval invalidates the approval. The GitHub merge request also sends that expected SHA in the API body, letting GitHub reject a head change between preflight and merge (TOCTOU protection). A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
