@@ -366,6 +366,10 @@ def test_build_agent_context_contains_non_core_metadata():
         "reviewer_feedback": {
             "status": "revision",
         },
+        "workspace_environment": {
+            "status": "passed",
+            "tool_execution_history": [{"command": "python -m venv .venv"}],
+        },
     }
 
     builder = ContextBuilder({})
