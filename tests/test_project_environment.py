@@ -37,7 +37,7 @@ def _service_with_stub_install(*, fail_on: int | None = None, barrier: threading
                 barrier.wait(timeout=10)
         if command.startswith("npm ci"):
             (root / "node_modules").mkdir()
-            (root / ".ai-team-cache" / "npm").mkdir(parents=True, exist_ok=True)
+            (root / "node_modules" / ".cache" / "npm").mkdir(parents=True, exist_ok=True)
         elif ".ai-team-cache" in command:
             (root / ".ai-team-cache" / "pip").mkdir(parents=True, exist_ok=True)
         exit_code = 9 if fail_on == len(calls) else 0
@@ -118,10 +118,10 @@ def test_node_environment_provisioner_keeps_node_modules_and_cache_inside_lease(
     assert result["adapter"] == "node"
     assert len(calls) == 1
     assert calls[0]["command"] == (
-        "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
+        "npm ci --ignore-scripts --no-audit --no-fund --cache node_modules/.cache/npm"
     )
     assert (tmp_path / "node_modules").is_dir()
-    assert (tmp_path / ".ai-team-cache" / "npm").is_dir()
+    assert (tmp_path / "node_modules" / ".cache" / "npm").is_dir()
     assert not (tmp_path / ".venv").exists()
 
 def test_environment_provisioner_skips_projects_without_supported_manifests(tmp_path: Path) -> None:
