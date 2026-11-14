@@ -139,3 +139,53 @@ def test_head_commit_parses_sha(tmp_path, monkeypatch):
 
     monkeypatch.setattr("runtime.host_git.git_tool.git_command", sha_git)
     assert service.head_commit(str(workspace)) == "abc123def4567890abc123def4567890abc12345"
+
+
+def test_host_remote_url_uses_fixed_host_owned_git_argument_vector(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout="https://github.com/acme/widget.git\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    assert service.remote_url(str(workspace)) == "https://github.com/acme/widget.git"
+    assert calls[0][0] == ["git", "remote", "get-url", "origin"]
+    assert calls[0][1]["shell"] is False
+
+
+def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(returncode=0, stdout="pushed\n", stderr="")
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    result = service.push(str(workspace), branch="release/1.2")
+
+    assert result == "exit_code=0\npushed\n"
+    assert calls == [["git", "push", "--porcelain", "origin", "HEAD:refs/heads/release/1.2"]]
+    for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
+        with pytest.raises(ValueError, match="branch name"):
+            service.push(str(workspace), branch=branch)
+
+
+def test_agent_git_parser_still_rejects_host_only_remote_and_push():
+    from tools.git import _parse_git_command
+
+    for command in ("push origin HEAD:refs/heads/main", "remote get-url origin"):
+        with pytest.raises(PermissionError, match="not allowed"):
+            _parse_git_command(command)
