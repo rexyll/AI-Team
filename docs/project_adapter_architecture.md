@@ -31,7 +31,7 @@ Detection signals: `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`
 
 Detection signal: a valid `package.json`.
 
-- Install: `npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm` only when an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) exists. `node_modules` and npm cache remain lease-local. pnpm/yarn lockfiles are detected but not executed by this first adapter.
+- Install: `npm ci --ignore-scripts --no-audit --no-fund --cache node_modules/.cache/npm` only when an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) exists. `node_modules` and npm cache under `node_modules/.cache/npm` remain lease-local. pnpm/yarn lockfiles are detected but not executed by this first adapter.
 - Build: `npm run build` only when the script exists.
 - Test: `npm test --if-present` only when the test script exists.
 - Package: `npm pack --ignore-scripts --json`.
