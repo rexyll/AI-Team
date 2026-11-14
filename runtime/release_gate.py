@@ -2,7 +2,7 @@
 
 Standard flow: no release is started unless the quality evidence allows it.
 The gate consumes only recorded evidence - integration regression status,
-QA verdict and the security audit verdict - and returns the blockers. The
+QA verdict and the security audit verdict and executable acceptance evidence - and returns the blockers. The
 release-manager agent can add a ``RELEASE_NO_GO`` on top, but cannot waive a
 deterministic blocker.
 """
@@ -17,6 +17,7 @@ def evaluate_release_gate(
     integration: dict[str, Any] | None = None,
     qa: dict[str, Any] | None = None,
     security: dict[str, Any] | None = None,
+    acceptance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return ``allowed`` / ``blocked`` with the explicit blocker list."""
     blockers: list[dict[str, str]] = []
@@ -27,6 +28,8 @@ def evaluate_release_gate(
         blockers.append({"code": "qa_failed", "reason": "QA 对抗测试判定为 QA_FAILED"})
     if isinstance(security, dict) and security.get("verdict") == "SEC_FAILED":
         blockers.append({"code": "security_failed", "reason": "安全审计存在高危发现"})
+    if isinstance(acceptance, dict) and acceptance.get("verdict") not in {"passed", "not_applicable"}:
+        blockers.append({"code": "acceptance_failed", "reason": "可执行需求验收证据未通过或未执行"})
 
     return {
         "status": "blocked" if blockers else "allowed",
