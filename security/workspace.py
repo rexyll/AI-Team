@@ -153,6 +153,11 @@ def get_default_workspace_root() -> Path:
     return DEFAULT_SANDBOX.root
 
 
+def get_default_workspace_folded_prefix() -> str | None:
+    """Return the current process-default folded path prefix."""
+    return "/".join(DEFAULT_SANDBOX.folded_prefix) or None
+
+
 def anchor_workspace_root(base: str | Path, mandated_dir: str) -> Path:
     """Return the sandbox root that anchors a mandated output directory.
 
