@@ -45,9 +45,10 @@ def test_durable_lease_store_serializes_acquire_across_processes(tmp_path):
         target=_worker_acquire,
         args=(str(tmp_path), "worker-a", "lease-a", 1.0, ready, result),
     )
+    second_ready = context.Event()
     second = context.Process(
         target=_worker_acquire,
-        args=(str(tmp_path), "worker-b", "lease-b", 1.0, context.Event(), result),
+        args=(str(tmp_path), "worker-b", "lease-b", 1.0, second_ready, result),
     )
 
     first.start()
