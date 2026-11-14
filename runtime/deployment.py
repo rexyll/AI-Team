@@ -32,11 +32,11 @@ DEFAULT_SMOKE_TIMEOUT = 300.0
 
 def _excluded(path: Path) -> bool:
     parts = path.parts
-    return (
-        "__pycache__" in parts
-        or ".pytest_cache" in parts
-        or path.name.endswith(".pyc")
-    )
+    excluded_directories = {
+        "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules",
+        ".ai-team-cache", ".ai-team-workspaces", ".ai-team-dev-workspaces", ".git",
+    }
+    return any(part in excluded_directories for part in parts) or path.name.endswith(".pyc")
 
 
 def find_test_files(deliverable_root: str | Path) -> list[str]:
