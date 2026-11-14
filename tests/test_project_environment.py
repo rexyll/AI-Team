@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 import core.orchestrator as orchestrator_module
 from core.orchestrator import Orchestrator
@@ -218,3 +219,69 @@ def test_orchestrator_fails_task_and_discards_lease_when_environment_install_fai
     assert not (root / "generated.py").exists()
     assert not (root / ".venv").exists()
     assert not list((root.parent / ".ai-team-dev-workspaces").glob("TASK-ENV-006-*"))
+
+def test_parallel_developers_receive_distinct_task_local_environments(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    _write(root / "requirements.txt", "pytest\\n")
+    tasks = [
+        Task(
+            id="TASK-PARALLEL-A",
+            title="parallel developer A",
+            description="write source A",
+            role="developer",
+            status="pending",
+            context={"workspace_root": str(root)},
+        ),
+        Task(
+            id="TASK-PARALLEL-B",
+            title="parallel developer B",
+            description="write source B",
+            role="developer",
+            status="pending",
+            context={"workspace_root": str(root)},
+        ),
+    ]
+    manager = TaskManager(tasks)
+    service, calls = _service_with_stub_install()
+    provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
+    barrier = threading.Barrier(2)
+    observed_roots: dict[str, Path] = {}
+
+    class _Workflow:
+        def execute(self, task_id: str, *, execution_id: str | None = None):
+            lease_root = resolve_workspace_path(".")
+            assert (lease_root / ".venv").is_dir()
+            observed_roots[task_id] = lease_root
+            barrier.wait(timeout=10)
+            write_file(f"{task_id}.py", f"VALUE = '{task_id}'\\n")
+            manager.get_task(task_id).status = "completed"
+
+    monkeypatch.setenv("AI_TEAM_TASK_ENVIRONMENTS", "1")
+    monkeypatch.setattr(
+        orchestrator_module,
+        "ProjectEnvironmentProvisioner",
+        lambda: provisioner,
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "create_task_workflow",
+        lambda **kwargs: _Workflow(),
+    )
+    orchestrator = Orchestrator(manager, _DeveloperRouter(), max_workers=2)
+
+    orchestrator.run()
+
+    assert all(task.status == "completed" for task in tasks)
+    assert len(observed_roots) == 2
+    assert len(set(observed_roots.values())) == 2
+    assert all(path != root.resolve() for path in observed_roots.values())
+    assert len(calls) == 4
+    assert len({call["root"] for call in calls}) == 2
+    assert (root / "TASK-PARALLEL-A.py").is_file()
+    assert (root / "TASK-PARALLEL-B.py").is_file()
+    assert not (root / ".venv").exists()
+    assert not (root / ".ai-team-cache").exists()
+    assert not list((root.parent / ".ai-team-dev-workspaces").glob("TASK-PARALLEL-*"))
