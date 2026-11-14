@@ -87,7 +87,7 @@ def test_approval_is_bound_to_repository_operation_and_target():
     with pytest.raises(SCMApprovalError, match="scope"):
         service.push_branch("acme/other", "/workspace/widget", "release/1.2", approval=approval)
 
-    assert provider.calls == []
+    assert provider.calls == [("local_head", "/workspace/widget")]
 
 
 def test_pull_request_creation_requires_explicit_approval():
