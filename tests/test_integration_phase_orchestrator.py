@@ -9,6 +9,7 @@ test report can carry it.
 
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 
@@ -135,6 +136,16 @@ class _DeveloperStub:
         self._deliverable.mkdir(parents=True, exist_ok=True)
         (self._deliverable / "todo.py").write_text(self._initial, encoding="utf-8")
         (self._deliverable / "test_todo.py").write_text(TODO_TEST, encoding="utf-8")
+        docs = self._deliverable / "docs"
+        docs.mkdir(exist_ok=True)
+        (docs / "acceptance_tests.json").write_text(json.dumps({
+            "schema_version": 1,
+            "tests": [{
+                "test_id": "AT-001",
+                "requirement_id": "REQ-001",
+                "selector": "test_todo::test_ok",
+            }],
+        }), encoding="utf-8")
         return {
             "status": "completed",
             "agent": "developer",
