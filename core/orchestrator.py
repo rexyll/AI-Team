@@ -181,9 +181,6 @@ class Orchestrator:
                             task.context["workspace_merge"] = manager.merge(lease).to_dict()
                         else:
                             task.context["workspace_discarded"] = True
-                    except BaseException:
-                        manager.discard(lease)
-                        raise
                     finally:
                         manager.discard(lease)
                 else:
