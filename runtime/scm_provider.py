@@ -233,6 +233,13 @@ class SCMService:
             raise ValueError("pull_request_number must be a positive integer")
         if merge_method not in {"merge", "squash", "rebase"}:
             raise ValueError("merge_method must be merge, squash, or rebase")
+        if (
+            not isinstance(approval, SCMApproval)
+            or approval.operation != "merge_pull_request"
+            or approval.repository != repository
+            or not approval.target.startswith(f"{pull_request_number}:")
+        ):
+            raise SCMApprovalError("explicit host approval is required for this repository and pull request")
         head_sha = self._provider_pr_head(repository, pull_request_number)
         ci = self.get_ci_status(repository, head_sha)
         review = self.get_review_status(repository, pull_request_number)
