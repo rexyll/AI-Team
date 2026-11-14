@@ -27,6 +27,8 @@ def _service_with_stub_install(*, fail_on: int | None = None):
         calls.append({"command": command, "root": root, "timeout": timeout})
         if command == "python -m venv --system-site-packages .venv":
             (root / ".venv").mkdir()
+        if ".ai-team-cache" in command:
+            (root / ".ai-team-cache" / "pip").mkdir(parents=True, exist_ok=True)
         exit_code = 9 if fail_on == len(calls) else 0
         return f"exit_code={exit_code}\nfixture install"
 
