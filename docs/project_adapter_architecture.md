@@ -50,7 +50,7 @@ Detection signal: a valid `package.json`.
 
 ## Current maturity and remaining work
 
-The adapter contracts, Python/npm planning rules, timeout schema and invocation-service executor are implemented. GitHub Actions contract tests verify detection, ambiguity, supported/skipped/unsupported decisions, bounded timeout propagation, invocation through the tool service, and fail-closed result parsing.
+The adapter contracts, Python/npm planning rules, timeout schema and invocation-service executor are implemented. GitHub Actions tests verify detection, ambiguity, supported/skipped/unsupported decisions, bounded timeout propagation, invocation through the tool service, fail-closed result parsing, and actual Python plus Node/npm fixture execution across install/build/test/package/smoke. Latest evidence: [run 43595491731](https://github.com/rexyll/AI-Team/actions/runs/43595491731), 2,267 passed / 9 skipped and 233 security tests passed / 9 skipped.
 
 This is not yet a claim of end-to-end Node.js delivery. Remaining T21.3 work:
 
