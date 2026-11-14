@@ -65,7 +65,25 @@ def _validate_command(command: str) -> None:
         )
 
     tokens = normalized.lower().split()
-    if any(token.strip('"') in BLOCKED_ARGUMENTS for token in tokens):
+    pip_install = (
+        executable in {"pip", "pip.exe"}
+        and len(tokens) >= 2
+        and tokens[1] == "install"
+    ) or (
+        executable in {"python", "python.exe"}
+        and len(tokens) >= 4
+        and tokens[1:4] == ["-m", "pip", "install"]
+    )
+    blocked_arguments = {
+        token.strip('"')
+        for token in tokens
+        if token.strip('"') in BLOCKED_ARGUMENTS
+    }
+    # "-e" is a valid pip editable-install option, not Python's eval flag.
+    # Permit it only when the parsed command is explicitly "pip install".
+    if pip_install:
+        blocked_arguments.discard("-e")
+    if blocked_arguments:
         raise TerminalPolicyError(
             "Code-evaluation arguments (e.g. python -c) are not allowed. "
             "Use write_file to create a script file, then run it with python <script>."
