@@ -9,6 +9,7 @@ from runtime.tool_errors import ToolExecutionError
 from security.runtime_capability import RuntimeCapabilityPolicy
 from security.tool_permission import ToolPermissionPolicy
 from tools.registry import ToolRegistry
+from security.workspace import resolve_workspace_path, workspace_scope
 
 
 def _registry(calls: list[dict[str, Any]]) -> ToolRegistry:
@@ -206,6 +207,41 @@ def test_invoke_many_rejects_duplicate_execution_ids_before_execution() -> None:
         ])
     assert calls == []
 
+
+
+def test_concurrent_tool_calls_inherit_task_workspace_context(tmp_path) -> None:
+    registry = ToolRegistry()
+
+    def resolve_root() -> str:
+        return str(resolve_workspace_path("."))
+
+    registry.register(
+        "resolve_root",
+        resolve_root,
+        {
+            "type": "function",
+            "function": {
+                "name": "resolve_root",
+                "description": "return the active task workspace root",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+    )
+    service = ToolInvocationService(registry=registry)
+    workspace = tmp_path / "task-workspace"
+    workspace.mkdir()
+
+    with workspace_scope(workspace):
+        results = service.invoke_many_concurrent(
+            role="developer",
+            task_id="TASK-CONTEXT",
+            invocations=[
+                {"execution_id": "CTX-A", "tool_name": "resolve_root", "arguments": {}},
+                {"execution_id": "CTX-B", "tool_name": "resolve_root", "arguments": {}},
+            ],
+        )
+
+    assert [result.output for result in results] == [str(workspace.resolve())] * 2
 
 def test_single_batch_and_concurrent_paths_are_contract_equivalent() -> None:
     invocations = [
