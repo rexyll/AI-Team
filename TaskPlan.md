@@ -166,7 +166,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - CI 安装运行依赖与开发依赖；将 Python 矩阵调整为项目明确支持的 3.14，避免在不支持的 3.13 上制造误报。
   - 保持全量回归与安全回归两个阶段；不得因安装失败而跳过安全门禁。
   - 验收：GitHub Actions 全量回归与安全回归均启动并通过；同时验证本地标准安装指令。
-- [ ] **T21.2 Developer Workspace 隔离**（第一阶段核心实现完成，整体仍未验收：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；同路径冲突 fail-closed；符号链接与路径边界检查；异常退出清理。尚余真实多 Developer 项目端到端验证，以及依赖环境适配策略）
+- [ ] **T21.2 Developer Workspace 隔离**（核心实现与依赖环境 v1 已完成，整体仍待真实多 Developer E2E：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；多文件事务回滚；冲突/路径/符号链接 fail-closed；异常退出清理；可选任务级依赖安装。`AI_TEAM_TASK_ENVIRONMENTS=1` 在 lease 内创建 Python `.venv` 或 Node `node_modules`，pip/npm 缓存同样落在 lease 的 `.ai-team-cache`；这些目录不复制、不合并、不进入交付清单/冒烟 staging，安装失败阻断 Developer workflow。共享缓存复用仍未实现）
   - 审查历史 `feature/reviewer-reliability-fallback` 中 workspace manager 的实现，只择取可证明安全的设计，不合并整支分支。
   - 实现说明：[`docs/developer_workspace_isolation.md`](docs/developer_workspace_isolation.md)，记录租约生命周期、跨进程锁、崩溃回收、依赖目录策略及当前安全边界。
   - 为并行 Developer 提供每任务/每执行者隔离工作区、租约/写者围栏、路径约束与结果回收机制。
@@ -178,11 +178,11 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - `Orchestrator` 在 Developer 成功时合并，失败/异常时通过 `finally` 丢弃；ContextVar 使并发工具调用保留任务级沙箱。
 - 新进程只回收无元数据的未完成目录或 owner PID 已确认退出的租约；活动租约保留，损坏元数据不自动删除。真实子进程 `os._exit` 故障测试通过。
 - 依赖目录（`.venv`、`node_modules`）不共享、不合并；项目适配器需创建任务级环境或提供验证过的只读缓存。
-- 已补充多文件 merge journal：先 staging/backup，再写 prepared/applying/committed 状态；进程在提交标记前崩溃时由新 manager 回滚整批文件，提交标记后只清理事务目录；损坏 journal/缺失 backup fail-closed。剩余：真实多 Developer 项目端到端和任务级依赖安装闭环。
+- 已补充多文件 merge journal：先 staging/backup，再写 prepared/applying/committed 状态；进程在提交标记前崩溃时由新 manager 回滚整批文件，提交标记后只清理事务目录；损坏 journal/缺失 backup fail-closed。剩余：真实多 Developer 项目端到端验证与共享依赖缓存复用策略。
 
 ### P1：真实多技术栈构建与可执行验收
 
-- [x] **T21.3 Project Adapter 架构（v1 完成，2026-11-14）**：Python 与 Node/npm 适配器注册表及 install/build/test/package/smoke/deploy 动作计划；`supported/skipped/unsupported` 状态；所有命令经 ToolInvocationService 的 `run_command`，1–3600 秒超时；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史；Python/Node fixture 真实命令验证；Windows 生产 PowerShell terminal 验证成功/失败退出码。边界：npm only（pnpm/yarn 明确 unsupported）、不共享依赖缓存（留待 T21.2 依赖环境策略）、deploy unsupported；适配器阶段默认关闭，避免未经显式授权的依赖网络访问。
+- [x] **T21.3 Project Adapter 架构（v1 完成，2026-11-14）**：Python 与 Node/npm 适配器注册表及 install/build/test/package/smoke/deploy 动作计划；`supported/skipped/unsupported` 状态；所有命令经 ToolInvocationService 的 `run_command`，1–3600 秒超时；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史；Python/Node fixture 真实命令验证；Windows 生产 PowerShell terminal 验证 task-local venv、build/test/smoke/package 与非零退出码 fail-closed。边界：npm only（pnpm/yarn 明确 unsupported）、缓存仅 lease-local（无跨任务复用）、deploy unsupported；适配器阶段默认关闭，避免未经显式授权的依赖网络访问。
   - 新增统一适配器协议/注册表，至少定义 detect、install、build、test、package、smoke、deploy 能力及明确的 unsupported 状态。
   - 首批实现 Python 与 Node.js；项目类型与语言/框架检测分离，不能仅凭 web/API 分类就假定技术栈。
   - 所有命令经过现有权限策略/沙箱，具备 allowlist、超时、工作目录限制、输出脱敏；不允许 adapter 绕过 ToolInvocationService。
@@ -233,5 +233,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
-| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段核心） | 核心实现与故障验证通过；全量回归 2255 passed / 9 skipped；安全回归 233 passed / 9 skipped。已实现跨进程锁、持久化租约、死进程回收、多文件事务回滚、损坏日志 fail-closed、冲突检测、路径/符号链接防护；整体 T21.2 仍待真实多 Developer E2E 与任务级依赖安装闭环 | [GitHub Actions run 43592173178](https://github.com/rexyll/AI-Team/actions/runs/43592173178)；提交 `c6f0063`、`735de79`、`f1f19a9`、`010ee89`、`c87820d`、`fbfa30e`、`419ddb1`、`469c944`、`e2d930f` 等 |
-| 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2273 passed / 10 skipped；安全回归 233 passed / 9 skipped；Windows 生产 terminal smoke 1 passed（Python build/test/smoke + 非零退出码 fail-closed）；Python/Node npm fixture 已经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。明确边界：npm only；pnpm/yarn 与 deploy unsupported；依赖缓存策略留待 T21.2 | [GitHub Actions run 43598452950](https://github.com/rexyll/AI-Team/actions/runs/43598452950)；新增 `runtime/project_adapters.py`、`tests/test_project_adapters.py`、`tests/test_project_adapter_orchestration.py`、`tests/test_project_adapter_windows_e2e.py`、`docs/project_adapter_architecture.md` |
+| 2026-11-14 | T21.2 Developer Workspace 隔离（核心实现 + 依赖环境 v1） | 任务隔离/跨进程租约/事务回滚/崩溃恢复已通过；新增 lease 内依赖环境 provisioner，`AI_TEAM_TASK_ENVIRONMENTS=1` 启用；Python venv、Node node_modules 与 pip/npm 缓存均为 lease-local，安装失败 fail-closed；依赖目录不复制、不合并、不进入交付/冒烟 staging。全量回归 2280 passed / 10 skipped；安全回归 233 passed / 9 skipped；Windows 生产终端 E2E 1 passed。仍待真实多 Developer 项目 E2E 与共享只读缓存设计 | [GitHub Actions run 43599217740](https://github.com/rexyll/AI-Team/actions/runs/43599217740)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
+| 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2280 passed / 10 skipped；安全回归 233 passed / 9 skipped；Windows 生产 terminal 1 passed（task-local venv、build/test/smoke/package + 非零退出码 fail-closed）；Python/Node npm fixture 经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。边界：npm only；pnpm/yarn 与 deploy unsupported；缓存仅 lease-local | [GitHub Actions run 43599217740](https://github.com/rexyll/AI-Team/actions/runs/43599217740)；新增适配器/环境 provisioner/编排与 Windows E2E 测试 |
