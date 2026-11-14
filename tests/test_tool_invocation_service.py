@@ -223,7 +223,7 @@ def test_concurrent_tool_calls_inherit_task_workspace_context(tmp_path) -> None:
             "function": {
                 "name": "read_file",
                 "description": "return the active task workspace root",
-                "parameters": {"type": "object", "properties": {}, "required": []},
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
             },
         },
     )
