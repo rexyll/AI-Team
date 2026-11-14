@@ -2,7 +2,7 @@ import pytest
 
 from security.workspace import resolve_workspace_path, PROJECT_ROOT
 from tools.git import git_command
-from tools.terminal import run_command
+from tools.terminal import _validate_command, run_command
 
 
 def test_workspace_rejects_path_escape():
@@ -33,3 +33,14 @@ def test_terminal_rejects_shell_chaining():
 def test_terminal_rejects_unapproved_executable():
     with pytest.raises(PermissionError):
         run_command("whoami", ".")
+
+
+def test_terminal_allows_pip_editable_install_but_keeps_eval_flags_blocked():
+    _validate_command("python -m pip install -e .")
+    _validate_command(r".\\.venv\\Scripts\\python.exe -m pip install -e .")
+    _validate_command("pip install -e .")
+
+    with pytest.raises(PermissionError):
+        _validate_command("python -e .")
+    with pytest.raises(PermissionError):
+        _validate_command("python -c print(1)")
