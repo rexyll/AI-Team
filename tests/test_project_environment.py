@@ -426,7 +426,7 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
     assert developer_a.tool_execution_history.get("REAL-DEV-A-WRITE").tool_name == "write_file"
     assert developer_b.tool_execution_history.get("REAL-DEV-B-WRITE").tool_name == "write_file"
     assert all(
-        record.agent_role == "developer"
+        record["agent_role"] == "developer"
         for developer in (developer_a, developer_b)
         for record in developer.tool_execution_history.to_dict()
     )
