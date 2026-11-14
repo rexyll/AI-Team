@@ -27,7 +27,7 @@ from runtime.process_lock import exclusive_process_lock
 SKIP_DIRECTORIES = frozenset({
     ".git", ".venv", "venv", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".idea", ".vscode",
-    "node_modules", ".ai-team-workspaces", ".ai-team-dev-workspaces",
+    "node_modules", ".ai-team-cache", ".ai-team-workspaces", ".ai-team-dev-workspaces",
 })
 _TASK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _METADATA_SCHEMA = 1
