@@ -240,9 +240,11 @@ def test_single_batch_and_concurrent_paths_are_contract_equivalent() -> None:
     assert [result.output for result in single_results] == ["content:a.py", "content:b.py", "content:c.py"]
     assert [result.output for result in batch_results] == [result.output for result in single_results]
     assert [result.output for result in concurrent_results] == [result.output for result in single_results]
-    assert single_calls == batch_calls == concurrent_calls == [
+    assert single_calls == batch_calls == [
         {"path": "a.py"}, {"path": "b.py"}, {"path": "c.py"}
     ]
+    # Concurrent side effects have no ordering guarantee; compare the multiset.
+    assert sorted(concurrent_calls, key=lambda item: item["path"]) == single_calls
     assert _record_shape(single) == _record_shape(batch) == _record_shape(concurrent)
 
 
