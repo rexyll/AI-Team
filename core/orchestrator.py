@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -21,6 +22,7 @@ from runtime.agent_router import AgentRouter
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.developer_workspace import DeveloperWorkspaceManager
+from runtime.project_environment import ProjectEnvironmentProvisioner
 from security.workspace import workspace_scope
 
 
@@ -176,6 +178,19 @@ class Orchestrator:
                             lease.root,
                             folded_prefix=task.context.get("workspace_folded_prefix"),
                         ):
+                            if os.environ.get("AI_TEAM_TASK_ENVIRONMENTS", "0") == "1":
+                                environment = ProjectEnvironmentProvisioner().prepare(
+                                    lease.root,
+                                    task_id=task.id,
+                                    execution_id=f"{active_execution_id}-environment",
+                                )
+                                task.context["workspace_environment"] = environment
+                                if environment.get("status") in {"failed", "unsupported"}:
+                                    raise RuntimeError(
+                                        "task-local project environment provisioning "
+                                        f"{environment.get('status')}: "
+                                        f"{environment.get('reason') or environment.get('adapter')}"
+                                    )
                             workflow.execute(task.id, execution_id=active_execution_id)
                         if task.status == "completed":
                             task.context["workspace_merge"] = manager.merge(lease).to_dict()
