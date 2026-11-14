@@ -387,6 +387,17 @@ class _DocWriterStub:
                 f"# {title}\n\nREQ-001 已实现；集成回归证据见下。\n", encoding="utf-8"
             )
             written.append({"document": title, "path": str(docs_root / filename), "filename": filename})
+        (docs_root / "acceptance_tests.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "tests": [{
+                    "test_id": "AT-001",
+                    "requirement_id": "REQ-001",
+                    "selector": "test_acceptance::test_requirement",
+                }],
+            }),
+            encoding="utf-8",
+        )
         return AgentResult(
             status="completed",
             agent=self.role,
@@ -430,6 +441,10 @@ def test_orchestrator_loads_knowledge_before_analysis_and_extracts_after_deliver
     task_manager.mark_running("TASK-001")
     task_manager.record_result("TASK-001", {"message": "实现完成", "data": {"tests": [{"command": "python -m pytest"}]}})
     task_manager.mark_completed("TASK-001")
+    deliverable.mkdir(parents=True, exist_ok=True)
+    (deliverable / "test_acceptance.py").write_text(
+        "def test_requirement():\n    assert True\n", encoding="utf-8"
+    )
 
     delivery = orchestrator._run_delivery_phase(task_manager, project="todo")
 
