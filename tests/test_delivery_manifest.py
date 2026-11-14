@@ -31,6 +31,8 @@ def test_collect_excludes_runtime_artifacts(tmp_path: Path):
     _write(tmp_path / "__pycache__" / "app.cpython.pyc", "junk")
     _write(tmp_path / ".pytest_cache" / "v" / "cache" / "lastfailed", "{}")
     _write(tmp_path / ".venv" / "pyvenv.cfg", "config")
+    _write(tmp_path / "node_modules" / "pkg" / "index.js", "runtime dependency")
+    _write(tmp_path / ".ai-team-cache" / "pip" / "wheel.whl", "package cache")
 
     entries = collect_deliverables(tmp_path)
 
