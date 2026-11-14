@@ -104,14 +104,14 @@ class PythonProjectAdapter:
         status: PlanStatus = "supported"
         if action == "install":
             if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m pip install --disable-pip-version-check -e ."
+                command = "python -m pip install --disable-pip-version-check --no-build-isolation -e ."
             elif (root / "requirements.txt").is_file():
                 command = "python -m pip install --disable-pip-version-check -r requirements.txt"
             else:
                 status, reason = "skipped", "no Python dependency manifest found"
         elif action == "build":
             if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m build"
+                command = "python -m build --no-isolation"
             else:
                 command = "python -m compileall -q ."
                 reason = "source compilation check; no distributable build manifest found"
