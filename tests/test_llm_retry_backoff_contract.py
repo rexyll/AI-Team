@@ -67,7 +67,7 @@ class _FakeClient:
 
 def _llm_with(script: list) -> tuple[ProviderLLM, _FakeCompletions]:
     completions = _FakeCompletions(script)
-    llm = ProviderLLM(client_instance=_FakeClient(completions))
+    llm = ProviderLLM(model="test-model", client_instance=_FakeClient(completions))
     return llm, completions
 
 
