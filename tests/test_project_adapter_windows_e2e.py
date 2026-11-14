@@ -13,12 +13,12 @@ from security.workspace import workspace_scope
 @pytest.mark.skipif(os.name != "nt", reason="production terminal smoke runs on Windows CI")
 def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        "[build-system]\\nrequires = ['setuptools>=75']\\nbuild-backend = 'setuptools.build_meta'\\n"
-        "[project]\\nname = 'windows-adapter-fixture'\\nversion = '0.1.0'\\n",
+        "[build-system]\nrequires = ['setuptools>=75']\nbuild-backend = 'setuptools.build_meta'\n"
+        "[project]\nname = 'windows-adapter-fixture'\nversion = '0.1.0'\n",
         encoding="utf-8",
     )
     (tmp_path / "requirements.txt").write_text("", encoding="utf-8")
-    (tmp_path / "sample.py").write_text("VALUE = 42\\n", encoding="utf-8")
+    (tmp_path / "sample.py").write_text("VALUE = 42\n", encoding="utf-8")
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_sample.py").write_text(
@@ -45,7 +45,7 @@ def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> N
         # native process exit code through PowerShell and the tool boundary.
         (tmp_path / "broken.py").write_text("def broken(:", encoding="utf-8")
         (tests / "test_broken.py").write_text(
-            "import broken\\n\\ndef test_broken():\\n    assert broken.VALUE == 1\\n",
+            "import broken\n\ndef test_broken():\n    assert broken.VALUE == 1\n",
             encoding="utf-8",
         )
         failed_test = executor.execute(
