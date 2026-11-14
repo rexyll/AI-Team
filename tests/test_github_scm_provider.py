@@ -57,7 +57,8 @@ def test_push_branch_requires_matching_origin_and_uses_non_force_host_git():
     }
     assert git.calls == [
         ("remote_url", "/workspace/widget"),
-        ("head_commit", "/workspace/widget"),\n        ("push", "/workspace/widget", "feature/scm", "e" * 40),
+        ("head_commit", "/workspace/widget"),
+        ("push", "/workspace/widget", "feature/scm", "e" * 40),
     ]
 
 
