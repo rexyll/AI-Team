@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
+import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,25 @@ from runtime.developer_workspace import (
 )
 from security.workspace import resolve_workspace_path, workspace_scope
 
+
+
+
+def _cross_process_merge_worker(root: str, task_id: str, value: str, ready, start, results) -> None:
+    manager = DeveloperWorkspaceManager(root)
+    lease = manager.issue(task_id)
+    (lease.root / "shared.txt").write_text(value, encoding="utf-8")
+    ready.set()
+    if not start.wait(10):
+        results.put("timeout")
+        manager.discard(lease)
+        return
+    try:
+        manager.merge(lease)
+        results.put("merged")
+    except WorkspaceMergeConflict:
+        results.put("conflict")
+    finally:
+        manager.discard(lease)
 
 
 class _DeveloperRouter:
@@ -87,6 +108,107 @@ def test_orchestrator_discards_failed_developer_workspace(tmp_path: Path, monkey
 
     assert not (root / "partial.py").exists()
     assert task.context["workspace_discarded"] is True
+
+
+
+def test_workspace_managers_serialize_cross_process_merges(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    (root / "shared.txt").write_text("base", encoding="utf-8")
+    context = multiprocessing.get_context("spawn")
+    ready_a, ready_b = context.Event(), context.Event()
+    start = context.Event()
+    results = context.Queue()
+    workers = [
+        context.Process(
+            target=_cross_process_merge_worker,
+            args=(str(root), "TASK-PROC-A", "A", ready_a, start, results),
+        ),
+        context.Process(
+            target=_cross_process_merge_worker,
+            args=(str(root), "TASK-PROC-B", "B", ready_b, start, results),
+        ),
+    ]
+    for worker in workers:
+        worker.start()
+    try:
+        assert ready_a.wait(15)
+        assert ready_b.wait(15)
+        start.set()
+        outcomes = sorted([results.get(timeout=15), results.get(timeout=15)])
+    finally:
+        start.set()
+        for worker in workers:
+            worker.join(timeout=15)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join()
+    assert outcomes == ["conflict", "merged"]
+    assert (root / "shared.txt").read_text(encoding="utf-8") in {"A", "B"}
+
+
+def test_workspace_manager_recovers_dead_process_leases(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    manager = DeveloperWorkspaceManager(root)
+    lease = manager.issue("TASK-STALE")
+    metadata_path = manager._metadata_path(lease.root)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["owner_pid"] = 2**30
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    recovered = DeveloperWorkspaceManager(root)
+
+    assert lease.root.name in recovered.recover_stale_leases() or not lease.root.exists()
+    assert not lease.root.exists()
+    assert not metadata_path.exists()
+
+
+def test_workspace_manager_preserves_live_process_leases(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    manager = DeveloperWorkspaceManager(root)
+    lease = manager.issue("TASK-LIVE")
+
+    DeveloperWorkspaceManager(root)
+
+    assert lease.root.is_dir()
+    manager.discard(lease)
+
+
+def test_workspace_manager_rejects_symlink_in_canonical_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "important.txt").write_text("protected", encoding="utf-8")
+    try:
+        (root / "linked").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this platform")
+
+    manager = DeveloperWorkspaceManager(root)
+
+    with pytest.raises(ValueError, match="symbolic links in the canonical workspace"):
+        manager.issue("TASK-SYMLINK")
+
+
+def test_workspace_lease_excludes_mutable_dependency_directories(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "bin" / "python").write_text("shared interpreter", encoding="utf-8")
+    (root / "node_modules" / "pkg").mkdir(parents=True)
+    (root / "node_modules" / "pkg" / "index.js").write_text("shared package", encoding="utf-8")
+    (root / "src").mkdir()
+    (root / "src" / "main.py").write_text("VALUE = 1", encoding="utf-8")
+    manager = DeveloperWorkspaceManager(root)
+
+    lease = manager.issue("TASK-DEPS")
+
+    assert (lease.root / "src" / "main.py").is_file()
+    assert not (lease.root / ".venv").exists()
+    assert not (lease.root / "node_modules").exists()
+    manager.discard(lease)
 
 
 def test_workspace_lease_merges_changed_added_and_deleted_files(tmp_path: Path) -> None:
