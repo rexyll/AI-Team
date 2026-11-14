@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from runtime.deployment import (
     generate_dockerfile_template,
     generate_installer_scripts,
     run_smoke_verification,
+    stage_deliverable_copy,
 )
 
 
@@ -41,6 +43,24 @@ def test_dockerfile_template_documents_placeholder():
 
     assert "python:3.12-slim" in dockerfile
     assert "按部署指引修改" in dockerfile
+
+
+def test_staging_copy_excludes_virtualenv_node_modules_and_task_caches(tmp_path: Path):
+    _write(tmp_path / "app.py", "VALUE = 1")
+    _write(tmp_path / ".venv" / "Lib" / "site-packages" / "venv_module.py", "VENV = True")
+    _write(tmp_path / "node_modules" / "pkg" / "index.py", "NODE = True")
+    _write(tmp_path / ".ai-team-cache" / "pip" / "cache_module.py", "CACHE = True")
+    _write(tmp_path / ".ai-team-dev-workspaces" / "lease" / "private.py", "PRIVATE = True")
+
+    staging = stage_deliverable_copy(tmp_path)
+    try:
+        assert (staging / "app.py").is_file()
+        assert not (staging / ".venv").exists()
+        assert not (staging / "node_modules").exists()
+        assert not (staging / ".ai-team-cache").exists()
+        assert not (staging / ".ai-team-dev-workspaces").exists()
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def test_smoke_verification_runs_tests_in_fresh_copy(tmp_path: Path):
