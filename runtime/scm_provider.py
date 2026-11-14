@@ -125,7 +125,9 @@ class SCMApprovalAuthority:
 class SCMProvider(Protocol):
     """Provider-neutral SCM operations. Implementations own credentials."""
 
-    def get_local_head_sha(self, local_repository: str) -> str: ...\n\n    def push_branch(\n        self, repository: str, local_repository: str, branch: str, *, expected_head_sha: str\n    ) -> dict[str, Any]: ...
+    def get_local_head_sha(self, local_repository: str) -> str: ...
+
+    def push_branch(\n        self, repository: str, local_repository: str, branch: str, *, expected_head_sha: str\n    ) -> dict[str, Any]: ...
 
     def create_or_update_pull_request(
         self, repository: str, *, head: str, base: str, title: str, body: str
