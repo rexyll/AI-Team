@@ -315,13 +315,20 @@ class DeveloperWorkspaceManager:
                     or journal.get("transaction_root") != transaction_root.name
                 ):
                     raise ValueError("workspace transaction journal identity mismatch")
-                if journal.get("status") != "committed":
+                status = journal.get("status")
+                if status not in {"prepared", "applying", "committed"}:
+                    raise ValueError("workspace transaction journal has an unknown status")
+                if status != "committed":
                     self._rollback_transaction(transaction_root, journal)
                 shutil.rmtree(transaction_root, ignore_errors=True)
                 recovered.append(transaction_root.name)
-            except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
-                # Never discard an incomplete or corrupt recovery record.
-                continue
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                # A partially applied transaction makes canonical state
+                # ambiguous. Refuse all further workspace operations until
+                # an operator repairs the journal/backups.
+                raise RuntimeError(
+                    f"cannot safely recover developer workspace transaction {transaction_root.name}"
+                ) from exc
         return recovered
 
     def merge(self, lease: WorkspaceLease) -> MergeReport:
