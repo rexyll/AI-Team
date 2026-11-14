@@ -41,7 +41,7 @@ The manager does not adopt another process's lease for merging. A merge/discard 
 - File replacement uses a temporary file in the destination directory followed by `os.replace`.
 - A same-path divergent change fails closed. Disjoint file changes can merge independently.
 
-The lock coordinates AI-Team managers. It does not prevent an unrelated process or user from changing the canonical tree outside this lock. The current merge is atomic per file, not transactional across the entire set of files; an OS/process failure during a multi-file merge can leave a partial set of already-replaced files. A durable merge journal/rollback protocol is a remaining hardening item.
+The lock coordinates AI-Team managers. It does not prevent an unrelated process or user from changing the canonical tree outside this lock. Multi-file merge uses a durable transaction directory under the manager-owned lease parent. It stages new content and backups before writing an atomic journal, records `prepared`/`applying`/`committed` state, then applies file replacements. If the process dies before the committed marker, the next manager rolls the entire operation back from backups. If the committed marker is durable, recovery only removes transaction residue. Recovery is idempotent and fails closed on a corrupt/unknown journal or missing backup rather than permitting further workspace operations. This provides crash recovery for manager-mediated operations; it does not protect against unrelated processes mutating the canonical tree outside the manager lock.
 
 ## Dependency directory policy
 
@@ -60,6 +60,8 @@ The contract suite covers:
 - successful/failed/exceptional Developer workflows;
 - changed, added and deleted files;
 - same-path conflict and disjoint parallel merges;
+- injected process termination after the first file of a multi-file merge, followed by full rollback;
+- corrupt transaction journal fail-closed behavior;
 - independent manager processes attempting competing merges;
 - simulated stale PID recovery and preservation of live leases;
 - real owner-process termination and subsequent recovery;
@@ -67,4 +69,4 @@ The contract suite covers:
 - dependency-directory exclusion and non-merging;
 - context propagation and folded output-path compatibility.
 
-The latest successful regression evidence is recorded in `TaskPlan.md`. The actual-process-termination test passed in GitHub Actions run [43591001425](https://github.com/rexyll/AI-Team/actions/runs/43591001425). The overall T21.2 milestone remains open until multi-file merge recovery, real multi-Developer project E2E and task-local dependency provisioning are validated.
+The latest successful regression evidence is recorded in `TaskPlan.md`. Multi-file crash rollback and corrupt-journal fail-closed tests passed in GitHub Actions run [43592173178](https://github.com/rexyll/AI-Team/actions/runs/43592173178). The overall T21.2 milestone remains open until real multi-Developer project E2E and task-local dependency provisioning are validated.
