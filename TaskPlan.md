@@ -168,6 +168,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 验收：GitHub Actions 全量回归与安全回归均启动并通过；同时验证本地标准安装指令。
 - [ ] **T21.2 Developer Workspace 隔离**（第一阶段核心实现完成，整体仍未验收：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；同路径冲突 fail-closed；符号链接与路径边界检查；异常退出清理。尚余多文件合并事务日志/回滚、真实多 Developer 项目端到端验证，以及依赖环境适配策略）
   - 审查历史 `feature/reviewer-reliability-fallback` 中 workspace manager 的实现，只择取可证明安全的设计，不合并整支分支。
+  - 实现说明：[`docs/developer_workspace_isolation.md`](docs/developer_workspace_isolation.md)，记录租约生命周期、跨进程锁、崩溃回收、依赖目录策略及当前安全边界。
   - 为并行 Developer 提供每任务/每执行者隔离工作区、租约/写者围栏、路径约束与结果回收机制。
   - 失败、超时、取消、进程崩溃时必须释放租约或可恢复；禁止两个执行者静默覆盖同一工作区。
   - 验收：并行写入互不污染、租约冲突 fail-closed、异常退出恢复、路径逃逸拒绝；全量回归通过。
@@ -231,4 +232,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
-| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段核心） | 核心实现与故障验证通过；全量回归 2253 passed / 9 skipped；安全回归 233 passed / 9 skipped。已实现跨进程锁、持久化租约、死进程回收、异常清理、冲突检测、路径/符号链接防护；整体 T21.2 仍待多文件事务恢复与真实多 Developer E2E | [GitHub Actions run 43591001425](https://github.com/rexyll/AI-Team/actions/runs/43591001425)；提交 `c6f0063`、`735de79`、`f1f19a9`、`010ee89`、`c87820d`、`fbfa30e`、`419ddb1`、`469c944` 等 |
+| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段核心） | 核心实现与故障验证通过；全量回归 2253 passed / 9 skipped；安全回归 233 passed / 9 skipped。已实现跨进程锁、持久化租约、死进程回收、异常清理、冲突检测、路径/符号链接防护；整体 T21.2 仍待多文件事务恢复与真实多 Developer E2E | [GitHub Actions run 43591001425](https://github.com/rexyll/AI-Team/actions/runs/43591001425)；提交 `c6f0063`、`735de79`、`f1f19a9`、`010ee89`、`c87820d`、`fbfa30e`、`419ddb1`、`469c944`、`e2d930f` 等 |
