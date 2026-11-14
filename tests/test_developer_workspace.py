@@ -95,6 +95,16 @@ def test_workspace_lease_rejects_symlinks_created_by_developer(tmp_path: Path) -
     manager.discard(lease)
 
 
+
+def test_workspace_scope_preserves_folded_deliverable_prefix(tmp_path: Path) -> None:
+    root = tmp_path / "isolated-deliverable"
+    root.mkdir()
+
+    with workspace_scope(root, folded_prefix="workspace/e2e_artifact"):
+        resolved = resolve_workspace_path("workspace/e2e_artifact/src/main.py")
+
+    assert resolved == (root / "src" / "main.py").resolve()
+
 def test_workspace_scope_is_context_local_across_threads(tmp_path: Path) -> None:
     roots = [tmp_path / "task-a", tmp_path / "task-b"]
     for root in roots:
