@@ -24,8 +24,8 @@ class _FakeInvocationService:
         # The executor must run while the deliverable is the active sandbox.
         assert resolve_workspace_path(".").is_dir()
         if self.fail_on is not None and len(self.calls) == self.fail_on:
-            return ToolResult.ok("exit_code=17\\nfixture command failed")
-        return ToolResult.ok("exit_code=0\\nfixture command passed")
+            return ToolResult.ok("exit_code=17\nfixture command failed")
+        return ToolResult.ok("exit_code=0\nfixture command passed")
 
 
 def _write(path: Path, content: str) -> None:
@@ -48,10 +48,10 @@ def test_project_adapter_phase_executes_through_tool_service_in_workspace_scope(
 ) -> None:
     _write(
         tmp_path / "pyproject.toml",
-        "[build-system]\\nrequires = ['setuptools>=75']\\nbuild-backend = 'setuptools.build_meta'\\n"
-        "[project]\\nname = 'adapter-orchestrator-fixture'\\nversion = '0.1.0'\\n",
+        "[build-system]\nrequires = ['setuptools>=75']\nbuild-backend = 'setuptools.build_meta'\n"
+        "[project]\nname = 'adapter-orchestrator-fixture'\nversion = '0.1.0'\n",
     )
-    _write(tmp_path / "tests" / "test_fixture.py", "def test_ok(): assert True\\n")
+    _write(tmp_path / "tests" / "test_fixture.py", "def test_ok(): assert True\n")
     service = _FakeInvocationService()
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTERS", "1")
     monkeypatch.setattr(project_module, "ToolInvocationService", lambda: service)
@@ -86,7 +86,7 @@ def test_project_adapter_phase_stops_on_first_failed_command(monkeypatch, tmp_pa
 
 
 def test_project_adapter_phase_rejects_ambiguous_toolchains(monkeypatch, tmp_path: Path) -> None:
-    _write(tmp_path / "pyproject.toml", "[project]\\nname='fixture'\\nversion='0.1.0'\\n")
+    _write(tmp_path / "pyproject.toml", "[project]\nname='fixture'\nversion='0.1.0'\n")
     _write(tmp_path / "package.json", '{"name":"fixture"}')
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTERS", "1")
     orchestrator = ProjectOrchestrator(agent_router=object())
