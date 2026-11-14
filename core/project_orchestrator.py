@@ -16,6 +16,11 @@ from runtime.acceptance import (
 )
 from runtime.change_impact import build_incremental_revision
 from runtime.dependency_scan import scan_deliverable_dependencies
+from runtime.executable_acceptance import (
+    evaluate_executable_acceptance,
+    load_acceptance_test_specs,
+    write_executable_acceptance_report,
+)
 from runtime.deployment_readiness import (
     run_deployment_readiness,
     sre_evidence_digest,
@@ -492,7 +497,11 @@ class ProjectOrchestrator:
             self._emit_project_event("project.delivery_skipped", payload={"reason": "doc_writer did not complete"})
             return None
         docs_root = (self.deliverable_dir or ".") + "/docs"
-        acceptance = self._run_acceptance_phase(manifest_root, project=project)
+        acceptance = self._run_acceptance_phase(
+            manifest_root,
+            project=project,
+            integration=(integration or {}).get("suite") if isinstance(integration, dict) else None,
+        )
         delivery = {
             "docs_root": docs_root,
             "deliverable_root": str(manifest_root),
@@ -608,14 +617,14 @@ class ProjectOrchestrator:
         print(f"[Delivery] 交付包 {bundle['bundle']} ({bundle['files']} 文件, 冒烟 {bundle['smoke']['status']}){verdict_note}")
         return delivery
 
-    def _run_acceptance_phase(self, manifest_root: Path, *, project: str | None) -> dict[str, Any] | None:
-        """Verify product-requirement conformance over the delivery artifacts.
-
-        Deterministic requirement traceability: every REQ-xxx the analyst
-        numbered must be referenced by the requirements document and the test
-        report (必须-level), with acceptance criteria present. The verdict is
-        reported but never fails the delivery phase itself.
-        """
+    def _run_acceptance_phase(
+        self,
+        manifest_root: Path,
+        *,
+        project: str | None,
+        integration: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Verify document traceability and executable acceptance evidence."""
         analysis = self.last_requirement_analysis or ""
         entries = parse_requirement_entries(analysis)
         if not entries:
@@ -635,14 +644,48 @@ class ProjectOrchestrator:
                 else ""
             )
         matrix = build_traceability_matrix(entries, sources=sources)
-        verdict = acceptance_verdict(entries, matrix)
-        report_path = write_acceptance_report(docs_dir, entries, matrix, verdict, project=project)
+        traceability = acceptance_verdict(entries, matrix)
+        traceability_report = write_acceptance_report(
+            docs_dir, entries, matrix, traceability, project=project
+        )
+        try:
+            specs = load_acceptance_test_specs(docs_dir)
+            executable = evaluate_executable_acceptance(entries, specs, integration)
+        except (OSError, TypeError, ValueError) as exc:
+            executable = {
+                "verdict": "failed",
+                "gaps": [f"acceptance test specification invalid: {type(exc).__name__}: {exc}"],
+                "warnings": [],
+                "requirements": [],
+                "test_count": 0,
+                "evidence_started_at": None,
+                "evidence_age_seconds": None,
+                "evidence_max_age_seconds": 86400,
+            }
+        executable_report = write_executable_acceptance_report(
+            docs_dir, executable, project=project
+        )
+        if traceability["verdict"] != "passed":
+            verdict = "failed"
+        elif executable["verdict"] in {"failed", "not_executed", "stale"}:
+            verdict = executable["verdict"]
+        else:
+            verdict = "passed"
+        gaps = list(traceability["gaps"]) + list(executable["gaps"])
+        warnings = list(traceability["warnings"]) + list(executable["warnings"])
         return {
-            "verdict": verdict["verdict"],
-            "gaps": verdict["gaps"],
-            "warnings": verdict["warnings"],
-            "total_requirements": verdict["total_requirements"],
-            "report": str(report_path),
+            "verdict": verdict,
+            "gaps": gaps,
+            "warnings": warnings,
+            "total_requirements": traceability["total_requirements"],
+            "test_count": executable["test_count"],
+            "traceability_verdict": traceability["verdict"],
+            "executable_verdict": executable["verdict"],
+            "requirements": executable["requirements"],
+            "report": str(traceability_report),
+            "executable_report": str(executable_report),
+            "evidence_started_at": executable["evidence_started_at"],
+            "evidence_age_seconds": executable["evidence_age_seconds"],
         }
 
     def _run_project_adapter_phase(self, manifest_root: Path) -> dict[str, Any]:
@@ -1082,7 +1125,7 @@ class ProjectOrchestrator:
         "integration_failed": "integration regression failed",
         "qa_failed": "QA verdict is QA_FAILED",
         "security_failed": "security audit is SEC_FAILED",
-        "release_manager_no_go": "release manager verdict is RELEASE_NO_GO",
+        "release_manager_no_go": "release manager verdict is RELEASE_NO_GO",\n        "acceptance_failed": "executable requirement acceptance evidence is not passed",
     }
 
     def _run_release_gate_phase(
