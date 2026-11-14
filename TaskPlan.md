@@ -203,7 +203,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - CI 失败反馈可转成修复任务，但需限制轮次并保留原始状态证据。
   - 验收：mock provider 全路径契约 + GitHub 最小集成验证；权限不足时 fail-closed。
   - 第一阶段已实现 provider-neutral `SCMProvider` / `SCMService` 与 GitHub REST adapter：分支推送、PR 创建/更新、CI 与 review 状态读取、PR 合并。
-  - push / PR 写入 / merge 使用 host-owned 一次性、短时、精确 scope approval；merge 额外绑定 PR head SHA，并要求 CI `success` + review `approved`。Agent 仍无法调用 raw Git `push` / `remote`。
+  - push / PR 写入 / merge 使用 host-owned 一次性、短时、精确 scope approval；push 绑定分支与本地 HEAD SHA，merge 绑定 PR head SHA 并向 GitHub 发送条件 merge SHA；还要求 CI `success` + review `approved`。Agent 仍无法调用 raw Git `push` / `remote`。
   - 当前已有 mock provider 与 GitHub REST transport 契约测试；尚未完成真实 GitHub test-repository 集成（需要 host token 与人工批准），CI 失败转修复任务也尚未接入。
 - [ ] **T21.6 Deployment / Operations Adapters**
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
