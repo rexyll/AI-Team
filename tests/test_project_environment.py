@@ -89,7 +89,7 @@ def test_environment_provisioner_installs_inside_the_supplied_lease(tmp_path: Pa
     assert len(calls) == 2
     assert all(call["root"] == tmp_path.resolve() for call in calls)
     assert len(service.audit.records()) == 2
-    assert all(record["agent_role"] == "developer" for record in service.audit.records())
+    assert all(record.agent_role == "developer" for record in service.audit.records())
 
 
 def test_environment_provisioner_skips_projects_without_supported_manifests(tmp_path: Path) -> None:
