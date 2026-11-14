@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import xml.etree.ElementTree as ET
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Sequence
 
 from runtime.deployment import find_test_files, stage_deliverable_copy
@@ -86,6 +88,35 @@ def extract_failed_tests(output: str) -> list[str]:
     return names
 
 
+def parse_junit_test_cases(report_path: str | Path) -> list[dict[str, Any]]:
+    """Extract exact JUnit selectors and outcomes from a pytest report."""
+    path = Path(report_path)
+    if not path.is_file():
+        return []
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError):
+        return []
+    records: list[dict[str, Any]] = []
+    for case in root.iter("testcase"):
+        classname = case.attrib.get("classname", "").strip()
+        name = case.attrib.get("name", "").strip()
+        if not classname or not name:
+            continue
+        failure = case.find("failure")
+        error = case.find("error")
+        skipped = case.find("skipped")
+        status = "failed" if failure is not None or error is not None else "skipped" if skipped is not None else "passed"
+        detail = failure if failure is not None else error if error is not None else skipped
+        records.append({
+            "selector": f"{classname}::{name}",
+            "status": status,
+            "duration_seconds": float(case.attrib.get("time", "0") or 0),
+            "summary": (detail.attrib.get("message") or (detail.text or "").strip())[:500] if detail is not None else None,
+        })
+    return records
+
+
 def run_integration_suite(
     deliverable_root: str | Path,
     *,
@@ -130,7 +161,10 @@ def run_integration_suite(
 
     staging = stage_deliverable_copy(root)
     command = [python, "-m", "pytest", *test_files, "-q", "--tb=short", "-p", "no:cacheprovider"]
+    started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
+    junit_report = staging / ".ai-team-junit.xml"
+    command.append(f"--junitxml={junit_report}")
     try:
         completed = subprocess.run(
             command,
@@ -142,6 +176,9 @@ def run_integration_suite(
         return {
             "status": "failed",
             "reason": f"integration suite timed out after {timeout} seconds",
+            "started_at": started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "test_cases": [],
             "test_files": test_files,
             "command": " ".join(command),
             "exit_code": None,
@@ -154,6 +191,8 @@ def run_integration_suite(
         shutil.rmtree(staging, ignore_errors=True)
 
     duration = round(time.monotonic() - started, 2)
+    completed_at = datetime.now(timezone.utc).isoformat()
+    test_cases = parse_junit_test_cases(junit_report)
     output = (completed.stdout or b"").decode("utf-8", errors="replace")
     errors = (completed.stderr or b"").decode("utf-8", errors="replace")
     tail = output[-3500:] if output else ""
@@ -162,6 +201,9 @@ def run_integration_suite(
     return {
         "status": "passed" if completed.returncode == 0 else "failed",
         "reason": None,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "test_cases": test_cases,
         "test_files": test_files,
         "command": " ".join(command),
         "exit_code": completed.returncode,
