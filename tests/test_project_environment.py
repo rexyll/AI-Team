@@ -225,7 +225,7 @@ def test_parallel_developers_receive_distinct_task_local_environments(
 ) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
-    _write(root / "requirements.txt", "pytest\\n")
+    _write(root / "requirements.txt", "pytest\n")
     tasks = [
         Task(
             id="TASK-PARALLEL-A",
@@ -256,7 +256,7 @@ def test_parallel_developers_receive_distinct_task_local_environments(
             assert (lease_root / ".venv").is_dir()
             observed_roots[task_id] = lease_root
             barrier.wait(timeout=10)
-            write_file(f"{task_id}.py", f"VALUE = '{task_id}'\\n")
+            write_file(f"{task_id}.py", f"VALUE = '{task_id}'\n")
             manager.get_task(task_id).status = "completed"
 
     monkeypatch.setenv("AI_TEAM_TASK_ENVIRONMENTS", "1")
