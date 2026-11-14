@@ -77,12 +77,12 @@ ACCEPTANCE_SPEC_SYSTEM_PROMPT = """
 
 def _acceptance_spec_prompt(analysis: str, test_cases: list[dict]) -> str:
     return (
-        "根据需求规格与实际集成测试运行结果，生成 acceptance_tests.json 内容。\\n"
+        "根据需求规格与实际集成测试运行结果，生成 acceptance_tests.json 内容。\n"
         '格式：{"schema_version":1,"tests":[{"test_id":"AT-001",'
-        '"requirement_id":"REQ-001","selector":"module::test_name"}]}。\\n'
+        '"requirement_id":"REQ-001","selector":"module::test_name"}]}。\n'
         "为每条必须级 REQ 尽可能关联一个或多个真正覆盖它的已执行测试；无法确认时不要猜测，留空映射。"
-        "selector 必须逐字取自提供的 JUnit selector 列表。test_id 从 AT-001 开始且不得重复。\\n\\n"
-        "需求规格：\\n" + analysis + "\\n\\n实际 JUnit 测试用例：\\n"
+        "selector 必须逐字取自提供的 JUnit selector 列表。test_id 从 AT-001 开始且不得重复。\n\n"
+        "需求规格：\n" + analysis + "\n\n实际 JUnit 测试用例：\n"
         + json.dumps(test_cases, ensure_ascii=False, indent=2)
     )
 
@@ -235,7 +235,7 @@ class DocWriterAgent(BaseAgent):
                         {"schema_version": 1, "tests": validated},
                         ensure_ascii=False,
                         indent=2,
-                    ) + "\\n"
+                    ) + "\n"
                     target = self._write_document(spec_relative, content)
                     acceptance_spec_record = {
                         "status": "generated",
