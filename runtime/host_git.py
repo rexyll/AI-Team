@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
@@ -152,6 +153,48 @@ class HostGitOperationService:
         if len(lines) < 2 or not lines[1].strip():
             raise ValueError("HEAD commit SHA could not be parsed")
         return lines[1].strip()
+
+    def remote_url(
+        self, workspace: str, *, remote: str = "origin", env: Mapping[str, str] | None = None
+    ) -> str:
+        """Read the configured host-owned remote URL without exposing credentials."""
+        if remote != "origin":
+            raise ValueError("only the origin remote is supported")
+        root = self._sandbox.require_directory(workspace)
+        self._require_repository(root, env=env)
+        output = self._git("remote get-url origin", root, env=env)
+        if not output.startswith("exit_code=0\\n"):
+            raise RuntimeError("unable to resolve origin remote")
+        return output.split("\\n", 1)[1].strip()
+
+    def push(
+        self,
+        workspace: str,
+        *,
+        branch: str,
+        remote: str = "origin",
+        env: Mapping[str, str] | None = None,
+    ) -> str:
+        """Push HEAD to a named origin branch; force-push is never supported."""
+        if remote != "origin":
+            raise ValueError("only the origin remote is supported")
+        if (
+            not isinstance(branch, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch)
+            or branch.endswith((".", "/"))
+            or "//" in branch
+            or ".." in branch
+            or "@{" in branch
+            or any(part in {"", ".", ".."} for part in branch.split("/"))
+        ):
+            raise ValueError("branch name is invalid")
+        root = self._sandbox.require_directory(workspace)
+        self._require_repository(root, env=env)
+        return self._git(
+            f"push --porcelain origin HEAD:refs/heads/{branch}",
+            root,
+            env=env,
+        )
 
     def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         if env is None:
