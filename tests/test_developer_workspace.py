@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
@@ -23,12 +24,13 @@ from security.workspace import resolve_workspace_path, workspace_scope
 
 
 
-def _crash_lease_owner(root: str, ready, hold, result_queue) -> None:
+def _crash_lease_owner(root: str, result_connection) -> None:
     manager = DeveloperWorkspaceManager(root)
     lease = manager.issue("TASK-CRASHED")
-    result_queue.put(str(lease.root))
-    ready.set()
-    hold.wait(30)
+    result_connection.send(str(lease.root))
+    result_connection.close()
+    # Simulate abrupt process death: do not execute manager.discard().
+    os._exit(0)
 
 
 def _cross_process_merge_worker(root: str, task_id: str, value: str, ready, start, results) -> None:
@@ -195,27 +197,26 @@ def test_workspace_manager_recovers_lease_after_owner_process_is_terminated(tmp_
     root = tmp_path / "deliverable"
     root.mkdir()
     context = multiprocessing.get_context("spawn")
-    ready, hold = context.Event(), context.Event()
-    result_queue = context.Queue()
+    parent_connection, child_connection = context.Pipe(duplex=False)
     worker = context.Process(
         target=_crash_lease_owner,
-        args=(str(root), ready, hold, result_queue),
+        args=(str(root), child_connection),
     )
     worker.start()
+    child_connection.close()
     try:
-        assert ready.wait(15)
-        lease_root = Path(result_queue.get(timeout=15))
-        assert lease_root.is_dir()
-        worker.terminate()
+        lease_root = Path(parent_connection.recv())
         worker.join(timeout=15)
         assert not worker.is_alive()
+        assert worker.exitcode == 0
+        assert lease_root.is_dir()
 
         manager = DeveloperWorkspaceManager(root)
 
         assert not lease_root.exists()
         assert not manager._metadata_path(lease_root).exists()
     finally:
-        hold.set()
+        parent_connection.close()
         if worker.is_alive():
             worker.terminate()
             worker.join(timeout=15)
