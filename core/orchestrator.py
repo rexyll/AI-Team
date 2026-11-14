@@ -172,7 +172,10 @@ class Orchestrator:
                     manager = self._workspace_manager_for(workspace_root)
                     lease = manager.issue(task.id)
                     try:
-                        with workspace_scope(lease.root):
+                        with workspace_scope(
+                            lease.root,
+                            folded_prefix=task.context.get("workspace_folded_prefix"),
+                        ):
                             workflow.execute(task.id, execution_id=active_execution_id)
                         if task.status == "completed":
                             task.context["workspace_merge"] = manager.merge(lease).to_dict()
