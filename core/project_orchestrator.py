@@ -898,6 +898,22 @@ class ProjectOrchestrator:
                     if isinstance(record, dict)
                 },
             }
+        adapter = integration.get("adapter")
+        if isinstance(adapter, dict):
+            digest["adapter"] = {
+                "status": adapter.get("status"),
+                "adapter": adapter.get("adapter"),
+                "language": adapter.get("language"),
+                "failed_action": adapter.get("failed_action"),
+                "actions": {
+                    name: {
+                        "status": result.get("status"),
+                        "reason": result.get("reason"),
+                    }
+                    for name, result in (adapter.get("actions") or {}).items()
+                    if isinstance(result, dict)
+                },
+            }
         return digest
 
     def _run_qa_phase(self, manifest_root: Path, integration: dict[str, Any] | None) -> dict[str, Any] | None:
