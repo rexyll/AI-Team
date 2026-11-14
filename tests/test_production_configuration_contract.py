@@ -3,6 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = ROOT / "requirements.txt"
+DEV_REQUIREMENTS = ROOT / "requirements-dev.txt"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PRODUCTION = ROOT / "docs" / "production_configuration.md"
 SETUP = ROOT / "docs" / "setup.md"
 CONFIG_MODEL = ROOT / "config" / "model.py"
@@ -49,6 +51,17 @@ def test_every_config_model_import_is_declared() -> None:
         )
 
 
+def test_ci_installs_pytest_and_uses_supported_python_matrix() -> None:
+    dev_requirements = DEV_REQUIREMENTS.read_text(encoding="utf-8-sig")
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8-sig")
+
+    assert "pytest" in dev_requirements
+    assert 'python-version: ["3.14"]' in workflow
+    assert "pip install -r requirements.txt -r requirements-dev.txt" in workflow
+    assert "python -m pytest -q" in workflow
+    assert "python tools/run_security_regression.py" in workflow
+
+
 def test_production_checklist_documents_provider_and_runtime_contract() -> None:
     assert PRODUCTION.is_file()
     content = PRODUCTION.read_text(encoding="utf-8-sig")
@@ -57,6 +70,8 @@ def test_production_checklist_documents_provider_and_runtime_contract() -> None:
         "# AI-Team Production Configuration Checklist",
         "Python 3.14",
         "pip install -r requirements.txt",
+        "requirements-dev.txt",
+        "Python 3.13 is intentionally excluded",
         # 多 Provider 注册表：两个 profile 的凭据变量均须在案。
         "AGNES_API_KEY",
         "OPENROUTER_API_KEY",
