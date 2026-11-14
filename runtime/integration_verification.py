@@ -172,6 +172,7 @@ def run_integration_suite(
             capture_output=True,
             timeout=timeout,
         )
+        test_cases = parse_junit_test_cases(junit_report)
     except subprocess.TimeoutExpired:
         return {
             "status": "failed",
@@ -192,7 +193,6 @@ def run_integration_suite(
 
     duration = round(time.monotonic() - started, 2)
     completed_at = datetime.now(timezone.utc).isoformat()
-    test_cases = parse_junit_test_cases(junit_report)
     output = (completed.stdout or b"").decode("utf-8", errors="replace")
     errors = (completed.stderr or b"").decode("utf-8", errors="replace")
     tail = output[-3500:] if output else ""
