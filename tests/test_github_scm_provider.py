@@ -222,7 +222,7 @@ def test_rest_transport_sanitizes_http_error_without_echoing_token():
         code = 403
 
         def read(self):
-            return json.dumps({"message": "Resource not accessible"}).encode()
+            return json.dumps({"message": "Resource not accessible: host-secret-token"}).encode()
 
         def close(self):
             return None
