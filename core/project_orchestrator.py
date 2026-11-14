@@ -701,19 +701,11 @@ class ProjectOrchestrator:
         }
 
     def _run_integration_phase(self, manifest_root: Path) -> dict[str, Any]:
-        """Product-level integration & regression gate with bounded rework.
+        """Run language-adapter checks, integration tests and static gates.
 
-        Each evaluation runs the deliverable's full test suite from a fresh
-        copy plus the deterministic static-quality gate (ruff enforced;
-        mypy opt-in). A failure in either feeds developer rework tasks
-        (carrying fenced failure evidence) through the canonical
-        TaskWorkflow, then both run again. Rounds are bounded by
-        AI_TEAM_INTEGRATION_MAX_ROUNDS (default 2, 0 disables rework but
-        still evaluates once); exhaustion is reported honestly as FAILED
-        and gates packaging. A deliverable without test files yields a
-        skipped suite record so the documentation can state the absence of
-        regression evidence; the static gate (AI_TEAM_STATIC_GATE, default
-        on) still applies.
+        Adapter checks are opt-in because dependency installation may access
+        package registries. Any adapter command failure or ambiguous project
+        toolchain is fail-closed and feeds the bounded developer rework loop.
         """
         timeout = self._env_float("AI_TEAM_INTEGRATION_TIMEOUT", DEFAULT_INTEGRATION_TIMEOUT)
         max_rounds = self._env_int("AI_TEAM_INTEGRATION_MAX_ROUNDS", 2)
@@ -744,7 +736,7 @@ class ProjectOrchestrator:
                 suite["command"] = suite.get("command") or "project adapter validation"
                 suite["output_tail"] = (
                     str(suite.get("output_tail") or "")
-                    + "\\n[project adapter failure]\\n"
+                    + "\n[project adapter failure]\n"
                     + str(adapter.get("reason") or adapter.get("failed_action") or adapter.get("status"))
                 )[-4000:]
             return suite, static, adapter
@@ -760,10 +752,11 @@ class ProjectOrchestrator:
             payload={
                 "status": suite["status"],
                 "test_files": len(suite.get("test_files") or []),
-                "static_status": static.get("status") if static is not None else None,\n            "adapter_status": adapter.get("status"),\n                "adapter_status": adapter.get("status"),
+                "static_status": static.get("status") if static is not None else None,
+                "adapter_status": adapter.get("status"),
             },
         )
-        if suite["status"] != "failed" and not failed(static, suite):
+        if not failed(static, suite):
             self._emit_project_event(
                 "project.integration_completed",
                 payload={
@@ -771,6 +764,7 @@ class ProjectOrchestrator:
                     "rounds": 0,
                     "summary": suite.get("summary"),
                     "static_status": static.get("status") if static is not None else None,
+                    "adapter_status": adapter.get("status"),
                 },
             )
             note = "（交付物无测试文件）" if suite["status"] == "skipped" else ""
@@ -781,24 +775,22 @@ class ProjectOrchestrator:
                 "rework_rounds": [],
                 "suite": suite,
                 "static": static,
+                "adapter": adapter,
             }
 
         rework_rounds: list[dict[str, Any]] = []
         for round_no in range(1, max_rounds + 1):
             rework_rounds.append(self._run_rework_round(suite, round_no, static=static))
-            suite, static = evaluate()
-            if suite["status"] != "failed" and not failed(static):
+            suite, static, adapter = evaluate()
+            if not failed(static, suite):
                 break
-        final_status = (
-            "failed"
-            if suite["status"] == "failed" or failed(static, suite)
-            else suite["status"]
-        )
+        final_status = "failed" if failed(static, suite) else suite["status"]
         payload = {
             "status": final_status,
             "rounds": len(rework_rounds),
             "summary": suite.get("summary"),
             "static_status": static.get("status") if static is not None else None,
+            "adapter_status": adapter.get("status"),
         }
         if final_status == "failed":
             self._emit_project_event("project.integration_failed", payload=payload)
@@ -812,6 +804,7 @@ class ProjectOrchestrator:
             "rework_rounds": rework_rounds,
             "suite": suite,
             "static": static,
+            "adapter": adapter,
         }
 
     def _run_rework_round(self, suite: dict[str, Any], round_no: int, *, static: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -830,6 +823,9 @@ class ProjectOrchestrator:
             "failed_tests": suite.get("failed_tests") or [],
             "output_tail": (suite.get("output_tail") or "")[-2500:],
         }
+        adapter_failure = suite.get("adapter_failure")
+        if isinstance(adapter_failure, dict):
+            evidence["adapter"] = adapter_failure
         static_failed = False
         if static is not None:
             static_failed = static.get("status") == "failed"
