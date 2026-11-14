@@ -6,6 +6,7 @@ transport. This module never places the token in Agent/task context.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
@@ -57,7 +58,7 @@ def create_github_scm_runtime(
         raise GitHubSCMConfigurationError(
             f"{TOKEN_ENV} is required when GitHub SCM observation is enabled"
         )
-    if not __import__("re").fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise GitHubSCMConfigurationError(
             f"{REPOSITORY_ENV} must use owner/name format"
         )
