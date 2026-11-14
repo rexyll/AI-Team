@@ -157,7 +157,7 @@ def _router(tmp_path: Path, qa_agent: _StubQAAgent | None) -> AgentRouter:
     router.register("tester", _DictStubAgent("tester", "passed", "TEST_PASSED"))
     router.register("reviewer", _DictStubAgent("reviewer", "approved", "APPROVED"))
     router.register("doc_writer", DocWriterAgent(
-        AgentConfig(role="doc_writer", model=""), llm=_FixedTextLLM("# 测试结果报告\n\nok\n"), sandbox=WorkspaceSandbox(tmp_path),
+        AgentConfig(role="doc_writer", model=""), llm=_FixedTextLLM("# 测试结果报告\n\nREQ-001 已实现并验证。\n"), sandbox=WorkspaceSandbox(tmp_path),
     ))
     if qa_agent is not None:
         router.register("qa", qa_agent)
