@@ -35,7 +35,18 @@ def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> N
             )
             assert result["status"] == "passed", (action, result)
 
+        # A deliberately broken source file must surface a non-zero
+        # native process exit code through PowerShell and the tool boundary.
+        (tmp_path / "broken.py").write_text("def broken(:\\n", encoding="utf-8")
+        failed_build = executor.execute(
+            registry.plan(tmp_path, "build", adapter_name="python"),
+            role="developer",
+            task_id="WINDOWS-ADAPTER-BUILD-FAIL",
+            execution_id="WINDOWS-ADAPTER-EXEC-BUILD-FAIL",
+        )
+        assert failed_build["status"] == "failed", failed_build
+
     records = service.audit.records()
-    assert len(records) == 3
+    assert len(records) == 4
     assert all(record.status == "completed" for record in records)
     assert all(record.agent_role == "developer" for record in records)
