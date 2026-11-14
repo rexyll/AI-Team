@@ -120,6 +120,9 @@ class ContextBuilder:
             "tester_feedback",
             "reviewer_feedback",
             "tool_execution_history",
+            "workspace_root",
+            "workspace_merge",
+            "workspace_discarded",
         }
 
         metadata = deepcopy({
