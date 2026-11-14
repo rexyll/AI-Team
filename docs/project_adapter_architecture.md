@@ -67,7 +67,7 @@ into the canonical source tree. Shared cache reuse is intentionally deferred.
 The adapter selection variable `AI_TEAM_PROJECT_ADAPTER` is shared by both
 flows.
 
-CI evidence: [run 43599649718](https://github.com/rexyll/AI-Team/actions/runs/43599649718) passed both jobs. Linux regression: 2,282 passed / 10 skipped; security regression: 234 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising lease-local venv install, build/test/smoke/package and a deliberately failing test to verify non-zero exit propagation. The terminal security guard permits `-e` only for parsed `pip install` commands; Python evaluation flags remain blocked. The orchestrator-level tests use a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
+CI evidence: [run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338) passed both jobs. Linux regression: 2,284 passed / 10 skipped; security regression: 234 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising lease-local venv install, build/test/smoke/package and a deliberately failing test to verify non-zero exit propagation. The terminal security guard permits `-e` only for parsed `pip install` commands; Python evaluation flags remain blocked. The orchestrator-level tests use a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
 
 ## Security and execution boundaries
 
