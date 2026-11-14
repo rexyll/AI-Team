@@ -177,10 +177,11 @@ def test_merge_pull_request_calls_github_merge_endpoint():
     transport = FakeTransport([{"merged": True, "sha": "d" * 40, "message": "merged"}])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
-    result = provider.merge_pull_request("acme/widget", 12, merge_method="squash")
+    result = provider.merge_pull_request("acme/widget", 12, merge_method="squash", expected_head_sha="d" * 40)
 
     assert result == {"status": "merged", "sha": "d" * 40, "message": "merged"}
     assert transport.calls[0][0] == "PUT"
+    assert transport.calls[0][2]["sha"] == "d" * 40
 
 
 def test_rest_transport_injects_host_token_without_returning_it():
