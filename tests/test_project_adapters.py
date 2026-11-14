@@ -71,6 +71,7 @@ def _write(path: Path, content: str) -> None:
 
 def test_python_adapter_detects_manifest_and_plans_supported_actions(tmp_path: Path) -> None:
     _write(tmp_path / "pyproject.toml", "[project]\nname='demo'\nversion='0.1.0'\n")
+    _write(tmp_path / "requirements-dev.txt", "pytest\n")
     _write(tmp_path / "tests" / "test_demo.py", "def test_ok(): assert True\n")
     registry = ProjectAdapterRegistry()
 
@@ -84,8 +85,13 @@ def test_python_adapter_detects_manifest_and_plans_supported_actions(tmp_path: P
     assert detection.adapter == "python"
     assert detection.language == "python"
     assert install.commands[0].command == "python -m venv --system-site-packages .venv"
+    assert ".ai-team-cache/pip" in install.commands[1].command
     assert install.commands[1].command.endswith(
-        " -m pip install --disable-pip-version-check --no-build-isolation -e ."
+        " -m pip install --disable-pip-version-check --no-build-isolation "
+        "--cache-dir .ai-team-cache/pip -e ."
+    )
+    assert install.commands[2].command.endswith(
+        "--cache-dir .ai-team-cache/pip -r requirements-dev.txt"
     )
     assert build.commands[0].command == "python -m build --no-isolation"
     assert test.commands[0].command == "python -m pytest -q"
@@ -123,7 +129,7 @@ def test_node_adapter_requires_valid_package_and_npm_lock_for_install(tmp_path: 
 
     _write(tmp_path / "package-lock.json", "{}")
     install = adapter.plan(tmp_path, "install")
-    assert install.commands[0].command == "npm ci --ignore-scripts --no-audit --no-fund"
+    assert install.commands[0].command == "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
 
 
 def test_node_adapter_reports_missing_scripts_as_skipped(tmp_path: Path) -> None:
