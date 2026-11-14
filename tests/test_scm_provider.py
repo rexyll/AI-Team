@@ -109,6 +109,19 @@ def test_pull_request_creation_requires_explicit_approval():
     ]
 
 
+def test_pull_request_metadata_is_available_through_read_only_service():
+    service, provider, _ = _service()
+
+    result = service.get_pull_request("acme/widget", 7)
+
+    assert result == {
+        "head_sha": "a" * 40,
+        "state": "open",
+        "merged": False,
+    }
+    assert provider.calls == [("get_pr", "acme/widget", 7)]
+
+
 def test_ci_and_review_reads_do_not_require_approval():
     service, provider, _ = _service()
 
