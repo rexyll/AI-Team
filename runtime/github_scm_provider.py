@@ -71,6 +71,10 @@ class GitHubRESTTransport:
                 detail = json.loads(exc.read().decode("utf-8", errors="replace")).get("message", "")
             except (ValueError, AttributeError):
                 detail = ""
+            # A remote error body is untrusted and may echo request material.
+            # Never allow the host credential to appear in surfaced exceptions.
+            if detail:
+                detail = detail.replace(self._token, "[REDACTED]")
             raise GitHubAPIError(
                 f"GitHub API request failed: HTTP {exc.code}" + (f" ({detail})" if detail else "")
             ) from None
