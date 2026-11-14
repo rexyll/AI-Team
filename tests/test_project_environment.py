@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import threading
 
 import core.orchestrator as orchestrator_module
+from agents.base import BaseAgent
+from agents.developer import DeveloperAgent
+from runtime.agent_result import AgentResult
+from runtime.agent_router import AgentRouter
+from runtime.llm.mock import MockLLM
 from core.orchestrator import Orchestrator
 from runtime.project_environment import ProjectEnvironmentProvisioner
 from runtime.task import Task
@@ -19,7 +25,7 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _service_with_stub_install(*, fail_on: int | None = None):
+def _service_with_stub_install(*, fail_on: int | None = None, barrier: threading.Barrier | None = None):
     calls: list[dict[str, object]] = []
 
     def run_command(command: str, cwd: str = ".", timeout: float = 600.0) -> str:
@@ -27,6 +33,8 @@ def _service_with_stub_install(*, fail_on: int | None = None):
         calls.append({"command": command, "root": root, "timeout": timeout})
         if command == "python -m venv --system-site-packages .venv":
             (root / ".venv").mkdir()
+            if barrier is not None:
+                barrier.wait(timeout=10)
         if ".ai-team-cache" in command:
             (root / ".ai-team-cache" / "pip").mkdir(parents=True, exist_ok=True)
         exit_code = 9 if fail_on == len(calls) else 0
@@ -287,3 +295,143 @@ def test_parallel_developers_receive_distinct_task_local_environments(
     assert not (root / ".venv").exists()
     assert not (root / ".ai-team-cache").exists()
     assert not list((root.parent / ".ai-team-dev-workspaces").glob("TASK-PARALLEL-*"))
+
+class _PassingTester(BaseAgent):
+    @property
+    def role(self) -> str:
+        return "tester"
+
+    def run(self, task: Task) -> AgentResult:
+        return AgentResult(
+            status="passed",
+            agent=self.role,
+            task_id=task.id,
+            message="TEST_PASSED",
+        )
+
+
+class _ApprovingReviewer(BaseAgent):
+    @property
+    def role(self) -> str:
+        return "reviewer"
+
+    def run(self, task: Task) -> AgentResult:
+        return AgentResult(
+            status="approved",
+            agent=self.role,
+            task_id=task.id,
+            message="APPROVED",
+        )
+
+
+class _TaskMappedDeveloperRouter(AgentRouter):
+    def __init__(self, developers_by_task: dict[str, DeveloperAgent]) -> None:
+        super().__init__()
+        self._developers_by_task = dict(developers_by_task)
+        self.register_developer_pool(list(developers_by_task.values()))
+        self.register(_PassingTester())
+        self.register(_ApprovingReviewer())
+
+    def get_developer_for_task(self, task_id: str):
+        return self._developers_by_task[task_id]
+
+
+def test_parallel_real_developer_agents_use_private_dependency_environments(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    _write(root / "requirements.txt", "pytest\\n")
+    task_a = Task(
+        id="TASK-REAL-DEV-A",
+        title="write source A",
+        description="Create source file A using write_file.",
+        role="developer",
+        status="pending",
+        context={"workspace_root": str(root)},
+    )
+    task_b = Task(
+        id="TASK-REAL-DEV-B",
+        title="write source B",
+        description="Create source file B using write_file.",
+        role="developer",
+        status="pending",
+        context={"workspace_root": str(root)},
+    )
+    llm_a = MockLLM(
+        tool_script=[
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "REAL-DEV-A-WRITE",
+                        "name": "write_file",
+                        "arguments": json.dumps({
+                            "path": "generated_a.py",
+                            "content": "VALUE = 'A'\\n",
+                        }),
+                    }
+                ]
+            },
+            "Created generated_a.py.",
+        ]
+    )
+    llm_b = MockLLM(
+        tool_script=[
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "REAL-DEV-B-WRITE",
+                        "name": "write_file",
+                        "arguments": json.dumps({
+                            "path": "generated_b.py",
+                            "content": "VALUE = 'B'\\n",
+                        }),
+                    }
+                ]
+            },
+            "Created generated_b.py.",
+        ]
+    )
+    developer_a = DeveloperAgent(llm=llm_a)
+    developer_b = DeveloperAgent(llm=llm_b)
+    router = _TaskMappedDeveloperRouter({
+        task_a.id: developer_a,
+        task_b.id: developer_b,
+    })
+    manager = TaskManager([task_a, task_b])
+    barrier = threading.Barrier(2)
+    service, calls = _service_with_stub_install(barrier=barrier)
+    provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
+    observed_roots: dict[str, Path] = {}
+
+    # The workflow is real; record each Developer's lease from the actual
+    # write_file tool execution evidence after both tasks complete.
+    monkeypatch.setenv("AI_TEAM_TASK_ENVIRONMENTS", "1")
+    monkeypatch.setattr(
+        orchestrator_module,
+        "ProjectEnvironmentProvisioner",
+        lambda: provisioner,
+    )
+    orchestrator = Orchestrator(manager, router, max_workers=2)
+
+    orchestrator.run()
+
+    for task in (task_a, task_b):
+        assert task.status == "completed"
+        assert task.workspace_root if hasattr(task, "workspace_root") else True
+        assert task.context["workspace_environment"]["status"] == "passed"
+    assert (root / "generated_a.py").read_text(encoding="utf-8") == "VALUE = 'A'\\n"
+    assert (root / "generated_b.py").read_text(encoding="utf-8") == "VALUE = 'B'\\n"
+    assert len(calls) == 4
+    assert len({call["root"] for call in calls}) == 2
+    assert len(service.audit.records()) == 4
+    assert developer_a.tool_execution_history.get("REAL-DEV-A-WRITE").tool_name == "write_file"
+    assert developer_b.tool_execution_history.get("REAL-DEV-B-WRITE").tool_name == "write_file"
+    assert all(
+        record.agent_role == "developer"
+        for developer in (developer_a, developer_b)
+        for record in developer.tool_execution_history.to_dict()
+    )
+    assert not (root / ".venv").exists()
+    assert not (root / ".ai-team-cache").exists()
+    assert not list((root.parent / ".ai-team-dev-workspaces").glob("TASK-REAL-DEV-*"))
