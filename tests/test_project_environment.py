@@ -328,8 +328,8 @@ class _TaskMappedDeveloperRouter(AgentRouter):
         super().__init__()
         self._developers_by_task = dict(developers_by_task)
         self.register_developer_pool(list(developers_by_task.values()))
-        self.register(_PassingTester())
-        self.register(_ApprovingReviewer())
+        self.register(_PassingTester(llm=MockLLM()))
+        self.register(_ApprovingReviewer(llm=MockLLM()))
 
     def get_developer_for_task(self, task_id: str):
         return self._developers_by_task[task_id]
