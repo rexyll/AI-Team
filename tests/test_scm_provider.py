@@ -84,7 +84,7 @@ def test_approval_is_bound_to_repository_operation_and_target():
     service, provider, authority = _service()
     approval = _approval(authority, "push_branch", "release/1.2:" + "c" * 40)
 
-    with pytest.raises(SCMApprovalError, match="scope"):
+    with pytest.raises(SCMApprovalError, match="approval"):
         service.push_branch("acme/other", "/workspace/widget", "release/1.2", approval=approval)
 
     assert provider.calls == []
@@ -146,7 +146,7 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
 def test_merge_requires_pull_request_head_metadata_and_approval():
     service, provider, authority = _service()
     provider.pr = {}
-    approval = _approval(authority, "merge_pull_request", "7")
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
 
     with pytest.raises(SCMPreflightError, match="head SHA"):
         service.merge_pull_request("acme/widget", 7, approval=approval)
