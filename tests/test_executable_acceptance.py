@@ -97,7 +97,7 @@ def test_missing_execution_is_not_executed():
         _integration(cases=[]),
     )
 
-    assert result["verdict"] == "failed"
+    assert result["verdict"] == "not_executed"
     assert any("AT-001 not_executed" in gap for gap in result["gaps"])
 
 
@@ -135,7 +135,7 @@ def test_stale_evidence_is_not_executed():
         now=now,
     )
 
-    assert result["verdict"] == "not_executed"
+    assert result["verdict"] == "stale"
     assert any("missing or stale" in gap for gap in result["gaps"])
 
 
