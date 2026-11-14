@@ -198,7 +198,7 @@ class ProjectAdapterRegistry:
     """Resolve language adapters independently from product/project categories."""
 
     def __init__(self, adapters: tuple[ProjectAdapter, ...] | None = None) -> None:
-        selected = adapters or (PythonProjectAdapter(), NodeProjectAdapter())
+        selected = adapters if adapters is not None else (PythonProjectAdapter(), NodeProjectAdapter())
         names = [adapter.name for adapter in selected]
         if len(names) != len(set(names)):
             raise ValueError("project adapter names must be unique")
