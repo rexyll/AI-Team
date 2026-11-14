@@ -165,10 +165,10 @@ def evaluate_executable_acceptance(
 
     if not entries:
         verdict = "not_applicable"
-    elif evidence_stale:
-        verdict = "stale"
     elif integration_status in (None, "skipped"):
         verdict = "not_executed"
+    elif evidence_stale:
+        verdict = "stale"
     elif integration_status != "passed" or mandatory_failed or orphan_specs:
         verdict = "failed"
     elif mandatory_unexecuted:
