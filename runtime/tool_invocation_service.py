@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
@@ -98,7 +99,11 @@ class ToolInvocationService:
         workers = max_workers or len(requests)
         workers = max(1, min(workers, len(requests)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(self.invoke_request, request) for request in requests]
+            contexts = [copy_context() for _ in requests]
+            futures = [
+                pool.submit(context.run, self.invoke_request, request)
+                for context, request in zip(contexts, requests)
+            ]
             return [future.result() for future in futures]
 
     @staticmethod
