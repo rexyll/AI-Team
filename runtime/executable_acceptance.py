@@ -107,6 +107,16 @@ def evaluate_executable_acceptance(
             evidence_age_seconds = None
     evidence_stale = evidence_age_seconds is None or evidence_age_seconds > max_age_seconds
 
+    known_requirements = {entry.req_id for entry in entries}
+    orphan_specs = [spec for spec in specs if spec.get("requirement_id") not in known_requirements]
+    for spec in orphan_specs:
+        gaps.append(
+            f"{spec.get('test_id', 'unknown')} references unknown requirement "
+            f"{spec.get('requirement_id', '')}"
+        )
+
+    mandatory_unexecuted = False
+    mandatory_failed = False
     for entry in entries:
         linked = specs_by_req.get(entry.req_id, [])
         if not linked:
@@ -141,6 +151,10 @@ def evaluate_executable_acceptance(
             for test in test_records:
                 if test["status"] != "passed":
                     gaps.append(f"{test['test_id']} {test['status']}: {test.get('reason') or 'test did not pass'}")
+                    if test["status"] in {"not_executed", "skipped", "unknown"}:
+                        mandatory_unexecuted = True
+                    else:
+                        mandatory_failed = True
         elif any(test["status"] != "passed" for test in test_records):
             warnings.append(f"{entry.req_id} optional acceptance tests are not all passed")
         records.append({
@@ -151,8 +165,14 @@ def evaluate_executable_acceptance(
 
     if not entries:
         verdict = "not_applicable"
-    elif integration_status != "passed" or evidence_stale:
-        verdict = "not_executed" if integration_status in (None, "skipped") or evidence_stale else "failed"
+    elif evidence_stale:
+        verdict = "stale"
+    elif integration_status in (None, "skipped"):
+        verdict = "not_executed"
+    elif integration_status != "passed" or mandatory_failed or orphan_specs:
+        verdict = "failed"
+    elif mandatory_unexecuted:
+        verdict = "not_executed"
     else:
         verdict = "failed" if gaps else "passed"
     return {
