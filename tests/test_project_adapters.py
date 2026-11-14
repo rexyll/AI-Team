@@ -129,7 +129,7 @@ def test_node_adapter_requires_valid_package_and_npm_lock_for_install(tmp_path: 
 
     _write(tmp_path / "package-lock.json", "{}")
     install = adapter.plan(tmp_path, "install")
-    assert install.commands[0].command == "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
+    assert install.commands[0].command == "npm ci --ignore-scripts --no-audit --no-fund --cache node_modules/.cache/npm"
 
 
 def test_node_adapter_reports_missing_scripts_as_skipped(tmp_path: Path) -> None:
