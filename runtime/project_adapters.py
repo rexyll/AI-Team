@@ -129,15 +129,15 @@ class PythonProjectAdapter:
                     requirements = " -r requirements.txt" if has_requirements else ""
                     install_commands.append(ProjectCommand(
                         f"{environment_python} -m pip install --disable-pip-version-check "
-                        f"--no-build-isolation -e .{requirements}"
+                        f"--no-build-isolation --cache-dir .ai-team-cache/pip -e .{requirements}"
                     ))
                 elif has_requirements:
                     install_commands.append(ProjectCommand(
-                        f"{environment_python} -m pip install --disable-pip-version-check -r requirements.txt"
+                        f"{environment_python} -m pip install --disable-pip-version-check --cache-dir .ai-team-cache/pip -r requirements.txt"
                     ))
                 if has_dev_requirements:
                     install_commands.append(ProjectCommand(
-                        f"{environment_python} -m pip install --disable-pip-version-check -r requirements-dev.txt"
+                        f"{environment_python} -m pip install --disable-pip-version-check --cache-dir .ai-team-cache/pip -r requirements-dev.txt"
                     ))
                 commands = tuple(install_commands)
             else:
@@ -204,7 +204,7 @@ class NodeProjectAdapter:
         )
         if action == "install":
             if has_npm_lock:
-                command = "npm ci --ignore-scripts --no-audit --no-fund"
+                command = "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
             else:
                 status, reason = "unsupported", "npm lockfile is required for reproducible installation"
         elif action == "build":
