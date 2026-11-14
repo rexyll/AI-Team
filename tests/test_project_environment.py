@@ -35,7 +35,10 @@ def _service_with_stub_install(*, fail_on: int | None = None, barrier: threading
             (root / ".venv").mkdir()
             if barrier is not None:
                 barrier.wait(timeout=10)
-        if ".ai-team-cache" in command:
+        if command.startswith("npm ci"):
+            (root / "node_modules").mkdir()
+            (root / ".ai-team-cache" / "npm").mkdir(parents=True, exist_ok=True)
+        elif ".ai-team-cache" in command:
             (root / ".ai-team-cache" / "pip").mkdir(parents=True, exist_ok=True)
         exit_code = 9 if fail_on == len(calls) else 0
         return f"exit_code={exit_code}\nfixture install"
@@ -91,6 +94,35 @@ def test_environment_provisioner_installs_inside_the_supplied_lease(tmp_path: Pa
     assert len(service.audit.records()) == 2
     assert all(record.agent_role == "developer" for record in service.audit.records())
 
+
+
+def test_node_environment_provisioner_keeps_node_modules_and_cache_inside_lease(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "package.json", '{"name":"node-env-fixture","version":"1.0.0"}')
+    _write(
+        tmp_path / "package-lock.json",
+        '{"name":"node-env-fixture","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"node-env-fixture","version":"1.0.0"}}}',
+    )
+    service, calls = _service_with_stub_install()
+    provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
+
+    with workspace_scope(tmp_path):
+        result = provisioner.prepare(
+            tmp_path,
+            task_id="TASK-ENV-NODE-001",
+            execution_id="TASK-ENV-NODE-EXEC-001",
+        )
+
+    assert result["status"] == "passed"
+    assert result["adapter"] == "node"
+    assert len(calls) == 1
+    assert calls[0]["command"] == (
+        "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
+    )
+    assert (tmp_path / "node_modules").is_dir()
+    assert (tmp_path / ".ai-team-cache" / "npm").is_dir()
+    assert not (tmp_path / ".venv").exists()
 
 def test_environment_provisioner_skips_projects_without_supported_manifests(tmp_path: Path) -> None:
     provisioner = ProjectEnvironmentProvisioner(invocation_service=_service_with_stub_install()[0])
