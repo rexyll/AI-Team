@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json\nfrom pathlib import Path\n\nfrom core.project_orchestrator import ProjectOrchestrator\nfrom runtime.release_gate import evaluate_release_gate\n
+import json
+from pathlib import Path
+
+from core.project_orchestrator import ProjectOrchestrator
+from runtime.release_gate import evaluate_release_gate
+
 
 def test_release_gate_blocks_failed_executable_acceptance():
     result = evaluate_release_gate(
