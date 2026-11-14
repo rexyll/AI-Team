@@ -2,7 +2,7 @@
 
 ## Status
 
-The first isolation milestone is implemented in `runtime/developer_workspace.py` and integrated into `core/orchestrator.py`.
+The T21.2 v1 isolation milestone is implemented in `runtime/developer_workspace.py`, `runtime/project_environment.py` and integrated into `core/orchestrator.py`.
 
 It provides per-Developer task snapshots, task-local filesystem sandbox context, cross-process merge serialization, conflict detection, and abandoned-lease cleanup. It is not yet a full container/OS sandbox and does not make a multi-file merge globally atomic.
 
@@ -54,7 +54,7 @@ When `AI_TEAM_TASK_ENVIRONMENTS=1`, the Orchestrator provisions dependencies ins
 - pip cache is directed to `.ai-team-cache/pip`; npm cache is directed to `node_modules/.cache/npm`. Both remain inside the lease, and no mutable package-manager cache is shared between concurrent tasks.
 - All three directories are excluded from merge, and the entire lease is removed after merge/discard. A failed/unsupported installation prevents the Developer workflow from running and causes the lease to be discarded.
 
-A two-Developer concurrency test now verifies separate lease roots, independent venv creation, concurrent workflow execution, disjoint source merges, and exclusion of all dependency directories from the canonical tree. CI evidence: [run 43599649718](https://github.com/rexyll/AI-Team/actions/runs/43599649718), 2,282 passed / 10 skipped, 234 security tests passed / 9 skipped, and the Windows production-terminal smoke passed.
+Parallel Developer E2E now uses two real `DeveloperAgent` instances with deterministic `MockLLM` scripts, actual `write_file` tool calls, independent task-local environments, disjoint source merges and lease cleanup. CI evidence: [run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338), 2,284 passed / 10 skipped, 234 security tests passed / 9 skipped, and the Windows production-terminal smoke passed.
 
 The environment setup is opt-in and disabled by default because it can access package registries. Multi-toolchain projects must select an adapter with `AI_TEAM_PROJECT_ADAPTER=python` or `node`. Cache reuse across tasks is intentionally deferred until a content-addressed, integrity-checked, read-only cache design is available.
 
@@ -78,4 +78,4 @@ The contract suite covers:
 - dependency-directory exclusion and non-merging;
 - context propagation and folded output-path compatibility.
 
-The latest successful regression evidence is recorded in `TaskPlan.md`. Multi-file crash rollback and corrupt-journal fail-closed tests passed in GitHub Actions run [43592173178](https://github.com/rexyll/AI-Team/actions/runs/43592173178). The overall T21.2 milestone remains open until real multi-Developer project E2E and task-local dependency provisioning are validated.
+The latest successful regression evidence is recorded in `TaskPlan.md`. Multi-file crash rollback and corrupt-journal fail-closed tests passed in [run 43592173178](https://github.com/rexyll/AI-Team/actions/runs/43592173178). T21.2 v1 is complete; external ProviderLLM credentials/integration and cross-task read-only cache reuse are deferred to the later real-project phase.
