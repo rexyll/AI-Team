@@ -38,7 +38,7 @@ def _registry(calls: list[dict[str, Any]]) -> ToolRegistry:
 
 
 def _record_shape(service: ToolInvocationService) -> list[dict[str, Any]]:
-    return [
+    return sorted([
         {
             "execution_id": record.execution_id,
             "task_id": record.task_id,
@@ -50,7 +50,7 @@ def _record_shape(service: ToolInvocationService) -> list[dict[str, Any]]:
             "error": record.error,
         }
         for record in service.audit.records()
-    ]
+    ], key=lambda item: item["execution_id"])
 
 
 def test_authorized_invocation_executes_and_audits() -> None:
