@@ -111,6 +111,7 @@ class PythonProjectAdapter:
         if action not in _ACTIONS:
             raise ValueError(f"unsupported project action: {action}")
         command: str | None = None
+        commands: tuple[ProjectCommand, ...] = ()
         reason: str | None = None
         status: PlanStatus = "supported"
         has_project_metadata = (root / "pyproject.toml").is_file() or (root / "setup.py").is_file()
@@ -118,7 +119,7 @@ class PythonProjectAdapter:
         has_dev_requirements = (root / "requirements-dev.txt").is_file()
         if action == "install":
             if has_project_metadata or has_requirements or has_dev_requirements:
-                commands = [ProjectCommand("python -m venv --system-site-packages .venv")]
+                install_commands = [ProjectCommand("python -m venv --system-site-packages .venv")]
                 environment_python = (
                     r".\\.venv\\Scripts\\python.exe"
                     if os.name == "nt"
@@ -126,12 +127,12 @@ class PythonProjectAdapter:
                 )
                 if has_project_metadata:
                     requirements = " -r requirements.txt" if has_requirements else ""
-                    commands.append(ProjectCommand(
+                    install_commands.append(ProjectCommand(
                         f"{environment_python} -m pip install --disable-pip-version-check "
                         f"--no-build-isolation -e .{requirements}"
                     ))
                 elif has_requirements:
-                    commands.append(ProjectCommand(
+                    install_commands.append(ProjectCommand(
                         f"{environment_python} -m pip install --disable-pip-version-check -r requirements.txt"
                     ))
                 if has_dev_requirements:
@@ -164,7 +165,8 @@ class PythonProjectAdapter:
                 reason = "no tests found; smoke is limited to Python source compilation"
         else:
             status, reason = "unsupported", "deployment requires a configured deployment provider"
-        commands = (ProjectCommand(command),) if command else ()
+        if command is not None:
+            commands = (ProjectCommand(command),)
         return ProjectActionPlan(self.name, action, status, reason, commands)
 
 
