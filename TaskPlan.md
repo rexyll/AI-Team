@@ -224,4 +224,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
-| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段） | 进行中：新增每任务文件快照/冲突检测/原子合并；ContextVar 绑定任务沙箱并传播至并发工具调用；Orchestrator 成功合并、失败丢弃；保留 folded-prefix 路径语义。仍需补齐进程崩溃后的租约回收/跨进程围栏，并评估依赖目录共享策略 | [GitHub Actions #?](https://github.com/rexyll/AI-Team/actions/runs/43587459119)：2246 passed / 9 skipped；安全回归 233 passed / 9 skipped；提交 `9bc486a` 及前序 T21.2 提交 |
+| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段） | 进行中：新增每任务文件快照/冲突检测/原子合并；ContextVar 绑定任务沙箱并传播至并发工具调用；Orchestrator 成功合并、失败丢弃；保留 folded-prefix 路径语义。仍需补齐进程崩溃后的租约回收/跨进程围栏，并评估依赖目录共享策略 | [GitHub Actions run 43587459119](https://github.com/rexyll/AI-Team/actions/runs/43587459119)：2246 passed / 9 skipped；安全回归 233 passed / 9 skipped；提交 `9bc486a` 及前序 T21.2 提交 |
