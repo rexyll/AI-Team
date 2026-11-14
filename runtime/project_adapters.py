@@ -136,9 +136,10 @@ class PythonProjectAdapter:
                         f"{environment_python} -m pip install --disable-pip-version-check -r requirements.txt"
                     ))
                 if has_dev_requirements:
-                    commands.append(ProjectCommand(
+                    install_commands.append(ProjectCommand(
                         f"{environment_python} -m pip install --disable-pip-version-check -r requirements-dev.txt"
                     ))
+                commands = tuple(install_commands)
             else:
                 status, reason = "skipped", "no Python dependency manifest found"
         elif action == "build":
