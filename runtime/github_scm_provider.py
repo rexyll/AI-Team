@@ -31,8 +31,8 @@ class GitHubRESTTransport:
     ) -> None:
         if not isinstance(token, str) or not token.strip():
             raise ValueError("GitHub token must be supplied by host configuration")
-        if not isinstance(api_base, str) or not api_base.startswith("https://"):
-            raise ValueError("GitHub API base must use HTTPS")
+        if api_base.rstrip("/") != "https://api.github.com":
+            raise ValueError("GitHub API base must be https://api.github.com")
         if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self._token = token.strip()
@@ -42,8 +42,14 @@ class GitHubRESTTransport:
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         if not isinstance(method, str) or method.upper() not in {"GET", "POST", "PATCH", "PUT"}:
             raise ValueError("unsupported GitHub HTTP method")
-        if not isinstance(path, str) or not path.startswith("/repos/"):
-            raise ValueError("GitHub API path must be repository-scoped")
+        if (
+            not isinstance(path, str)
+            or not path.startswith("/repos/")
+            or path.startswith("//")
+            or chr(92) in path
+            or ".." in path.split("?", 1)[0].split("/")
+        ):
+            raise ValueError("GitHub API path must be a safe repository-scoped path")
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = urllib.request.Request(
             self._api_base + path,
@@ -98,6 +104,9 @@ class GitHubSCMProvider:
             r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
         ):
             raise ValueError("repository must be an owner/name identifier")
+        owner, name = repository.split("/", 1)
+        if owner in {".", ".."} or name in {".", ".."}:
+            raise ValueError("repository owner and name cannot be dot path segments")
         return "/repos/" + repository
 
     @staticmethod
