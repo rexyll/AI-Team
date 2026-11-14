@@ -18,9 +18,14 @@ class FakeSCMProvider:
         self.ci = {"status": "success"}
         self.review = {"status": "approved"}
         self.pr = {"head_sha": "a" * 40}
+        self.local_head = "c" * 40
 
-    def push_branch(self, repository, local_repository, branch):
-        self.calls.append(("push_branch", repository, local_repository, branch))
+    def get_local_head_sha(self, local_repository):
+        self.calls.append(("local_head", local_repository))
+        return self.local_head
+
+    def push_branch(self, repository, local_repository, branch, *, expected_head_sha):
+        self.calls.append(("push_branch", repository, local_repository, branch, expected_head_sha))
         return {"status": "pushed", "branch": branch}
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body):
@@ -65,19 +70,19 @@ def test_push_requires_exact_one_use_host_approval():
     with pytest.raises(SCMApprovalError):
         service.push_branch("acme/widget", "/workspace/widget", "release/1.2", approval=None)
 
-    approval = _approval(authority, "push_branch", "release/1.2")
+    approval = _approval(authority, "push_branch", "release/1.2:" + "c" * 40)
     result = service.push_branch(
         "acme/widget", "/workspace/widget", "release/1.2", approval=approval
     )
     assert result == {"status": "pushed", "branch": "release/1.2"}
-    assert provider.calls == [("push_branch", "acme/widget", "/workspace/widget", "release/1.2")]
+    assert provider.calls == [("local_head", "/workspace/widget"), ("push_branch", "acme/widget", "/workspace/widget", "release/1.2", "c" * 40)]
     with pytest.raises(SCMApprovalError):
         service.push_branch("acme/widget", "/workspace/widget", "release/1.2", approval=approval)
 
 
 def test_approval_is_bound_to_repository_operation_and_target():
     service, provider, authority = _service()
-    approval = _approval(authority, "push_branch", "release/1.2")
+    approval = _approval(authority, "push_branch", "release/1.2:" + "c" * 40)
 
     with pytest.raises(SCMApprovalError, match="scope"):
         service.push_branch("acme/other", "/workspace/widget", "release/1.2", approval=approval)
