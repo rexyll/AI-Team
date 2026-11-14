@@ -83,7 +83,10 @@ def test_python_adapter_detects_manifest_and_plans_supported_actions(tmp_path: P
 
     assert detection.adapter == "python"
     assert detection.language == "python"
-    assert install.commands[0].command == "python -m pip install --disable-pip-version-check --no-build-isolation -e ."
+    assert install.commands[0].command == "python -m venv --system-site-packages .venv"
+    assert install.commands[1].command.endswith(
+        " -m pip install --disable-pip-version-check --no-build-isolation -e ."
+    )
     assert build.commands[0].command == "python -m build --no-isolation"
     assert test.commands[0].command == "python -m pytest -q"
     assert package.status == "supported"
