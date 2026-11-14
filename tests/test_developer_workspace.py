@@ -79,6 +79,40 @@ def test_orchestrator_merges_successful_developer_workspace(tmp_path: Path, monk
     assert task.context["workspace_merge"]["added"] == ["generated.py"]
 
 
+
+def test_orchestrator_discards_workspace_when_developer_raises(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    task = Task(
+        id="TASK-008",
+        title="write then raise",
+        description="write then raise",
+        role="developer",
+        status="ready",
+        context={"workspace_root": str(root)},
+    )
+    manager = TaskManager([task])
+
+    class _Workflow:
+        def execute(self, task_id: str, *, execution_id: str | None = None):
+            write_file("partial.py", "PARTIAL = True\\n")
+            raise RuntimeError("simulated developer timeout")
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "create_task_workflow",
+        lambda **kwargs: _Workflow(),
+    )
+    orchestrator = Orchestrator(manager, _DeveloperRouter())
+
+    orchestrator._execute_task(task, execution_id="EXEC-008")
+
+    assert not (root / "partial.py").exists()
+    assert task.status in {"failed", "ready"}
+    lease_parent = root.parent / ".ai-team-dev-workspaces"
+    assert not list(lease_parent.glob("TASK-008-*"))
+
+
 def test_orchestrator_discards_failed_developer_workspace(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
@@ -208,6 +242,10 @@ def test_workspace_lease_excludes_mutable_dependency_directories(tmp_path: Path)
     assert (lease.root / "src" / "main.py").is_file()
     assert not (lease.root / ".venv").exists()
     assert not (lease.root / "node_modules").exists()
+    (lease.root / ".venv").mkdir()
+    (lease.root / ".venv" / "injected.txt").write_text("not merged", encoding="utf-8")
+    manager.merge(lease)
+    assert not (root / ".venv" / "injected.txt").exists()
     manager.discard(lease)
 
 
