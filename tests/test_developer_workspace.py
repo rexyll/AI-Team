@@ -5,11 +5,88 @@ from pathlib import Path
 
 import pytest
 
+import core.orchestrator as orchestrator_module
+from core.orchestrator import Orchestrator
+from runtime.task import Task
+from runtime.task_manager import TaskManager
+from tools.filesystem import write_file
+
 from runtime.developer_workspace import (
     DeveloperWorkspaceManager,
     WorkspaceMergeConflict,
 )
 from security.workspace import resolve_workspace_path, workspace_scope
+
+
+
+class _DeveloperRouter:
+    def get_developer_for_task(self, task_id: str):
+        return object()
+
+    def get_agent(self, role: str):
+        return object()
+
+
+def test_orchestrator_merges_successful_developer_workspace(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    task = Task(
+        id="TASK-006",
+        title="write an artifact",
+        description="write an artifact",
+        role="developer",
+        status="ready",
+        context={"workspace_root": str(root)},
+    )
+    manager = TaskManager([task])
+
+    class _Workflow:
+        def execute(self, task_id: str, *, execution_id: str | None = None):
+            write_file("generated.py", "VALUE = 42\n")
+            manager.get_task(task_id).status = "completed"
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "create_task_workflow",
+        lambda **kwargs: _Workflow(),
+    )
+    orchestrator = Orchestrator(manager, _DeveloperRouter())
+
+    orchestrator._execute_task(task, execution_id="EXEC-006")
+
+    assert (root / "generated.py").read_text(encoding="utf-8") == "VALUE = 42\n"
+    assert task.context["workspace_merge"]["added"] == ["generated.py"]
+
+
+def test_orchestrator_discards_failed_developer_workspace(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    task = Task(
+        id="TASK-007",
+        title="write then fail",
+        description="write then fail",
+        role="developer",
+        status="ready",
+        context={"workspace_root": str(root)},
+    )
+    manager = TaskManager([task])
+
+    class _Workflow:
+        def execute(self, task_id: str, *, execution_id: str | None = None):
+            write_file("partial.py", "PARTIAL = True\n")
+            manager.get_task(task_id).status = "failed"
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "create_task_workflow",
+        lambda **kwargs: _Workflow(),
+    )
+    orchestrator = Orchestrator(manager, _DeveloperRouter())
+
+    orchestrator._execute_task(task, execution_id="EXEC-007")
+
+    assert not (root / "partial.py").exists()
+    assert task.context["workspace_discarded"] is True
 
 
 def test_workspace_lease_merges_changed_added_and_deleted_files(tmp_path: Path) -> None:
