@@ -21,9 +21,9 @@
 Detection signals: `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, or top-level Python source.
 
 - Install: editable install from project metadata, otherwise install `requirements.txt`; skipped if no manifest.
-- Build: `python -m build` when package metadata exists; otherwise a compile-only check (`python -m compileall -q .`).
+- Build: `python -m build --no-isolation` when package metadata exists; otherwise a compile-only check (`python -m compileall -q .`).
 - Test: `python -m pytest -q` when pytest-style test files exist; otherwise skipped.
-- Package: `python -m build` when package metadata exists; otherwise unsupported.
+- Package: `python -m build --no-isolation` when package metadata exists; otherwise unsupported.
 - Smoke: test suite when present, otherwise compile-only check.
 - Deploy: unsupported until a deployment provider is configured.
 
@@ -59,8 +59,7 @@ registries and modify dependency directories; enabling it is an explicit
 operator decision. The legacy integration suite and static gate continue to
 run independently, including on a fresh staged copy.
 
-CI evidence for the orchestration wiring and audited tool-service tests: [run 43598140624](https://github.com/rexyll/AI-Team/actions/runs/43598140624),
-2,273 passed / 9 skipped and 233 security tests passed / 9 skipped. The orchestrator-level test uses a stubbed command implementation behind the real ToolInvocationService; the adapter-level Python and Node fixtures separately execute real commands through ToolInvocationService. A Windows-host run against the production PowerShell-backed terminal remains outstanding.
+CI evidence: [run 43598452950](https://github.com/rexyll/AI-Team/actions/runs/43598452950) passed both jobs. Linux regression: 2,273 passed / 10 skipped; security regression: 233 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising build/test/smoke and verifying a deliberately failing compile is reported as failed. The orchestrator-level test uses a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
 
 ## Security and execution boundaries
 
@@ -74,11 +73,11 @@ CI evidence for the orchestration wiring and audited tool-service tests: [run 43
 
 ## Current maturity and remaining work
 
-The adapter contracts, Python/npm planning rules, timeout schema and invocation-service executor are implemented. GitHub Actions tests verify detection, ambiguity, supported/skipped/unsupported decisions, bounded timeout propagation, invocation through the tool service, fail-closed result parsing, and actual Python plus Node/npm fixture execution across install/build/test/package/smoke. Latest evidence: [run 43595491731](https://github.com/rexyll/AI-Team/actions/runs/43595491731), 2,267 passed / 9 skipped and 233 security tests passed / 9 skipped.
+The first Project Adapter milestone (T21.3 v1) is complete. Verified capabilities include Python and Node/npm detection/planning, explicit unsupported states, bounded command execution through ToolInvocationService, opt-in ProjectOrchestrator integration, workspace scoping, failure evidence/rework, and real fixture execution for install/build/test/package/smoke. CI verifies both the audited invocation boundary and the production Windows terminal.
 
-This is not yet a claim of end-to-end Node.js delivery. Remaining T21.3 work:
+Known boundaries are explicit rather than silently inferred:
 
-1. Wire the adapter executor into project-level integration/package orchestration without bypassing existing tool authorization.
-2. Run real Python and Node.js fixture projects through install/build/test/package/smoke on a supported host, with network-free fixtures where possible.
-3. Add explicit support or deterministic unsupported results for pnpm/yarn, and define how read-only dependency caches can be safely shared with Developer workspaces.
-4. Keep deploy unsupported until a deployment provider is implemented and verified.
+1. Node support is npm-only. pnpm/yarn lockfiles are detected, but install is unsupported until dedicated lockfile-aware adapters are implemented.
+2. Dependency caches are not shared between Developer workspaces. This remains coupled to the T21.2 workspace/dependency-environment design.
+3. Adapter integration is disabled by default because install can access package registries; enable it deliberately with `AI_TEAM_PROJECT_ADAPTERS=1`.
+4. Deploy remains unsupported until a deployment provider is implemented and verified.
