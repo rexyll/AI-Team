@@ -15,6 +15,8 @@ def _service_with_stub_command(*, fail_on: int | None = None):
     def run_command(command: str, cwd: str = ".", timeout: float = 600.0) -> str:
         working_directory = resolve_workspace_path(cwd)
         assert working_directory.is_dir()
+        if command == "python -m venv --system-site-packages .venv":
+            (working_directory / ".venv").mkdir()
         calls.append({
             "command": command,
             "cwd": cwd,
@@ -81,15 +83,15 @@ def test_project_adapter_phase_uses_real_tool_invocation_service_and_workspace_s
     assert result["status"] == "passed", result
     assert result["adapter"] == "python"
     assert set(result["actions"]) == {"install", "build", "test", "smoke", "package"}
-    assert len(calls) == 5
+    assert len(calls) == 6
     assert all(call["cwd"] == "." for call in calls)
     assert all(1 <= call["timeout"] <= 3600 for call in calls)
     records = service.history.to_dict()
-    assert len(records) == 5
+    assert len(records) == 6
     assert all(record["agent_role"] == "developer" for record in records)
     assert all(record["tool_name"] == "run_command" for record in records)
     assert all(record["status"] == "completed" for record in records)
-    assert len(result["tool_execution_history"]) == 5
+    assert len(result["tool_execution_history"]) == 6
 
 
 def test_project_adapter_phase_stops_on_first_failed_command(monkeypatch, tmp_path: Path) -> None:
