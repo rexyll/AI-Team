@@ -164,9 +164,9 @@ class HostGitOperationService:
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
         output = self._git_host(["remote", "get-url", "origin"], root, env=env)
-        if not output.startswith("exit_code=0\\n"):
+        if not output.startswith("exit_code=0\n"):
             raise RuntimeError("unable to resolve origin remote")
-        return output.split("\\n", 1)[1].strip()
+        return output.split("\n", 1)[1].strip()
 
     def push(
         self,
@@ -213,8 +213,8 @@ class HostGitOperationService:
         )
         output = completed.stdout or ""
         if completed.stderr:
-            output += "\\n" + completed.stderr
-        return f"exit_code={completed.returncode}\\n{output}"
+            output += "\n" + completed.stderr
+        return f"exit_code={completed.returncode}\n{output}"
 
     def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         if env is None:
