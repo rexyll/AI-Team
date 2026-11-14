@@ -188,11 +188,12 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 所有命令经过现有权限策略/沙箱，具备 allowlist、超时、工作目录限制、输出脱敏；不允许 adapter 绕过 ToolInvocationService。
   - 设计说明：[`docs/project_adapter_architecture.md`](docs/project_adapter_architecture.md)。
   - 验收：Python 与 Node.js fixture 项目分别完成依赖安装（离线 fixture 可替代网络安装）、构建、测试、打包和冒烟；未知技术栈明确拒绝或降级。
-- [ ] **T21.4 Executable Acceptance Evidence**
-  - 建立 REQ → acceptance test ID → 命令/测试选择器 → 实际执行结果 → 日志/报告摘要的确定性证据模型。
-  - 每条强制 REQ 必须关联至少一条可执行验收测试；缺失、未执行、失败均不能标记验收通过。
-  - 保留人工 UAT 签核作为可选外部证据，不能由 Agent 伪造。
-  - 验收：通过、失败、未执行、无关联测试、证据过期等路径均有契约测试；报告与发布门禁一致。
+- [x] **T21.4 Executable Acceptance Evidence（v1 完成，2026-11-14）**
+  - `runtime/executable_acceptance.py` 建立 REQ → AT ID → 精确 JUnit selector → 实际执行状态/耗时/摘要的确定性模型；保留集成测试命令、退出码、汇总与证据时间。
+  - `runtime/integration_verification.py` 从隔离 staging 的 pytest JUnit XML 读取逐用例结果；DocWriter 只可从本次真实观测到的 REQ 与 selector 生成 `docs/acceptance_tests.json`，既有人工维护映射保持不覆盖。
+  - 强制 REQ 无映射、selector 未执行、测试失败、suite 跳过、manifest 非法或证据超过 24 小时均不能通过；`runtime/release_gate.py` 对 `failed/not_executed/stale` 确定性阻断，Release Manager 不能覆盖。
+  - 报告：`docs/acceptance_report.md`（文档追溯）与 `docs/executable_acceptance_report.md`（执行证据）。人工 UAT 签核仍是外部人工流程；未接入可验证签名 provider，不计为自动化证据。
+  - 验证：通过/失败/未执行/无关联测试/过期/非法 selector/发布阻断契约测试；GitHub Actions run 43606002701：全量回归 2309 passed / 10 skipped，安全回归 234 passed / 9 skipped，Windows 生产终端 smoke 1 passed。
   
 ### P2：外部协作与部署闭环
 
@@ -234,4 +235,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
 | 2026-11-14 | T21.2 Developer Workspace 隔离（v1 完成） | 跨进程租约/事务回滚/崩溃恢复通过；任务级 Python venv、Node node_modules、pip/npm lease-local cache；依赖目录不复制、不合并、不进入交付/冒烟 staging；安装失败 fail-closed。并行真实 DeveloperAgent + MockLLM 工具循环验证两份独立 lease、write_file 工具调用、源码合并与环境回收。全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed。剩余边界：无跨任务缓存复用；外部 ProviderLLM 集成留待 T21.8 | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
+| 2026-11-14 | T21.4 Executable Acceptance Evidence（v1 完成） | JUnit 逐用例执行证据、REQ/AT/selector 映射、24h 过期检测与确定性发布门禁完成；DocWriter 映射生成受已观测 selector 约束；人工签名 UAT provider 暂未接入。全量回归 2309 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows smoke 1 passed | [GitHub Actions run 43606002701](https://github.com/rexyll/AI-Team/actions/runs/43606002701)；新增 `runtime/executable_acceptance.py`、`docs/executable_acceptance_evidence.md` 与执行证据契约测试 |
 | 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed（task-local venv、build/test/smoke/package + 非零退出码 fail-closed）；Python/Node npm fixture 经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。边界：npm only；pnpm/yarn 与 deploy unsupported；缓存仅 lease-local | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增适配器/环境 provisioner/编排与 Windows E2E 测试 |
