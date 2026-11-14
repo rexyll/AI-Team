@@ -236,7 +236,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
-| 2026-11-14 | T21.5.1 ProjectOrchestrator SCM 接线（只读观察） | 完成：注入式 SCMService + 显式 repo/PR 配置；交付阶段记录 PR head/state、CI、review 证据；仅全绿标记 ready，异常记录 unavailable，不执行任何写操作；无配置保持旧行为。新增 service PR metadata read 与 orchestrator contract tests。 | 提交 `7163d32`、`311a826`、`23f3b2b`、`8f52d89`、`3e3b1e8`；`tests/test_scm_provider.py`、`tests/test_scm_orchestrator.py` |
+| 2026-11-14 | T21.5.1 ProjectOrchestrator SCM 接线（只读观察） | 实现完成，CI 待验证：注入式 SCMService + 显式 repo/PR 配置；交付阶段记录 PR head/state、CI、review 证据；仅全绿标记 ready，异常记录 unavailable，不执行任何写操作；无配置保持旧行为。新增 service PR metadata read 与 orchestrator contract tests。GitHub connector 当前未返回该提交的 check/status 或 workflow run，不能据此宣称测试通过。 | 提交 `7163d32`、`311a826`、`23f3b2b`、`8f52d89`、`3e3b1e8`；`tests/test_scm_provider.py`、`tests/test_scm_orchestrator.py` |
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
 | 2026-11-14 | T21.2 Developer Workspace 隔离（v1 完成） | 跨进程租约/事务回滚/崩溃恢复通过；任务级 Python venv、Node node_modules、pip/npm lease-local cache；依赖目录不复制、不合并、不进入交付/冒烟 staging；安装失败 fail-closed。并行真实 DeveloperAgent + MockLLM 工具循环验证两份独立 lease、write_file 工具调用、源码合并与环境回收。全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed。剩余边界：无跨任务缓存复用；外部 ProviderLLM 集成留待 T21.8 | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
