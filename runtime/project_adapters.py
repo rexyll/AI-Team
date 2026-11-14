@@ -8,6 +8,7 @@ the source of truth.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,16 @@ def _python_tests(root: Path) -> bool:
     return False
 
 
+def _python_executable(root: Path) -> str:
+    """Select the task-local interpreter when an isolated venv exists."""
+    environment = root / ".venv"
+    if environment.is_dir() and not environment.is_symlink():
+        if os.name == "nt":
+            return r".\\.venv\\Scripts\\python.exe"
+        return "./.venv/bin/python"
+    return "python"
+
+
 def _node_package(root: Path) -> dict[str, object] | None:
     package_file = root / "package.json"
     if not package_file.is_file() or package_file.is_symlink():
@@ -88,7 +99,7 @@ class PythonProjectAdapter:
 
     def detect(self, root: Path) -> ProjectDetection | None:
         signals = tuple(
-            name for name in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg")
+            name for name in ("pyproject.toml", "requirements.txt", "requirements-dev.txt", "setup.py", "setup.cfg")
             if (root / name).is_file() and not (root / name).is_symlink()
         )
         if not signals and not any(root.glob("*.py")):
@@ -102,31 +113,53 @@ class PythonProjectAdapter:
         command: str | None = None
         reason: str | None = None
         status: PlanStatus = "supported"
+        has_project_metadata = (root / "pyproject.toml").is_file() or (root / "setup.py").is_file()
+        has_requirements = (root / "requirements.txt").is_file()
+        has_dev_requirements = (root / "requirements-dev.txt").is_file()
         if action == "install":
-            if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m pip install --disable-pip-version-check --no-build-isolation -e ."
-            elif (root / "requirements.txt").is_file():
-                command = "python -m pip install --disable-pip-version-check -r requirements.txt"
+            if has_project_metadata or has_requirements or has_dev_requirements:
+                commands = [ProjectCommand("python -m venv --system-site-packages .venv")]
+                environment_python = (
+                    r".\\.venv\\Scripts\\python.exe"
+                    if os.name == "nt"
+                    else "./.venv/bin/python"
+                )
+                if has_project_metadata:
+                    requirements = " -r requirements.txt" if has_requirements else ""
+                    commands.append(ProjectCommand(
+                        f"{environment_python} -m pip install --disable-pip-version-check "
+                        f"--no-build-isolation -e .{requirements}"
+                    ))
+                elif has_requirements:
+                    commands.append(ProjectCommand(
+                        f"{environment_python} -m pip install --disable-pip-version-check -r requirements.txt"
+                    ))
+                if has_dev_requirements:
+                    commands.append(ProjectCommand(
+                        f"{environment_python} -m pip install --disable-pip-version-check -r requirements-dev.txt"
+                    ))
             else:
                 status, reason = "skipped", "no Python dependency manifest found"
         elif action == "build":
-            if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m build --no-isolation"
+            python = _python_executable(root)
+            if has_project_metadata:
+                command = f"{python} -m build --no-isolation"
             else:
-                command = "python -m compileall -q ."
+                command = f"{python} -m compileall -q ."
                 reason = "source compilation check; no distributable build manifest found"
         elif action == "test":
             if _python_tests(root):
-                command = "python -m pytest -q"
+                command = f"{_python_executable(root)} -m pytest -q"
             else:
                 status, reason = "skipped", "no Python test files found"
         elif action == "package":
-            if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m build --no-isolation"
+            if has_project_metadata:
+                command = f"{_python_executable(root)} -m build --no-isolation"
             else:
                 status, reason = "unsupported", "Python package metadata is required for a distributable build"
         elif action == "smoke":
-            command = "python -m pytest -q" if _python_tests(root) else "python -m compileall -q ."
+            python = _python_executable(root)
+            command = f"{python} -m pytest -q" if _python_tests(root) else f"{python} -m compileall -q ."
             if not _python_tests(root):
                 reason = "no tests found; smoke is limited to Python source compilation"
         else:
