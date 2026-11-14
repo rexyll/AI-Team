@@ -68,6 +68,17 @@ def _seed_release(root: Path, *, version: str = "0.1.0") -> None:
     )
     (root / "docs").mkdir(exist_ok=True)
     (root / "docs" / "requirements.md").write_text(REQUIREMENTS_DOC, encoding="utf-8")
+    (root / "docs" / "acceptance_tests.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "tests": [{
+                "test_id": "AT-001",
+                "requirement_id": "REQ-001",
+                "selector": "test_todo::test_ok",
+            }],
+        }),
+        encoding="utf-8",
+    )
 
 
 def test_parse_defect_intake_normalizes_severity_and_versions():
