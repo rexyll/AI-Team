@@ -122,7 +122,7 @@ class PythonProjectAdapter:
                 status, reason = "skipped", "no Python test files found"
         elif action == "package":
             if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
-                command = "python -m build"
+                command = "python -m build --no-isolation"
             else:
                 status, reason = "unsupported", "Python package metadata is required for a distributable build"
         elif action == "smoke":
