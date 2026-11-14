@@ -213,6 +213,30 @@ class SCMService:
             repository, head=head, base=base, title=title, body=body
         )
 
+    def get_pull_request(self, repository: str, pull_request_number: int) -> dict[str, Any]:
+        """Read the current PR head and state without granting a write capability."""
+        repository = _repository(repository)
+        if (
+            not isinstance(pull_request_number, int)
+            or isinstance(pull_request_number, bool)
+            or pull_request_number < 1
+        ):
+            raise ValueError("pull_request_number must be a positive integer")
+        getter = getattr(self._provider, "get_pull_request", None)
+        if not callable(getter):
+            raise SCMPreflightError("provider does not expose pull request metadata")
+        result = getter(repository, pull_request_number)
+        if not isinstance(result, dict):
+            raise SCMPreflightError("provider returned invalid pull request metadata")
+        head_sha = result.get("head_sha")
+        if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
+            raise SCMPreflightError("provider returned no valid pull request head SHA")
+        return {
+            "head_sha": head_sha,
+            "state": result.get("state"),
+            "merged": result.get("merged"),
+        }
+
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
         repository = _repository(repository)
         if not isinstance(commit_sha, str) or not _SHA.fullmatch(commit_sha):
