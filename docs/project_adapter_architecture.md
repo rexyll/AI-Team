@@ -38,6 +38,30 @@ Detection signal: a valid `package.json`.
 - Smoke: test script when present; otherwise skipped.
 - Deploy: unsupported until a deployment provider is configured.
 
+## Project orchestration integration
+
+`ProjectOrchestrator` now includes an opt-in adapter phase in the existing
+integration gate. Enable it with `AI_TEAM_PROJECT_ADAPTERS=1`; if a project
+contains more than one supported toolchain, select one explicitly with
+`AI_TEAM_PROJECT_ADAPTER=python` or `AI_TEAM_PROJECT_ADAPTER=node`.
+
+The phase plans and executes install, build, test, smoke and package in that
+order. It uses a fresh `ToolInvocationService` and invokes only the registered
+`run_command` tool as the developer role. A task-local `workspace_scope`
+anchors every command to the deliverable root. Existing capability checks,
+argument schema validation, command allowlist, timeout enforcement and tool
+execution history remain in force. A failed command or ambiguous toolchain
+fails the integration gate and is included in bounded rework evidence;
+skipped/unsupported individual actions are retained as explicit evidence.
+
+The phase is disabled by default. Dependency installation can contact package
+registries and modify dependency directories; enabling it is an explicit
+operator decision. The legacy integration suite and static gate continue to
+run independently, including on a fresh staged copy.
+
+CI evidence for the orchestration wiring: [run 43597770742](https://github.com/rexyll/AI-Team/actions/runs/43597770742),
+2,272 passed / 9 skipped and 233 security tests passed / 9 skipped.
+
 ## Security and execution boundaries
 
 - The adapter receives a project root and reads only known manifest files for detection/planning.
