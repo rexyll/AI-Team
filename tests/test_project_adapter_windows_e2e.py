@@ -37,7 +37,7 @@ def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> N
 
         # A deliberately broken source file must surface a non-zero
         # native process exit code through PowerShell and the tool boundary.
-        (tmp_path / "broken.py").write_text("def broken(:\\n", encoding="utf-8")
+        (tmp_path / "broken.py").write_text("def broken(:", encoding="utf-8")
         failed_build = executor.execute(
             registry.plan(tmp_path, "build", adapter_name="python"),
             role="developer",
