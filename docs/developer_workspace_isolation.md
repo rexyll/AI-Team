@@ -67,4 +67,4 @@ The contract suite covers:
 - dependency-directory exclusion and non-merging;
 - context propagation and folded output-path compatibility.
 
-The latest successful regression evidence is recorded in `TaskPlan.md`. The actual-process-termination test is being validated in CI before this milestone is considered complete.
+The latest successful regression evidence is recorded in `TaskPlan.md`. The actual-process-termination test passed in GitHub Actions run [43591001425](https://github.com/rexyll/AI-Team/actions/runs/43591001425). The overall T21.2 milestone remains open until multi-file merge recovery, real multi-Developer project E2E and task-local dependency provisioning are validated.
