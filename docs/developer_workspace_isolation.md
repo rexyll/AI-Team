@@ -54,6 +54,8 @@ When `AI_TEAM_TASK_ENVIRONMENTS=1`, the Orchestrator provisions dependencies ins
 - pip and npm caches are directed to lease-local `.ai-team-cache` paths. No mutable package-manager cache is shared between concurrent tasks.
 - All three directories are excluded from merge, and the entire lease is removed after merge/discard. A failed/unsupported installation prevents the Developer workflow from running and causes the lease to be discarded.
 
+A two-Developer concurrency test now verifies separate lease roots, independent venv creation, concurrent workflow execution, disjoint source merges, and exclusion of all dependency directories from the canonical tree. CI evidence: [run 43599649718](https://github.com/rexyll/AI-Team/actions/runs/43599649718), 2,282 passed / 10 skipped, 234 security tests passed / 9 skipped, and the Windows production-terminal smoke passed.
+
 The environment setup is opt-in and disabled by default because it can access package registries. Multi-toolchain projects must select an adapter with `AI_TEAM_PROJECT_ADAPTER=python` or `node`. Cache reuse across tasks is intentionally deferred until a content-addressed, integrity-checked, read-only cache design is available.
 
 ## Current boundaries
