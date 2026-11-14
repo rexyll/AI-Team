@@ -113,12 +113,26 @@ class GitHubSCMProvider:
         slug = slug.removesuffix(".git").strip("/")
         return slug.lower() == repository.lower()
 
-    def push_branch(self, repository: str, local_repository: str, branch: str) -> dict[str, Any]:
+    def get_local_head_sha(self, local_repository: str) -> str:
+        return self._git.head_commit(local_repository)
+
+    def push_branch(
+        self,
+        repository: str,
+        local_repository: str,
+        branch: str,
+        *,
+        expected_head_sha: str,
+    ) -> dict[str, Any]:
         self._repo_path(repository)
+        if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
+            raise ValueError("expected_head_sha must be a hexadecimal SHA")
         remote_url = self._git.remote_url(local_repository)
         if not self._remote_matches(remote_url, repository):
             raise PermissionError("origin remote does not match the approved GitHub repository")
-        output = self._git.push(local_repository, branch=branch)
+        if self._git.head_commit(local_repository) != expected_head_sha:
+            raise PermissionError("local HEAD changed after the push approval")
+        output = self._git.push(local_repository, branch=branch, commit_sha=expected_head_sha)
         first_line = output.splitlines()[0] if output else ""
         if first_line != "exit_code=0":
             raise GitHubAPIError("git push failed: " + output[-1200:])
