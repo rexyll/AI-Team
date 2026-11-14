@@ -197,11 +197,14 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   
 ### P2：外部协作与部署闭环
 
-- [ ] **T21.5 SCM / PR / CI Provider**
+- [ ] **T21.5 SCM / PR / CI Provider（进行中）**
   - 定义 SCM provider 接口，首批支持 GitHub：分支/提交推送、PR 创建/更新、CI 状态读取、review 状态读取、合并前检查。
   - 远端写操作与合并必须受 host-owned 权限边界和显式审批控制；Agent 不得自行扩大 token 权限。
   - CI 失败反馈可转成修复任务，但需限制轮次并保留原始状态证据。
   - 验收：mock provider 全路径契约 + GitHub 最小集成验证；权限不足时 fail-closed。
+  - 第一阶段已实现 provider-neutral `SCMProvider` / `SCMService` 与 GitHub REST adapter：分支推送、PR 创建/更新、CI 与 review 状态读取、PR 合并。
+  - push / PR 写入 / merge 使用 host-owned 一次性、短时、精确 scope approval；merge 额外绑定 PR head SHA，并要求 CI `success` + review `approved`。Agent 仍无法调用 raw Git `push` / `remote`。
+  - 当前已有 mock provider 与 GitHub REST transport 契约测试；尚未完成真实 GitHub test-repository 集成（需要 host token 与人工批准），CI 失败转修复任务也尚未接入。
 - [ ] **T21.6 Deployment / Operations Adapters**
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
@@ -236,4 +239,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
 | 2026-11-14 | T21.2 Developer Workspace 隔离（v1 完成） | 跨进程租约/事务回滚/崩溃恢复通过；任务级 Python venv、Node node_modules、pip/npm lease-local cache；依赖目录不复制、不合并、不进入交付/冒烟 staging；安装失败 fail-closed。并行真实 DeveloperAgent + MockLLM 工具循环验证两份独立 lease、write_file 工具调用、源码合并与环境回收。全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed。剩余边界：无跨任务缓存复用；外部 ProviderLLM 集成留待 T21.8 | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
 | 2026-11-14 | T21.4 Executable Acceptance Evidence（v1 完成） | JUnit 逐用例执行证据、REQ/AT/selector 映射、24h 过期检测与确定性发布门禁完成；DocWriter 映射生成受已观测 selector 约束；人工签名 UAT provider 暂未接入。全量回归 2309 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows smoke 1 passed | [GitHub Actions run 43606002701](https://github.com/rexyll/AI-Team/actions/runs/43606002701)；新增 `runtime/executable_acceptance.py`、`docs/executable_acceptance_evidence.md` 与执行证据契约测试 |
+| 2026-11-14 | T21.5 SCM / PR / CI Provider（接口与 GitHub adapter 第一阶段） | provider contract、GitHub REST adapter、host-only 非强制 push、短时一次性审批、CI/review preflight 与精确 head-SHA merge scope 已实现；live GitHub 尚未验证，CI 失败自动返工未接入 | 新增 `runtime/scm_provider.py`、`runtime/github_scm_provider.py`、`docs/scm_provider_architecture.md` 与 mock contract tests |
 | 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed（task-local venv、build/test/smoke/package + 非零退出码 fail-closed）；Python/Node npm fixture 经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。边界：npm only；pnpm/yarn 与 deploy unsupported；缓存仅 lease-local | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增适配器/环境 provisioner/编排与 Windows E2E 测试 |
