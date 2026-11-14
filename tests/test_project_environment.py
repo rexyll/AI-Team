@@ -258,6 +258,7 @@ def test_parallel_developers_receive_distinct_task_local_environments(
     service, calls = _service_with_stub_install()
     provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
     barrier = threading.Barrier(2)
+    observed_roots: dict[str, Path] = {}
 
     class _Workflow:
         def execute(self, task_id: str, *, execution_id: str | None = None):
@@ -427,7 +428,7 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
     assert all(
         record.agent_role == "developer"
         for developer in (developer_a, developer_b)
-        for record in developer.tool_execution_history.to_dict().values()
+        for record in developer.tool_execution_history.to_dict()
     )
     assert not (root / ".venv").exists()
     assert not (root / ".ai-team-cache").exists()
