@@ -20,7 +20,8 @@ def test_process_lock_serializes_independent_processes(tmp_path):
     entered_b = context.Event()
 
     first = context.Process(target=_critical_section, args=(str(tmp_path), entered_a, release_a))
-    second = context.Process(target=_critical_section, args=(str(tmp_path), entered_b, context.Event()))
+    release_b = context.Event()
+    second = context.Process(target=_critical_section, args=(str(tmp_path), entered_b, release_b))
 
     first.start()
     assert entered_a.wait(timeout=5)
