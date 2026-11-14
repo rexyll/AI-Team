@@ -1,5 +1,7 @@
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +20,8 @@ from runtime.task_manager import TaskManager
 from runtime.agent_router import AgentRouter
 from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
+from runtime.developer_workspace import DeveloperWorkspaceManager
+from security.workspace import workspace_scope
 
 
 class _CheckpointFailure(OSError):
@@ -53,6 +57,8 @@ class Orchestrator:
         self.failure_recovery_executor = FailureRecoveryExecutor(task_manager)
         self._resource_execution = ResourceExecutionCoordinator(resource_governor if resource_governor is not None else ResourceGovernor(ResourceLimits(max_concurrent_tasks=max_workers)))
         self._replan_coordinator = RecoveryReplanCoordinator(task_manager, replan_planner) if replan_planner is not None else None
+        self._developer_workspace_managers: dict[str, DeveloperWorkspaceManager] = {}
+        self._developer_workspace_managers_lock = threading.Lock()
         self._state_change_hook: Callable[[TaskManager], None] | None = None; self._workflow_event_log = workflow_event_log
         self._workflow_event_sink = _OrchestratorWorkflowEventLog(workflow_event_log) if workflow_event_log is not None else None; self._project_id = project_id
     @property
@@ -120,6 +126,15 @@ class Orchestrator:
         for task in candidates:
             if self._resource_execution.admit(task) is not None: executable.append(task)
         return executable
+    def _workspace_manager_for(self, root: str) -> DeveloperWorkspaceManager:
+        canonical = str(Path(root).resolve())
+        with self._developer_workspace_managers_lock:
+            manager = self._developer_workspace_managers.get(canonical)
+            if manager is None:
+                manager = DeveloperWorkspaceManager(canonical)
+                self._developer_workspace_managers[canonical] = manager
+            return manager
+
     def _select_developer(self, task) -> object:
         selector = getattr(self.agent_router, "get_developer_for_task", None)
         if callable(selector): return selector(task.id)
@@ -151,7 +166,25 @@ class Orchestrator:
             if task.role == "developer":
                 developer = self._select_developer(task); identity = self._developer_identity(developer); task.context["developer_assignment"] = identity
                 self._emit_event("developer_assigned", task, payload=identity | {"execution_id": active_execution_id})
-                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer, execution_id=active_execution_id); workflow.execute(task.id, execution_id=active_execution_id)
+                workflow = create_task_workflow(task_manager=self.task_manager, agent_router=self.agent_router, state_change_hook=self._persist_state_checkpoint, workflow_event_log=self._workflow_event_sink, project_id=self._project_id, developer=developer, execution_id=active_execution_id)
+                workspace_root = task.context.get("workspace_root")
+                if isinstance(workspace_root, str) and workspace_root.strip():
+                    manager = self._workspace_manager_for(workspace_root)
+                    lease = manager.issue(task.id)
+                    try:
+                        with workspace_scope(lease.root):
+                            workflow.execute(task.id, execution_id=active_execution_id)
+                        if task.status == "completed":
+                            task.context["workspace_merge"] = manager.merge(lease).to_dict()
+                        else:
+                            task.context["workspace_discarded"] = True
+                    except BaseException:
+                        manager.discard(lease)
+                        raise
+                    finally:
+                        manager.discard(lease)
+                else:
+                    workflow.execute(task.id, execution_id=active_execution_id)
             else:
                 agent = self.agent_router.get_agent(task.role); result = agent.run(task); self.task_manager.mark_completed(task.id, result); self._emit_event("task_completed", task, payload={"status": task.status, "execution_id": active_execution_id})
             if task.role != "developer": self._persist_state_checkpoint()
