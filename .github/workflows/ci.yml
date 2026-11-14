@@ -39,3 +39,28 @@ jobs:
       - name: Security regression suite
         if: always()
         run: python tools/run_security_regression.py
+
+  windows-toolchain-smoke:
+    runs-on: windows-latest
+    env:
+      DEFAULT_PROVIDER: agnes
+      DEFAULT_MODEL: ci-test-model
+      AGNES_API_KEY: ci-placeholder-not-a-secret
+      AGNES_BASE_URL: https://ci.invalid/v1
+      AGNES_MODEL: ci-test-model
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Production Windows terminal adapter smoke
+        run: python -m pytest -q tests/test_project_adapter_windows_e2e.py
