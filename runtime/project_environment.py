@@ -6,6 +6,7 @@ merged back into the canonical deliverable.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,15 @@ class ProjectEnvironmentProvisioner:
     ) -> dict[str, Any]:
         project_root = Path(root).resolve()
         try:
-            detection = self._registry.resolve(project_root)
+            selected_adapter = os.environ.get("AI_TEAM_PROJECT_ADAPTER")
+            detection = self._registry.resolve(
+                project_root,
+                adapter_name=(
+                    selected_adapter.strip()
+                    if isinstance(selected_adapter, str) and selected_adapter.strip()
+                    else None
+                ),
+            )
         except LookupError:
             return {
                 "status": "skipped",
