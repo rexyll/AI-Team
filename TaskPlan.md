@@ -166,7 +166,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - CI 安装运行依赖与开发依赖；将 Python 矩阵调整为项目明确支持的 3.14，避免在不支持的 3.13 上制造误报。
   - 保持全量回归与安全回归两个阶段；不得因安装失败而跳过安全门禁。
   - 验收：GitHub Actions 全量回归与安全回归均启动并通过；同时验证本地标准安装指令。
-- [ ] **T21.2 Developer Workspace 隔离**（核心实现与依赖环境 v1 已完成；新增双 Developer 并发编排测试，验证两个 lease 的独立 venv、并行执行、源码合并与依赖目录不合并；整体仍待真实 Agent/LLM 项目 E2E：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；多文件事务回滚；冲突/路径/符号链接 fail-closed；异常退出清理；可选任务级依赖安装。`AI_TEAM_TASK_ENVIRONMENTS=1` 在 lease 内创建 Python `.venv` 或 Node `node_modules`，pip/npm 缓存同样落在 lease 的 `.ai-team-cache`；这些目录不复制、不合并、不进入交付清单/冒烟 staging，安装失败阻断 Developer workflow。共享缓存复用仍未实现）
+- [ ] **T21.2 Developer Workspace 隔离**（核心实现与依赖环境 v1 已完成；新增双 Developer 并发编排测试，验证两个 lease 的独立 venv、并行执行、源码合并与依赖目录不合并；整体仍待真实 Agent/LLM 项目 E2E：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；多文件事务回滚；冲突/路径/符号链接 fail-closed；异常退出清理；可选任务级依赖安装。`AI_TEAM_TASK_ENVIRONMENTS=1` 在 lease 内创建 Python `.venv` 或 Node `node_modules`，pip 缓存落在 lease 的 `.ai-team-cache/pip`，npm 缓存落在 `node_modules/.cache/npm`；这些目录不复制、不合并、不进入交付清单/冒烟 staging，安装失败阻断 Developer workflow。共享缓存复用仍未实现）
   - 审查历史 `feature/reviewer-reliability-fallback` 中 workspace manager 的实现，只择取可证明安全的设计，不合并整支分支。
   - 实现说明：[`docs/developer_workspace_isolation.md`](docs/developer_workspace_isolation.md)，记录租约生命周期、跨进程锁、崩溃回收、依赖目录策略及当前安全边界。
   - 为并行 Developer 提供每任务/每执行者隔离工作区、租约/写者围栏、路径约束与结果回收机制。
