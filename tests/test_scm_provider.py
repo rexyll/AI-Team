@@ -39,8 +39,8 @@ class FakeSCMProvider:
         self.calls.append(("review", repository, pull_request_number))
         return self.review
 
-    def merge_pull_request(self, repository, pull_request_number, *, merge_method):
-        self.calls.append(("merge", repository, pull_request_number, merge_method))
+    def merge_pull_request(self, repository, pull_request_number, *, merge_method, expected_head_sha):
+        self.calls.append(("merge", repository, pull_request_number, merge_method, expected_head_sha))
         return {"status": "merged", "number": pull_request_number}
 
 
