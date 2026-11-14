@@ -110,6 +110,23 @@ def _router(tmp_path: Path) -> AgentRouter:
     return router
 
 
+def _seed_acceptance_fixture(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "test_acceptance.py").write_text(
+        "def test_wordcount():\n    assert 2 + 2 == 4\n", encoding="utf-8"
+    )
+    docs_root = root / "docs"
+    docs_root.mkdir(exist_ok=True)
+    (docs_root / "acceptance_tests.json").write_text(json.dumps({
+        "schema_version": 1,
+        "tests": [{
+            "test_id": "AT-001",
+            "requirement_id": "REQ-001",
+            "selector": "test_acceptance::test_wordcount",
+        }],
+    }), encoding="utf-8")
+
+
 def test_create_plan_passes_analysis_via_context(tmp_path: Path):
     orchestrator = ProjectOrchestrator(agent_router=_router(tmp_path), deliverable_dir="e2e_flat")
 
@@ -133,21 +150,7 @@ def test_delivery_phase_writes_docs_and_manifest(tmp_path: Path):
     task_manager.mark_running("TASK-001")
     task_manager.record_result("TASK-001", {"message": "实现完成", "data": {"tests": [{"command": "python -m pytest"}]}})
     task_manager.mark_completed("TASK-001")
-    deliverable_root = tmp_path / "e2e_flat"
-    deliverable_root.mkdir(parents=True, exist_ok=True)
-    (deliverable_root / "test_acceptance.py").write_text(
-        "def test_wordcount():\\n    assert 2 + 2 == 4\\n", encoding="utf-8"
-    )
-    docs_root = deliverable_root / "docs"
-    docs_root.mkdir(exist_ok=True)
-    (docs_root / "acceptance_tests.json").write_text(json.dumps({
-        "schema_version": 1,
-        "tests": [{
-            "test_id": "AT-001",
-            "requirement_id": "REQ-001",
-            "selector": "test_acceptance::test_wordcount",
-        }],
-    }), encoding="utf-8")
+    _seed_acceptance_fixture(tmp_path / "e2e_flat")
 
     delivery = orchestrator._run_delivery_phase(task_manager, project="wordcount")
 
@@ -184,6 +187,7 @@ def test_acceptance_runs_after_delivery_and_passes(tmp_path: Path):
     task_manager.mark_running("TASK-001")
     task_manager.record_result("TASK-001", {"message": "实现完成 REQ-001", "data": {"tests": []}})
     task_manager.mark_completed("TASK-001")
+    _seed_acceptance_fixture(tmp_path / "e2e_flat")
 
     delivery = orchestrator._run_delivery_phase(task_manager, project="wordcount")
 
