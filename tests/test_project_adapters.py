@@ -38,8 +38,8 @@ def _real_tool_service_for_fixture(root: Path) -> ToolInvocationService:
         )
         output = completed.stdout
         if completed.stderr:
-            output += "\\n" + completed.stderr
-        return f"exit_code={completed.returncode}\\n{output}"
+            output += "\n" + completed.stderr
+        return f"exit_code={completed.returncode}\n{output}"
 
     registry = ToolRegistry()
     registry.register(
@@ -83,7 +83,7 @@ def test_python_adapter_detects_manifest_and_plans_supported_actions(tmp_path: P
 
     assert detection.adapter == "python"
     assert detection.language == "python"
-    assert install.commands[0].command == "python -m pip install --disable-pip-version-check -e ."
+    assert install.commands[0].command == "python -m pip install --disable-pip-version-check --no-build-isolation -e ."
     assert build.commands[0].command == "python -m build"
     assert test.commands[0].command == "python -m pytest -q"
     assert package.status == "supported"
@@ -161,14 +161,14 @@ def test_python_fixture_executes_install_build_test_package_and_smoke_through_to
         pytest.skip("python executable is unavailable")
     _write(
         tmp_path / "pyproject.toml",
-        "[build-system]\\nrequires = ['setuptools>=75']\\nbuild-backend = 'setuptools.build_meta'\\n"
-        "[project]\\nname = 'ai-team-python-fixture'\\nversion = '0.1.0'\\n",
+        "[build-system]\nrequires = ['setuptools>=75']\nbuild-backend = 'setuptools.build_meta'\n"
+        "[project]\nname = 'ai-team-python-fixture'\nversion = '0.1.0'\n",
     )
     _write(tmp_path / "requirements.txt", "")
-    _write(tmp_path / "fixture_pkg" / "__init__.py", "VALUE = 42\\n")
+    _write(tmp_path / "fixture_pkg" / "__init__.py", "VALUE = 42\n")
     _write(
         tmp_path / "tests" / "test_fixture.py",
-        "from fixture_pkg import VALUE\\n\\ndef test_value():\\n    assert VALUE == 42\\n",
+        "from fixture_pkg import VALUE\n\ndef test_value():\n    assert VALUE == 42\n",
     )
     executor = ProjectAdapterExecutor(_real_tool_service_for_fixture(tmp_path))
     registry = ProjectAdapterRegistry()
@@ -208,11 +208,11 @@ def test_node_fixture_executes_install_build_test_package_and_smoke_through_tool
     )
     _write(
         tmp_path / "build.js",
-        "const fs = require('fs'); fs.mkdirSync('dist', {recursive:true}); fs.writeFileSync('dist/result.txt', 'built');\\n",
+        "const fs = require('fs'); fs.mkdirSync('dist', {recursive:true}); fs.writeFileSync('dist/result.txt', 'built');\n",
     )
     _write(
         tmp_path / "test.js",
-        "const fs = require('fs'); if (fs.readFileSync('dist/result.txt', 'utf8') !== 'built') process.exit(1);\\n",
+        "const fs = require('fs'); if (fs.readFileSync('dist/result.txt', 'utf8') !== 'built') process.exit(1);\n",
     )
     executor = ProjectAdapterExecutor(_real_tool_service_for_fixture(tmp_path))
     registry = ProjectAdapterRegistry()
