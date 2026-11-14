@@ -243,14 +243,21 @@ class GitHubSCMProvider:
         return {"status": status, "review_count": len(latest_by_user), "states": states}
 
     def merge_pull_request(
-        self, repository: str, pull_request_number: int, *, merge_method: str
+        self,
+        repository: str,
+        pull_request_number: int,
+        *,
+        merge_method: str,
+        expected_head_sha: str,
     ) -> dict[str, Any]:
         if merge_method not in {"merge", "squash", "rebase"}:
             raise ValueError("unsupported merge method")
+        if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
+            raise ValueError("expected_head_sha must be a hexadecimal SHA")
         result = self._transport.request(
             "PUT",
             f"{self._repo_path(repository)}/pulls/{pull_request_number}/merge",
-            {"merge_method": merge_method},
+            {"merge_method": merge_method, "sha": expected_head_sha},
         )
         if not isinstance(result, dict) or result.get("merged") is not True:
             message = result.get("message") if isinstance(result, dict) else ""
