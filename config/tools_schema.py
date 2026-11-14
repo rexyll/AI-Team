@@ -88,6 +88,12 @@ TOOLS_SCHEMA = [
                         "type": "string",
                         "description": "Working directory.",
                     },
+                    "timeout": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 3600,
+                        "description": "Maximum execution time in seconds.",
+                    },
                 },
                 "required": ["command"],
             },
