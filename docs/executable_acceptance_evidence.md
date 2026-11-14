@@ -35,7 +35,7 @@ Rules:
 - A test may cover more than one requirement. Multiple tests may be mapped to one requirement; all mapped tests must pass.
 - Optional requirements without executable tests produce warnings, not mandatory release blockers.
 
-The integration runner executes the deliverable test suite in a fresh staging copy and writes a JUnit XML report. The evidence evaluator consumes the test cases from that report; it does not run arbitrary commands from the manifest. The actual runner command, exit code, suite summary, test selector, status and duration are retained in the evidence report.
+The integration runner executes the deliverable test suite in a fresh staging copy and writes a JUnit XML report. DocWriter can propose the manifest from the requirement list and the observed JUnit selectors, but the host validates every requirement ID and selector against those observed values before writing it. Existing project-authored manifests are preserved. The evidence evaluator consumes the test cases from that report; it does not run arbitrary commands from the manifest. The actual runner command, exit code, suite summary, test selector, status and duration are retained in the evidence report.
 
 ## Freshness and release behavior
 
