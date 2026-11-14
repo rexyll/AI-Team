@@ -138,7 +138,7 @@ class SCMProvider(Protocol):
     def get_review_status(self, repository: str, pull_request_number: int) -> dict[str, Any]: ...
 
     def merge_pull_request(
-        self, repository: str, pull_request_number: int, *, merge_method: str
+        self, repository: str, pull_request_number: int, *, merge_method: str, expected_head_sha: str
     ) -> dict[str, Any]: ...
 
 
@@ -230,7 +230,7 @@ class SCMService:
             target=f"{pull_request_number}:{head_sha}",
         )
         return self._provider.merge_pull_request(
-            repository, pull_request_number, merge_method=merge_method
+            repository, pull_request_number, merge_method=merge_method, expected_head_sha=head_sha
         )
 
     def _provider_pr_head(self, repository: str, pull_request_number: int) -> str:
