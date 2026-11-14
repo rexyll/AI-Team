@@ -1,2 +1,4 @@
 # Test and development tooling; kept separate from production runtime dependencies.
 pytest>=8.4,<10
+ruff>=0.14,<1
+mypy>=1.18,<2
