@@ -12,6 +12,7 @@ from runtime.clarification_session import ClarificationSession, prompt_for_answe
 from core.hotfix_runner import run_hotfix
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
+from runtime.github_scm_config import create_github_scm_runtime
 from runtime.dashboard_cli import write_dashboard
 from runtime.knowledge_base import (
     DEFAULT_KNOWLEDGE_LIMIT,
@@ -428,8 +429,12 @@ def run_project(
         usage_ledger=(usage_ledger := ModelUsageLedger()),
         usage_project_id=(usage_project_id := f"run-{uuid4()}"),
     )
+    scm_runtime = create_github_scm_runtime()
     project_orchestrator = ProjectOrchestrator(
         agent_router=router,
+        scm_service=scm_runtime.service if scm_runtime else None,
+        scm_repository=scm_runtime.repository if scm_runtime else None,
+        scm_pull_request_number=scm_runtime.pull_request_number if scm_runtime else None,
         deliverable_dir=deliverable_dir,
         clarifications=clarifications,
         change_request=change_request,
