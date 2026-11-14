@@ -16,8 +16,6 @@ ALLOWED_GIT_COMMANDS = {
     "commit",
     "init",
     "tag",
-    "remote",
-    "push",
 }
 
 BLOCKED_TOKENS = {
