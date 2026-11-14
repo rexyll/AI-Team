@@ -161,7 +161,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 ### P0：修复可验证基线与并行写入安全
 
-- [ ] **T21.1 CI 基线修复**
+- [x] **T21.1 CI 基线修复**（2026-11-14 完成：requirements-dev.txt 安装 pytest/ruff/mypy；CI 仅运行 Python 3.14，注入仅供 mock 测试的 .invalid 假 Provider 配置；安全回归使用 always() 确保主回归失败时仍执行；修正注入式 ProviderLLM 测试模型参数、spawn Event 生命周期与并发审计顺序断言；最终全量回归 2236 passed / 9 skipped，安全回归 233 passed / 9 skipped，GitHub Actions run 43586159954 全绿）
   - 新增开发依赖清单（至少包含 pytest，采用兼容 Python 3.14 的受支持版本范围）。
   - CI 安装运行依赖与开发依赖；将 Python 矩阵调整为项目明确支持的 3.14，避免在不支持的 3.13 上制造误报。
   - 保持全量回归与安全回归两个阶段；不得因安装失败而跳过安全门禁。
@@ -223,3 +223,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
+| 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
