@@ -36,8 +36,32 @@ def test_suite_passes_on_green_deliverable(tmp_path: Path):
     assert result["failed_tests"] == []
     assert result["test_files"] == ["test_todo.py"]
     assert result["duration_seconds"] is not None
+    assert result["started_at"]
+    assert result["completed_at"]
+    assert result["test_cases"] == [{
+        "selector": "test_todo::test_ok",
+        "status": "passed",
+        "duration_seconds": result["test_cases"][0]["duration_seconds"],
+        "summary": None,
+    }]
     assert "-m pytest" in result["command"]
+    assert "--junitxml=" in result["command"]
     assert result["command"].split(" ")[0] == sys.executable
+
+
+def test_suite_exposes_failed_junit_case_evidence(tmp_path: Path):
+    _write(tmp_path / "test_todo.py", "def test_rejected():\n    assert False\n")
+
+    result = run_integration_suite(tmp_path, timeout=120)
+
+    assert result["status"] == "failed"
+    assert result["test_cases"] == [{
+        "selector": "test_todo::test_rejected",
+        "status": "failed",
+        "duration_seconds": result["test_cases"][0]["duration_seconds"],
+        "summary": result["test_cases"][0]["summary"],
+    }]
+    assert result["test_cases"][0]["summary"]
 
 
 def test_suite_fails_and_reports_failed_test_names(tmp_path: Path):
