@@ -82,6 +82,7 @@ from runtime.project_adapters import (
     ProjectAdapterExecutor,
 )
 from runtime.tool_invocation_service import ToolInvocationService
+from runtime.scm_provider import SCMService
 
 
 class ProjectOrchestrator:
@@ -112,6 +113,9 @@ class ProjectOrchestrator:
         usage_project_id: str | None = None,
         knowledge_base: str | None = None,
         knowledge_query: str | None = None,
+        scm_service: SCMService | None = None,
+        scm_repository: str | None = None,
+        scm_pull_request_number: int | None = None,
     ):
         if agent_router is None:
             raise ValueError("agent_router cannot be None")
@@ -159,6 +163,24 @@ class ProjectOrchestrator:
             raise ValueError("knowledge_base must be a non-empty string or None")
         if knowledge_query is not None and not isinstance(knowledge_query, str):
             raise TypeError("knowledge_query must be a string or None")
+        if scm_service is not None and not isinstance(scm_service, SCMService):
+            raise TypeError("scm_service must be an SCMService or None")
+        scm_configured = any(
+            value is not None
+            for value in (scm_service, scm_repository, scm_pull_request_number)
+        )
+        if scm_configured and (
+            scm_service is None
+            or not isinstance(scm_repository, str)
+            or not scm_repository.strip()
+            or not isinstance(scm_pull_request_number, int)
+            or isinstance(scm_pull_request_number, bool)
+            or scm_pull_request_number < 1
+        ):
+            raise ValueError(
+                "SCM observation requires scm_service, scm_repository and a positive "
+                "scm_pull_request_number"
+            )
         self.agent_router = agent_router
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.orchestrator_factory = orchestrator_factory if orchestrator_factory is not None else self._default_orchestrator_factory
@@ -182,6 +204,10 @@ class ProjectOrchestrator:
         self.usage_project_id = usage_project_id
         self.knowledge_base = knowledge_base.strip() if knowledge_base else None
         self.knowledge_query = knowledge_query.strip() if knowledge_query else None
+        self.scm_service = scm_service
+        self.scm_repository = scm_repository.strip() if scm_repository else None
+        self.scm_pull_request_number = scm_pull_request_number
+        self.last_scm_observation: dict[str, Any] | None = None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -424,6 +450,48 @@ class ProjectOrchestrator:
         self.last_result = result
         return result
 
+    def _observe_scm_pull_request(self) -> dict[str, Any] | None:
+        """Capture read-only PR/CI/review evidence; never perform SCM writes."""
+        if self.scm_service is None:
+            return None
+        repository = self.scm_repository
+        pull_request_number = self.scm_pull_request_number
+        if repository is None or pull_request_number is None:
+            raise RuntimeError("SCM observation configuration is incomplete")
+        try:
+            pull_request = self.scm_service.get_pull_request(
+                repository, pull_request_number
+            )
+            head_sha = pull_request["head_sha"]
+            ci = self.scm_service.get_ci_status(repository, head_sha)
+            review = self.scm_service.get_review_status(
+                repository, pull_request_number
+            )
+            ready = (
+                pull_request.get("state") == "open"
+                and pull_request.get("merged") is not True
+                and ci.get("status") == "success"
+                and review.get("status") == "approved"
+            )
+            return {
+                "status": "ready" if ready else "blocked",
+                "repository": repository,
+                "pull_request_number": pull_request_number,
+                "head_sha": head_sha,
+                "pull_request_state": pull_request.get("state"),
+                "ci_status": ci.get("status", "unknown"),
+                "review_status": review.get("status", "unknown"),
+            }
+        except Exception as exc:
+            # SCM is an optional external observation. Keep delivery honest
+            # without turning an unavailable remote into a false green state.
+            return {
+                "status": "unavailable",
+                "repository": repository,
+                "pull_request_number": pull_request_number,
+                "error_type": type(exc).__name__,
+            }
+
     def _run_delivery_phase(self, task_manager: TaskManager, *, project: str | None) -> dict[str, Any] | None:
         """Produce the integration evidence, document set and delivery manifest.
 
@@ -448,6 +516,7 @@ class ProjectOrchestrator:
         else:
             manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
         integration = self._run_integration_phase(manifest_root)
+        self.last_scm_observation = self._observe_scm_pull_request()
         qa: dict[str, Any] | None = None
         if integration is None or integration["status"] != "failed":
             qa = self._run_qa_phase(manifest_root, integration)
@@ -463,6 +532,8 @@ class ProjectOrchestrator:
         )
         delivery_task.context["requirement_analysis"] = self.last_requirement_analysis or ""
         delivery_task.context["deliverable_dir"] = self.deliverable_dir or ""
+        if self.last_scm_observation is not None:
+            delivery_task.context["scm_observation"] = dict(self.last_scm_observation)
         delivery_task.context["plan_summary"] = {
             "project": (self.last_plan or {}).get("project", ""),
             "summary": (self.last_plan or {}).get("summary", ""),
