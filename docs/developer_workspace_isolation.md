@@ -45,9 +45,16 @@ The lock coordinates AI-Team managers. It does not prevent an unrelated process 
 
 ## Dependency directory policy
 
-Virtual environments, package installation trees and generated caches are deliberately not copied or merged. Sharing mutable `.venv` or `node_modules` across parallel Developers would reintroduce cross-task write races and could allow one task to alter another task's execution environment.
+Virtual environments, package installation trees and generated caches are deliberately not copied or merged. The excluded directories are `.venv`, `node_modules` and `.ai-team-cache`; delivery-manifest generation and smoke staging exclude them as well.
 
-The corresponding trade-off is that a task lease does not inherit those directories. Project adapters must provision isolated task-local environments or explicitly provide a verified read-only dependency cache. The current implementation does not claim that dependency setup is solved.
+When `AI_TEAM_TASK_ENVIRONMENTS=1`, the Orchestrator provisions dependencies inside the newly issued lease before starting the Developer workflow:
+
+- Python creates a lease-local `.venv` with `--system-site-packages`; project and requirements are installed into that venv. The base interpreter's tooling remains visible to avoid reinstalling the test/build runner in every task, but this is not an OS security boundary.
+- Node/npm runs `npm ci` into lease-local `node_modules`.
+- pip and npm caches are directed to lease-local `.ai-team-cache` paths. No mutable package-manager cache is shared between concurrent tasks.
+- All three directories are excluded from merge, and the entire lease is removed after merge/discard. A failed/unsupported installation prevents the Developer workflow from running and causes the lease to be discarded.
+
+The environment setup is opt-in and disabled by default because it can access package registries. Multi-toolchain projects must select an adapter with `AI_TEAM_PROJECT_ADAPTER=python` or `node`. Cache reuse across tasks is intentionally deferred until a content-addressed, integrity-checked, read-only cache design is available.
 
 ## Current boundaries
 
