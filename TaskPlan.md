@@ -166,12 +166,19 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - CI 安装运行依赖与开发依赖；将 Python 矩阵调整为项目明确支持的 3.14，避免在不支持的 3.13 上制造误报。
   - 保持全量回归与安全回归两个阶段；不得因安装失败而跳过安全门禁。
   - 验收：GitHub Actions 全量回归与安全回归均启动并通过；同时验证本地标准安装指令。
-- [ ] **T21.2 Developer Workspace 隔离**
+- [ ] **T21.2 Developer Workspace 隔离**（第一阶段核心实现完成，整体仍未验收：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；同路径冲突 fail-closed；符号链接与路径边界检查；异常退出清理。尚余多文件合并事务日志/回滚、真实多 Developer 项目端到端验证，以及依赖环境适配策略）
   - 审查历史 `feature/reviewer-reliability-fallback` 中 workspace manager 的实现，只择取可证明安全的设计，不合并整支分支。
   - 为并行 Developer 提供每任务/每执行者隔离工作区、租约/写者围栏、路径约束与结果回收机制。
   - 失败、超时、取消、进程崩溃时必须释放租约或可恢复；禁止两个执行者静默覆盖同一工作区。
   - 验收：并行写入互不污染、租约冲突 fail-closed、异常退出恢复、路径逃逸拒绝；全量回归通过。
   
+阶段进展（2026-11-14）：
+- 已完成 `runtime/developer_workspace.py` 的任务快照、SHA-256 冲突检测、同目录原子文件替换、OS 进程锁与租约 sidecar 元数据。
+- `Orchestrator` 在 Developer 成功时合并，失败/异常时通过 `finally` 丢弃；ContextVar 使并发工具调用保留任务级沙箱。
+- 新进程只回收无元数据的未完成目录或 owner PID 已确认退出的租约；活动租约保留，损坏元数据不自动删除。真实子进程 `os._exit` 故障测试通过。
+- 依赖目录（`.venv`、`node_modules`）不共享、不合并；项目适配器需创建任务级环境或提供验证过的只读缓存。
+- 剩余：多文件 merge journal/rollback（当前是逐文件原子，不是整批事务）、PID 重用下的保守孤儿处理策略、真实多 Developer 项目端到端和完整依赖安装闭环。
+
 ### P1：真实多技术栈构建与可执行验收
 
 - [ ] **T21.3 Project Adapter 架构**
@@ -224,4 +231,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
-| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段） | 进行中：新增每任务文件快照/冲突检测/原子合并；ContextVar 绑定任务沙箱并传播至并发工具调用；Orchestrator 成功合并、失败丢弃；保留 folded-prefix 路径语义。仍需补齐进程崩溃后的租约回收/跨进程围栏，并评估依赖目录共享策略 | [GitHub Actions run 43587459119](https://github.com/rexyll/AI-Team/actions/runs/43587459119)：2246 passed / 9 skipped；安全回归 233 passed / 9 skipped；提交 `9bc486a` 及前序 T21.2 提交 |
+| 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段核心） | 核心实现与故障验证通过；全量回归 2253 passed / 9 skipped；安全回归 233 passed / 9 skipped。已实现跨进程锁、持久化租约、死进程回收、异常清理、冲突检测、路径/符号链接防护；整体 T21.2 仍待多文件事务恢复与真实多 Developer E2E | [GitHub Actions run 43591001425](https://github.com/rexyll/AI-Team/actions/runs/43591001425)；提交 `c6f0063`、`735de79`、`f1f19a9`、`010ee89`、`c87820d`、`fbfa30e`、`419ddb1`、`469c944` 等 |
