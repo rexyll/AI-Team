@@ -1137,7 +1137,7 @@ class ProjectOrchestrator:
         acceptance: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Release go/no-go: deterministic blockers first, release manager second."""
-        gate = evaluate_release_gate(integration=integration, qa=qa, security=security)
+        gate = evaluate_release_gate(integration=integration, qa=qa, security=security, acceptance=acceptance)
         record: dict[str, Any] = {
             "status": gate["status"],
             "blockers": gate["blockers"],
