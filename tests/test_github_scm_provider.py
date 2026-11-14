@@ -234,3 +234,27 @@ def test_rest_transport_sanitizes_http_error_without_echoing_token():
             transport.request("GET", "/repos/acme/widget")
 
     assert "host-secret-token" not in str(error.value)
+
+
+def test_push_branch_rejects_local_head_drift_after_approval():
+    class DriftingGitService(FakeGitService):
+        def __init__(self):
+            super().__init__()
+            self.heads = iter(["e" * 40, "f" * 40])
+
+        def head_commit(self, local_repository):
+            self.calls.append(("head_commit", local_repository))
+            return next(self.heads)
+
+    git = DriftingGitService()
+    provider = GitHubSCMProvider(FakeTransport([]), git_service=git)
+
+    with pytest.raises(PermissionError, match="HEAD changed"):
+        provider.push_branch(
+            "acme/widget",
+            "/workspace/widget",
+            "release/1.2",
+            expected_head_sha="e" * 40,
+        )
+
+    assert not any(call[0] == "push" for call in git.calls)
