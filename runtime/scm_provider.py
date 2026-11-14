@@ -178,6 +178,8 @@ class SCMService:
         head = _non_empty(head, "head")
         base = _non_empty(base, "base")
         title = _non_empty(title, "title")
+        if not isinstance(body, str):
+            raise TypeError("body must be a string")
         target = f"{head}:{base}"
         self._approvals.consume(
             approval,
@@ -214,7 +216,8 @@ class SCMService:
             raise ValueError("pull_request_number must be a positive integer")
         if merge_method not in {"merge", "squash", "rebase"}:
             raise ValueError("merge_method must be merge, squash, or rebase")
-        ci = self.get_ci_status(repository, self._provider_pr_head(repository, pull_request_number))
+        head_sha = self._provider_pr_head(repository, pull_request_number)
+        ci = self.get_ci_status(repository, head_sha)
         review = self.get_review_status(repository, pull_request_number)
         if ci.get("status") != "success":
             raise SCMPreflightError("merge blocked: CI status is not success")
@@ -224,7 +227,7 @@ class SCMService:
             approval,
             operation="merge_pull_request",
             repository=repository,
-            target=str(pull_request_number),
+            target=f"{pull_request_number}:{head_sha}",
         )
         return self._provider.merge_pull_request(
             repository, pull_request_number, merge_method=merge_method
