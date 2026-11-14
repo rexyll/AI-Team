@@ -59,8 +59,8 @@ registries and modify dependency directories; enabling it is an explicit
 operator decision. The legacy integration suite and static gate continue to
 run independently, including on a fresh staged copy.
 
-CI evidence for the orchestration wiring: [run 43597770742](https://github.com/rexyll/AI-Team/actions/runs/43597770742),
-2,272 passed / 9 skipped and 233 security tests passed / 9 skipped.
+CI evidence for the orchestration wiring and audited tool-service tests: [run 43598140624](https://github.com/rexyll/AI-Team/actions/runs/43598140624),
+2,273 passed / 9 skipped and 233 security tests passed / 9 skipped. The orchestrator-level test uses a stubbed command implementation behind the real ToolInvocationService; the adapter-level Python and Node fixtures separately execute real commands through ToolInvocationService. A Windows-host run against the production PowerShell-backed terminal remains outstanding.
 
 ## Security and execution boundaries
 
