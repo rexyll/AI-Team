@@ -218,6 +218,9 @@ def test_rest_transport_sanitizes_http_error_without_echoing_token():
         def read(self):
             return json.dumps({"message": "Resource not accessible"}).encode()
 
+        def close(self):
+            return None
+
     transport = GitHubRESTTransport("host-secret-token")
     with patch("urllib.request.urlopen", side_effect=__import__("urllib.error").error.HTTPError(
         "https://api.github.com/repos/acme/widget", 403, "Forbidden", {}, ErrorResponse()
