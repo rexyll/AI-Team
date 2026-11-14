@@ -20,18 +20,18 @@
 
 Detection signals: `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, or top-level Python source.
 
-- Install: editable install from project metadata, otherwise install `requirements.txt`; skipped if no manifest.
-- Build: `python -m build --no-isolation` when package metadata exists; otherwise a compile-only check (`python -m compileall -q .`).
-- Test: `python -m pytest -q` when pytest-style test files exist; otherwise skipped.
-- Package: `python -m build --no-isolation` when package metadata exists; otherwise unsupported.
-- Smoke: test suite when present, otherwise compile-only check.
+- Install: create a lease-local `.venv` with `--system-site-packages`, then install project/requirements into it; optionally install `requirements-dev.txt`. pip cache is scoped to `.ai-team-cache/pip`; skipped if no dependency manifest.
+- Build: use the lease-local interpreter for `python -m build --no-isolation` when package metadata exists; otherwise a compile-only check (`python -m compileall -q .`).
+- Test: use the lease-local interpreter for `python -m pytest -q` when pytest-style test files exist; otherwise skipped.
+- Package: use the lease-local interpreter for `python -m build --no-isolation` when package metadata exists; otherwise unsupported.
+- Smoke: test suite through the lease-local interpreter when present, otherwise compile-only check.
 - Deploy: unsupported until a deployment provider is configured.
 
 ### Node.js (npm)
 
 Detection signal: a valid `package.json`.
 
-- Install: `npm ci --ignore-scripts --no-audit --no-fund` only when an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) exists. pnpm/yarn lockfiles are detected but not executed by this first adapter.
+- Install: `npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm` only when an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) exists. `node_modules` and npm cache remain lease-local. pnpm/yarn lockfiles are detected but not executed by this first adapter.
 - Build: `npm run build` only when the script exists.
 - Test: `npm test --if-present` only when the test script exists.
 - Package: `npm pack --ignore-scripts --json`.
@@ -58,6 +58,13 @@ The phase is disabled by default. Dependency installation can contact package
 registries and modify dependency directories; enabling it is an explicit
 operator decision. The legacy integration suite and static gate continue to
 run independently, including on a fresh staged copy.
+
+Developer task leases have a separate opt-in setup switch: `AI_TEAM_TASK_ENVIRONMENTS=1`.
+It provisions only the install action before the Developer workflow, inside the
+task's private lease. The per-task venv, `node_modules` and package caches are
+discarded with that lease and never merged into the canonical source tree.
+The adapter selection variable `AI_TEAM_PROJECT_ADAPTER` is shared by both
+flows.
 
 CI evidence: [run 43598452950](https://github.com/rexyll/AI-Team/actions/runs/43598452950) passed both jobs. Linux regression: 2,273 passed / 10 skipped; security regression: 233 passed / 9 skipped. The Windows production-terminal smoke passed (1 passed), exercising build/test/smoke and verifying a deliberately failing compile is reported as failed. The orchestrator-level test uses a stub command behind the real ToolInvocationService; adapter-level Python and Node fixtures execute real commands through ToolInvocationService with a subprocess-backed test registry.
 
