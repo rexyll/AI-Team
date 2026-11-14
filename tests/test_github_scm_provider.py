@@ -34,8 +34,12 @@ class FakeGitService:
         self.calls.append(("remote_url", local_repository))
         return self.remote
 
-    def push(self, local_repository, *, branch):
-        self.calls.append(("push", local_repository, branch))
+    def head_commit(self, local_repository):
+        self.calls.append(("head_commit", local_repository))
+        return "e" * 40
+
+    def push(self, local_repository, *, branch, commit_sha):
+        self.calls.append(("push", local_repository, branch, commit_sha))
         return self.output
 
 
@@ -44,7 +48,7 @@ def test_push_branch_requires_matching_origin_and_uses_non_force_host_git():
     git = FakeGitService()
     provider = GitHubSCMProvider(transport, git_service=git)
 
-    result = provider.push_branch("acme/widget", "/workspace/widget", "feature/scm")
+    result = provider.push_branch("acme/widget", "/workspace/widget", "feature/scm", expected_head_sha="e" * 40)
 
     assert result == {
         "status": "pushed",
@@ -53,7 +57,7 @@ def test_push_branch_requires_matching_origin_and_uses_non_force_host_git():
     }
     assert git.calls == [
         ("remote_url", "/workspace/widget"),
-        ("push", "/workspace/widget", "feature/scm"),
+        ("head_commit", "/workspace/widget"),\n        ("push", "/workspace/widget", "feature/scm", "e" * 40),
     ]
 
 
@@ -62,7 +66,7 @@ def test_push_branch_rejects_origin_for_another_repository():
     provider = GitHubSCMProvider(FakeTransport([]), git_service=git)
 
     with pytest.raises(PermissionError, match="does not match"):
-        provider.push_branch("acme/widget", "/workspace/widget", "main")
+        provider.push_branch("acme/widget", "/workspace/widget", "main", expected_head_sha="e" * 40)
 
     assert [call[0] for call in git.calls] == ["remote_url"]
 
