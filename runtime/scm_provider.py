@@ -125,7 +125,7 @@ class SCMApprovalAuthority:
 class SCMProvider(Protocol):
     """Provider-neutral SCM operations. Implementations own credentials."""
 
-    def push_branch(self, repository: str, local_repository: str, branch: str) -> dict[str, Any]: ...
+    def get_local_head_sha(self, local_repository: str) -> str: ...\n\n    def push_branch(\n        self, repository: str, local_repository: str, branch: str, *, expected_head_sha: str\n    ) -> dict[str, Any]: ...
 
     def create_or_update_pull_request(
         self, repository: str, *, head: str, base: str, title: str, body: str
@@ -159,10 +159,18 @@ class SCMService:
         repository = _repository(repository)
         local_repository = _non_empty(local_repository, "local_repository")
         branch = _non_empty(branch, "branch")
+        head_sha = self._provider.get_local_head_sha(local_repository)
+        if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
+            raise SCMPreflightError("local repository returned no valid HEAD SHA")
         self._approvals.consume(
-            approval, operation="push_branch", repository=repository, target=branch
+            approval,
+            operation="push_branch",
+            repository=repository,
+            target=f"{branch}:{head_sha}",
         )
-        return self._provider.push_branch(repository, local_repository, branch)
+        return self._provider.push_branch(
+            repository, local_repository, branch, expected_head_sha=head_sha
+        )
 
     def create_or_update_pull_request(
         self,
