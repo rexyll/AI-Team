@@ -166,7 +166,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - CI 安装运行依赖与开发依赖；将 Python 矩阵调整为项目明确支持的 3.14，避免在不支持的 3.13 上制造误报。
   - 保持全量回归与安全回归两个阶段；不得因安装失败而跳过安全门禁。
   - 验收：GitHub Actions 全量回归与安全回归均启动并通过；同时验证本地标准安装指令。
-- [ ] **T21.2 Developer Workspace 隔离**（核心实现与依赖环境 v1 已完成；新增双 Developer 并发编排测试，验证两个 lease 的独立 venv、并行执行、源码合并与依赖目录不合并；整体仍待真实 Agent/LLM 项目 E2E：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据；死进程租约回收；多文件事务回滚；冲突/路径/符号链接 fail-closed；异常退出清理；可选任务级依赖安装。`AI_TEAM_TASK_ENVIRONMENTS=1` 在 lease 内创建 Python `.venv` 或 Node `node_modules`，pip 缓存落在 lease 的 `.ai-team-cache/pip`，npm 缓存落在 `node_modules/.cache/npm`；这些目录不复制、不合并、不进入交付清单/冒烟 staging，安装失败阻断 Developer workflow。共享缓存复用仍未实现）
+- [x] **T21.2 Developer Workspace 隔离（v1 完成，2026-11-14）**：任务级快照/ContextVar 沙箱/并发工具上下文传播；跨进程 OS 文件锁；原子租约元数据与死进程回收；多文件事务回滚；冲突/路径/符号链接 fail-closed；异常退出清理；可选任务级依赖安装。`AI_TEAM_TASK_ENVIRONMENTS=1` 在 lease 内创建 Python `.venv` 或 Node `node_modules`；pip 缓存位于 lease 的 `.ai-team-cache/pip`，npm 缓存位于 `node_modules/.cache/npm`。依赖目录不复制、不合并、不进入交付清单/冒烟 staging；安装失败阻断 Developer workflow。新增两个并行 Developer 的真实 `DeveloperAgent` + 确定性 `MockLLM` 工具循环 E2E，覆盖独立 lease、真实 `write_file` 工具、并行源码合并与环境回收。边界：不复用跨任务缓存；真实 ProviderLLM/外部凭证 E2E 留待 T21.8。
   - 审查历史 `feature/reviewer-reliability-fallback` 中 workspace manager 的实现，只择取可证明安全的设计，不合并整支分支。
   - 实现说明：[`docs/developer_workspace_isolation.md`](docs/developer_workspace_isolation.md)，记录租约生命周期、跨进程锁、崩溃回收、依赖目录策略及当前安全边界。
   - 为并行 Developer 提供每任务/每执行者隔离工作区、租约/写者围栏、路径约束与结果回收机制。
@@ -177,8 +177,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 已完成 `runtime/developer_workspace.py` 的任务快照、SHA-256 冲突检测、同目录原子文件替换、OS 进程锁与租约 sidecar 元数据。
 - `Orchestrator` 在 Developer 成功时合并，失败/异常时通过 `finally` 丢弃；ContextVar 使并发工具调用保留任务级沙箱。
 - 新进程只回收无元数据的未完成目录或 owner PID 已确认退出的租约；活动租约保留，损坏元数据不自动删除。真实子进程 `os._exit` 故障测试通过。
-- 依赖目录（`.venv`、`node_modules`）不共享、不合并；项目适配器需创建任务级环境或提供验证过的只读缓存。
-- 已补充多文件 merge journal：先 staging/backup，再写 prepared/applying/committed 状态；进程在提交标记前崩溃时由新 manager 回滚整批文件，提交标记后只清理事务目录；损坏 journal/缺失 backup fail-closed。剩余：真实多 Developer 项目端到端验证与共享依赖缓存复用策略。
+- 依赖目录（`.venv`、`node_modules`、`.ai-team-cache`）按 lease 隔离，不复制、不合并；任务级环境 provisioner 已实现，跨任务只读缓存复用仍延期。
+- 已补充多文件 merge journal：先 staging/backup，再写 prepared/applying/committed 状态；进程在提交标记前崩溃时由新 manager 回滚整批文件，提交标记后只清理事务目录；损坏 journal/缺失 backup fail-closed。已通过并行真实 DeveloperAgent + MockLLM 工具循环 E2E；外部 ProviderLLM 集成与共享依赖缓存复用策略延期到 T21.8/后续性能阶段。
 
 ### P1：真实多技术栈构建与可执行验收
 
@@ -233,5 +233,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 |---|---|---|---|
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
-| 2026-11-14 | T21.2 Developer Workspace 隔离（核心实现 + 依赖环境 v1） | 任务隔离/跨进程租约/事务回滚/崩溃恢复已通过；新增 lease 内依赖环境 provisioner，`AI_TEAM_TASK_ENVIRONMENTS=1` 启用；Python venv、Node node_modules 与 pip/npm 缓存均为 lease-local，安装失败 fail-closed；依赖目录不复制、不合并、不进入交付/冒烟 staging。全量回归 2282 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产终端 E2E 1 passed。双 Developer 并发编排测试已通过；仍待真实 Agent/LLM 项目 E2E 与共享只读缓存设计 | [GitHub Actions run 43599649718](https://github.com/rexyll/AI-Team/actions/runs/43599217740)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
-| 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2282 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed（task-local venv、build/test/smoke/package + 非零退出码 fail-closed）；Python/Node npm fixture 经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。边界：npm only；pnpm/yarn 与 deploy unsupported；缓存仅 lease-local | [GitHub Actions run 43599217740](https://github.com/rexyll/AI-Team/actions/runs/43599217740)；新增适配器/环境 provisioner/编排与 Windows E2E 测试 |
+| 2026-11-14 | T21.2 Developer Workspace 隔离（v1 完成） | 跨进程租约/事务回滚/崩溃恢复通过；任务级 Python venv、Node node_modules、pip/npm lease-local cache；依赖目录不复制、不合并、不进入交付/冒烟 staging；安装失败 fail-closed。并行真实 DeveloperAgent + MockLLM 工具循环验证两份独立 lease、write_file 工具调用、源码合并与环境回收。全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed。剩余边界：无跨任务缓存复用；外部 ProviderLLM 集成留待 T21.8 | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增 `runtime/project_environment.py`、`tests/test_project_environment.py` 与依赖目录排除回归 |
+| 2026-11-14 | T21.3 Project Adapter 架构（v1 完成） | Linux 全量回归 2284 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows 生产 terminal 1 passed（task-local venv、build/test/smoke/package + 非零退出码 fail-closed）；Python/Node npm fixture 经 ToolInvocationService 完成 install/build/test/package/smoke；ProjectOrchestrator opt-in 集成门禁、workspace scope、失败返工证据与审计历史完成。边界：npm only；pnpm/yarn 与 deploy unsupported；缓存仅 lease-local | [GitHub Actions run 43600653338](https://github.com/rexyll/AI-Team/actions/runs/43600653338)；新增适配器/环境 provisioner/编排与 Windows E2E 测试 |
