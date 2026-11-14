@@ -173,12 +173,15 @@ class HostGitOperationService:
         workspace: str,
         *,
         branch: str,
+        commit_sha: str,
         remote: str = "origin",
         env: Mapping[str, str] | None = None,
     ) -> str:
         """Push HEAD to a named origin branch; force-push is never supported."""
         if remote != "origin":
             raise ValueError("only the origin remote is supported")
+        if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_sha):
+            raise ValueError("commit_sha must be a hexadecimal SHA")
         if (
             not isinstance(branch, str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch)
@@ -192,7 +195,7 @@ class HostGitOperationService:
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
         return self._git_host(
-            ["push", "--porcelain", "origin", f"HEAD:refs/heads/{branch}"],
+            ["push", "--porcelain", "origin", f"{commit_sha}:refs/heads/{branch}"],
             root,
             env=env,
         )
