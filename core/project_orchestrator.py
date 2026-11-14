@@ -929,6 +929,16 @@ class ProjectOrchestrator:
                 "duration_seconds": suite.get("duration_seconds"),
                 "summary": suite.get("summary"),
                 "failed_tests": (suite.get("failed_tests") or [])[:10],
+                "test_cases": [
+                    {
+                        "selector": item.get("selector"),
+                        "status": item.get("status"),
+                        "duration_seconds": item.get("duration_seconds"),
+                        "summary": item.get("summary"),
+                    }
+                    for item in (suite.get("test_cases") or [])[:200]
+                    if isinstance(item, dict)
+                ],
                 "output_tail": (suite.get("output_tail") or "")[-2000:],
             }
         static = integration.get("static")
