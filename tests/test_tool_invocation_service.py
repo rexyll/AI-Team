@@ -212,16 +212,16 @@ def test_invoke_many_rejects_duplicate_execution_ids_before_execution() -> None:
 def test_concurrent_tool_calls_inherit_task_workspace_context(tmp_path) -> None:
     registry = ToolRegistry()
 
-    def resolve_root() -> str:
+    def resolve_root(path: str) -> str:
         return str(resolve_workspace_path("."))
 
     registry.register(
-        "resolve_root",
+        "read_file",
         resolve_root,
         {
             "type": "function",
             "function": {
-                "name": "resolve_root",
+                "name": "read_file",
                 "description": "return the active task workspace root",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
@@ -236,8 +236,8 @@ def test_concurrent_tool_calls_inherit_task_workspace_context(tmp_path) -> None:
             role="developer",
             task_id="TASK-CONTEXT",
             invocations=[
-                {"execution_id": "CTX-A", "tool_name": "resolve_root", "arguments": {}},
-                {"execution_id": "CTX-B", "tool_name": "resolve_root", "arguments": {}},
+                {"execution_id": "CTX-A", "tool_name": "read_file", "arguments": {"path": "ignored"}},
+                {"execution_id": "CTX-B", "tool_name": "read_file", "arguments": {"path": "ignored"}},
             ],
         )
 
