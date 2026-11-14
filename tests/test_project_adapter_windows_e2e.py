@@ -39,7 +39,8 @@ def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> N
                 task_id=f"WINDOWS-ADAPTER-{action}",
                 execution_id=f"WINDOWS-ADAPTER-EXEC-{action}",
             )
-            assert result["status"] == "passed", (action, result)
+            if result["status"] != "passed":
+                pytest.fail(f"{action}: adapter result={result!r}")
 
         # A deliberately broken source file must surface a non-zero
         # native process exit code through PowerShell and the tool boundary.
