@@ -1125,7 +1125,8 @@ class ProjectOrchestrator:
         "integration_failed": "integration regression failed",
         "qa_failed": "QA verdict is QA_FAILED",
         "security_failed": "security audit is SEC_FAILED",
-        "release_manager_no_go": "release manager verdict is RELEASE_NO_GO",\n        "acceptance_failed": "executable requirement acceptance evidence is not passed",
+        "release_manager_no_go": "release manager verdict is RELEASE_NO_GO",
+        "acceptance_failed": "executable requirement acceptance evidence is not passed",
     }
 
     def _run_release_gate_phase(
