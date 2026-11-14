@@ -27,7 +27,7 @@ def _service_with_stub_install(*, fail_on: int | None = None):
         if command == "python -m venv --system-site-packages .venv":
             (root / ".venv").mkdir()
         exit_code = 9 if fail_on == len(calls) else 0
-        return f"exit_code={exit_code}\\nfixture install"
+        return f"exit_code={exit_code}\nfixture install"
 
     registry = ToolRegistry()
     registry.register(
@@ -61,7 +61,7 @@ class _DeveloperRouter:
 
 
 def test_environment_provisioner_installs_inside_the_supplied_lease(tmp_path: Path) -> None:
-    _write(tmp_path / "requirements.txt", "pytest\\n")
+    _write(tmp_path / "requirements.txt", "pytest\n")
     service, calls = _service_with_stub_install()
     provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
 
@@ -94,7 +94,7 @@ def test_environment_provisioner_skips_projects_without_supported_manifests(tmp_
 
 
 def test_environment_provisioner_rejects_ambiguous_project_toolchains(tmp_path: Path) -> None:
-    _write(tmp_path / "requirements.txt", "pytest\\n")
+    _write(tmp_path / "requirements.txt", "pytest\n")
     _write(tmp_path / "package.json", '{"name":"ambiguous"}')
     provisioner = ProjectEnvironmentProvisioner(invocation_service=_service_with_stub_install()[0])
 
@@ -109,7 +109,7 @@ def test_environment_provisioner_rejects_ambiguous_project_toolchains(tmp_path: 
 
 
 def test_environment_install_failure_is_reported_without_claiming_prepared(tmp_path: Path) -> None:
-    _write(tmp_path / "requirements.txt", "pytest\\n")
+    _write(tmp_path / "requirements.txt", "pytest\n")
     service, _ = _service_with_stub_install(fail_on=2)
     provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
 
@@ -130,7 +130,7 @@ def test_orchestrator_prepares_environment_in_lease_and_never_merges_it(
 ) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
-    _write(root / "requirements.txt", "pytest\\n")
+    _write(root / "requirements.txt", "pytest\n")
     task = Task(
         id="TASK-ENV-005",
         title="develop with isolated dependencies",
@@ -147,7 +147,7 @@ def test_orchestrator_prepares_environment_in_lease_and_never_merges_it(
     class _Workflow:
         def execute(self, task_id: str, *, execution_id: str | None = None):
             observed["environment_visible"] = (resolve_workspace_path(".") / ".venv").is_dir()
-            write_file("generated.py", "VALUE = 42\\n")
+            write_file("generated.py", "VALUE = 42\n")
             manager.get_task(task_id).status = "completed"
 
     monkeypatch.setenv("AI_TEAM_TASK_ENVIRONMENTS", "1")
@@ -170,7 +170,7 @@ def test_orchestrator_prepares_environment_in_lease_and_never_merges_it(
     assert all(call["root"] != root.resolve() for call in calls)
     assert task.status == "completed"
     assert task.context["workspace_environment"]["status"] == "passed"
-    assert (root / "generated.py").read_text(encoding="utf-8") == "VALUE = 42\\n"
+    assert (root / "generated.py").read_text(encoding="utf-8") == "VALUE = 42\n"
     assert not (root / ".venv").exists()
     assert not list((root.parent / ".ai-team-dev-workspaces").glob("TASK-ENV-005-*"))
 
@@ -180,7 +180,7 @@ def test_orchestrator_fails_task_and_discards_lease_when_environment_install_fai
 ) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
-    _write(root / "requirements.txt", "pytest\\n")
+    _write(root / "requirements.txt", "pytest\n")
     task = Task(
         id="TASK-ENV-006",
         title="must not run without dependencies",
