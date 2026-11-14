@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping, Sequence
@@ -162,7 +163,7 @@ class HostGitOperationService:
             raise ValueError("only the origin remote is supported")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
-        output = self._git("remote get-url origin", root, env=env)
+        output = self._git_host(["remote", "get-url", "origin"], root, env=env)
         if not output.startswith("exit_code=0\\n"):
             raise RuntimeError("unable to resolve origin remote")
         return output.split("\\n", 1)[1].strip()
@@ -190,11 +191,30 @@ class HostGitOperationService:
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
-        return self._git(
-            f"push --porcelain origin HEAD:refs/heads/{branch}",
+        return self._git_host(
+            ["push", "--porcelain", "origin", f"HEAD:refs/heads/{branch}"],
             root,
             env=env,
         )
+
+    def _git_host(
+        self, arguments: list[str], workspace: Path, *, env: Mapping[str, str] | None = None
+    ) -> str:
+        """Execute a fixed host-owned Git argument vector outside the Agent parser."""
+        completed = subprocess.run(
+            ["git", *arguments],
+            cwd=str(workspace),
+            shell=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=dict(env) if env is not None else None,
+        )
+        output = completed.stdout or ""
+        if completed.stderr:
+            output += "\\n" + completed.stderr
+        return f"exit_code={completed.returncode}\\n{output}"
 
     def _git(self, command: str, workspace: Path, *, env: Mapping[str, str] | None = None) -> str:
         if env is None:
