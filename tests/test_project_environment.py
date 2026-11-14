@@ -401,10 +401,9 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
     barrier = threading.Barrier(2)
     service, calls = _service_with_stub_install(barrier=barrier)
     provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
-    observed_roots: dict[str, Path] = {}
 
-    # The workflow is real; record each Developer's lease from the actual
-    # write_file tool execution evidence after both tasks complete.
+    # Each real DeveloperAgent uses its own MockLLM script and the global
+    # write_file tool, which resolves the active per-task workspace scope.
     monkeypatch.setenv("AI_TEAM_TASK_ENVIRONMENTS", "1")
     monkeypatch.setattr(
         orchestrator_module,
