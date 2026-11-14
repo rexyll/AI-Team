@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -212,7 +213,8 @@ class HostGitOperationService:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=dict(env) if env is not None else None,
+            env={**os.environ, **dict(env or {}), "GIT_TERMINAL_PROMPT": "0"},
+            timeout=60,
         )
         output = completed.stdout or ""
         if completed.stderr:
