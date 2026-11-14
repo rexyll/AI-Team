@@ -130,7 +130,7 @@ class DeveloperWorkspaceManager:
                 canonical_hash = canonical.get(name)
                 local_changed = local_hash != base_hash
                 canonical_changed = canonical_hash != base_hash
-                if local_changed and canonical_changed:
+                if local_changed and canonical_changed and local_hash != canonical_hash:
                     conflicts.append(name)
             if conflicts:
                 raise WorkspaceMergeConflict(
