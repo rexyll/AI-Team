@@ -66,7 +66,17 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
 from security.prompt_injection import untrusted_content
-from security.workspace import WorkspaceSandbox, get_default_workspace_folded_prefix, resolve_workspace_path
+from security.workspace import (
+    WorkspaceSandbox,
+    get_default_workspace_folded_prefix,
+    resolve_workspace_path,
+    workspace_scope,
+)
+from runtime.project_adapters import (
+    DEFAULT_PROJECT_ADAPTER_REGISTRY,
+    ProjectAdapterExecutor,
+)
+from runtime.tool_invocation_service import ToolInvocationService
 
 
 class ProjectOrchestrator:
@@ -635,6 +645,61 @@ class ProjectOrchestrator:
             "report": str(report_path),
         }
 
+    def _run_project_adapter_phase(self, manifest_root: Path) -> dict[str, Any]:
+        """Run opt-in language-adapter checks through the authorized tool boundary.
+
+        Adapter execution is opt-in because install steps may access package
+        registries and mutate task-local dependency directories. Commands run
+        with the deliverable as the active workspace and retain the normal
+        developer capability policy, terminal allowlist, timeout and audit.
+        """
+        if self._env_int("AI_TEAM_PROJECT_ADAPTERS", 0) != 1:
+            return {"status": "disabled", "actions": {}, "reason": "set AI_TEAM_PROJECT_ADAPTERS=1 to enable"}
+
+        adapter_name = os.environ.get("AI_TEAM_PROJECT_ADAPTER")
+        try:
+            detection = DEFAULT_PROJECT_ADAPTER_REGISTRY.resolve(
+                manifest_root,
+                adapter_name=adapter_name.strip() if adapter_name and adapter_name.strip() else None,
+            )
+        except LookupError:
+            return {"status": "skipped", "actions": {}, "reason": "no supported language adapter detected"}
+        except (ValueError, KeyError) as exc:
+            return {"status": "unsupported", "actions": {}, "reason": str(exc)}
+
+        service = ToolInvocationService()
+        executor = ProjectAdapterExecutor(service)
+        actions: dict[str, dict[str, Any]] = {}
+        task_id = f"PROJECT-ADAPTER-{self._resolved_project_id() or 'LOCAL'}"
+        with workspace_scope(manifest_root):
+            for action in ("install", "build", "test", "smoke", "package"):
+                plan = DEFAULT_PROJECT_ADAPTER_REGISTRY.plan(
+                    manifest_root, action, adapter_name=detection.adapter
+                )
+                result = executor.execute(
+                    plan,
+                    role="developer",
+                    task_id=task_id,
+                    execution_id=f"{task_id}-{action}-{uuid4().hex[:12]}",
+                )
+                actions[action] = result
+                if result.get("status") == "failed":
+                    break
+
+        failed_action = next(
+            (name for name, result in actions.items() if result.get("status") == "failed"),
+            None,
+        )
+        return {
+            "status": "failed" if failed_action else "passed",
+            "adapter": detection.adapter,
+            "language": detection.language,
+            "signals": list(detection.signals),
+            "actions": actions,
+            "failed_action": failed_action,
+            "tool_execution_history": service.history.to_dict(),
+        }
+
     def _run_integration_phase(self, manifest_root: Path) -> dict[str, Any]:
         """Product-level integration & regression gate with bounded rework.
 
@@ -659,7 +724,8 @@ class ProjectOrchestrator:
         enforce_mypy = self._env_int("AI_TEAM_STATIC_MYPY_ENFORCE", 0) == 1
         static_timeout = self._env_float("AI_TEAM_STATIC_TIMEOUT", DEFAULT_STATIC_TIMEOUT)
 
-        def evaluate() -> tuple[dict[str, Any], dict[str, Any] | None]:
+        def evaluate() -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+            adapter = self._run_project_adapter_phase(manifest_root)
             suite = run_integration_suite(manifest_root, timeout=timeout)
             static = (
                 run_static_quality_gate(
@@ -671,21 +737,33 @@ class ProjectOrchestrator:
                 if static_enabled
                 else None
             )
-            return suite, static
+            if adapter.get("status") in {"failed", "unsupported"}:
+                suite = dict(suite)
+                suite["status"] = "failed"
+                suite["adapter_failure"] = adapter
+                suite["command"] = suite.get("command") or "project adapter validation"
+                suite["output_tail"] = (
+                    str(suite.get("output_tail") or "")
+                    + "\\n[project adapter failure]\\n"
+                    + str(adapter.get("reason") or adapter.get("failed_action") or adapter.get("status"))
+                )[-4000:]
+            return suite, static, adapter
 
-        def failed(static: dict[str, Any] | None) -> bool:
-            return static is not None and static.get("status") == "failed"
+        def failed(static: dict[str, Any] | None, suite: dict[str, Any]) -> bool:
+            return suite.get("status") == "failed" or (
+                static is not None and static.get("status") == "failed"
+            )
 
-        suite, static = evaluate()
+        suite, static, adapter = evaluate()
         self._emit_project_event(
             "project.integration_started",
             payload={
                 "status": suite["status"],
                 "test_files": len(suite.get("test_files") or []),
-                "static_status": static.get("status") if static is not None else None,
+                "static_status": static.get("status") if static is not None else None,\n            "adapter_status": adapter.get("status"),\n                "adapter_status": adapter.get("status"),
             },
         )
-        if suite["status"] != "failed" and not failed(static):
+        if suite["status"] != "failed" and not failed(static, suite):
             self._emit_project_event(
                 "project.integration_completed",
                 payload={
@@ -713,7 +791,7 @@ class ProjectOrchestrator:
                 break
         final_status = (
             "failed"
-            if suite["status"] == "failed" or failed(static)
+            if suite["status"] == "failed" or failed(static, suite)
             else suite["status"]
         )
         payload = {
