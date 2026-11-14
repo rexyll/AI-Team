@@ -259,3 +259,12 @@ def test_push_branch_rejects_local_head_drift_after_approval():
         )
 
     assert not any(call[0] == "push" for call in git.calls)
+
+
+def test_rest_transport_rejects_untrusted_api_hosts_and_paths():
+    with pytest.raises(ValueError, match="api.github.com"):
+        GitHubRESTTransport("host-secret-token", api_base="https://attacker.example")
+    transport = GitHubRESTTransport("host-secret-token")
+    for path in ("/repos/../secrets", "//attacker.example/repos/acme/widget", "/repos/acme/widget\\\\.."):
+        with pytest.raises(ValueError, match="repository-scoped"):
+            transport.request("GET", path)
