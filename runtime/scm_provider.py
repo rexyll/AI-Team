@@ -33,6 +33,9 @@ class SCMPreflightError(RuntimeError):
 def _repository(value: str) -> str:
     if not isinstance(value, str) or not _REPOSITORY.fullmatch(value.strip()):
         raise ValueError("repository must be an owner/name identifier")
+    owner, name = value.strip().split("/", 1)
+    if owner in {".", ".."} or name in {".", ".."}:
+        raise ValueError("repository owner and name cannot be dot path segments")
     return value.strip()
 
 
