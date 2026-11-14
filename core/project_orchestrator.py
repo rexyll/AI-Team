@@ -66,7 +66,7 @@ from runtime.workflow_event import WorkflowEvent
 from runtime.workflow_event_log import WorkflowEventLog
 from runtime.workflow_event_persistence import WorkflowEventPersistenceAdapter
 from security.prompt_injection import untrusted_content
-from security.workspace import WorkspaceSandbox, resolve_workspace_path
+from security.workspace import WorkspaceSandbox, get_default_workspace_folded_prefix, resolve_workspace_path
 
 
 class ProjectOrchestrator:
@@ -334,9 +334,21 @@ class ProjectOrchestrator:
             if self.sandbox is not None
             else resolve_workspace_path(self.deliverable_dir or ".")
         )
+        base_prefix = (
+            "/".join(self.sandbox.folded_prefix)
+            if self.sandbox is not None
+            else get_default_workspace_folded_prefix()
+        )
+        prefix_parts = [part for part in (base_prefix or "").split("/") if part]
+        if self.deliverable_dir:
+            prefix_parts.extend(
+                part for part in self.deliverable_dir.replace("\\", "/").split("/") if part
+            )
+        folded_prefix = "/".join(prefix_parts) or None
         for task in task_manager.get_all_tasks():
             if task.role == "developer":
                 task.context["workspace_root"] = str(workspace_root)
+                task.context["workspace_folded_prefix"] = folded_prefix
         # T12: record the project type and match developer tasks to the
         # specialists enabled by the profile. Only task metadata changes;
         # the plan schema and workflow graph stay untouched.
