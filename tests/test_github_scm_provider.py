@@ -77,7 +77,7 @@ def test_push_branch_reports_nonzero_git_exit_code():
     provider = GitHubSCMProvider(FakeTransport([]), git_service=git)
 
     with pytest.raises(GitHubAPIError, match="git push failed"):
-        provider.push_branch("acme/widget", "/workspace/widget", "main")
+        provider.push_branch("acme/widget", "/workspace/widget", "main", expected_head_sha="e" * 40)
 
 
 def test_create_pull_request_creates_when_no_open_match():
