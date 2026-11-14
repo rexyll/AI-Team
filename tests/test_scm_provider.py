@@ -124,7 +124,7 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
     service, provider, authority = _service()
     provider.ci = ci
     provider.review = review
-    approval = _approval(authority, "merge_pull_request", "7")
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
 
     with pytest.raises(SCMPreflightError, match=expected):
         service.merge_pull_request("acme/widget", 7, approval=approval)
@@ -182,3 +182,14 @@ def test_merge_rejects_invalid_method():
     service, _, _ = _service()
     with pytest.raises(ValueError, match="merge_method"):
         service.merge_pull_request("acme/widget", 7, approval=None, merge_method="force")
+
+
+def test_merge_approval_is_bound_to_the_exact_head_sha():
+    service, provider, authority = _service()
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+    provider.pr = {"head_sha": "b" * 40}
+
+    with pytest.raises(SCMApprovalError, match="scope"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
+
+    assert not any(call[0] == "merge" for call in provider.calls)
