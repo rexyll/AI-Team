@@ -31,7 +31,7 @@ class GitHubRESTTransport:
     ) -> None:
         if not isinstance(token, str) or not token.strip():
             raise ValueError("GitHub token must be supplied by host configuration")
-        if api_base.rstrip("/") != "https://api.github.com":
+        if not isinstance(api_base, str) or api_base.rstrip("/") != "https://api.github.com":
             raise ValueError("GitHub API base must be https://api.github.com")
         if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
