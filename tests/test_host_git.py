@@ -174,10 +174,10 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
 
     monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
 
-    result = service.push(str(workspace), branch="release/1.2")
+    result = service.push(str(workspace), branch="release/1.2", commit_sha="a" * 40)
 
     assert result == "exit_code=0\npushed\n"
-    assert calls == [["git", "push", "--porcelain", "origin", "HEAD:refs/heads/release/1.2"]]
+    assert calls == [["git", "push", "--porcelain", "origin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2"]]
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
             service.push(str(workspace), branch=branch)
