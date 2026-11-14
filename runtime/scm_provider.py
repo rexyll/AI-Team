@@ -161,6 +161,13 @@ class SCMService:
         repository = _repository(repository)
         local_repository = _non_empty(local_repository, "local_repository")
         branch = _non_empty(branch, "branch")
+        if (
+            not isinstance(approval, SCMApproval)
+            or approval.operation != "push_branch"
+            or approval.repository != repository
+            or not approval.target.startswith(f"{branch}:")
+        ):
+            raise SCMApprovalError("explicit host approval is required for this repository and branch")
         head_sha = self._provider.get_local_head_sha(local_repository)
         if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
             raise SCMPreflightError("local repository returned no valid HEAD SHA")
