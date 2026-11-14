@@ -197,7 +197,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   
 ### P2：外部协作与部署闭环
 
-- [ ] **T21.5 SCM / PR / CI Provider（进行中）**
+- [ ] **T21.5 SCM / PR / CI Provider（进行中；T21.5.1 编排器只读证据接线完成）**
   - 定义 SCM provider 接口，首批支持 GitHub：分支/提交推送、PR 创建/更新、CI 状态读取、review 状态读取、合并前检查。
   - 远端写操作与合并必须受 host-owned 权限边界和显式审批控制；Agent 不得自行扩大 token 权限。
   - CI 失败反馈可转成修复任务，但需限制轮次并保留原始状态证据。
@@ -205,6 +205,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 第一阶段已实现 provider-neutral `SCMProvider` / `SCMService` 与 GitHub REST adapter：分支推送、PR 创建/更新、CI 与 review 状态读取、PR 合并。
   - push / PR 写入 / merge 使用 host-owned 一次性、短时、精确 scope approval；push 绑定分支与本地 HEAD SHA，merge 绑定 PR head SHA 并向 GitHub 发送条件 merge SHA；还要求 CI `success` + review `approved`。Agent 仍无法调用 raw Git `push` / `remote`。
   - 当前已有 mock provider 与 GitHub REST transport 契约测试；尚未完成真实 GitHub test-repository 集成（需要 host token 与人工批准），CI 失败转修复任务也尚未接入。
+  - T21.5.1 已接入 `ProjectOrchestrator`：可注入 host-created `SCMService` 与显式 repository/PR 编号；交付阶段只读采集 PR head/state、CI 与 review，写入交付任务上下文。只有 open + unmerged + CI success + review approved 标记 `ready`；非绿标记 `blocked`，远端异常标记 `unavailable`（仅记录异常类型）；不执行 push/PR write/merge，无配置时保持旧行为。新增 `SCMService.get_pull_request` 与 `tests/test_scm_orchestrator.py`。
 - [ ] **T21.6 Deployment / Operations Adapters**
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
@@ -232,6 +233,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 6. 如果安全边界、现有测试契约或数据兼容性无法证明，暂停该节点并记录阻塞，不以弱化测试换取通过。
 
 ## 21.4 Phase 21 执行记录
+
+| 2026-11-14 | T21.5.1 ProjectOrchestrator SCM 接线（只读观察） | 完成：注入式 SCMService + 显式 repo/PR 配置；交付阶段记录 PR head/state、CI、review 证据；仅全绿标记 ready，异常记录 unavailable，不执行任何写操作；无配置保持旧行为。新增 service PR metadata read 与 orchestrator contract tests。 | 提交 `7163d32`、`311a826`、`23f3b2b`、`8f52d89`、`3e3b1e8`；`tests/test_scm_provider.py`、`tests/test_scm_orchestrator.py` |
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
