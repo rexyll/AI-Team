@@ -8,6 +8,13 @@ on:
 jobs:
   regression:
     runs-on: ubuntu-latest
+    env:
+      # Non-secret placeholders: tests must use mocks and must never call a live provider.
+      DEFAULT_PROVIDER: agnes
+      DEFAULT_MODEL: ci-test-model
+      AGNES_API_KEY: ci-placeholder-not-a-secret
+      AGNES_BASE_URL: https://ci.invalid/v1
+      AGNES_MODEL: ci-test-model
     strategy:
       fail-fast: false
       matrix:
@@ -30,4 +37,5 @@ jobs:
         run: python -m pytest -q
 
       - name: Security regression suite
+        if: always()
         run: python tools/run_security_regression.py
