@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from runtime.project_adapters import ProjectAdapterExecutor, ProjectAdapterRegistry
+from runtime.tool_invocation_service import ToolInvocationService
+from security.workspace import workspace_scope
+
+
+@pytest.mark.skipif(os.name != "nt", reason="production terminal smoke runs on Windows CI")
+def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("VALUE = 42\\n", encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_sample.py").write_text(
+        "from sample import VALUE\\n\\ndef test_value():\\n    assert VALUE == 42\\n",
+        encoding="utf-8",
+    )
+
+    registry = ProjectAdapterRegistry()
+    service = ToolInvocationService()
+    executor = ProjectAdapterExecutor(service)
+
+    with workspace_scope(tmp_path):
+        for action in ("build", "test", "smoke"):
+            plan = registry.plan(tmp_path, action, adapter_name="python")
+            result = executor.execute(
+                plan,
+                role="developer",
+                task_id=f"WINDOWS-ADAPTER-{action}",
+                execution_id=f"WINDOWS-ADAPTER-EXEC-{action}",
+            )
+            assert result["status"] == "passed", (action, result)
+
+    records = service.audit.records()
+    assert len(records) == 3
+    assert all(record.status == "completed" for record in records)
+    assert all(record.agent_role == "developer" for record in records)
