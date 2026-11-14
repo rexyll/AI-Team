@@ -8,7 +8,7 @@
 
 ## Write approval
 
-Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
+Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A merge approval is additionally bound to the exact PR head SHA observed during preflight, so branch movement after approval invalidates the approval. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
 
 The merge path performs deterministic preflight before consuming the merge approval:
 
