@@ -24,6 +24,28 @@ from security.workspace import resolve_workspace_path, workspace_scope
 
 
 
+
+def _crash_during_multi_file_merge(root: str, connection) -> None:
+    import runtime.developer_workspace as workspace_module
+
+    manager = DeveloperWorkspaceManager(root)
+    lease = manager.issue("TASK-MERGE-CRASH")
+    (lease.root / "a.txt").write_text("changed-a", encoding="utf-8")
+    (lease.root / "b.txt").write_text("changed-b", encoding="utf-8")
+    original_replace = workspace_module.os.replace
+    canonical_a = Path(root) / "a.txt"
+
+    def replace_then_crash(source, destination):
+        original_replace(source, destination)
+        if Path(destination) == canonical_a:
+            connection.send("first-file-applied")
+            connection.close()
+            os._exit(17)
+
+    workspace_module.os.replace = replace_then_crash
+    manager.merge(lease)
+
+
 def _crash_lease_owner(root: str, result_connection) -> None:
     manager = DeveloperWorkspaceManager(root)
     lease = manager.issue("TASK-CRASHED")
@@ -191,6 +213,38 @@ def test_workspace_managers_serialize_cross_process_merges(tmp_path: Path) -> No
     assert outcomes == ["conflict", "merged"]
     assert (root / "shared.txt").read_text(encoding="utf-8") in {"A", "B"}
 
+
+
+
+def test_workspace_manager_rolls_back_partial_multi_file_merge_after_process_crash(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    (root / "a.txt").write_text("base-a", encoding="utf-8")
+    (root / "b.txt").write_text("base-b", encoding="utf-8")
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe(duplex=False)
+    worker = context.Process(
+        target=_crash_during_multi_file_merge,
+        args=(str(root), child_connection),
+    )
+    worker.start()
+    child_connection.close()
+    try:
+        assert parent_connection.recv() == "first-file-applied"
+        worker.join(timeout=15)
+        assert not worker.is_alive()
+        assert worker.exitcode == 17
+
+        manager = DeveloperWorkspaceManager(root)
+
+        assert (root / "a.txt").read_text(encoding="utf-8") == "base-a"
+        assert (root / "b.txt").read_text(encoding="utf-8") == "base-b"
+        assert not list(manager._lease_parent.glob(".txn-*"))
+    finally:
+        parent_connection.close()
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=15)
 
 
 def test_workspace_manager_recovers_lease_after_owner_process_is_terminated(tmp_path: Path) -> None:
