@@ -204,7 +204,7 @@ class NodeProjectAdapter:
         )
         if action == "install":
             if has_npm_lock:
-                command = "npm ci --ignore-scripts --no-audit --no-fund --cache .ai-team-cache/npm"
+                command = "npm ci --ignore-scripts --no-audit --no-fund --cache node_modules/.cache/npm"
             else:
                 status, reason = "unsupported", "npm lockfile is required for reproducible installation"
         elif action == "build":
