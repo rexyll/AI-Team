@@ -241,7 +241,7 @@ def test_push_branch_rejects_local_head_drift_after_approval():
     class DriftingGitService(FakeGitService):
         def __init__(self):
             super().__init__()
-            self.heads = iter(["e" * 40, "f" * 40])
+            self.heads = iter(["f" * 40])
 
         def head_commit(self, local_repository):
             self.calls.append(("head_commit", local_repository))
