@@ -4,7 +4,7 @@ AI-powered software development team.
 
 ## Current status
 
-**Phase 20 — Full-Pipeline Automation Closure** is the current development phase on `main`, tracked in [`TaskPlan.md`](TaskPlan.md). Phases 0–19 completed their planned acceptance work (see [`DevPlan.md`](DevPlan.md)); Phase 20 closes the remaining pipeline stages so a single requirement runs end to end: requirement → analysis → architecture → development → unit tests → **product-level integration & regression (bounded rework)** → packaging → **release (semver, release notes, git anchor)**.
+**Phase 20 — Full-Pipeline Automation Closure** is the current development phase on `main`, tracked in [`TaskPlan.md`](TaskPlan.md). Phases 0–19 completed their planned acceptance work (see [`DevPlan.md`](DevPlan.md)); Phase 20 closes the remaining pipeline stages so a single requirement runs end to end: requirement → analysis → architecture → development → unit tests → **product-level integration & regression (bounded rework)** → packaging → **release (semver, release notes, git anchor)** → **post-delivery monitoring / defect reflow** → **incremental revision of persisted projects**.
 
 The current development branch is:
 
@@ -93,6 +93,18 @@ The defect file uses `## 缺陷 DEF-001 标题` sections with `严重级别` and
 `docs/defect_report.md` and the same defects are also expressed as
 `hotfix_request.md` (`CHG-xxx`) for the regular change-request path.
 
+A persisted project snapshot can receive the same change-request channel
+incrementally: unaffected completed tasks keep their evidence and only the
+tasks affected by the revision (plus their downstream) are executed again.
+
+```powershell
+python main.py "<original requirement>" --revise-project F:\workspace\projects\snapshots\PROJECT-001.json --change-request change.md
+```
+
+The report (`--output json` exposes it under `revision`) lists reused,
+affected, added and removed task ids; when the revised plan cannot be matched
+reliably the run honestly falls back to a full re-execution (`mode: "full"`).
+
 To reuse lessons from earlier deliveries (historical patterns, pitfalls and
 conventions load into requirement analysis and delivery documentation; new
 lessons are extracted into the store after each delivery):
@@ -119,7 +131,7 @@ Reference examples are under `examples/` and are deterministic, provider-indepen
 
 ## Architecture
 
-Nine specialized agents form a closed development loop:
+Twelve specialized agents form a closed development loop:
 
 - Analyst Agent — normalizes requirements of any clarity into a structured draft spec (REQ ids, acceptance criteria, explicit assumptions, open questions)
 - Planner Agent — requirement decomposition and task graph
@@ -129,9 +141,14 @@ Nine specialized agents form a closed development loop:
 - Reviewer Agent — final approval gate (APPROVED / REVISION_REQUIRED)
 - QA Agent — product-level adversarial verification after integration; `QA_FAILED` blocks release but never packaging
 - UI/UX Designer Agent — information architecture, layout, interaction states, design tokens and accessibility; enabled only when the detected project profile requires a visible interface (web / desktop / mobile or explicit interface signals)
+- Security Engineer Agent — triages the deterministic security audit (secret leakage, dangerous constructs, dependency declarations); `SEC_FAILED` always wins and blocks release
+- SRE Agent — reviews deployment readiness (deployment guide, monitoring contract and runbook, handover documents, release notes); external cloud deployment/APM remains an explicit limitation
+- Release Manager Agent — release go/no-go over recorded integration, QA, security and acceptance evidence; deterministic blockers cannot be waived
 - Doc Writer Agent — standard delivery document set (requirements / design / test report / deployment guide / user manual) plus a checksummed delivery manifest
 
-The project-level pipeline closes the loop: Analyst → **deterministic project profile (project type + UI/UX + developer specialties)** → Planner → optional UI/UX design task before interface work → Developer pool with per-task Tester/Reviewer gates → **product-level integration & regression suite (bounded rework rounds; a red suite is reported honestly and never packaged)** → **product-level adversarial QA** → DocWriter document set → deterministic acceptance → **release phase (version, notes, git anchor, release log)** → checksummed manifest → deployment package with smoke verification.
+The three governance agents are tool-free by policy: their verdict can never modify product files or run commands.
+
+The project-level pipeline closes the loop: Analyst → **deterministic project profile (project type + UI/UX + developer specialties)** → Planner → optional UI/UX design task before interface work → Developer pool with per-task Tester/Reviewer gates → **product-level integration & regression suite (bounded rework rounds; a red suite is reported honestly and never packaged)** → **product-level adversarial QA** → **deterministic security audit** → DocWriter document set → deterministic acceptance → **release go/no-go gate (deterministic blockers + release-manager verdict)** → **release phase (version, notes, git anchor, release log)** → **post-delivery monitoring contract** → **deployment-readiness review (SRE)** → checksummed manifest → deployment package with smoke verification.
 
 The current runtime separates Agent routing, task orchestration, workflow lifecycle, durable workflow-event persistence, read-only projection, and operational query boundaries.
 

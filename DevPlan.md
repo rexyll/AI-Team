@@ -504,7 +504,52 @@ plus the security regression suite.
   `tests/test_monitoring.py` (8 tests) plus the orchestrator delivery contract
   assertions (38 focused tests total).
 
+### 20.10 Incremental revision of persisted projects (T14) — completed
+- [x] `runtime/change_impact.py`: deterministic impact analysis merges the
+  persisted task graph with the re-planned one. Matching is conservative
+  (plan id, then normalised title, same role); completed evidence is reused
+  only when title, description and the id-mapped dependency set are unchanged.
+  Changed tasks and their transitive downstream are reset, unmatched tasks are
+  new work, and removed tasks leave the graph and are reported (their completed
+  evidence is not silently reused).
+- [x] `ProjectOrchestrator.revise_persisted`: change request → analyst
+  authoritative revision → re-plan → incremental graph → only affected tasks
+  execute → integration/QA/documents/packaging gate → snapshot written back
+  atomically, with checkpoint persistence at every execution boundary. Unaffected
+  completed tasks keep results, review/test evidence and tool history; blocked
+  or failed carried tasks stay honest. No reliable match degrades to a full
+  re-run (`mode=full`) instead of pretending to be incremental.
+- [x] CLI `--revise-project PATH --change-request PATH` (positional original
+  requirement, same workspace anchoring as a normal delivery) and a `revision`
+  block in `--output json` (mode, reused/affected/added/carried/removed/
+  reset-completed ids, match bases).
+- [x] Focused suite: `tests/test_incremental_revision.py` (19 tests).
+
+### 20.11 Team completeness & standard-flow alignment (T15–T17) — completed
+- [x] Re-audited the runtime against a complete R&D team: the existing nine
+  roles (analyst/planner/architect/ui_ux/developer/tester/reviewer/qa/doc_writer)
+  were missing security, release/operations (SRE) and release management.
+- [x] Governance roles (`agents/governance.py`, `config/model.py`,
+  `runtime/agent_factory.py`, `security/runtime_capability.py`): `security`,
+  `sre` and `release_manager` are registered with a **zero tool surface** and
+  produce `SEC_PASSED/SEC_FAILED`, `SRE_READY/SRE_NOT_READY`,
+  `RELEASE_GO/RELEASE_NO_GO`. Evidence is fenced with `untrusted_content`; the
+  rationale summary is recorded separately from the verdict.
+- [x] Deterministic evidence engines: `runtime/security_audit.py` (secrets and
+  dangerous constructs, masked report, advisory dependency declarations),
+  `runtime/release_gate.py` (integration/QA/security blockers) and
+  `runtime/deployment_readiness.py` (deployment guide, monitoring contract and
+  runbook, handover documents, release notes). No LLM is needed for any of them.
+- [x] SDLC wiring: security audit after QA and before documentation; release
+  go/no-go before the release phase (deterministic blockers win over the
+  release manager, and a blocked gate records `project.release_blocked`); SRE
+  readiness after monitoring and before the checksummed manifest. Reports ship
+  as `docs/security_audit.md` and `docs/sre_readiness.md`.
+- [x] Focused suites: `tests/test_team_governance_roles.py` (15 tests) and
+  `tests/test_security_release_workflow.py` (19 tests); the configuration
+  contract now resolves all twelve roles.
+
 Phase 20 nodes T5–T9 (static quality gate, QA role, dependency SBOM, cost
-report, change-request reflow) are recorded in `TaskPlan.md`; P3 (T11–T13) is
-now closed. Remaining external integration (real deployment targets/cloud APM)
-is documented as a limitation rather than simulated.
+report, change-request reflow) are recorded in `TaskPlan.md`; P3 (T11–T14) and
+P4 (T15–T17) are now closed. Remaining external integration (real deployment
+targets/cloud APM) is documented as a limitation rather than simulated.

@@ -95,7 +95,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 ### P2 项目管理（完整性审计建议 4/5）
 
 - [x] **T8 成本报告**（2026-11-02 完成，提交见执行记录：ModelUsageLedger 接入真实 ProviderLLM 工厂路径（per-run ledger + run-scoped project key）；用量汇总进 delivery 记录、交付文档『模型用量与成本』章节与发布说明；费率未配置时如实标注未估算成本）
-- [x] **T9 需求变更回流**（2026-11-02 完成，提交见执行记录：--change-request 文件 → Analyst 权威修订通道（customer.change_request 围栏 + CHG-xxx 受理规则）→ 修订后规格重规划为全新任务图；analyze-only 同样支持；残留：持久化项目的增量续跑（只重跑受影响任务）待后续节点）
+- [x] **T9 需求变更回流**（2026-11-02 完成，提交见执行记录：--change-request 文件 → Analyst 权威修订通道（customer.change_request 围栏 + CHG-xxx 受理规则）→ 修订后规格重规划为全新任务图；analyze-only 同样支持；残留：持久化项目的增量续跑（只重跑受影响任务）已由 T14 关闭）
 - [x] **T10 版本规划/里程碑**（2026-11-03 完成：`runtime/release_plan.py` 里程碑计划解析 + 共享 plan 文档 + 跨交付物 release_log 汇总；`--requirements-file` 串行逐需求完整交付且各自版本号、失败即停并如实标记 skipped、共享 plan 必写；`--milestone` 里程碑标签入发布说明与 release_log；`--release-history [PATH]` 只读版本汇总视图（text/json）；验收：test_release_plan.py 20 passed + 全量 2138 passed）：设计要点——基于 T3 的 per-delivery semver 与 release_log.json，增加多需求批量入口（如 --requirements-file，逐个需求串行交付、各自版本号、共享发布计划）；多项目并行可评估 multi_project_scheduler 复用（本轮采用确定性串行，并行留待后续评估）；交付物版本列表汇总视图（跨 release_log 聚合）
 
 ### P3 组织记忆与交付后（完整性审计建议 6/7，OpenClaw heartbeat/memory 借鉴）
@@ -106,6 +106,15 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 按项目类型启用，而非所有项目都跑设计/专项角色；不改计划 schema 与工作流图。
 - [x] **T13 交付后监控/缺陷回流**（2026-11-04 完成：`runtime/monitoring.py` 在发布后、清单前写入 `monitoring/health_contract.json` + `MONITORING.md`，契约只声明可离线验证的探针（发布锚点/清单完整性/回归套件），并如实标注未接入云 APM；`python main.py --monitor-check PATH` 心跳自检，写入 `monitoring/status.json`，healthy/degraded/failed 三态且非 healthy 退出码 1；`runtime/defect_reflow.py` 解析确定性缺陷清单（`## 缺陷 DEF-001 标题` + 严重级别/描述/影响版本/复现步骤，严格校验重复编号、未知字段、非法严重级别与不在发布历史中的版本），生成 `hotfix_request.md`（CHG-xxx，可复用变更通道）与 `docs/defect_report.md`（缺陷→热修任务→版本映射）；`core/hotfix_runner.py` + CLI `--hotfix-project/--defect-intake/--hotfix-version` 直接复用既有执行管线（集成回归/QA/补丁发布/清单/重新打包），结果 fixed/pending/failed 如实入报告；验收：tests/test_defect_reflow.py + tests/test_monitoring.py + 编排器契约 38 passed）
   - 监控无外部部署环境时以交付物自检契约落地，不伪造云监控接入；缺陷回流要求已有发布基线，失败不静默放行。
+- [x] **T14 持久化项目增量续跑**（2026-11-04 完成：`runtime/change_impact.py` 确定性变更影响分析——旧任务图与新任务图按“计划 id → 归一化标题”保守匹配；仅当标题、描述与（id 映射后的）依赖集合全部不变才复用已完成状态/结果/测试证据，变更任务及其下游传递性重置为待执行，无法匹配的新任务一律视为新增工作；被变更删除的任务从任务图移除并在报告中如实列出，不复用其证据；`ProjectOrchestrator.revise_persisted` 串起“变更请求 → Analyst 权威修订 → 重规划 → 增量任务图 → 只执行受影响任务 → 集成回归/QA/文档/打包门禁 → 原子写回快照”，期间按边界检查点持久化；CLI `--revise-project PATH --change-request PATH`（配合原始需求文本，复用同一 workspace 锚定；JSON 输出附 `revision` 报告）；无法判定时如实退化为全量重跑并标注 `mode=full`；验收：tests/test_incremental_revision.py 19 passed）
+  - 增量判定不依赖 LLM、可离线验证；未受影响任务的完成证据与工具执行历史保留，失败任务如实上报。
+
+### P4 团队完整性与标准流程对齐（2026-11-04 团队完整性复审）
+
+- [x] **T15 安全工程师角色 + 交付前安全门禁**（`agents/governance.py` role=`security` 零工具面；`runtime/security_audit.py` 确定性离线扫描——私钥/云与供应商令牌/危险构造（shell=True、verify=False、pickle.loads、yaml.load、eval/exec）+ 依赖声明参考证据；高危即 `SEC_FAILED`；报告 `docs/security_audit.md` 证据脱敏，不写回原始密钥；编排器在 QA 后、文档前执行，安全证据进入 DocWriter/测试报告上下文；确定性 `SEC_FAILED` 不可被 Agent 复核改写为 `SEC_PASSED`）
+- [x] **T16 发布/运维工程师（SRE）角色 + 部署就绪审查**（`agents/governance.py` role=`sre` 零工具面；`runtime/deployment_readiness.py` 检查部署指引（安装/启动/回退）、监控契约 `monitoring/health_contract.json` + `MONITORING.md`、交接文档集、发布后的 `RELEASE_NOTES.md` 版本记录；`SRE_READY`/`SRE_DEGRADED`；报告 `docs/sre_readiness.md` 随交付清单校验；外部云部署/APM 接入为显式边界，不伪造）
+- [x] **T17 发布经理角色 + 发布 GO/NO-GO 门禁**（`agents/governance.py` role=`release_manager` 零工具面；`runtime/release_gate.py` 确定性阻断 integration_failed/qa_failed/security_failed，发布经理可追加 `RELEASE_NO_GO` 但不可豁免确定性阻断；编排器在发布阶段前执行，阻断时记录 `project.release_blocked` 且不执行发布；三角色统一注册于 `config/model.py`/`runtime/agent_factory.py`/`security/runtime_capability.py`）
+  - 团队配置核对：标准研发团队角色（分析师/规划/架构/UI-UX/开发/测试/评审/QA/安全/SRE/发布管理/文档）已齐全；流程核对：需求澄清→设计→实现→测试→QA→安全→文档→验收→发布门禁→发布→监控→部署就绪→清单/打包，缺口已按标准 SDLC 补齐。
 
 ## 三、执行记录
 
@@ -125,3 +134,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-03 | T11 跨项目知识库（确定性沉淀/过滤加载/CLI/交付后回流） | 完成；聚焦 tests/test_knowledge_base.py 10 passed；全量回归 2148 passed | 本提交 |
 | 2026-11-03 | T12 UI/UX 与专项开发角色（确定性项目剖面/按类型启用/设计任务注入/专项技能匹配） | 完成；聚焦 tests/test_specialist_roles.py 18 passed；全量回归 2166 passed；静态门禁 E9/F63/F7/F82 通过 | 本变更（工作区，待提交） |
 | 2026-11-04 | T13 交付后监控/缺陷回流（健康契约+心跳自检/缺陷清单→热修任务→重新打包） | 完成；聚焦 tests/test_defect_reflow.py + tests/test_monitoring.py + 编排器契约 38 passed；静态门禁 E9/F63/F7/F82 通过；全量回归 2193 passed | 本变更（工作区，待提交） |
+| 2026-11-04 | T14 持久化项目增量续跑（确定性影响分析/证据保留/只跑受影响任务/CLI 快照修订） | 完成；聚焦 tests/test_incremental_revision.py 19 passed；静态门禁 E9/F63/F7/F82 通过；全量回归 2212 passed | 本变更（工作区，待提交） |
+| 2026-11-04 | P4 团队完整性与标准流程对齐（安全工程师/SRE/发布经理三角色 + 安全审计/发布门禁/部署就绪审查） | 完成；聚焦 tests/test_team_governance_roles.py 15 + tests/test_security_release_workflow.py 19 passed；静态门禁 E9/F63/F7/F82 通过；全量回归 2244 passed（同步更新配置契约角色清单） | 本变更（工作区，待提交） |

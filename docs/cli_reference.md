@@ -42,8 +42,9 @@ python main.py "<project requirement>"
   `monitoring/status.json`, then exit. Exits non-zero unless the status is
   `healthy`; `--output json` prints the full report.
 - `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
-  `--defect-intake`; runs hotfix tasks through integration regression, QA, a
-  patch release and repackaging on the same deliverable.
+  `--defect-intake`; runs hotfix tasks through integration regression, QA, the
+  security audit, the release gate, a patch release and repackaging on the same
+  deliverable.
 - `--defect-intake <path>` — UTF-8 Markdown defect list for
   `--hotfix-project`.
 - `--hotfix-version <semver>` — optional explicit hotfix version (defaults to a
@@ -183,6 +184,44 @@ ids, unknown fields, invalid severities and affected versions absent from the
 release history, and writes `docs/defect_report.md` (`FIXED` / `PENDING` /
 `FAILED`) plus `hotfix_request.md` (`CHG-xxx`, usable with `--change-request`).
 
+
+## Incremental revision of a persisted project
+
+`--revise-project PATH` revises an existing project snapshot (`<project_id>.json`
+written by `ProjectPersistenceAdapter`) after a customer change request. The
+original requirement is passed as the positional argument so the analyst can
+produce the amended specification; the workspace anchoring matches a normal
+delivery (`--projects-base` applies).
+
+```powershell
+python main.py "Build a small expense tracker" --revise-project F:\workspace\projects\snapshots\PROJECT-001.json --change-request change.md
+python main.py "Build a small expense tracker" --revise-project F:\workspace\projects\snapshots\PROJECT-001.json --change-request change.md --output json
+```
+
+Contract:
+
+- `--revise-project` requires `--change-request` and the positional requirement;
+  it is a standalone revision mode and cannot be combined with `--interactive`,
+  `--resume-session`, `--analyze-only`, `--requirements-file`, `--hotfix-project`
+  or the read-only inspection flags.
+- The change request goes through the regular authoritative analyst channel
+  (`customer.change_request` fence, `CHG-xxx` amendments) and the delivery is
+  re-planned.
+- Impact analysis is deterministic and LLM-free: old and new tasks are matched
+  by plan id, then by normalised title (same role). A completed task is reused
+  only when its title, description and id-mapped dependencies are unchanged;
+  changed tasks and their transitive downstream are reset, unmatched tasks are
+  new work, removed tasks are dropped from the graph and listed in the report.
+- Only affected/pending tasks execute; the delivery phase (integration
+  regression, QA, security audit, documents, acceptance, release go/no-go,
+  monitoring/deployment readiness, manifest and packaging when requested) runs
+  again as the gate for the revised product.
+- The snapshot is updated in place (atomic writes, checkpointed at execution
+  boundaries). No match at all degrades honestly to a full re-run; the report
+  then shows `mode: "full"`.
+- `--output json` adds a top-level `revision` object: `mode`, `reused`,
+  `affected`, `added`, `carried`, `removed`, `removed_completed`,
+  `reset_completed`, `match_bases`, `project_id`, `chars`.
 
 ## JSON output
 

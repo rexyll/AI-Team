@@ -4,6 +4,71 @@ All notable changes to the AI-Team runtime are documented here. Development
 follows the node discipline in `DevPlan.md`; every accepted node carries a
 commit SHA as evidence.
 
+## Unreleased — TaskPlan P4: team completeness & standard-flow alignment (2026-11-04)
+
+### Added
+
+- **Three governance roles close the standard development team** (`agents/governance.py`,
+  `config/model.py`, `runtime/agent_factory.py`): `security` (security engineer),
+  `sre` (release/operations engineer) and `release_manager` (release manager).
+  All three are pure LLM-level roles with a **zero tool surface**
+  (`ROLE_CAPABILITIES` = empty), so a verdict can never modify product files or
+  run commands. Each returns a structured verdict and a rationale summary; the
+  evidence block is wrapped in the `untrusted_content` fence.
+- **Deterministic security audit** (`runtime/security_audit.py`): offline scan of
+  the deliverable for private keys, cloud/provider tokens and dangerous
+  constructs (`shell=True`, `verify=False`, `pickle.loads`, `yaml.load`,
+  `eval`/`exec`), plus advisory dependency-declaration evidence. One high
+  finding yields `SEC_FAILED`; report evidence is masked so no raw secret is
+  ever written to `docs/security_audit.md`.
+- **Deterministic release go/no-go gate** (`runtime/release_gate.py`): a release
+  is never started when integration regression failed, QA is `QA_FAILED` or the
+  security audit is `SEC_FAILED`. The release manager may add `RELEASE_NO_GO`
+  on top but can never waive a deterministic blocker.
+- **Deployment-readiness review** (`runtime/deployment_readiness.py`): checks the
+  deployment guide (install/start/rollback), the monitoring contract and
+  `MONITORING.md`, the handover document set and, after a release, the release
+  notes for the released version; verdict is `SRE_READY` / `SRE_DEGRADED` and
+  the report ships as `docs/sre_readiness.md`. External cloud deployment/APM
+  remains an explicit, documented limitation.
+- **Pipeline wiring** (`core/project_orchestrator.py`): security audit runs after
+  QA (its evidence reaches the DocWriter context and the test report), the
+  release gate runs before the release phase and records
+  `project.release_blocked` when blocked, and the SRE readiness review runs
+  after the monitoring contract but before the checksummed manifest. Delivery
+  payloads gain `security_verdict`, `sre_verdict` and `release_gate_status`.
+- Focused suites: `tests/test_team_governance_roles.py` (15 tests) and
+  `tests/test_security_release_workflow.py` (19 tests), including
+  "deterministic `SEC_FAILED` cannot be waived by the agent" and
+  "`RELEASE_NO_GO` blocks an otherwise green delivery".
+
+## Unreleased — TaskPlan T14: incremental revision of persisted projects (2026-11-04)
+
+### Added
+
+- **Deterministic change impact analysis** (`runtime/change_impact.py`): a
+  persisted task graph is merged with the re-planned graph by conservative
+  matching (plan id, then normalised title, same role). Completed evidence
+  (status, result, review/test history, retry state, tool history) is reused
+  only when title, description and the id-mapped dependency set are unchanged;
+  changed tasks and their transitive downstream are reset to `pending`, unmatched
+  tasks count as new work, removed tasks leave the graph and are reported
+  explicitly. No LLM call is involved, so the decision is deterministic and
+  offline-verifiable.
+- **`ProjectOrchestrator.revise_persisted`**: change request → authoritative
+  analyst revision → re-plan → incremental task graph → execute only the
+  affected tasks → integration regression / QA / documents / packaging gate →
+  atomically write the revised snapshot back (checkpointed at every execution
+  boundary). Unaffected completed tasks keep their evidence; failures are
+  reported honestly and never replaced by assumed success.
+- **CLI `--revise-project PATH --change-request PATH`**: revises an existing
+  persisted project snapshot in place (the original requirement is passed as
+  the positional argument; workspace anchoring matches a normal delivery).
+  `--output json` adds a `revision` report (mode, reused/affected/added/
+  removed/reset-completed ids, match bases). When no reliable match exists the
+  run falls back to a full re-execution and reports `mode: "full"`.
+- Focused suite: `tests/test_incremental_revision.py` (19 tests).
+
 ## Unreleased — TaskPlan P3: post-delivery monitoring & defect reflow (2026-11-04)
 
 ### Added

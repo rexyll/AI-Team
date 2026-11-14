@@ -14,7 +14,13 @@ from runtime.acceptance import (
     parse_requirement_entries,
     write_acceptance_report,
 )
+from runtime.change_impact import build_incremental_revision
 from runtime.dependency_scan import scan_deliverable_dependencies
+from runtime.deployment_readiness import (
+    run_deployment_readiness,
+    sre_evidence_digest,
+    write_sre_report,
+)
 from runtime.agent_result import AgentResult
 from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
@@ -44,6 +50,12 @@ from runtime.project_type import (
     apply_project_profile,
     classify_task_specialist,
     detect_project_profile,
+)
+from runtime.release_gate import evaluate_release_gate
+from runtime.security_audit import (
+    run_security_audit,
+    security_evidence_digest,
+    write_security_report,
 )
 from runtime.task import Task
 from runtime.task_manager import TaskManager
@@ -142,6 +154,7 @@ class ProjectOrchestrator:
         self.last_project_profile: ProjectProfile | None = None
         self.last_delivery: dict[str, Any] | None = None
         self.last_acceptance: dict[str, Any] | None = None
+        self.last_revision: dict[str, Any] | None = None
         self.deliverable_dir = deliverable_dir.strip().strip("/") if deliverable_dir else None
         self.sandbox = sandbox
         self.clarifications = clarifications
@@ -403,6 +416,7 @@ class ProjectOrchestrator:
         qa: dict[str, Any] | None = None
         if integration is None or integration["status"] != "failed":
             qa = self._run_qa_phase(manifest_root, integration)
+        security = self._run_security_phase(manifest_root)
         dependency_scan = scan_deliverable_dependencies(manifest_root)
         usage = self._usage_report()
         delivery_task = Task(
@@ -426,6 +440,8 @@ class ProjectOrchestrator:
             delivery_task.context["integration_evidence"] = self._integration_evidence_digest(integration)
         if qa is not None:
             delivery_task.context["qa_evidence"] = self._qa_evidence_digest(qa)
+        if security is not None:
+            delivery_task.context["security_evidence"] = self._security_evidence_digest(security)
         delivery_task.context["dependency_scan"] = dependency_scan
         delivery_task.context["usage_report"] = usage
         knowledge_assets = self._knowledge_prompt(roles=("doc_writer",))
@@ -455,6 +471,9 @@ class ProjectOrchestrator:
             "acceptance": acceptance,
             "integration": integration,
             "qa": qa,
+            "security": security,
+            "sre": None,
+            "release_gate": None,
             "dependency_scan": dependency_scan,
             "usage": usage,
             "release": None,
@@ -465,10 +484,20 @@ class ProjectOrchestrator:
         verdict_note = f"，验收 {acceptance['verdict'].upper()}" if acceptance else ""
         release: dict[str, Any] | None = None
         if self.release_requested and (integration is None or integration["status"] != "failed"):
-            if qa is not None and qa.get("verdict") == "QA_FAILED":
-                delivery["release"] = {"status": "blocked", "reason": "QA verdict is QA_FAILED"}
-                self._emit_project_event("project.release_blocked", payload={"reason": "qa_failed"})
-                print("[Release] QA 对抗测试未通过（QA_FAILED），发布已门禁")
+            gate = self._run_release_gate_phase(
+                integration=integration,
+                qa=qa,
+                security=security,
+                acceptance=acceptance,
+            )
+            delivery["release_gate"] = gate
+            if gate["status"] == "blocked":
+                delivery["release"] = {"status": "blocked", "reason": gate["reason"]}
+                self._emit_project_event(
+                    "project.release_blocked",
+                    payload={"reason": gate.get("blocking_code"), "blockers": gate.get("blockers")},
+                )
+                print(f"[Release] 发布门禁阻断：{gate['reason']}")
             else:
                 release = self._run_release_phase(manifest_root, delivery, project=project)
                 delivery["release"] = release
@@ -478,6 +507,10 @@ class ProjectOrchestrator:
         delivery["monitoring"] = self._run_monitoring_phase(
             manifest_root, project=project, release=release
         )
+        # Deployment readiness review runs after the monitoring contract so
+        # the SRE role can judge the artefacts operations will rely on. The
+        # report is written before the manifest and thus ships checksummed.
+        delivery["sre"] = self._run_sre_phase(manifest_root, release=release)
         # The manifest is written after the release phase so RELEASE_NOTES.md
         # and release_log.json are part of the checksummed deliverable set.
         # Knowledge extraction runs last so it can record release facts.
@@ -499,6 +532,12 @@ class ProjectOrchestrator:
             payload["integration_rounds"] = integration["rounds"]
         if qa is not None:
             payload["qa_verdict"] = qa.get("verdict")
+        if security is not None:
+            payload["security_verdict"] = security.get("verdict")
+        if delivery.get("sre") is not None:
+            payload["sre_verdict"] = delivery["sre"].get("verdict")
+        if delivery.get("release_gate") is not None:
+            payload["release_gate_status"] = delivery["release_gate"].get("status")
         if usage is not None:
             payload["llm_calls"] = usage.get("llm_calls")
         if release is not None:
@@ -842,6 +881,223 @@ class ProjectOrchestrator:
             "message_head": str(qa.get("message_head") or "")[:1200],
         }
 
+    def _run_security_phase(self, manifest_root: Path) -> dict[str, Any]:
+        """Deterministic security audit plus optional security-engineer review.
+
+        The deterministic audit is always computed, so the security gate is
+        reproducible without an LLM. A registered security agent triages the
+        digest and may *add* a SEC_FAILED verdict, but can never waive a
+        deterministic high-severity failure. The report is written before the
+        documentation phase so it ships with the deliverable.
+        """
+        audit = run_security_audit(manifest_root)
+        review: dict[str, Any] | None = None
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        security_agent = get_agent("security") if callable(get_agent) else None
+        if security_agent is not None and audit.get("status") == "completed":
+            task = Task(
+                id="SECURITY-001",
+                title="安全审计复核（Security Review）",
+                description="复核交付物安全审计证据，给出 SEC_PASSED / SEC_FAILED 结论。",
+                role="security",
+                status="ready",
+            )
+            task.context["evidence"] = security_evidence_digest(audit)
+            try:
+                outcome = security_agent.run(task)
+            except Exception as exc:
+                review = {"verdict": "UNKNOWN", "summary": f"{type(exc).__name__}: {exc}", "status": "error"}
+            else:
+                data = getattr(outcome, "data", None)
+                record = data.get("security") if isinstance(data, dict) else None
+                review = {
+                    "verdict": (record or {}).get("verdict") or "UNKNOWN",
+                    "summary": (record or {}).get("summary") or "",
+                    "status": str(getattr(outcome, "status", "completed")),
+                }
+
+        verdict = audit.get("verdict", "SEC_SKIPPED")
+        if review is not None and review.get("verdict") == "SEC_FAILED":
+            verdict = "SEC_FAILED"
+        report_path: Path | None = None
+        if audit.get("status") == "completed":
+            report_path = write_security_report(manifest_root, audit, review=review)
+        security = {
+            "status": audit.get("status"),
+            "verdict": verdict,
+            "files_scanned": audit.get("files_scanned", 0),
+            "high_severity": audit.get("high_severity", 0),
+            "medium_severity": audit.get("medium_severity", 0),
+            "findings": audit.get("findings", []),
+            "review": review,
+            "report": report_path.relative_to(manifest_root).as_posix() if report_path else None,
+        }
+        self._emit_project_event(
+            "project.security_completed",
+            payload={
+                "verdict": verdict,
+                "high_severity": security["high_severity"],
+                "medium_severity": security["medium_severity"],
+            },
+        )
+        print(
+            f"[Security] 安全审计结论：{verdict}"
+            f"（高危 {security['high_severity']}，中危 {security['medium_severity']}）"
+        )
+        return security
+
+    @staticmethod
+    def _security_evidence_digest(security: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(security, dict):
+            return None
+        return {
+            "verdict": security.get("verdict"),
+            "high_severity": security.get("high_severity", 0),
+            "medium_severity": security.get("medium_severity", 0),
+            "files_scanned": security.get("files_scanned", 0),
+            "findings": [
+                {
+                    "rule": item.get("rule"),
+                    "severity": item.get("severity"),
+                    "path": item.get("path"),
+                    "line": item.get("line"),
+                }
+                for item in (security.get("findings") or [])[:20]
+                if isinstance(item, dict)
+            ],
+            "report": security.get("report"),
+        }
+
+    _RELEASE_BLOCK_REASONS = {
+        "integration_failed": "integration regression failed",
+        "qa_failed": "QA verdict is QA_FAILED",
+        "security_failed": "security audit is SEC_FAILED",
+        "release_manager_no_go": "release manager verdict is RELEASE_NO_GO",
+    }
+
+    def _run_release_gate_phase(
+        self,
+        *,
+        integration: dict[str, Any] | None,
+        qa: dict[str, Any] | None,
+        security: dict[str, Any] | None,
+        acceptance: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Release go/no-go: deterministic blockers first, release manager second."""
+        gate = evaluate_release_gate(integration=integration, qa=qa, security=security)
+        record: dict[str, Any] = {
+            "status": gate["status"],
+            "blockers": gate["blockers"],
+            "blocking_code": None,
+            "reason": None,
+            "manager": None,
+        }
+        if gate["status"] == "blocked":
+            code = gate["blockers"][0]["code"]
+            record["blocking_code"] = code
+            record["reason"] = self._RELEASE_BLOCK_REASONS.get(code, gate["blockers"][0]["reason"])
+            print(f"[ReleaseGate] 发布被确定性门禁阻断：{record['reason']}")
+            return record
+
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        manager = get_agent("release_manager") if callable(get_agent) else None
+        if manager is None:
+            return record
+        task = Task(
+            id="RELEASE-GATE-001",
+            title="发布就绪评审（Release Go/No-Go）",
+            description="基于集成回归、QA、安全与验收证据给出 RELEASE_GO / RELEASE_NO_GO。",
+            role="release_manager",
+            status="ready",
+        )
+        task.context["evidence"] = {
+            "integration": (integration or {}).get("status"),
+            "qa": (qa or {}).get("verdict"),
+            "security": (security or {}).get("verdict"),
+            "acceptance": (acceptance or {}).get("verdict"),
+        }
+        try:
+            outcome = manager.run(task)
+        except Exception as exc:
+            record["manager"] = {
+                "verdict": "UNKNOWN",
+                "summary": f"{type(exc).__name__}: {exc}",
+                "status": "error",
+            }
+            print(f"[ReleaseGate] 发布经理评审失败（不阻断确定性通过的结果）：{exc}")
+            return record
+        data = getattr(outcome, "data", None)
+        review = data.get("release") if isinstance(data, dict) else None
+        record["manager"] = {
+            "verdict": (review or {}).get("verdict") or "UNKNOWN",
+            "summary": (review or {}).get("summary") or "",
+            "status": str(getattr(outcome, "status", "completed")),
+        }
+        if record["manager"]["verdict"] == "RELEASE_NO_GO":
+            record["status"] = "blocked"
+            record["blocking_code"] = "release_manager_no_go"
+            record["reason"] = self._RELEASE_BLOCK_REASONS["release_manager_no_go"]
+        print(f"[ReleaseGate] 发布经理结论：{record['manager']['verdict']}")
+        return record
+
+    def _run_sre_phase(
+        self, manifest_root: Path, *, release: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Deployment readiness review plus optional SRE-agent triage.
+
+        Runs after the monitoring contract and before the manifest so the
+        readiness report ships checksummed. External deployment/APM remains an
+        explicit limitation; the verdict only covers evidence in the
+        deliverable.
+        """
+        readiness = run_deployment_readiness(manifest_root, release=release)
+        review: dict[str, Any] | None = None
+        get_agent = getattr(self.agent_router, "get_agent", None)
+        sre_agent = get_agent("sre") if callable(get_agent) else None
+        if sre_agent is not None and readiness.get("status") == "completed":
+            task = Task(
+                id="SRE-001",
+                title="部署就绪审查（Deployment Readiness）",
+                description="复核部署就绪证据，给出 SRE_READY / SRE_NOT_READY 结论。",
+                role="sre",
+                status="ready",
+            )
+            task.context["evidence"] = sre_evidence_digest(readiness)
+            try:
+                outcome = sre_agent.run(task)
+            except Exception as exc:
+                review = {"verdict": "UNKNOWN", "summary": f"{type(exc).__name__}: {exc}", "status": "error"}
+            else:
+                data = getattr(outcome, "data", None)
+                record = data.get("sre") if isinstance(data, dict) else None
+                review = {
+                    "verdict": (record or {}).get("verdict") or "UNKNOWN",
+                    "summary": (record or {}).get("summary") or "",
+                    "status": str(getattr(outcome, "status", "completed")),
+                }
+
+        verdict = readiness.get("verdict", "SRE_SKIPPED")
+        if review is not None and review.get("verdict") == "SRE_NOT_READY":
+            verdict = "SRE_NOT_READY"
+        report_path: Path | None = None
+        if readiness.get("status") == "completed":
+            report_path = write_sre_report(manifest_root, readiness, review=review)
+        sre = {
+            "status": readiness.get("status"),
+            "verdict": verdict,
+            "failed_checks": readiness.get("failed_checks", []),
+            "checks": readiness.get("checks", []),
+            "review": review,
+            "limitation": readiness.get("limitation"),
+            "report": report_path.relative_to(manifest_root).as_posix() if report_path else None,
+        }
+        self._emit_project_event(
+            "project.sre_completed",
+            payload={"verdict": verdict, "failed_checks": sre["failed_checks"]},
+        )
+        print(f"[SRE] 部署就绪结论：{verdict}")
+        return sre
+
     @staticmethod
     def _env_int(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -1150,6 +1406,88 @@ class ProjectOrchestrator:
         if persisted.result != result or any(persisted.task_manager.get_task(task.id).status != task.status for task in self.last_task_manager.get_all_tasks()):
             adapter.update(project_id, plan=self.last_plan, task_manager=self.last_task_manager, result=result)
         return result
+
+    def revise_persisted(
+        self,
+        project_id: str,
+        adapter: ProjectPersistenceAdapter,
+        requirement: str,
+        *,
+        event_persistence: WorkflowEventPersistenceAdapter | None = None,
+    ) -> tuple[ProjectResult, dict[str, Any]]:
+        """Re-plan a persisted project after a change request (T14).
+
+        The analyst receives the change request as an authoritative revision,
+        the planner produces a new task graph, and a deterministic impact
+        analysis decides which tasks must run again: unaffected completed
+        tasks keep their state and evidence, while changed tasks and their
+        downstream are reset. Only those tasks are executed; the delivery
+        phase (integration regression, QA, documents, packaging) runs again
+        as the gate for the revised product.
+        """
+        if not isinstance(adapter, ProjectPersistenceAdapter):
+            raise TypeError("adapter must be a ProjectPersistenceAdapter")
+        if not isinstance(requirement, str):
+            raise TypeError("requirement must be a string")
+        if not requirement.strip():
+            raise ValueError("requirement cannot be empty")
+        change_request = self.change_request
+        if not isinstance(change_request, str) or not change_request.strip():
+            raise ValueError(
+                "a non-empty change request is required to revise a persisted project"
+            )
+
+        snapshot = adapter.load(project_id)
+        self._restore_tool_execution_history(snapshot.task_manager, snapshot.tool_execution_history)
+        self._rehydrate_workflow_event_log(project_id, event_persistence)
+        self._emit_project_event(
+            "project.change_request_received",
+            payload={
+                "source": "persistence",
+                "project_id": project_id,
+                "chars": len(change_request),
+            },
+        )
+
+        plan = self.create_plan(requirement)
+        planned_manager = self.build_task_manager(plan)
+        revision = build_incremental_revision(
+            snapshot.task_manager, planned_manager.get_all_tasks()
+        )
+        merged_manager = TaskManager(list(revision.tasks))
+        self.last_plan = plan
+        self.last_task_manager = merged_manager
+        self.last_revision = {**revision.to_dict(), "project_id": project_id, "chars": len(change_request)}
+        self._emit_project_event(
+            "project.incremental_revision_planned", payload=self.last_revision
+        )
+        print(
+            f"[Revision] 变更影响分析（{revision.mode}）：复用 {len(revision.reused_task_ids)} 个"
+            f"已完成任务，重执行 {len(revision.affected_task_ids)} 个，"
+            f"新增 {len(revision.added_task_ids)} 个，移除 {len(revision.removed_task_ids)} 个"
+        )
+        if revision.removed_completed_task_ids:
+            print(
+                "[Revision] 变更删除的已完成任务不再纳入任务图："
+                + ", ".join(revision.removed_completed_task_ids)
+            )
+
+        project_name = plan.get("project")
+
+        def persist_boundary(manager: TaskManager) -> None:
+            boundary_result = ProjectResult.from_task_manager(manager, project=project_name)
+            adapter.update(
+                project_id, plan=plan, task_manager=manager, result=boundary_result
+            )
+
+        result = self.execute(merged_manager, state_change_hook=persist_boundary)
+        adapter.update(
+            project_id,
+            plan=plan,
+            task_manager=self.last_task_manager,
+            result=result,
+        )
+        return result, dict(self.last_revision)
 
     def run(self, requirement: str) -> ProjectResult:
         plan = self.create_plan(requirement)

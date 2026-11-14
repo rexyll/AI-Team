@@ -23,6 +23,7 @@ from runtime.knowledge_base import (
 from runtime.model_usage import ModelUsageLedger
 from runtime.monitoring import render_health_report, run_health_checks
 from runtime.plan_constraints import extract_required_paths
+from runtime.project_persistence import ProjectPersistenceAdapter
 from runtime.release_plan import (
     collect_release_history,
     load_release_plan_file,
@@ -103,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help="Path to a UTF-8 text file with the customer's change request. The analyst accepts it as an authoritative revision (CHG-xxx amendments) and re-plans the delivery around the amended specification.",
+    )
+    parser.add_argument(
+        "--revise-project",
+        metavar="PATH",
+        default=None,
+        help="Incrementally revise an existing persisted project snapshot (.json) after a change request: re-analyze and re-plan, then execute only the tasks affected by the change while unaffected completed tasks keep their evidence. Requires the original requirement and --change-request.",
     )
     parser.add_argument(
         "--release",
@@ -375,6 +382,27 @@ class AcceptanceGateError(RuntimeError):
     """Raised with --strict-acceptance when the acceptance verdict is FAILED."""
 
 
+def _prepare_workspace(requirement: str, projects_base: str | None) -> str | None:
+    """Anchor the workspace for a delivery and return the mandated deliverable dir."""
+    mandated_dirs = extract_required_paths(requirement)
+    base = Path(projects_base) if projects_base else Path(PROJECT_ROOT)
+    if mandated_dirs:
+        # Local import: anchor helpers are only needed on the mandated path
+        # (set_default_workspace_root itself stays a module-level import).
+        from security.workspace import anchor_workspace_root, mandated_folded_prefix
+        anchored = anchor_workspace_root(base, mandated_dirs[0])
+        set_default_workspace_root(anchored, folded_prefix=mandated_folded_prefix(mandated_dirs[0]))
+        # Pre-create the mandated deliverable directory: agents that explore
+        # before writing must see it exist, or they burn their tool budget
+        # re-checking a directory that is only created by their own writes.
+        deliverable_path = anchored / mandated_dirs[0].replace("\\", "/").split("/")[-1]
+        deliverable_path.mkdir(parents=True, exist_ok=True)
+        print(f"[Workspace] 沙盒根已重定向到需求指定目录: {anchored}（产物将物理落位于 {mandated_dirs[0]}/ 之下）")
+        return mandated_dirs[0].rsplit("/", 1)[-1]
+    set_default_workspace_root(base)
+    return None
+
+
 def run_project(
     requirement: str,
     *,
@@ -395,28 +423,11 @@ def run_project(
     if not requirement.strip():
         raise ValueError("requirement cannot be empty")
 
-    mandated_dirs = extract_required_paths(requirement)
-    base = Path(projects_base) if projects_base else Path(PROJECT_ROOT)
-    if mandated_dirs:
-        # Local import: anchor helpers are only needed on the mandated path
-        # (set_default_workspace_root itself stays a module-level import).
-        from security.workspace import anchor_workspace_root, mandated_folded_prefix
-        anchored = anchor_workspace_root(base, mandated_dirs[0])
-        set_default_workspace_root(anchored, folded_prefix=mandated_folded_prefix(mandated_dirs[0]))
-        # Pre-create the mandated deliverable directory: agents that explore
-        # before writing must see it exist, or they burn their tool budget
-        # re-checking a directory that is only created by their own writes.
-        deliverable_path = anchored / mandated_dirs[0].replace("\\", "/").split("/")[-1]
-        deliverable_path.mkdir(parents=True, exist_ok=True)
-        print(f"[Workspace] 沙盒根已重定向到需求指定目录: {anchored}（产物将物理落位于 {mandated_dirs[0]}/ 之下）")
-    else:
-        set_default_workspace_root(base)
-
+    deliverable_dir = _prepare_workspace(requirement, projects_base)
     router = create_agent_router(
         usage_ledger=(usage_ledger := ModelUsageLedger()),
         usage_project_id=(usage_project_id := f"run-{uuid4()}"),
     )
-    deliverable_dir = mandated_dirs[0].rsplit("/", 1)[-1] if mandated_dirs else None
     project_orchestrator = ProjectOrchestrator(
         agent_router=router,
         deliverable_dir=deliverable_dir,
@@ -442,6 +453,62 @@ def run_project(
             f"验收结论为 FAILED；验收报告: {report or '未知'}"
         )
     return task_manager, result
+
+
+def run_project_revision(
+    requirement: str,
+    *,
+    project_path: str,
+    change_request: str,
+    projects_base: str | None = None,
+    strict_acceptance: bool = False,
+    release: bool = False,
+    release_version: str | None = None,
+    auto_release: bool = False,
+    knowledge_base: str | None = None,
+    knowledge_query: str | None = None,
+):
+    """Incrementally revise a persisted project after a change request.
+
+    The requirement is re-analyzed with the change request and re-planned;
+    only the tasks affected by the revision are executed, unaffected completed
+    tasks keep their evidence, and the revised snapshot is persisted in place.
+    """
+    if not isinstance(requirement, str) or not requirement.strip():
+        raise ValueError("requirement cannot be empty")
+    if not isinstance(change_request, str) or not change_request.strip():
+        raise ValueError("a non-empty change request is required to revise a persisted project")
+    snapshot_path = Path(project_path)
+    if not snapshot_path.is_file():
+        raise ValueError(f"persisted project snapshot not found: {project_path}")
+
+    deliverable_dir = _prepare_workspace(requirement, projects_base)
+    router = create_agent_router(
+        usage_ledger=(usage_ledger := ModelUsageLedger()),
+        usage_project_id=(usage_project_id := f"revise-{uuid4()}"),
+    )
+    project_orchestrator = ProjectOrchestrator(
+        agent_router=router,
+        deliverable_dir=deliverable_dir,
+        change_request=change_request,
+        release_requested=release or auto_release,
+        release_version=release_version,
+        auto_release=auto_release,
+        usage_ledger=usage_ledger,
+        usage_project_id=usage_project_id,
+        knowledge_base=knowledge_base,
+        knowledge_query=knowledge_query,
+    )
+    adapter = ProjectPersistenceAdapter(snapshot_path.parent)
+    result, revision = project_orchestrator.revise_persisted(
+        snapshot_path.stem, adapter, requirement
+    )
+    if strict_acceptance and getattr(result, "acceptance_verdict", None) == "failed":
+        report = (getattr(project_orchestrator, "last_acceptance", None) or {}).get("report")
+        raise AcceptanceGateError(
+            f"验收结论为 FAILED；验收报告: {report or '未知'}"
+        )
+    return project_orchestrator.last_task_manager, result, revision
 
 
 def run_release_plan(
@@ -608,6 +675,7 @@ def main() -> int:
             or args.knowledge_extract is not None
             or args.hotfix_project is not None
             or args.defect_intake is not None
+            or args.revise_project is not None
         ):
             parser.error("--monitor-check is read-only and cannot be combined with a delivery request")
         try:
@@ -628,6 +696,7 @@ def main() -> int:
             or args.monitor_check is not None
             or args.hotfix_project is not None
             or args.defect_intake is not None
+            or args.revise_project is not None
         ):
             parser.error("--release-history is read-only and cannot be combined with a delivery request")
         root = args.release_history or args.projects_base or str(PROJECT_ROOT)
@@ -647,6 +716,7 @@ def main() -> int:
             or args.knowledge_extract is not None
             or args.hotfix_project is not None
             or args.defect_intake is not None
+            or args.revise_project is not None
         ):
             parser.error("--knowledge-list is read-only and cannot be combined with a delivery request")
         store_path = args.knowledge_list or args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
@@ -667,6 +737,7 @@ def main() -> int:
             or args.analyze_only
             or args.hotfix_project is not None
             or args.defect_intake is not None
+            or args.revise_project is not None
         ):
             parser.error("--knowledge-extract cannot be combined with a delivery request")
         store_path = args.knowledge_base or DEFAULT_KNOWLEDGE_BASE
@@ -703,6 +774,7 @@ def main() -> int:
             or args.milestone
             or args.release_version
             or args.strict_acceptance
+            or args.revise_project is not None
         ):
             parser.error(
                 "--hotfix-project is a standalone defect-reflow run and cannot be "
@@ -760,6 +832,60 @@ def main() -> int:
             if package.get("archive"):
                 print(f"[Hotfix] 交付包: {package['archive']}")
         return 0 if outcome["status"] == "fixed" else 1
+
+    if args.revise_project is not None:
+        if args.requirement is None:
+            parser.error("--revise-project requires the original requirement as a positional argument")
+        if not args.change_request:
+            parser.error("--revise-project requires --change-request")
+        if (
+            args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
+            or args.monitor_check is not None
+            or args.release_history is not None
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+        ):
+            parser.error(
+                "--revise-project is a standalone incremental revision and cannot be "
+                "combined with another delivery mode"
+            )
+        try:
+            task_manager, result, revision = run_project_revision(
+                args.requirement,
+                project_path=args.revise_project,
+                change_request=read_change_request(args.change_request),
+                projects_base=args.projects_base,
+                strict_acceptance=args.strict_acceptance,
+                release=args.release,
+                release_version=args.release_version,
+                auto_release=args.auto_release,
+                knowledge_base=args.knowledge_base,
+                knowledge_query=args.knowledge_query,
+            )
+        except AcceptanceGateError as exc:
+            print(f"[ACCEPTANCE-GATE] {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            payload = json.loads(_json_result(task_manager, result))
+            payload["revision"] = revision
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            if args.strict_acceptance and getattr(result, "acceptance_verdict", None) == "failed":
+                print("[ACCEPTANCE-GATE] 验收结论为 FAILED：按 --strict-acceptance 以非零码退出。", file=sys.stderr)
+                return 1
+            return 0
+        print(
+            f"[Revision] 模式 {revision['mode']}：复用 {len(revision['reused'])} 个已完成任务，"
+            f"重执行 {len(revision['affected'])} 个，新增 {len(revision['added'])} 个，"
+            f"移除 {len(revision['removed'])} 个（快照: {args.revise_project}）"
+        )
 
     if args.requirements_file:
         if args.requirement is not None:

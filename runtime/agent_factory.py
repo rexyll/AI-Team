@@ -5,6 +5,7 @@ from agents.analyst import RequirementAnalystAgent
 from agents.architect import ArchitectAgent
 from agents.developer import DeveloperAgent
 from agents.doc_writer import DocWriterAgent
+from agents.governance import ReleaseManagerAgent, SREAgent, SecurityEngineerAgent
 from agents.planner import PlannerAgent
 from agents.qa import QAAgent
 from agents.tester import TesterAgent
@@ -22,7 +23,19 @@ AgentConfigMap = Mapping[str, AgentConfig]
 
 DEFAULT_ARTIFACT_MIN_CHARS = 16384
 
-PROJECT_ROLES = ("architect", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux")
+PROJECT_ROLES = (
+    "architect",
+    "tester",
+    "reviewer",
+    "planner",
+    "analyst",
+    "doc_writer",
+    "qa",
+    "ui_ux",
+    "security",
+    "sre",
+    "release_manager",
+)
 
 
 def _developer_artifact_archive():
@@ -52,7 +65,20 @@ def _developer_artifact_archive():
 def _default_agent_configs() -> dict[str, AgentConfig]:
     return {
         role: AgentConfig(role=role, model="")
-        for role in ("architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux")
+        for role in (
+            "architect",
+            "developer",
+            "tester",
+            "reviewer",
+            "planner",
+            "analyst",
+            "doc_writer",
+            "qa",
+            "ui_ux",
+            "security",
+            "sre",
+            "release_manager",
+        )
     }
 
 
@@ -72,7 +98,20 @@ def create_agent_router(
             raise ValueError("Missing agent configurations: " + ", ".join(sorted(missing_roles)))
         effective_configs = {**default_configs, **configs}
 
-    supported_roles = {"architect", "developer", "tester", "reviewer", "planner", "analyst", "doc_writer", "qa", "ui_ux"}
+    supported_roles = {
+        "architect",
+        "developer",
+        "tester",
+        "reviewer",
+        "planner",
+        "analyst",
+        "doc_writer",
+        "qa",
+        "ui_ux",
+        "security",
+        "sre",
+        "release_manager",
+    }
     for role in supported_roles:
         config = effective_configs.get(role)
         if config is None:
@@ -149,4 +188,15 @@ def create_agent_router(
     router.register("doc_writer", DocWriterAgent(effective_configs["doc_writer"], llm=role_llms["doc_writer"]))
     router.register("qa", QAAgent(effective_configs["qa"], llm=role_llms["qa"]))
     router.register("ui_ux", UIDesignerAgent(effective_configs["ui_ux"], llm=role_llms["ui_ux"]))
+    router.register(
+        "security",
+        SecurityEngineerAgent(effective_configs["security"], llm=role_llms["security"]),
+    )
+    router.register("sre", SREAgent(effective_configs["sre"], llm=role_llms["sre"]))
+    router.register(
+        "release_manager",
+        ReleaseManagerAgent(
+            effective_configs["release_manager"], llm=role_llms["release_manager"]
+        ),
+    )
     return router

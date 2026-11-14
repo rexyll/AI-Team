@@ -40,6 +40,11 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     # The documentation writer reads project context and writes documents,
     # but never executes commands in the workspace.
     "doc_writer": frozenset({READ, WRITE}),
+    # Governance roles decide on evidence only: no tool surface at all, so a
+    # verdict can never modify product files or run commands.
+    "security": frozenset(),
+    "sre": frozenset(),
+    "release_manager": frozenset(),
 }
 
 
