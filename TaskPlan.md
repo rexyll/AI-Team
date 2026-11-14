@@ -182,7 +182,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 ### P1：真实多技术栈构建与可执行验收
 
-- [ ] **T21.3 Project Adapter 架构**（第一阶段已实现：独立于项目类型的语言适配器注册表；Python 与 Node/npm detect/plan；install/build/test/package/smoke/deploy 的 supported/skipped/unsupported 状态；命令只经 ToolInvocationService 的 run_command 执行；run_command 增加 1–3600 秒超时参数。尚需项目编排接入、真实 fixture E2E、依赖缓存策略与 pnpm/yarn 支持/明确拒绝）
+- [ ] **T21.3 Project Adapter 架构**（第一阶段已实现：独立于项目类型的语言适配器注册表；Python 与 Node/npm detect/plan；install/build/test/package/smoke/deploy 的 supported/skipped/unsupported 状态；命令只经 ToolInvocationService 的 run_command 执行；run_command 增加 1–3600 秒超时参数。已接入 ProjectOrchestrator 集成门禁（默认关闭；`AI_TEAM_PROJECT_ADAPTERS=1` 启用；多技术栈用 `AI_TEAM_PROJECT_ADAPTER=python|node` 显式选择），失败会进入有界返工并写入交付证据。仍需真实 Windows 主机经默认 run_command 的 E2E、依赖缓存策略与 pnpm/yarn 支持/明确拒绝）
   - 新增统一适配器协议/注册表，至少定义 detect、install、build、test、package、smoke、deploy 能力及明确的 unsupported 状态。
   - 首批实现 Python 与 Node.js；项目类型与语言/框架检测分离，不能仅凭 web/API 分类就假定技术栈。
   - 所有命令经过现有权限策略/沙箱，具备 allowlist、超时、工作目录限制、输出脱敏；不允许 adapter 绕过 ToolInvocationService。
@@ -234,4 +234,4 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
 | 2026-11-14 | T21.1 CI 基线修复 | 完成；全量回归 2236 passed / 9 skipped；安全回归 233 passed / 9 skipped | [GitHub Actions #9](https://github.com/rexyll/AI-Team/actions/runs/43586159954)，提交 `518e3f3` 及前序 CI 修复提交 |
 | 2026-11-14 | T21.2 Developer Workspace 隔离（第一阶段核心） | 核心实现与故障验证通过；全量回归 2255 passed / 9 skipped；安全回归 233 passed / 9 skipped。已实现跨进程锁、持久化租约、死进程回收、多文件事务回滚、损坏日志 fail-closed、冲突检测、路径/符号链接防护；整体 T21.2 仍待真实多 Developer E2E 与任务级依赖安装闭环 | [GitHub Actions run 43592173178](https://github.com/rexyll/AI-Team/actions/runs/43592173178)；提交 `c6f0063`、`735de79`、`f1f19a9`、`010ee89`、`c87820d`、`fbfa30e`、`419ddb1`、`469c944`、`e2d930f` 等 |
-| 2026-11-14 | T21.3 Project Adapter 架构（第一阶段） | Python/Node npm adapter 注册表与动作计划完成；执行器通过 ToolInvocationService 调用 run_command，超时 1–3600 秒，命令结果无 exit_code 时 fail-closed；全量回归 2267 passed / 9 skipped，安全回归 233 passed / 9 skipped；Python 与 Node/npm fixture 已通过 ToolInvocationService 实际执行 install/build/test/package/smoke。尚未完成 ProjectOrchestrator 接入与多语言项目端到端交付 | [GitHub Actions run 43595491731](https://github.com/rexyll/AI-Team/actions/runs/43592556106)；新增 `runtime/project_adapters.py`、`tests/test_project_adapters.py`、`docs/project_adapter_architecture.md` |
+| 2026-11-14 | T21.3 Project Adapter 架构（第一阶段） | Python/Node npm adapter 注册表与动作计划完成；执行器通过 ToolInvocationService 调用 run_command，超时 1–3600 秒，命令结果无 exit_code 时 fail-closed；全量回归 2272 passed / 9 skipped，安全回归 233 passed / 9 skipped；Python 与 Node/npm fixture 已通过 ToolInvocationService 实际执行 install/build/test/package/smoke；ProjectOrchestrator 已接入 opt-in 适配器集成门禁、工作区作用域和返工证据。仍未完成真实 Windows 默认 run_command E2E、依赖缓存策略与 pnpm/yarn 支持 | [GitHub Actions run 43597770742](https://github.com/rexyll/AI-Team/actions/runs/43597770742)；新增 `runtime/project_adapters.py`、`tests/test_project_adapters.py`、`docs/project_adapter_architecture.md` |
