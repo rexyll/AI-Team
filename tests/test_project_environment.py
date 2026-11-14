@@ -258,7 +258,6 @@ def test_parallel_developers_receive_distinct_task_local_environments(
     service, calls = _service_with_stub_install()
     provisioner = ProjectEnvironmentProvisioner(invocation_service=service)
     barrier = threading.Barrier(2)
-    observed_roots: dict[str, Path] = {}
 
     class _Workflow:
         def execute(self, task_id: str, *, execution_id: str | None = None):
@@ -341,7 +340,7 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
 ) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
-    _write(root / "requirements.txt", "pytest\\n")
+    _write(root / "requirements.txt", "pytest\n")
     task_a = Task(
         id="TASK-REAL-DEV-A",
         title="write source A",
@@ -367,7 +366,7 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
                         "name": "write_file",
                         "arguments": json.dumps({
                             "path": "generated_a.py",
-                            "content": "VALUE = 'A'\\n",
+                            "content": "VALUE = 'A'\n",
                         }),
                     }
                 ]
@@ -384,7 +383,7 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
                         "name": "write_file",
                         "arguments": json.dumps({
                             "path": "generated_b.py",
-                            "content": "VALUE = 'B'\\n",
+                            "content": "VALUE = 'B'\n",
                         }),
                     }
                 ]
@@ -418,10 +417,9 @@ def test_parallel_real_developer_agents_use_private_dependency_environments(
 
     for task in (task_a, task_b):
         assert task.status == "completed"
-        assert task.workspace_root if hasattr(task, "workspace_root") else True
         assert task.context["workspace_environment"]["status"] == "passed"
-    assert (root / "generated_a.py").read_text(encoding="utf-8") == "VALUE = 'A'\\n"
-    assert (root / "generated_b.py").read_text(encoding="utf-8") == "VALUE = 'B'\\n"
+    assert (root / "generated_a.py").read_text(encoding="utf-8") == "VALUE = 'A'\n"
+    assert (root / "generated_b.py").read_text(encoding="utf-8") == "VALUE = 'B'\n"
     assert len(calls) == 4
     assert len({call["root"] for call in calls}) == 2
     assert len(service.audit.records()) == 4
