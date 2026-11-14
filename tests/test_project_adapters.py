@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import shlex
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +18,50 @@ from runtime.project_adapters import (
     PythonProjectAdapter,
 )
 from runtime.tool_result import ToolResult
+from runtime.tool_invocation_service import ToolInvocationService
+from tools.registry import ToolRegistry
+from security.workspace import WorkspaceSandbox
+
+
+
+def _real_tool_service_for_fixture(root: Path) -> ToolInvocationService:
+    sandbox = WorkspaceSandbox(root)
+
+    def run_command(command: str, cwd: str = ".", timeout: float = 600.0) -> str:
+        completed = subprocess.run(
+            shlex.split(command),
+            cwd=sandbox.resolve(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        output = completed.stdout
+        if completed.stderr:
+            output += "\\n" + completed.stderr
+        return f"exit_code={completed.returncode}\\n{output}"
+
+    registry = ToolRegistry()
+    registry.register(
+        "run_command",
+        run_command,
+        {
+            "type": "function",
+            "function": {
+                "name": "run_command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "cwd": {"type": "string"},
+                        "timeout": {"type": "number", "minimum": 1, "maximum": 3600},
+                    },
+                    "required": ["command"],
+                },
+            },
+        },
+    )
+    return ToolInvocationService(registry=registry)
 
 
 def _write(path: Path, content: str) -> None:
@@ -105,6 +153,81 @@ def test_registry_rejects_invalid_root_and_unknown_adapter(tmp_path: Path) -> No
         registry.detect_all(tmp_path / "missing")
     with pytest.raises(KeyError, match="unknown project adapter"):
         registry.resolve(tmp_path, adapter_name="rust")
+
+
+
+def test_python_fixture_executes_install_build_test_package_and_smoke_through_tool_service(tmp_path: Path) -> None:
+    if not shutil.which("python"):
+        pytest.skip("python executable is unavailable")
+    _write(
+        tmp_path / "pyproject.toml",
+        "[build-system]\\nrequires = ['setuptools>=75']\\nbuild-backend = 'setuptools.build_meta'\\n"
+        "[project]\\nname = 'ai-team-python-fixture'\\nversion = '0.1.0'\\n",
+    )
+    _write(tmp_path / "requirements.txt", "")
+    _write(tmp_path / "fixture_pkg" / "__init__.py", "VALUE = 42\\n")
+    _write(
+        tmp_path / "tests" / "test_fixture.py",
+        "from fixture_pkg import VALUE\\n\\ndef test_value():\\n    assert VALUE == 42\\n",
+    )
+    executor = ProjectAdapterExecutor(_real_tool_service_for_fixture(tmp_path))
+    registry = ProjectAdapterRegistry()
+
+    for action in ("install", "build", "test", "package", "smoke"):
+        result = executor.execute(
+            registry.plan(tmp_path, action, adapter_name="python"),
+            role="developer",
+            task_id=f"PY-{action}",
+            execution_id=f"PY-EXEC-{action}",
+        )
+        assert result["status"] == "passed", (action, result)
+
+    assert list((tmp_path / "dist").glob("*.whl"))
+    assert list((tmp_path / "dist").glob("*.tar.gz"))
+
+
+def test_node_fixture_executes_install_build_test_package_and_smoke_through_tool_service(tmp_path: Path) -> None:
+    if not shutil.which("node") or not shutil.which("npm"):
+        pytest.skip("Node.js/npm are unavailable")
+    package = {
+        "name": "ai-team-node-fixture",
+        "version": "1.0.0",
+        "private": True,
+        "scripts": {"build": "node build.js", "test": "node test.js"},
+    }
+    _write(tmp_path / "package.json", json.dumps(package))
+    _write(
+        tmp_path / "package-lock.json",
+        json.dumps({
+            "name": package["name"],
+            "version": package["version"],
+            "lockfileVersion": 3,
+            "requires": True,
+            "packages": {"": {"name": package["name"], "version": package["version"]}},
+        }),
+    )
+    _write(
+        tmp_path / "build.js",
+        "const fs = require('fs'); fs.mkdirSync('dist', {recursive:true}); fs.writeFileSync('dist/result.txt', 'built');\\n",
+    )
+    _write(
+        tmp_path / "test.js",
+        "const fs = require('fs'); if (fs.readFileSync('dist/result.txt', 'utf8') !== 'built') process.exit(1);\\n",
+    )
+    executor = ProjectAdapterExecutor(_real_tool_service_for_fixture(tmp_path))
+    registry = ProjectAdapterRegistry()
+
+    for action in ("install", "build", "test", "package", "smoke"):
+        result = executor.execute(
+            registry.plan(tmp_path, action, adapter_name="node"),
+            role="developer",
+            task_id=f"NODE-{action}",
+            execution_id=f"NODE-EXEC-{action}",
+        )
+        assert result["status"] == "passed", (action, result)
+
+    assert (tmp_path / "dist" / "result.txt").read_text(encoding="utf-8") == "built"
+    assert list(tmp_path.glob("*.tgz"))
 
 
 def test_adapter_executor_routes_commands_through_tool_invocation_service() -> None:
