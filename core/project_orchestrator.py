@@ -329,6 +329,14 @@ class ProjectOrchestrator:
         if not isinstance(plan, dict):
             raise TypeError("plan must be a dictionary")
         task_manager = self.plan_builder.build_task_manager(plan)
+        workspace_root = (
+            self.sandbox.resolve(self.deliverable_dir or ".")
+            if self.sandbox is not None
+            else resolve_workspace_path(self.deliverable_dir or ".")
+        )
+        for task in task_manager.get_all_tasks():
+            if task.role == "developer":
+                task.context["workspace_root"] = str(workspace_root)
         # T12: record the project type and match developer tasks to the
         # specialists enabled by the profile. Only task metadata changes;
         # the plan schema and workflow graph stay untouched.
