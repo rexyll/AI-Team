@@ -27,7 +27,7 @@ class FakeClient:
 
 
 def test_provider_llm_implements_base_llm():
-    assert isinstance(ProviderLLM(client_instance=FakeClient()), BaseLLM)
+    assert isinstance(ProviderLLM(model="test-model", client_instance=FakeClient()), BaseLLM)
 
 
 def test_provider_llm_maps_base_contract_to_openai_compatible_client():
@@ -57,7 +57,7 @@ def test_provider_llm_maps_base_contract_to_openai_compatible_client():
 
 def test_provider_llm_omits_empty_system_prompt():
     client = FakeClient()
-    llm = ProviderLLM(client_instance=client)
+    llm = ProviderLLM(model="test-model", client_instance=client)
 
     assert llm.generate("prompt") == "provider response"
     assert client.chat.completions.calls[0]["messages"] == [
