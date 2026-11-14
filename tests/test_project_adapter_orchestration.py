@@ -78,7 +78,7 @@ def test_project_adapter_phase_uses_real_tool_invocation_service_and_workspace_s
 
     result = orchestrator._run_project_adapter_phase(tmp_path)
 
-    assert result["status"] == "passed"
+    assert result["status"] == "passed", result
     assert result["adapter"] == "python"
     assert set(result["actions"]) == {"install", "build", "test", "smoke", "package"}
     assert len(calls) == 5
@@ -146,7 +146,7 @@ def test_integration_phase_includes_adapter_gate_evidence(monkeypatch, tmp_path:
 
     result = orchestrator._run_integration_phase(tmp_path)
 
-    assert result["status"] == "skipped"
+    assert result["status"] == "skipped", result
     assert result["adapter"]["status"] == "passed"
     assert result["adapter"]["adapter"] == "node"
 
