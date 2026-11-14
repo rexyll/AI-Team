@@ -22,7 +22,7 @@ def _service_with_stub_command(*, fail_on: int | None = None):
             "workspace": working_directory,
         })
         exit_code = 17 if fail_on == len(calls) else 0
-        return f"exit_code={exit_code}\\nfixture command"
+        return f"exit_code={exit_code}\nfixture command"
 
     registry = ToolRegistry()
     registry.register(
