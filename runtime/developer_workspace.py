@@ -127,6 +127,7 @@ class DeveloperWorkspaceManager:
         root_key = hashlib.sha256(str(self.main_root).encode("utf-8")).hexdigest()[:20]
         self._process_lock_path = self._lease_parent / f".manager-{root_key}.lock"
         with self._guard():
+            self._recover_transactions_locked()
             self._recover_stale_leases_locked()
 
     @contextmanager
@@ -220,6 +221,7 @@ class DeveloperWorkspaceManager:
         if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id) or task_id in {".", ".."}:
             raise ValueError("task_id must be a safe non-empty identifier")
         with self._guard():
+            self._recover_transactions_locked()
             self._recover_stale_leases_locked()
             if _contains_symlink(self.main_root):
                 raise ValueError("symbolic links in the canonical workspace are not allowed")
@@ -244,8 +246,87 @@ class DeveloperWorkspaceManager:
                 raise
             return WorkspaceLease(task_id, lease_root, base_hashes, lease_id)
 
+    @staticmethod
+    def _fsync_file(path: Path) -> None:
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+
+    def _transaction_journal_path(self, transaction_root: Path) -> Path:
+        return transaction_root / "journal.json"
+
+    def _write_transaction_journal(
+        self, transaction_root: Path, payload: dict[str, object]
+    ) -> None:
+        self._write_metadata(self._transaction_journal_path(transaction_root), payload)
+
+    def _rollback_transaction(self, transaction_root: Path, journal: dict[str, object]) -> None:
+        operations = journal.get("operations")
+        if not isinstance(operations, list):
+            raise ValueError("workspace transaction journal has invalid operations")
+        for operation in reversed(operations):
+            if not isinstance(operation, dict) or not isinstance(operation.get("path"), str):
+                raise ValueError("workspace transaction journal contains an invalid operation")
+            relative = _relative_path(operation["path"])
+            destination = self.main_root / relative
+            self._assert_safe_destination(destination)
+            existed = operation.get("existed") is True
+            if existed:
+                backup_name = operation.get("backup")
+                if not isinstance(backup_name, str):
+                    raise ValueError("workspace transaction journal is missing a backup")
+                backup = transaction_root / _relative_path(backup_name)
+                if not backup.is_file():
+                    raise ValueError(f"workspace transaction backup is missing: {backup_name}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                self._assert_safe_destination(destination)
+                with tempfile.NamedTemporaryFile(
+                    dir=destination.parent, prefix=f".{destination.name}.",
+                    suffix=".rollback-tmp", delete=False,
+                ) as temporary:
+                    temporary_path = Path(temporary.name)
+                try:
+                    shutil.copy2(backup, temporary_path)
+                    os.replace(temporary_path, destination)
+                finally:
+                    temporary_path.unlink(missing_ok=True)
+            else:
+                if destination.is_file() and not destination.is_symlink():
+                    destination.unlink()
+
+    def _recover_transactions_locked(self) -> list[str]:
+        recovered: list[str] = []
+        if not self._lease_parent.exists():
+            return recovered
+        for transaction_root in sorted(self._lease_parent.glob(".txn-*")):
+            if not transaction_root.is_dir() or transaction_root.is_symlink():
+                continue
+            journal_path = self._transaction_journal_path(transaction_root)
+            if not journal_path.exists():
+                # A transaction without a journal was never allowed to mutate
+                # the canonical workspace.
+                shutil.rmtree(transaction_root, ignore_errors=True)
+                recovered.append(transaction_root.name)
+                continue
+            try:
+                journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                if (
+                    not isinstance(journal, dict)
+                    or journal.get("schema_version") != _METADATA_SCHEMA
+                    or journal.get("transaction_root") != transaction_root.name
+                ):
+                    raise ValueError("workspace transaction journal identity mismatch")
+                if journal.get("status") != "committed":
+                    self._rollback_transaction(transaction_root, journal)
+                shutil.rmtree(transaction_root, ignore_errors=True)
+                recovered.append(transaction_root.name)
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                # Never discard an incomplete or corrupt recovery record.
+                continue
+        return recovered
+
     def merge(self, lease: WorkspaceLease) -> MergeReport:
         with self._guard():
+            self._recover_transactions_locked()
             self._validate_lease(lease)
             if _contains_symlink(lease.root):
                 raise ValueError("symbolic links are not allowed in a developer workspace")
@@ -272,39 +353,101 @@ class DeveloperWorkspaceManager:
                     + ", ".join(conflicts)
                 )
 
-            changed: list[str] = []
-            added: list[str] = []
-            deleted: list[str] = []
-            for name in sorted(local):
-                path = _relative_path(name)
-                digest = local[name]
-                if base.get(name) == digest:
-                    continue
-                destination = self.main_root / path
+            changed = [name for name in sorted(local) if name in base and local[name] != base[name]]
+            added = [name for name in sorted(local) if name not in base]
+            deleted = [name for name in sorted(set(base) - set(local))]
+            operations: list[dict[str, object]] = []
+            for name in changed + added + deleted:
+                relative = _relative_path(name)
+                destination = self.main_root / relative
                 self._assert_safe_destination(destination)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                self._assert_safe_destination(destination)
-                source = lease.root / path
-                with tempfile.NamedTemporaryFile(
-                    dir=destination.parent, prefix=f".{destination.name}.",
-                    suffix=".merge-tmp", delete=False,
-                ) as temporary:
-                    temporary_path = Path(temporary.name)
-                try:
-                    shutil.copyfile(source, temporary_path)
-                    shutil.copystat(source, temporary_path)
-                    os.replace(temporary_path, destination)
-                finally:
-                    temporary_path.unlink(missing_ok=True)
-                (changed if name in base else added).append(name)
+                existed = destination.is_file() and not destination.is_symlink()
+                if name in changed or name in deleted:
+                    if not existed:
+                        raise WorkspaceMergeConflict(
+                            f"canonical file disappeared before merge: {name}"
+                        )
+                elif existed or destination.exists():
+                    raise WorkspaceMergeConflict(
+                        f"canonical path appeared before add: {name}"
+                    )
+                operations.append({
+                    "path": name,
+                    "kind": "delete" if name in deleted else "write",
+                    "existed": existed,
+                    "backup": f"backup/{name}" if existed else None,
+                    "staged": f"staged/{name}" if name not in deleted else None,
+                })
 
-            for name in sorted(set(base) - set(local)):
-                path = _relative_path(name)
-                destination = self.main_root / path
-                self._assert_safe_destination(destination)
-                if destination.exists() and destination.is_file():
-                    destination.unlink()
-                    deleted.append(name)
+            transaction_root = self._lease_parent / f".txn-{uuid4().hex}"
+            (transaction_root / "backup").mkdir(parents=True)
+            (transaction_root / "staged").mkdir()
+            try:
+                for operation in operations:
+                    name = str(operation["path"])
+                    relative = _relative_path(name)
+                    destination = self.main_root / relative
+                    if operation["existed"]:
+                        backup = transaction_root / str(operation["backup"])
+                        backup.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(destination, backup)
+                        self._fsync_file(backup)
+                    if operation["kind"] == "write":
+                        staged = transaction_root / str(operation["staged"])
+                        staged.parent.mkdir(parents=True, exist_ok=True)
+                        source = lease.root / relative
+                        shutil.copy2(source, staged)
+                        self._fsync_file(staged)
+
+                journal: dict[str, object] = {
+                    "schema_version": _METADATA_SCHEMA,
+                    "transaction_root": transaction_root.name,
+                    "task_id": lease.task_id,
+                    "lease_id": lease.lease_id,
+                    "status": "prepared",
+                    "operations": operations,
+                }
+                self._write_transaction_journal(transaction_root, journal)
+                journal["status"] = "applying"
+                self._write_transaction_journal(transaction_root, journal)
+
+                for operation in operations:
+                    relative = _relative_path(str(operation["path"]))
+                    destination = self.main_root / relative
+                    self._assert_safe_destination(destination)
+                    if operation["kind"] == "delete":
+                        destination.unlink()
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    self._assert_safe_destination(destination)
+                    staged = transaction_root / str(operation["staged"])
+                    with tempfile.NamedTemporaryFile(
+                        dir=destination.parent, prefix=f".{destination.name}.",
+                        suffix=".merge-tmp", delete=False,
+                    ) as temporary:
+                        temporary_path = Path(temporary.name)
+                    try:
+                        shutil.copy2(staged, temporary_path)
+                        os.replace(temporary_path, destination)
+                    finally:
+                        temporary_path.unlink(missing_ok=True)
+
+                journal["status"] = "committed"
+                self._write_transaction_journal(transaction_root, journal)
+                shutil.rmtree(transaction_root, ignore_errors=True)
+            except BaseException:
+                journal_path = self._transaction_journal_path(transaction_root)
+                if journal_path.exists():
+                    try:
+                        current_journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                        self._rollback_transaction(transaction_root, current_journal)
+                        shutil.rmtree(transaction_root, ignore_errors=True)
+                    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                        # Keep the journal and backups for recovery on next startup.
+                        pass
+                else:
+                    shutil.rmtree(transaction_root, ignore_errors=True)
+                raise
 
             return MergeReport(lease.task_id, tuple(changed), tuple(added), tuple(deleted))
 
