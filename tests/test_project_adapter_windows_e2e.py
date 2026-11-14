@@ -12,11 +12,11 @@ from security.workspace import workspace_scope
 
 @pytest.mark.skipif(os.name != "nt", reason="production terminal smoke runs on Windows CI")
 def test_python_adapter_uses_production_windows_run_command(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text("VALUE = 42\\n", encoding="utf-8")
+    (tmp_path / "sample.py").write_text("VALUE = 42\n", encoding="utf-8")
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_sample.py").write_text(
-        "from sample import VALUE\\n\\ndef test_value():\\n    assert VALUE == 42\\n",
+        "from sample import VALUE\n\ndef test_value():\n    assert VALUE == 42\n",
         encoding="utf-8",
     )
 
