@@ -180,7 +180,7 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     assert calls == [["git", "push", "--porcelain", "origin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2"]]
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
-            service.push(str(workspace), branch=branch)
+            service.push(str(workspace), branch=branch, commit_sha="a" * 40)
 
 
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():
