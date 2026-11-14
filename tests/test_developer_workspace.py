@@ -216,6 +216,21 @@ def test_workspace_managers_serialize_cross_process_merges(tmp_path: Path) -> No
 
 
 
+
+def test_workspace_manager_fails_closed_on_corrupt_merge_journal(tmp_path: Path) -> None:
+    root = tmp_path / "deliverable"
+    root.mkdir()
+    manager = DeveloperWorkspaceManager(root)
+    transaction_root = manager._lease_parent / ".txn-corrupt"
+    transaction_root.mkdir()
+    (transaction_root / "journal.json").write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="cannot safely recover developer workspace transaction"):
+        DeveloperWorkspaceManager(root)
+
+    assert transaction_root.exists()
+
+
 def test_workspace_manager_rolls_back_partial_multi_file_merge_after_process_crash(tmp_path: Path) -> None:
     root = tmp_path / "deliverable"
     root.mkdir()
