@@ -127,7 +127,9 @@ class SCMProvider(Protocol):
 
     def get_local_head_sha(self, local_repository: str) -> str: ...
 
-    def push_branch(\n        self, repository: str, local_repository: str, branch: str, *, expected_head_sha: str\n    ) -> dict[str, Any]: ...
+    def push_branch(
+        self, repository: str, local_repository: str, branch: str, *, expected_head_sha: str
+    ) -> dict[str, Any]: ...
 
     def create_or_update_pull_request(
         self, repository: str, *, head: str, base: str, title: str, body: str
