@@ -78,7 +78,7 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
   | security | 74.02% | 66.22% | 70% | 60% |
   | tools | 67.92% | 63.56% | 65% | 58% |
 
-- 门槛是相对当前实测基线留出波动余量的模块底线，不是声称这些数值代表充分测试；后续应优先补强低覆盖高风险路径（例如 `security/process_sandbox.py`、`tools/terminal.py`），并在基线变化时审查阈值变更。暂不使用单一全局百分比。
+- 门槛是相对当前实测基线留出波动余量的模块底线，不是声称这些数值代表充分测试；后续应优先补强低覆盖高风险路径（例如 `security/process_sandbox.py`、`tools/terminal.py`），并在基线变化时审查阈值变更。暂不使用单一全局百分比。覆盖率测量明确排除 6 个机器时间敏感 benchmark 测试文件和 3 个 CI-only helper source（`tools/check_coverage_thresholds.py`、`tools/check_trivy_license_policy.py`、`tools/check_osv_db_freshness.py`）；helper 对应的 unit tests 仍在全量 regression/coverage pytest 执行中运行，只是不计入产品模块的 coverage 分母。
 - 性能现状复核：`tests/test_workflow_event_performance_contract.py` 与 `tests/test_workflow_event_performance_regression_contract.py` 检查任务/事件语义、吞吐随规模扩展的宽松比例；`tests/test_large_project_benchmark.py` 在默认 CI 中运行确定性 1,000/5,000-task 结构与 5,000-task 测量。`benchmarks/large_project_benchmark.py` 的 10,000-task 全量基准通过脚本入口 opt-in；`benchmarks/real_developer/live.py` 仅在显式调用时构造真实 Provider executor，不会被默认 CI 隐式触发。`benchmarks/multi_developer/statistics.py` 已提供重复样本 mean/median/stddev/CV 描述统计。
 - 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；当前没有已配置的固定 self-hosted performance runner，因此本节点不设机器相关绝对时间/吞吐预算。后续需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
 - 压力测试保持 opt-in，默认 CI 有界；不可因超时或资源压力静默跳过。
