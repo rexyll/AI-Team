@@ -1,4 +1,4 @@
-"""Deliverable dependency scan contracts: offline SBOM + declaration audit."""
+"""Deliverable dependency declaration audit contracts."""
 
 from __future__ import annotations
 
