@@ -45,6 +45,20 @@ def evaluate_license_report(
     problems: list[str] = []
     allowed = {str(item).upper() for item in policy.get("allowed_classifications", [])}
     blocked = {str(item).upper() for item in policy.get("blocked_classifications", [])}
+    overrides = policy.get("license_classification_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+        problems.append("license classification overrides must be an object")
+    for license_name, override in overrides.items():
+        if (
+            not isinstance(override, dict)
+            or str(override.get("classification", "")).upper() not in allowed
+            or not isinstance(override.get("source"), str)
+            or not override.get("source").startswith("https://")
+            or not isinstance(override.get("rationale"), str)
+            or not override.get("rationale").strip()
+        ):
+            problems.append(f"invalid or ungrounded license classification override: {license_name}")
     if not allowed or not blocked or allowed & blocked:
         problems.append("license policy classifications are missing or overlap")
     if policy.get("unknown_license_policy") != "deny":
@@ -123,20 +137,26 @@ def evaluate_license_report(
                 problems.append("license finding is missing package, name, category, or severity")
                 continue
             normalized_category = category.upper()
+            override = overrides.get(license_name)
+            effective_category = normalized_category
+            if isinstance(override, dict):
+                effective_category = str(override.get("classification", "")).upper()
             record = {
                 "package": package_name,
                 "license": license_name,
-                "classification": normalized_category,
+                "scanner_classification": normalized_category,
+                "classification": effective_category,
                 "severity": severity.upper(),
+                "override_applied": isinstance(override, dict),
             }
             findings.append(record)
             if _normalize_name(package_name) not in lock_components:
                 problems.append(f"license finding references unlocked package: {package_name}")
-            if normalized_category in blocked:
+            if effective_category in blocked:
                 problems.append(
-                    f"{package_name} license {license_name} is blocked ({normalized_category})"
+                    f"{package_name} license {license_name} is blocked ({effective_category})"
                 )
-            elif normalized_category not in allowed:
+            elif effective_category not in allowed:
                 problems.append(
                     f"{package_name} license {license_name} has unrecognized category {category}"
                 )
