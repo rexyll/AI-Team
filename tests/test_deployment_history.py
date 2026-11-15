@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from runtime.deployment_provider import (
+    DeploymentArtifact, DeploymentOperationResult, DeploymentRecord,
+    DeploymentRequest, HealthCheckResult,
+)
+from runtime.deployment_history import DeploymentHistoryStore, HostDeploymentManager
+
+
+class StubProvider:
+    name = "docker-local"
+
+    def __init__(self, result=None):
+        self.result = result
+        self.rollback_record = None
+
+    def rollback(self, request, previous):
+        self.rollback_record = previous
+        return self.result or DeploymentOperationResult(
+            "rollback", "unsupported", self.name, "safe replacement not implemented"
+        )
+
+
+def make_record(deployment_id, *, environment="staging", status="running", health="healthy"):
+    artifact = DeploymentArtifact("docker-local", f"image:{deployment_id}", "a" * 64, "1.0")
+    return DeploymentRecord(
+        deployment_id, "docker-local", environment, "1.0", artifact,
+        status, health, "2026-11-15T10:00:00Z",
+    )
+
+
+def successful(record):
+    return DeploymentOperationResult("deploy", "succeeded", "docker-local", "started", record=record)
+
+
+def test_history_persists_and_reloads_records(tmp_path):
+    db = tmp_path / "state" / "deployments.sqlite3"
+    history = DeploymentHistoryStore(db)
+    expected = make_record("old")
+    history.append(expected)
+    reloaded = DeploymentHistoryStore(db)
+    assert reloaded.get("old") == expected
+
+
+def test_history_rejects_non_running_records(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    with pytest.raises(ValueError, match="running"):
+        history.append(make_record("stopped", status="stopped"))
+
+
+def test_only_verified_healthy_previous_record_is_candidate(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("unknown", health="unknown"))
+    history.append(make_record("unhealthy", health="unhealthy"))
+    history.append(make_record("healthy"))
+    assert history.rollback_candidate(provider="docker-local", environment="staging").deployment_id == "healthy"
+    assert history.rollback_candidate(provider="docker-local", environment="production") is None
+
+
+def test_health_observation_updates_persisted_record(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("deploy", health="unknown"))
+    updated = history.update_health(
+        "deploy", HealthCheckResult("healthy", "2026-11-15T10:01:00Z", "docker healthcheck")
+    )
+    assert updated.health_status == "healthy"
+    assert DeploymentHistoryStore(tmp_path / "history.db").get("deploy").health_status == "healthy"
+
+
+def test_manager_persists_only_success_from_configured_provider(tmp_path):
+    provider = StubProvider()
+    manager = HostDeploymentManager(provider, DeploymentHistoryStore(tmp_path / "history.db"))
+    record = make_record("deploy")
+    assert manager.record_deployment(successful(record)) == record
+    with pytest.raises(ValueError, match="successful"):
+        manager.record_deployment(DeploymentOperationResult("deploy", "failed", provider.name, "no"))
+    with pytest.raises(ValueError, match="configured"):
+        manager.record_deployment(DeploymentOperationResult("deploy", "succeeded", "other", "wrong", record=record))
+
+
+def test_manager_rollback_uses_only_host_history_record(tmp_path):
+    provider = StubProvider()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    old = make_record("old")
+    history.append(old)
+    manager = HostDeploymentManager(provider, history)
+    result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
+    assert result.status == "unsupported"
+    assert provider.rollback_record == old
+
+
+def test_manager_fails_closed_without_prior_healthy_deployment(tmp_path):
+    provider = StubProvider()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("not-healthy", health="unknown"))
+    manager = HostDeploymentManager(provider, history)
+    result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
+    assert result.status == "failed"
+    assert provider.rollback_record is None

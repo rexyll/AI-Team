@@ -41,3 +41,10 @@ Fake-runner tests cover executable/daemon unavailable, build failure, image dige
 3. Host-owned deployment history and verified rollback (T21.6.3).
 4. Container-backed E2E and CI, including daemon unavailable, build failure, unhealthy deployment and rollback failure (T21.6.4).
 5. Cloud providers remain separate future adapters; no cloud capability is implied by this implementation.
+
+
+## Host-owned deployment history (T21.6.3)
+
+Deployment history belongs to the host runtime and must be stored independently of Agent messages or caller-supplied records. The host history is the authority for selecting a prior deployment. A rollback request may identify an environment, but it must not supply the record that authorizes rollback.
+
+The first T21.6.3 increment introduces a local SQLite history store and a host manager. It persists successful running deployment records, records verified health observations, reloads records after process restart, and selects only earlier records whose persisted state is running and whose health observation is healthy. Before delegating rollback, the manager checks provider and environment scope against the configured host provider and request. Provider-specific safe replacement remains a separate requirement: the Docker adapter must not stop the current deployment before it has verified that the target can be started and made healthy. Until that replacement/traffic-switch sequence exists, Docker rollback remains unsupported and the manager must report that honestly.
