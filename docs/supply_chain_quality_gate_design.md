@@ -5,26 +5,23 @@
 
 ## 结论
 
-T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/开发依赖锁与哈希安装闭环；仍缺可验证的覆盖率阈值、标准化 SBOM、漏洞数据库扫描和许可证策略门禁。不能把现有性能回归测试或 requirements 顶层 pin 描述为完整供应链治理。
+T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/开发依赖锁与哈希安装闭环；T21.7.2 已完成 CycloneDX 1.6 SBOM/provenance；T21.7.3 已落地 line/branch coverage 基线与模块门槛，但固定硬件绝对性能预算仍待受控 runner；T21.7.4 漏洞数据库扫描和许可证策略门禁仍待实施。不能把现有性能回归测试或 requirements 顶层 pin 描述为完整供应链治理。
 
 ## 已有能力（经代码核对）
 
 | 领域 | 当前实现 | 证据与边界 |
 |---|---|---|
-| 性能回归 | workflow event 性能/吞吐与扩展性测试，规模覆盖 32/128/512 个事件或任务 | `tests/test_workflow_event_performance_contract.py`、`tests/test_workflow_event_performance_regression_contract.py`；断言为宽松相对退化保护，不是跨机器绝对 SLA，也没有独立 benchmark 历史基线 |
+| 性能回归 | workflow event 性能/吞吐与扩展性测试，规模覆盖 32/128/512 个事件或任务；10k-task 与真实 Provider 基准 opt-in | `tests/test_workflow_event_performance_contract.py`、`tests/test_workflow_event_performance_regression_contract.py`；断言为宽松相对退化保护，不是跨机器绝对 SLA；没有固定性能 runner，绝对预算暂缓 |
 | 依赖声明 | 顶层输入 `requirements.txt` / `requirements-dev.txt`；四份 Python 3.14 平台锁包含完整解析依赖与 SHA-256 hashes | Linux/Windows 分别解析；CI 使用对应开发锁与 `--require-hashes`；顶层输入本身仍不是安装锁 |
 | 离线依赖检查 | `runtime/dependency_scan.py` 解析交付物 requirements，检查未声明第三方 import，并记录 vulnerability lookup unavailable | 不是 SPDX/CycloneDX SBOM；requirements parser 不解析完整 PEP 508/requirements include 语义；不会查询漏洞库或许可证 |
 | 安全回归 | CI 单独运行 `tools/run_security_regression.py` | 安全测试覆盖不等于依赖漏洞/许可证扫描 |
-| CI | Ubuntu Python 3.14 全量与安全回归；Windows production terminal smoke | pip 25.3 固定；分别消费 Linux/Windows 开发锁并强制哈希；仍没有 coverage 上传/阈值或供应链扫描 job |
+| CI | Ubuntu Python 3.14 全量、安全回归与独立 line/branch coverage 门禁；Windows production terminal smoke | pip 25.3 固定；分别消费 Linux/Windows 开发锁并强制哈希；覆盖率 JSON/HTML artifact 归档并执行模块风险门槛；漏洞/许可证扫描 job 尚未接入 |
 
 ## 已确认缺口
 
-1. **覆盖率门槛**：仓库未声明 coverage 工具、统一测量范围、排除规则或阈值。应先生成可复现基线，检查关键模块覆盖，再按风险分层设置阈值；不能先拍脑袋设置数字。
-2. **性能预算**：现有测试提供相对扩展性保护，但没有稳定 runner 上的基线采集、历史比较、预算版本化和噪声处理。当前测试不得被包装成性能 SLA。
-3. **依赖可复现性**：T21.7.1 已补齐 Python 3.14 Linux/Windows 生产与开发锁，CI 已固定 pip 25.3 并强制哈希安装。后续仍需为其他 Python 版本/平台（若支持矩阵扩展）生成独立锁，并维护受控 resolver 更新策略。
-4. **标准化 SBOM**：现有扫描输出是内部摘要，不含标准格式、组件 PURL、许可证表达式、来源/构建元数据，也未覆盖所有分发依赖来源。
-5. **漏洞与许可证**：没有数据库查询、漏洞匹配或许可证 allow/deny policy。当前网络出口策略为 deny-by-default；不得在应用运行时偷偷联网，也不得把 scanner unavailable 记作 clean。
-6. **制品来源**：尚未形成依赖锁、SBOM、构建来源、测试证据和发布制品摘要之间的统一可验证绑定。
+1. **性能预算**：现有测试提供相对扩展性保护，但没有稳定 runner 上的基线采集、历史比较、预算版本化和噪声处理。当前测试不得被包装成性能 SLA；无固定 runner 时不设绝对预算。
+2. **依赖可复现性**：T21.7.1 已补齐 Python 3.14 Linux/Windows 生产与开发锁，CI 已固定 pip 25.3 并强制哈希安装。后续仍需为其他 Python 版本/平台（若支持矩阵扩展）生成独立锁，并维护受控 resolver 更新策略。
+4. **漏洞与许可证**：尚未实现漏洞数据库查询、漏洞匹配或许可证 allow/deny policy。当前网络出口策略为 deny-by-default；不得在应用运行时偷偷联网，也不得把 scanner unavailable 记作 clean。
 
 ## 推荐实施顺序
 
@@ -85,6 +82,15 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 - 性能现状复核：`tests/test_workflow_event_performance_contract.py` 与 `tests/test_workflow_event_performance_regression_contract.py` 检查任务/事件语义、吞吐随规模扩展的宽松比例；`tests/test_large_project_benchmark.py` 在默认 CI 中运行确定性 1,000/5,000-task 结构与 5,000-task 测量。`benchmarks/large_project_benchmark.py` 的 10,000-task 全量基准通过脚本入口 opt-in；`benchmarks/real_developer/live.py` 仅在显式调用时构造真实 Provider executor，不会被默认 CI 隐式触发。`benchmarks/multi_developer/statistics.py` 已提供重复样本 mean/median/stddev/CV 描述统计。
 - 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；当前没有已配置的固定 self-hosted performance runner，因此本节点不设机器相关绝对时间/吞吐预算。后续需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
 - 压力测试保持 opt-in，默认 CI 有界；不可因超时或资源压力静默跳过。
+
+
+#### T21.7.4 扫描工具与网络边界（实施决策）
+
+- 漏洞扫描采用 `pip-audit`，直接扫描仓库生产 lock（不重新解析、不自动修复），使用 OSV 服务；`--strict` 与完整 hash lock 用于确保依赖收集失败时不被当作 clean。官方项目支持 requirements 输入、OSV/PyPI 多服务及 JSON 输出；其安全模型明确指出在线服务不可用时扫描不能被视为成功。参考：[pip-audit README](https://github.com/pypa/pip-audit/blob/main/README.md)。
+- 许可证扫描采用 `pip-licenses` 从独立 production venv 的已安装 distribution metadata 收集报告；扫描工具本身及其依赖不计入 production license set。报告必须覆盖每个 production lock component，unknown/empty/unrecognized license 由本仓库策略检查器 fail-closed。`pip-licenses` 支持 JSON、选择目标 Python 环境及不同 metadata 来源；其 `allow-only` 对多许可证条目采用“至少一项匹配”的语义，因此不直接用它作为合规门禁，而由项目检查器确保每个表达式/条目都获准。参考：[pip-licenses PyPI documentation](https://pypi.org/project/pip-licenses/)。
+- 在线扫描 job 限定 Ubuntu Linux（Harden-Runner block-mode egress enforcement）；Windows CI 仍只运行本地测试，不访问漏洞数据库。扫描依赖在启用 egress block 前通过 hash lock 安装，真正查询漏洞数据库的步骤只允许访问 `api.osv.dev:443`；GitHub Actions 必需的 checkout/API/artifact endpoints 需按实际审计确定并明确列入 allowlist。Harden-Runner 的 Community block mode 仅支持 GitHub-hosted Linux runner；其 DoH egress bypass advisory 的修复版本为 v2.16.0，实施时固定到已修复的、不可变 commit SHA，而非浮动 tag。参考：[Harden-Runner](https://github.com/step-security/harden-runner)、[GHSA-46g3-37rh-v698](https://github.com/step-security/harden-runner/security/advisories/GHSA-46g3-37rh-v698)。
+- 每次扫描记录 UTC 时间、commit SHA、目标 lock SHA-256、scanner/version、OSV service/endpoint、数据库可用性/更新时间证据、漏洞结果和许可证报告。当前 OSV API 响应不一定提供可验证的全局数据库更新时间；若无法从可信来源取得 freshness 证据，状态必须是 `unknown` 并阻断发布门禁，不能用扫描时间伪装数据库更新时间。
+- 首轮只生成报告并审查许可证表达式，不自动升级、不自动忽略漏洞、不自动批准未知许可证；任何豁免都需明确 ID、责任人、到期日和理由。
 
 ### T21.7.4 漏洞与许可证策略
 - 仅在 CI 明确声明的网络出口白名单中运行锁文件扫描；应用交付运行时继续保持无隐式网络查询。
