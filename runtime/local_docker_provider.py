@@ -161,17 +161,36 @@ class LocalDockerProvider:
         The caller must build input_text through an allowlisted command builder.
         No shell or shell pipe is used.
         """
-        if isinstance(args, (str, bytes)) or not isinstance(args, Sequence) or not args:
-            raise ValueError("Docker args must be a non-empty sequence of strings")
+        if isinstance(args, (str, bytes)) or not isinstance(args, Sequence):
+            raise ValueError("Docker args must be the exact HAProxy Unix socket exec argv")
         if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in args):
             raise ValueError("Docker args must contain non-empty strings without NUL bytes")
+        if (
+            len(args) != 8
+            or args[0] != "exec"
+            or args[1] != "-i"
+            or not re.fullmatch(r"[0-9a-f]{64}", args[2])
+            or args[3] != "socat"
+            or args[4] != "-T"
+            or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", args[5])
+            or not 0 < float(args[5]) <= 15
+            or args[6] != "STDIO"
+            or args[7] != "UNIX-CONNECT:/run/haproxy/admin.sock"
+        ):
+            raise ValueError("Docker stdin is restricted to Router immutable-ID Unix admin socket exec")
         if not isinstance(input_text, str) or "\x00" in input_text:
             raise ValueError("input_text must be a string without NUL bytes")
-        if len(input_text.encode("utf-8")) > 65536:
-            raise ValueError("Docker stdin payload exceeds 65536 UTF-8 bytes")
+        if "\r" in input_text:
+            raise ValueError("input_text must not contain carriage returns")
+        if len(input_text.encode("utf-8")) > 1024:
+            raise ValueError("HAProxy Runtime API input exceeds 1024 UTF-8 bytes")
+        if not re.fullmatch(r"[a-zA-Z0-9_./:= -]+\n", input_text):
+            raise ValueError("input_text must be one allowlisted Runtime API command line")
         effective_timeout = self.timeout if timeout is None else timeout
         if not isinstance(effective_timeout, (int, float)) or effective_timeout <= 0:
             raise ValueError("timeout must be positive")
+        if effective_timeout > 17:
+            raise ValueError("HAProxy Runtime API timeout must not exceed 17 seconds")
         executor = getattr(self.runner, "execute_input", None)
         if not callable(executor):
             return None, "configured Docker runner does not support stdin execution"
