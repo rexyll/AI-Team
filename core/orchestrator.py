@@ -173,6 +173,11 @@ class Orchestrator:
                 if isinstance(workspace_root, str) and workspace_root.strip():
                     manager = self._workspace_manager_for(workspace_root)
                     lease = manager.issue(task.id)
+                    task.context["workspace_lease"] = {
+                        "lease_id": lease.lease_id,
+                        "task_id": lease.task_id,
+                        "disposition": "issued",
+                    }
                     try:
                         with workspace_scope(
                             lease.root,
@@ -194,9 +199,14 @@ class Orchestrator:
                             workflow.execute(task.id, execution_id=active_execution_id)
                         if task.status == "completed":
                             task.context["workspace_merge"] = manager.merge(lease).to_dict()
+                            task.context["workspace_lease"]["disposition"] = "merged"
                         else:
                             task.context["workspace_discarded"] = True
+                            task.context["workspace_lease"]["disposition"] = "discarded"
                     finally:
+                        if task.context["workspace_lease"]["disposition"] == "issued":
+                            task.context["workspace_lease"]["disposition"] = "discarded"
+                            task.context["workspace_discarded"] = True
                         manager.discard(lease)
                 else:
                     workflow.execute(task.id, execution_id=active_execution_id)
