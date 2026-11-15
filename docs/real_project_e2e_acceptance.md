@@ -103,7 +103,7 @@ T21.8 is complete only after:
 
 ## Current status (2026-11-15)
 
-Partial execution evidence exists; T21.8 is **not complete**.
+Partial execution evidence exists; T21.8 is **not complete**. The Python CLI orchestrator test is implemented, but its CI result is not yet recorded.
 
 - Python CLI: Windows production adapter E2E installs/builds/tests/smokes/packages a real package, executes the installed console script, checks success and invalid input, and verifies a deliberate failing test.
 - Node.js Web adapter: Windows production adapter E2E runs npm install/build/test/smoke/package and checks the built artifact and command audit.
@@ -113,7 +113,7 @@ Partial execution evidence exists; T21.8 is **not complete**.
 Evidence boundaries and remaining work:
 
 - The planner, developer, tester and reviewer in the orchestration E2E are deterministic scripted role doubles. Only the document writer is driven by `MockLLM`; this does **not** prove full MockLLM-driven agent reasoning or provider quality.
-- The full Python CLI scenario has not yet run through `ProjectOrchestrator` and the complete delivery phase.
+- Python CLI `ProjectOrchestrator` coverage has now been added in `tests/test_project_adapter_node_e2e.py` as `test_python_cli_requirement_runs_through_project_orchestrator_and_delivery` (commit `3b204e7`). It runs on the Windows toolchain job and exercises the real orchestrator, task lease, Python adapter/`ToolInvocationService`, document writer + `MockLLM`, package/manifest generation, and the installed `sample-cli --value 21` command (`42` expected). The commit's CI result has not yet been verified in this record, so this is implementation evidence, not accepted CI evidence.
 - The full Analyst → Planner → Developer → Tester/Reviewer → integration → QA/security → documentation/acceptance → package chain is not yet covered by one end-to-end scenario. Analyst and QA agent stages are not part of the current Node test.
 - A committed, machine-readable evidence bundle tying requirement IDs, task graph, lease IDs/merge results, command audit, acceptance, checksums and release gates together is still required.
 - Live ProviderLLM requires explicit user-managed credentials and remains not run. External deployment/publishing remains not run and requires a dedicated environment plus separate approval.
