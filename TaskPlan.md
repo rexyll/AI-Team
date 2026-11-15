@@ -240,6 +240,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - 选取 Python CLI/API 与 Node.js Web 两类代表项目，从自然语言需求启动完整交付。
   - 检查需求追溯、隔离开发、构建测试、可执行验收、QA/安全、打包、发布记录与交付说明。
   - 输出能力边界报告，明确哪些步骤由本地执行、哪些依赖用户凭证/环境/人工审批。
+  - 2026-11-15 现状评审：Python 已有 Windows 真实命令链路 smoke；Node.js 已有 adapter/lease 隔离契约，但尚无完整 Web 项目交付验收。新增 `docs/real_project_e2e_acceptance.md`，定义 Python CLI/API 与 Node.js Web 两个场景、生产 ToolInvocationService 命令边界、可执行验收证据、失败/安全矩阵，以及 MockLLM deterministic E2E、Live ProviderLLM 和外部部署三种证据级别。该文档仅完成验收规范，不代表真实项目 E2E 已通过；下一步实现两个场景的确定性端到端运行与证据归档。
 
 ## 21.3 优先级与停止条件
 
