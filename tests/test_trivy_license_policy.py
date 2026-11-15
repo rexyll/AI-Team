@@ -8,6 +8,13 @@ POLICY = {
     "blocked_classifications": ["UNKNOWN", "RECIPROCAL", "RESTRICTED", "FORBIDDEN"],
     "unknown_license_policy": "deny",
     "exceptions": [],
+    "license_classification_overrides": {
+        "PSF-2.0": {
+            "classification": "NOTICE",
+            "source": "https://spdx.org/licenses/PSF-2.0.html",
+            "rationale": "SPDX-listed PSF 2.0 grants royalty-free redistribution and derivative works with retention of the PSF license and copyright notice.",
+        }
+    },
 }
 
 
@@ -70,7 +77,8 @@ def test_license_policy_blocks_reciprocal_and_unknown_classifications(tmp_path: 
 
     assert result["status"] == "failed"
     assert any("RECIPROCAL" in problem for problem in result["problems"])
-    assert any("UNKNOWN" in problem for problem in result["problems"])
+    assert not any("PSF-2.0" in problem for problem in result["problems"])
+    assert any("RECIPROCAL" in problem for problem in result["problems"])
 
 
 def test_license_policy_rejects_missing_license_metadata_and_inventory_mismatch(tmp_path: Path):
