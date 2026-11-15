@@ -250,7 +250,10 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - **Python CLI 编排器 E2E 已实现，CI 待核验**：提交 `3b204e7` 新增 `test_python_cli_requirement_runs_through_project_orchestrator_and_delivery`，复用真实 `ProjectOrchestrator`、Developer task lease、生产 Python adapter/`ToolInvocationService`、DocWriterAgent + MockLLM；验证安装后的 `sample-cli --value 21` 输出 `42`，并检查交付 manifest、package 与 `SEC_PASSED`。该用例运行在 Windows toolchain CI；当前未取得该提交的 CI 通过证据，暂不计为验收完成。
   - **Evidence Bundle v1 已实现，CI 待核验**：新增 `runtime/project_evidence_bundle.py` 与 `docs/project_evidence_bundle.schema.json`，通过规范化 JSON + SHA-256 内容摘要输出隐私最小化证据；包含 requirement fingerprint/REQ、task graph、Tester/Reviewer 结论、workspace lease ID 与 merged/discarded、ToolInvocationService 参数摘要、adapter/integration/QA/security/acceptance/release/SRE 门禁、manifest 成员 SHA-256、最终 package SHA-256。原始需求、Prompt/analysis、命令参数/输出、secret 与本机绝对路径不写入。新增 `tests/test_project_evidence_bundle.py`，覆盖摘要篡改、敏感数据不落盘、workspace lease 非法状态、manifest 路径越界与 REQ→AT→selector 追溯。
   - **E2E/CI 接线已实现，CI 待核验**：DeveloperWorkspaceManager lease 现记录非路径化 lease ID 与最终 disposition；Python CLI 与 Node.js Web ProjectOrchestrator E2E 各自生成 Evidence Bundle，Windows CI 上传 `project-e2e-evidence` artifact（30 天）。当前新增代码尚未获得最新 CI 成功证据，不计为验收完成。
-  - **仍未完成**：Analyst/QA Agent 实际纳入统一 E2E；完整 Analyst → Planner → Developer → Tester/Reviewer → integration → QA/security → executable acceptance → package 链路；能力边界报告；Live ProviderLLM 与外部部署（需凭证/审批）。T21.8 继续进行中。
+  - **Analyst / QA 与验收映射已接入，CI 待核验**：Python CLI 与 Node.js Web 两条 ProjectOrchestrator 场景均注册真实 `RequirementAnalystAgent`（MockLLM）和真实 `QAAgent`（MockLLM + list_files/read_file/run_command 受限工具调用）。QA MockLLM 根据实际文件列表、文件内容与命令 `exit_code=0` 结果决定 verdict，不再无条件返回 QA_PASSED；QA 原始参数/输出不进入交付记录，仅保留 args SHA-256 与调用元数据。DocWriter acceptance mapping mock 仅从真实 JUnit selector 列表中选映射；无已执行 selector 时返回空映射，新增单测锁定该契约。
+  - **隔离回归与静态门禁增强，CI 待核验**：`stage_deliverable_copy` 改为复制所有安全普通交付文件（含 Node `dist/index.html`），排除 `.venv`、`node_modules`、缓存、VCS 数据与符号链接；新增 staging contract tests。Node E2E 新增 Python JUnit 测试从隔离 staging 读取真实构建 HTML；Python/Node 两场景均要求 integration passed、executable acceptance passed、QA passed、Ruff 强制静态门禁 passed、安全审计 SEC_PASSED。
+  - **能力边界报告已完成**：新增 `docs/project_e2e_capability_boundary.md`，区分真实生产编排/工具/适配器与 scripted Planner/Developer/Tester/Reviewer、MockLLM Analyst/QA/DocWriter；明确 Live ProviderLLM、browser acceptance、外部部署、SCM 写入与签名 UAT 的未验证边界。
+  - **仍未完成**：Planner/Developer/Tester/Reviewer 的真实模型自主推理 E2E；Live ProviderLLM、浏览器验收、人工签名 UAT、外部部署/发布和经验证的 Evidence Bundle CI artifact。最新新增代码尚未取得完整 main CI 成功证据，T21.8 继续保持进行中。
 
 ## 21.3 优先级与停止条件
 
@@ -265,6 +268,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-15 | T21.7.1 dependency input inventory | 核对 requirements、CI 安装步骤与安装文档。确认 production requirements 仅 pin 两个直接依赖，dev requirements 使用范围约束，CI 升级 pip 后在线解析；setup guide 还引用仓库中不存在的 requirements-mcp.txt。修正文档，明确 MCP bridge 为外部项目，并如实说明当前尚无传递依赖锁/哈希验证；新增文档契约测试。完整 lock 生成暂缓，需在受控 Python 3.14 环境解析并验证 Windows/Linux 目标平台及 hash，不能猜测传递版本或伪造 hash。 | 提交 `695c7a3`、`54635a9`；CI 待验证 |
 
 ## 21.4 Phase 21 执行记录
+
+| 2026-11-15 | T21.8 Analyst/QA result-aware flow + strict JUnit acceptance + Ruff | 两个 ProjectOrchestrator E2E 接入真实 RequirementAnalystAgent/QAAgent（确定性 MockLLM），QA verdict 由实际工具结果与 exit code 决定；DocWriter 只消费实际 JUnit selector；Node staging 包含 dist 静态产物并排除环境/缓存/符号链接；两场景强制 Ruff、集成、可执行验收、QA、安全门禁通过。新增能力边界报告。最新完整 CI 尚未核验，不计为验收完成。 | 提交 `21d5914`、`48e869b`、`9aeb7da`、`3b3f2ce`、`00a8d1f`、`ab81048`、`992dbf6`、`ffe0c62`、`68dcb86`；CI 待验证 |
 
 | 2026-11-15 | T21.8 Evidence Bundle v1 + E2E artifact plumbing | 新增隐私最小化 JSON Evidence Bundle builder/schema/contract tests；将 workspace lease ID/disposition 记入 task context；Python CLI 与 Node Web orchestrator E2E 写出独立 evidence JSON；Windows CI 上传 `project-e2e-evidence` artifact。摘要不包含原始需求、Prompt、命令参数/输出、secret 或本机绝对路径。新增测试与 CI 改动尚待最新 main CI 验证。 | 提交 `bdac7de`、`910766b`、`4032222`、`e8674db`、`7f11bec`、`bb743b3`、`aac9b53`、`ec31625`、`d3bb2d6`、`542ae61`、`a642efa`；CI 待验证 |
 
