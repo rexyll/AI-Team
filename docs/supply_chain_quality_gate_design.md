@@ -119,7 +119,7 @@ T21.6.3 的 reconciliation mutation 仍受可信 host 身份认证、独立双�
 
 ### T21.7.4 项目许可证与有条件依赖例外（2026-11-15）
 
-- 根目录 `LICENSE` 最初采用官方原文 PolyForm Small Business 1.0.0；该历史方案没有授予所有个人宽泛的非商业使用权。**该方案已于 2026-11-15 被后续的 PolyForm Noncommercial 1.0.0 + PolyForm Small Business 1.0.0 双许可方案 取代**：非商业用途选择官方 PolyForm Noncommercial 1.0.0（其条款明确任何非商业目的均为 permitted purpose，并列出个人研究、实验、学习、私人娱乐、爱好和业余活动）；符合条件的小企业商业用途选择官方 PolyForm Small Business 1.0.0 并遵守其全部门槛和条件；其他商业用途须取得单独书面许可。该自定义许可不是未修改的 PolyForm 许可，也不是 OSI-approved open-source license。
+- 根目录 `LICENSE` 最初仅采用官方 PolyForm Small Business 1.0.0；该历史方案没有授予所有个人宽泛的非商业使用权。**该方案已于 2026-11-15 被两份原版官方 PolyForm 许可证的双许可方案取代**：非商业用途选择 PolyForm Noncommercial 1.0.0（其条款明确任何非商业目的均为 permitted purpose，并列出个人研究、实验、学习、私人娱乐、爱好和业余活动）；符合条件的小企业商业用途选择 PolyForm Small Business 1.0.0 并遵守其全部门槛和条件；其他商业用途须取得单独书面许可。
 - 新增 `THIRD_PARTY_NOTICES.md`，记录 `tqdm==4.70.1`（`openai` 传递依赖）的 `MPL-2.0 AND MIT` 表达式、上游来源和再分发义务。项目许可证不改变任何第三方依赖许可证。
 - 许可证例外只匹配 `tqdm`、`4.70.1`、精确表达式 `MPL-2.0 AND MIT` 与 `RECIPROCAL` 分类；责任人 `repository owner (rexyll)`，批准日期 2026-11-15，到期/复审日期 2027-02-13。保留原始分类并在报告中显式列出已应用例外，不把它改写为 NOTICE/PERMISSIVE；未知许可证、扫描器不可用和数据库过期仍 deny。
 - policy evaluator 已验证例外 schema、生产锁版本、精确表达式、审批日期、到期日期和非空义务清单；新增测试覆盖精确匹配、版本/表达式不匹配及过期 fail-closed。例外不能覆盖其他版本/包/许可证，也不能豁免漏洞扫描。
@@ -137,12 +137,12 @@ T21.6.3 的 reconciliation mutation 仍受可信 host 身份认证、独立双�
 
 仓库所有者确认：**任何个人都应能免费进行非商业使用**。因此，项目不再把官方 PolyForm Small Business 1.0.0 单独作为项目主许可证，而采用根目录 `LICENSE` 中的两份官方 PolyForm 许可证构成的双许可方案：
 
-1. **个人非商业许可（Section 2）**：授予自然人全球范围、免版税的使用、复制、修改、衍生和非商业分发权，涵盖个人、教育、学术、研究、爱好及社区用途。无需满足公司员工数或收入条件；但个人必须独立行事，不得代表、服务于或为企业/组织利益使用，也不得以商业优势或金钱报酬为目的。
-2. **小企业商业许可（Section 3）**：单独纳入官方 PolyForm Small Business 1.0.0，完整适用其定义、员工/承包人员数量、通胀调整收入门槛、通知、专利、终止及其他限制。项目自定义许可不扩大其适用范围。
-3. **其他商业许可（Section 4）**：不符合上述小企业许可条件的商业或组织利益用途，必须事先取得权利人的单独书面许可。
+1. **非商业许可**：选择官方 PolyForm Noncommercial 1.0.0。任何非商业目的均为 permitted purpose；其 Personal Uses 条款明确包括个人研究、实验、测试、学习、私人娱乐、爱好和业余活动。该路径不授权商业用途。
+2. **小企业商业许可**：选择官方 PolyForm Small Business 1.0.0，完整适用其定义、员工/承包人员数量、通胀调整收入门槛、通知、专利、终止及其他限制。
+3. **其他商业许可**：不符合 Small Business 许可条件的商业或组织利益用途，必须事先取得权利人的单独书面许可。
 4. **第三方组件**：项目主许可不改变第三方依赖的许可证；继续遵守 `THIRD_PARTY_NOTICES.md` 中记录的 MPL-2.0/MIT 等义务。
 
-此方案是两份官方 PolyForm 许可证的独立授权路径，不是自定义或修改版 PolyForm 许可证；两份许可证均不是 OSI-approved open-source license。它也不是法律意见；在正式商业分发前，建议由专业律师审阅，尤其确认“个人独立非商业用途”与组织/商业用途之间的边界是否符合预期。
+此方案是两份官方 PolyForm 许可证的独立授权路径，不是自定义或修改版 PolyForm 许可证；两份许可证均不是 OSI-approved open-source license。许可证选择不是法律意见；正式商业分发前建议由专业律师审阅。
 
 
 ### 最终采用官方双许可路径（2026-11-15）
