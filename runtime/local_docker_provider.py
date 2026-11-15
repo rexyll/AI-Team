@@ -119,6 +119,7 @@ class LocalDockerProvider:
         return any(
             marker in lowered
             for marker in (
+                "docker executable not found",
                 "cannot connect to the docker daemon",
                 "is the docker daemon running",
                 "error during connect",
