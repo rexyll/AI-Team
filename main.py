@@ -758,13 +758,13 @@ def main() -> int:
                 "Type 'yes' to approve pushing this exact HEAD to the target branch: "
             )
             if push_confirmation != "yes":
-                print("[SCM] Push cancelled; no remote write was performed.")
+                print("[SCM] Push cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)
                 return 3
             pr_confirmation = _read_host_confirmation(
                 "Type 'yes' separately to approve creating/updating this pull request: "
             )
             if pr_confirmation != "yes":
-                print("[SCM] PR creation cancelled; no remote write was performed.")
+                print("[SCM] PR creation cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)
                 return 3
             authority = scm_runtime.approval_authority
             push_approval = authority.issue(
