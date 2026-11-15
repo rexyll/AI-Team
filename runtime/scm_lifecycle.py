@@ -1,6 +1,7 @@
 """Host-owned, approval-gated SCM pull-request lifecycle coordination."""
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -16,7 +17,11 @@ class SCMLifecycleConfig:
     poll_interval_seconds: float = 5.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.repository, str) or self.repository.count("/") != 1:
+        if (
+            not isinstance(self.repository, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.repository)
+            or any(part in {".", ".."} for part in self.repository.split("/", 1))
+        ):
             raise ValueError("repository must use owner/name format")
         if not isinstance(self.base_branch, str) or not self.base_branch.strip():
             raise ValueError("base_branch must be non-empty")
