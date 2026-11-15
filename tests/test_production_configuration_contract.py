@@ -73,7 +73,11 @@ def test_production_checklist_documents_provider_and_runtime_contract() -> None:
     for token in (
         "# AI-Team Production Configuration Checklist",
         "Python 3.14",
-        "pip install -r requirements.txt",
+        "requirements-windows-py314.lock",
+        "requirements-dev-windows-py314.lock",
+        "requirements-dev-linux-py314.lock",
+        "--require-hashes",
+        "requirements.txt",
         "requirements-dev.txt",
         "Python 3.13 is intentionally excluded",
         # 多 Provider 注册表：两个 profile 的凭据变量均须在案。
