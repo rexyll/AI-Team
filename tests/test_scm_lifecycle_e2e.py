@@ -238,7 +238,7 @@ def test_pr_creation_failure_is_reported_after_push_without_hidden_retry():
         _publish(coordinator, authority, provider)
 
     assert [event[0] for event in provider.events] == [
-        "local_head", "local_head", "push", "create_pr"
+        "local_head", "push", "create_pr"
     ]
     assert sum(event[0] == "push" for event in provider.events) == 1
     assert sum(event[0] == "create_pr" for event in provider.events) == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import main
+from runtime.scm_provider import SCMApprovalAuthority, SCMService
 
 
 def test_parser_accepts_publish_options():
@@ -84,7 +85,10 @@ def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_pat
     body_file = tmp_path / "body.md"
     body_file.write_text("Implementation details", encoding="utf-8")
     runtime = SimpleNamespace(
-        service=SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+        service=SCMService(
+            SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+            SCMApprovalAuthority(),
+        ),
         repository="acme/widget",
         approval_authority=SimpleNamespace(issue=lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("approval must not be issued after cancellation")
@@ -129,7 +133,10 @@ def test_publish_cli_refuses_non_interactive_stdin(monkeypatch, tmp_path, capsys
     body_file = tmp_path / "body.md"
     body_file.write_text("Implementation details", encoding="utf-8")
     runtime = SimpleNamespace(
-        service=SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+        service=SCMService(
+            SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+            SCMApprovalAuthority(),
+        ),
         repository="acme/widget",
         approval_authority=SimpleNamespace(issue=lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("approval must not be issued without a terminal")
