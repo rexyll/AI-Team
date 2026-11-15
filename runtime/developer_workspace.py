@@ -248,7 +248,10 @@ class DeveloperWorkspaceManager:
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
-        with path.open("rb") as handle:
+        # Windows _commit requires a descriptor opened for writing. Opening a
+        # staged/backup file read-only can raise EBADF even though the file is
+        # valid; rb+ preserves the bytes while providing a writable descriptor.
+        with path.open("rb+") as handle:
             os.fsync(handle.fileno())
 
     def _transaction_journal_path(self, transaction_root: Path) -> Path:
