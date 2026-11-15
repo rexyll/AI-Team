@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -186,3 +187,21 @@ def test_provenance_binds_archive_and_detects_tampering(tmp_path: Path):
     verification = verify_delivery_provenance(provenance["path"], archive_path=archive)
     assert verification["ok"] is False
     assert "delivery archive SHA-256 mismatch" in verification["problems"]
+
+
+def test_repository_python314_lock_is_fully_parsed(tmp_path: Path):
+    repository_root = Path(__file__).resolve().parents[1]
+    source_lock = repository_root / "requirements-linux-py314.lock"
+    lock = tmp_path / source_lock.name
+    shutil.copyfile(source_lock, lock)
+    _write(tmp_path / "requirements.txt", "openai==3.1.0\n")
+    result = write_delivery_sbom(
+        tmp_path,
+        project="ai-team",
+        build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
+        lock_file=lock.name,
+    )
+    bom = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert result["components"] == 17
+    assert all(component.get("hashes") for component in bom["components"])
