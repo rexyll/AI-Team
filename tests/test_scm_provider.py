@@ -211,3 +211,18 @@ def test_merge_approval_is_bound_to_the_exact_head_sha():
         service.merge_pull_request("acme/widget", 7, approval=approval)
 
     assert not any(call[0] == "merge" for call in provider.calls)
+
+
+def test_local_head_sha_is_available_for_operator_approval_preview():
+    service, provider, _ = _service()
+
+    assert service.get_local_head_sha("/workspace/widget") == "c" * 40
+    assert provider.calls == [("local_head", "/workspace/widget")]
+
+
+def test_local_head_sha_rejects_invalid_provider_result():
+    service, provider, _ = _service()
+    provider.local_head = "not-a-sha"
+
+    with pytest.raises(SCMPreflightError, match="valid HEAD SHA"):
+        service.get_local_head_sha("/workspace/widget")
