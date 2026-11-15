@@ -269,7 +269,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 ## 21.4 Phase 21 执行记录
 
-| 2026-11-15 | T21.8 Analyst/QA result-aware flow + strict JUnit acceptance + Ruff | 两个 ProjectOrchestrator E2E 接入真实 RequirementAnalystAgent/QAAgent（确定性 MockLLM），QA verdict 由实际工具结果与 exit code 决定；DocWriter 只消费实际 JUnit selector；Node staging 包含 dist 静态产物并排除环境/缓存/符号链接；两场景强制 Ruff、集成、可执行验收、QA、安全门禁通过。新增能力边界报告。最新完整 CI 尚未核验，不计为验收完成。 | 提交 `21d5914`、`48e869b`、`9aeb7da`、`3b3f2ce`、`00a8d1f`、`ab81048`、`992dbf6`、`ffe0c62`、`68dcb86`；CI 待验证 |
+| 2026-11-15 | T21.8 Analyst/QA result-aware flow + strict JUnit acceptance + Ruff | 两个 ProjectOrchestrator E2E 接入真实 RequirementAnalystAgent/QAAgent（确定性 MockLLM），QA verdict 由实际工具结果与 exit code 决定；DocWriter 只消费实际 JUnit selector；Node staging 包含 dist 静态产物并排除环境/缓存/符号链接并拒绝 symlink 根目录；两场景强制 Ruff、集成、可执行验收、QA、安全门禁通过。新增能力边界报告。最新完整 CI 尚未核验，不计为验收完成。 | 提交 `21d5914`、`48e869b`、`9aeb7da`、`3b3f2ce`、`00a8d1f`、`ab81048`、`8f1793b`、`4036410`、`992dbf6`、`ffe0c62`、`68dcb86`；CI 待验证 |
 
 | 2026-11-15 | T21.8 Evidence Bundle v1 + E2E artifact plumbing | 新增隐私最小化 JSON Evidence Bundle builder/schema/contract tests；将 workspace lease ID/disposition 记入 task context；Python CLI 与 Node Web orchestrator E2E 写出独立 evidence JSON；Windows CI 上传 `project-e2e-evidence` artifact。摘要不包含原始需求、Prompt、命令参数/输出、secret 或本机绝对路径。新增测试与 CI 改动尚待最新 main CI 验证。 | 提交 `bdac7de`、`910766b`、`4032222`、`e8674db`、`7f11bec`、`bb743b3`、`aac9b53`、`ec31625`、`d3bb2d6`、`542ae61`、`a642efa`；CI 待验证 |
 
