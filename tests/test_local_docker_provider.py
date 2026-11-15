@@ -304,6 +304,7 @@ def test_inspect_runtime_does_not_call_docker_without_immutable_id():
     result = LocalDockerProvider(runner).inspect_runtime(legacy)
 
     assert result.status == "invalid_response"
+    assert result.expected_runtime_id is None
     assert "immutable" in result.detail.lower()
     assert runner.calls == []
 
@@ -361,6 +362,37 @@ def test_runtime_inspection_contract_rejects_false_identity_claims():
             status="not_found",
             runtime_state="unknown",
             health_status="healthy",
+            checked_at="2026-11-15T16:00:00Z",
+            probe="test",
+        )
+
+
+def test_inspect_runtime_treats_unclassified_state_payload_as_unknown():
+    runner = FakeRunner(ok(json.dumps({
+        "Id": "f" * 64,
+        "State": {"Status": ["unexpected"]},
+    })))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "verified"
+    assert result.runtime_state == "unknown"
+    assert result.health_status == "unknown"
+
+
+def test_runtime_inspection_rejects_non_immutable_expected_ids():
+    from runtime.deployment_provider import DeploymentRuntimeInspection
+
+    with pytest.raises(ValueError, match="full lowercase immutable"):
+        DeploymentRuntimeInspection(
+            provider="docker-local",
+            deployment_id="release",
+            expected_runtime_id="container-name",
+            observed_runtime_id=None,
+            identity_match=False,
+            status="not_found",
+            runtime_state="unknown",
+            health_status="unavailable",
             checked_at="2026-11-15T16:00:00Z",
             probe="test",
         )

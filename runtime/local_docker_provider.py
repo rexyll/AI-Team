@@ -335,7 +335,7 @@ class LocalDockerProvider:
             return DeploymentRuntimeInspection(
                 provider=self.name,
                 deployment_id=record.deployment_id,
-                expected_runtime_id=record.container_id or "missing-immutable-id",
+                expected_runtime_id=record.container_id,
                 observed_runtime_id=None,
                 identity_match=False,
                 status="invalid_response",
@@ -349,7 +349,7 @@ class LocalDockerProvider:
             return DeploymentRuntimeInspection(
                 provider=self.name,
                 deployment_id=record.deployment_id,
-                expected_runtime_id="missing-immutable-id",
+                expected_runtime_id=None,
                 observed_runtime_id=None,
                 identity_match=False,
                 status="invalid_response",
@@ -468,7 +468,7 @@ class LocalDockerProvider:
         health_status = "unknown"
         if isinstance(state, dict):
             raw_state = state.get("Status")
-            if raw_state in {
+            if isinstance(raw_state, str) and raw_state in {
                 "created", "running", "paused", "restarting",
                 "removing", "exited", "dead",
             }:

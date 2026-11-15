@@ -13,6 +13,7 @@ OperationStatus = Literal["succeeded", "failed", "unavailable", "unsupported"]
 DeploymentStatus = Literal["prepared", "running", "stopped", "failed"]
 HealthStatus = Literal["healthy", "unhealthy", "unknown", "unavailable"]
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_RUNTIME_ID = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,7 @@ class DeploymentRuntimeInspection:
 
     provider: str
     deployment_id: str
-    expected_runtime_id: str
+    expected_runtime_id: str | None
     observed_runtime_id: str | None
     identity_match: bool
     status: RuntimeInspectionStatus
@@ -155,14 +156,20 @@ class DeploymentRuntimeInspection:
     detail: str = ""
 
     def __post_init__(self) -> None:
-        for name in ("provider", "deployment_id", "expected_runtime_id", "checked_at", "probe"):
+        for name in ("provider", "deployment_id", "checked_at", "probe"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a non-empty string")
-        if self.observed_runtime_id is not None and (
-            not isinstance(self.observed_runtime_id, str) or not self.observed_runtime_id.strip()
+        if self.expected_runtime_id is not None and (
+            not isinstance(self.expected_runtime_id, str)
+            or not _RUNTIME_ID.fullmatch(self.expected_runtime_id)
         ):
-            raise ValueError("observed_runtime_id must be non-empty when provided")
+            raise ValueError("expected_runtime_id must be a full lowercase immutable runtime ID")
+        if self.observed_runtime_id is not None and (
+            not isinstance(self.observed_runtime_id, str)
+            or not _RUNTIME_ID.fullmatch(self.observed_runtime_id)
+        ):
+            raise ValueError("observed_runtime_id must be a full lowercase immutable runtime ID")
         if not isinstance(self.identity_match, bool):
             raise TypeError("identity_match must be a bool")
         if self.status not in {
@@ -177,17 +184,24 @@ class DeploymentRuntimeInspection:
         if self.health_status not in {"healthy", "unhealthy", "unknown", "unavailable"}:
             raise ValueError("invalid health status")
         if self.status == "verified":
-            if not self.identity_match or self.observed_runtime_id != self.expected_runtime_id:
+            if (
+                self.expected_runtime_id is None
+                or not self.identity_match
+                or self.observed_runtime_id != self.expected_runtime_id
+            ):
                 raise ValueError("verified inspection must match the expected immutable runtime ID")
         elif self.identity_match:
             raise ValueError("non-verified inspection cannot claim an identity match")
         if self.status == "identity_mismatch" and (
-            self.observed_runtime_id is None
+            self.expected_runtime_id is None
+            or self.observed_runtime_id is None
             or self.observed_runtime_id == self.expected_runtime_id
         ):
             raise ValueError("identity mismatch must report a different observed runtime ID")
-        if self.status == "not_found" and self.observed_runtime_id is not None:
-            raise ValueError("not-found inspection cannot report an observed runtime ID")
+        if self.status == "not_found" and (
+            self.expected_runtime_id is None or self.observed_runtime_id is not None
+        ):
+            raise ValueError("not-found inspection requires an expected ID and no observed ID")
         if self.health_status == "healthy" and (
             self.status != "verified" or self.runtime_state != "running"
         ):
