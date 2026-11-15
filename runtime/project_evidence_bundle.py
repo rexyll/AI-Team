@@ -177,6 +177,15 @@ def _task_summaries(project: Any) -> tuple[list[dict[str, Any]], dict[str, Any],
                     discarded_count += 1
                 else:
                     incomplete_count += 1
+        def decision_summary(value: Any) -> dict[str, Any] | None:
+            if not isinstance(value, Mapping):
+                return None
+            return {
+                key: value.get(key)
+                for key in ("status", "verdict", "approved", "passed")
+                if isinstance(value.get(key), (str, int, float, bool)) or value.get(key) is None
+            }
+
         summaries.append({
             "id": task_id,
             "role": role,
@@ -185,6 +194,8 @@ def _task_summaries(project: Any) -> tuple[list[dict[str, Any]], dict[str, Any],
             "dependencies": list(dependencies),
             "title_sha256": _sha256_value(str(title)),
             "description_sha256": _sha256_value(str(description)),
+            "tester": decision_summary(_get(task, "test_result")),
+            "reviewer": decision_summary(_get(task, "review_result")),
             "workspace": workspace,
         })
         history = context.get("tool_execution_history")
@@ -284,6 +295,32 @@ def _integration_summary(integration: Any) -> tuple[dict[str, Any] | None, list[
         "static": static_summary,
         "adapter": adapter_summary,
     }, adapter_tools
+
+
+def _acceptance_summary(value: Any) -> dict[str, Any] | None:
+    summary = _gate_summary(value)
+    if summary is None:
+        return None
+    summary["traceability_verdict"] = value.get("traceability_verdict", "unknown")
+    summary["executable_verdict"] = value.get("executable_verdict", "unknown")
+    requirement_results = []
+    for requirement in (value.get("requirements") or [])[:500]:
+        if not isinstance(requirement, Mapping):
+            continue
+        requirement_results.append({
+            "requirement_id": requirement.get("req_id"),
+            "tests": [
+                {
+                    "test_id": test.get("test_id"),
+                    "status": test.get("status", "unknown"),
+                    "selector_sha256": _sha256_value(str(test.get("selector") or "")),
+                }
+                for test in (requirement.get("tests") or [])[:100]
+                if isinstance(test, Mapping)
+            ],
+        })
+    summary["requirements"] = requirement_results
+    return summary
 
 
 def _gate_summary(value: Any, *, verdict_key: str = "verdict") -> dict[str, Any] | None:
@@ -454,10 +491,15 @@ def build_project_evidence_bundle(
             key=lambda item: (str(item.get("started_at") or ""), item["execution_id"]),
         ),
         "gates": {
+            "analyst": {
+                "status": "available" if analysis.strip() else "not_registered",
+                "analysis_sha256": _sha256_bytes(analysis.encode("utf-8")) if analysis.strip() else None,
+                "requirement_count": len(requirements),
+            },
             "integration": integration,
             "qa": _gate_summary(delivery.get("qa")),
             "security": _gate_summary(delivery.get("security")),
-            "acceptance": _gate_summary(delivery.get("acceptance")),
+            "acceptance": _acceptance_summary(delivery.get("acceptance")),
             "release_gate": _gate_summary(delivery.get("release_gate"), verdict_key="status"),
             "sre": _gate_summary(delivery.get("sre")),
             "monitoring": _gate_summary(delivery.get("monitoring"), verdict_key="status"),
