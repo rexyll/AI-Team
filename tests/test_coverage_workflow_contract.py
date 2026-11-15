@@ -26,6 +26,7 @@ def test_ci_collects_line_and_branch_coverage_without_machine_timing_tests():
     assert "coverage json --pretty-print -o coverage.json" in workflow
     assert "coverage html -d coverage-html" in workflow
     assert "coverage report -m" in workflow
+    assert "--omit=tools/check_coverage_thresholds.py,tools/check_trivy_license_policy.py,tools/check_osv_db_freshness.py" in workflow
     assert "python tools/check_coverage_thresholds.py coverage.json config/coverage_thresholds.json" in workflow
     assert "config/coverage_thresholds.json" in workflow
     assert "coverage-baseline-python314" in workflow
