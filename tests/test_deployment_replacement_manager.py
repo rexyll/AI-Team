@@ -511,3 +511,32 @@ def test_recovery_inventory_recognizes_retired_previous_before_terminal_journal_
     assert item.automatic_recovery_allowed is False
     assert history.get_replacement(prepared.operation_id).phase == "traffic_switched"
     assert provider.calls == []
+
+
+def test_recovery_inventory_recognizes_aborted_candidate_before_terminal_journal_commit(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    candidate = _record(
+        target.deployment_id, status="running", health="unhealthy", version=target.version
+    )
+    history.append(candidate)
+    prepared = _replacement_journal(previous, target)
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared,
+        phase="candidate_started",
+        candidate_runtime_id="runtime:candidate",
+        updated_at="2026-11-15T12:04:00Z",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+    history.mark_stopped(candidate)
+
+    item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
+
+    assert item.classification == "candidate_stopped_commit_pending"
+    assert item.phase == "candidate_started"
+    assert item.active_deployment_id == previous.deployment_id
+    assert item.external_state_verified is False
+    assert item.automatic_recovery_allowed is False
+    assert item.recovery_assessment.disposition == "pre_switch_state_requires_inspection"
+    assert history.get_replacement(prepared.operation_id).phase == "candidate_started"
+    assert provider.calls == []

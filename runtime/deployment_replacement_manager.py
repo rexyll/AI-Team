@@ -50,6 +50,7 @@ RecoveryInventoryClassification = Literal[
     "journal_route_evidence_incomplete",
     "journal_history_incomplete",
     "previous_retired_commit_pending",
+    "candidate_stopped_commit_pending",
 ]
 
 
@@ -183,7 +184,7 @@ class HostDeploymentReplacementManager:
                     and candidate.provider == journal.provider
                     and candidate.project == journal.project
                     and candidate.environment == journal.environment
-                    and candidate.status == "running"
+                    and candidate.status in {"running", "stopped"}
                 )
 
                 if not scope_matches or not candidate_scope_matches:
@@ -204,6 +205,25 @@ class HostDeploymentReplacementManager:
                     classification = (
                         "previous_retired_commit_pending"
                         if retirement_committed
+                        else "journal_history_incomplete"
+                    )
+                elif candidate is not None and candidate.status == "stopped":
+                    # The pre-switch abort path can commit the stopped candidate
+                    # record immediately before its terminal aborted journal phase.
+                    abort_committed = (
+                        journal.phase in {
+                            "candidate_started", "candidate_healthy", "needs_reconciliation"
+                        }
+                        and journal.candidate_runtime_id is not None
+                        and journal.candidate_runtime_id != journal.previous_runtime_id
+                        and active_id == journal.previous_deployment_id
+                        and journal.effective_traffic_target in {
+                            None, journal.previous_runtime_id
+                        }
+                    )
+                    classification = (
+                        "candidate_stopped_commit_pending"
+                        if abort_committed
                         else "journal_history_incomplete"
                     )
                 elif journal.phase == "prepared" and (
