@@ -94,12 +94,12 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 
 ### T21.7.4 漏洞与许可证策略
 
-**首轮实施结果（2026-11-15，仍未完成）**：
+**首轮实施结果（2026-11-15）**：
 
 - 新增 `.github/workflows/dependency-security.yml`，拆分 prepare 与 scan jobs；scan job 使用 Harden-Runner v2.21.1 block mode，allowlist 只包含 OSV API/数据导出及 GitHub Actions 必需 endpoints。Trivy OCI DB 在 GitHub-hosted runner 上连接被拒绝后，漏洞扫描改用 `pip-audit 2.10.1` + OSV API；Trivy `0.76.2` 仅执行离线 license scan。
 - 最新完整 scan run `43703756088`（commit `3631263`）扫描 production Linux lock 的 17 个包，pip-audit 返回 0 个已知漏洞；OSV PyPI export 的 `Last-Modified` 为 `2026-11-15T09:18:04Z`，最新 advisory `MAL-2026-19942` 的 API `modified` 与导出记录一致，数据库年龄约 1.09 小时，freshness gate 通过。lock SHA-256 `2a142d5843133f0dced3926ae2b423cebc5fe7c1480dc213099aa5374c04ea3c`。报告 artifact `14156674350`。
-- Trivy 识别 17 个 production package licenses。`PSF-2.0` 从 Trivy `UNKNOWN` 经 SPDX 文本证据映射为 `NOTICE`（保留 notice）；唯一剩余阻断项为 `tqdm` 的 `MPL-2.0 AND MIT`，分类 `RECIPROCAL`。没有添加 blanket exception，也没有把该项标成 clean；需明确 license owner review 或调整依赖后，T21.7.4 才能完成。
-- 许可证审查边界：锁文件显示 `tqdm==4.70.1` 是 `openai` 的传递依赖；仓库根目录未发现项目级 `LICENSE` 文件，因此不能假设项目采用 MIT 或其他兼容许可证。Mozilla 官方 FAQ 将 MPL 2.0 描述为 file-level copyleft：对 MPL 覆盖文件的修改需按 MPL 提供源代码与通知；独立的更大作品文件可按其他许可证分发，但可执行分发仍需提供 MPL 覆盖部分的源代码。参考：[Mozilla MPL 2.0 FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)、[MPL 2.0 text](https://www.mozilla.org/en-US/MPL/2.0/)。当前保持阻断，等待项目 owner 决定是否接受该依赖及其通知/源代码义务，或更换依赖；不自动豁免。
+- Trivy 识别 17 个 production package licenses。`PSF-2.0` 从 Trivy `UNKNOWN` 经 SPDX 文本证据映射为 `NOTICE`（保留 notice）；唯一剩余阻断项最初为 `tqdm` 的 `MPL-2.0 AND MIT`，分类 `RECIPROCAL`。在项目 owner 批准后，已为 `tqdm==4.70.1` 增加精确、限期、附带义务的单包例外；该项仍保持原始 `RECIPROCAL` 分类，报告会单独标记 `exception_applied`，不伪装成 permissive。
+- 许可证审查边界：锁文件显示 `tqdm==4.70.1` 是 `openai` 的传递依赖；仓库根目录未发现项目级 `LICENSE` 文件，因此不能假设项目采用 MIT 或其他兼容许可证。Mozilla 官方 FAQ 将 MPL 2.0 描述为 file-level copyleft：对 MPL 覆盖文件的修改需按 MPL 提供源代码与通知；独立的更大作品文件可按其他许可证分发，但可执行分发仍需提供 MPL 覆盖部分的源代码。参考：[Mozilla MPL 2.0 FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)、[MPL 2.0 text](https://www.mozilla.org/en-US/MPL/2.0/)。项目 owner 于 2026-11-15 批准有条件接受该传递依赖。例外责任人记为仓库 owner/maintainer（GitHub `rexyll`），到期/复审日为 2027-02-13；义务包括保留上游版权/许可证/归属通知、再分发时提供 MPL-2.0 与 MIT 许可证文本或权威 URL，以及修改并分发 MPL 覆盖文件时按 MPL-2.0 提供对应源代码。例外严格匹配包名、版本、许可证表达式与阻断分类；到期、锁版本不符、表达式不符或义务字段缺失均 fail-closed。策略文件：`config/dependency_license_policy.json`；执行器：`tools/check_trivy_license_policy.py`。
 - 仅在 CI 明确声明的网络出口白名单中运行锁文件扫描；应用交付运行时继续保持无隐式网络查询。
 - scanner 版本、数据库更新时间、扫描目标、豁免责任人/期限与结果必须入证据；scanner unavailable、数据库过期、解析失败不能等同无漏洞。
 - 许可证策略按项目配置；未知许可证和冲突必须显式报告，不可默认批准。
@@ -115,3 +115,12 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 ## 与 T21.6.3 的边界
 
 T21.6.3 的 reconciliation mutation 仍受可信 host 身份认证、独立双人审批、独立完整性锚和真实 provider/route read-back 约束。当前只有数据契约与设计文档，未实现安全执行接口；Local Docker rollback 继续 unsupported。供应链工作不会改变该状态。
+
+
+### T21.7.4 项目许可证与有条件依赖例外（2026-11-15）
+
+- 根目录新增 `LICENSE`，采用官方原文 [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0)，并附项目 `Required Notice`。该许可证允许符合其定义的小型企业为公司利益使用软件：员工与独立承包人员合计少于 100 人，且上一纳税年度收入低于按美国 CPI 调整的 2019 年 USD 1,000,000 门槛。未满足条件的商业用途不在该许可授权内，须另行取得许可。README 已说明该边界。该许可证并非 OSI-approved open-source license；不得宣传为无条件开源或允许所有企业免费商用。
+- 新增 `THIRD_PARTY_NOTICES.md`，记录 `tqdm==4.70.1`（`openai` 传递依赖）的 `MPL-2.0 AND MIT` 表达式、上游来源和再分发义务。项目许可证不改变任何第三方依赖许可证。
+- 许可证例外只匹配 `tqdm`、`4.70.1`、精确表达式 `MPL-2.0 AND MIT` 与 `RECIPROCAL` 分类；责任人 `repository owner (rexyll)`，批准日期 2026-11-15，到期/复审日期 2027-02-13。保留原始分类并在报告中显式列出已应用例外，不把它改写为 NOTICE/PERMISSIVE；未知许可证、扫描器不可用和数据库过期仍 deny。
+- policy evaluator 已验证例外 schema、生产锁版本、精确表达式、审批日期、到期日期和非空义务清单；新增测试覆盖精确匹配、版本/表达式不匹配及过期 fail-closed。例外不能覆盖其他版本/包/许可证，也不能豁免漏洞扫描。
+- 法律边界：许可证文本按 PolyForm 官方版本原样采用并保留其条件；本仓库的项目许可证与第三方依赖许可证分别适用。许可证选择不是法律意见，商业分发前建议由专业律师审阅。
