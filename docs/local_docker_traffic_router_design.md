@@ -56,9 +56,16 @@ Docker user-defined bridge 支持网络内容器名/alias 互访，并提供明�
 
 ## 4. 原子路由模型
 
-### 4.1 一个 selector 驱动所有端口
+### 4.1 一个 selector 驱动所有端口，并且不得隐式回退
 
-每个端口 backend 定义两个 server slots，并通过 HAProxy map fetch + use-server 规则选择 slot。所有 frontend 查询相同 active-slot map key，因此多端口不需要逐个切换。一次 set map <map-id> active_slot slot_b 是唯一 route switch；不得循环改端口并声称整个 scope 原子切换。
+每个 TCP backend 定义两个 server slots，HAProxy 用同一个 active-slot map key 产生 ACL，再通过 use-server 明确指定 slot。use-server 支持 TCP mode；但如果规则指定的 server 为 DOWN，HAProxy 在没有 persist/force-persist 时会忽略该规则并继续后续选择。因此 Router config 必须同时满足：
+
+- slot_a 与 slot_b server 均配置 weight 0；不能存在任何可绕过 selector 的普通 load-balancing fallback。
+- 每个 frontend/backend 只使用同一 active-slot map key；active-slot 缺失/非法、两个 use-server 规则都不匹配或目标 server DOWN 时，连接应失败，而不是落到另一个槽位。
+- 不配置 cookie、stick-table、source persistence 或 force-persist；每条新连接都严格使用当前 active-slot selector。
+- map 缺失/解析失败、Runtime API read-back 与预期 selector 不一致、目标 backend 非 UP 时，Host 将 route 标记为 unverified/needs_reconciliation，不接受“HAProxy 仍能转发”作为成功证据。
+
+所有 frontend 查询相同 active-slot map key，因此多端口不需要逐个切换。一次 set map <map-id> active_slot slot_b 是唯一 route switch；不得循环改端口并声称整个 scope 原子切换。[HAProxy use-server（支持 TCP mode，且规则按顺序评估）](https://docs.haproxy.org/3.4/configuration.html)
 
 ### 4.2 Candidate preparation
 
@@ -76,14 +83,14 @@ Docker user-defined bridge 支持网络内容器名/alias 互访，并提供明�
 2. 将 candidate active-slot map 写入 Host 私有目录；临时文件 + 原子 rename + fsync 文件和目录。
 3. 更新 candidate slot 地址/状态；逐端口核对 IP/port 和 HAProxy health。
 4. 执行单条 set map 更新 active_slot。这是全 scope 唯一切换点。
-5. Runtime API read-back：get/show map 验证 active slot；show servers state/show stat 验证每个 backend 的候选地址、端口和 UP 状态；与 Router ID、candidate Docker immutable ID 和 network IP 交叉核验。
+5. Runtime API read-back：get/show map 验证 active slot；show servers state/show stat 验证每个 backend 的候选地址、端口和 UP 状态；从 show stat 的 server rows 读取 scur（当前 session 数）用于 drain 观察；与 Router ID、candidate Docker immutable ID 和 network IP 交叉核验。show servers conn 仅用于诊断，不作为自动 retirement 的计数依据。
 6. 全部读回匹配后，journal 才能进入 traffic_switched，active pointer 才能 CAS 更新。
 
 API 超时/错误不能凭命令返回值猜测切换结果；必须 read-back。确认指向 old/candidate 才能报告 observed route；unknown、地址不匹配、Router ID 不符、backend 缺项一律 needs_reconciliation，并保留两实例与 scope reservation。
 
 ### 4.4 Drain previous
 
-route 指向 candidate 且 read-back 成功后，将 old slot 设为 drain，停止新连接分配但允许现有会话完成。Host 对 old server active connections 有界轮询并要求连续稳定为零；长连接超时则保留 old，返回 pending/degraded 或 needs_reconciliation，不能强制 stop。连接排空后重新验证 route、candidate ID/health，再 stop old；stop 后 inspect 完整容器 ID 和 stopped 状态，最后才提交 previous_retired。任何路由/身份/Router/审计不确定性都保留 reservation。
+route 指向 candidate 且 read-back 成功后，将 old slot 设为 drain；但 HAProxy 的 drain 状态仍允许新的 persistent connections，因此它不能单独证明已停止接收全部新连接。Router v1 不配置 persistence，且所有新连接必须通过 active-slot map 的 use-server 规则；active selector 改变后，old slot 不再是新连接的目标。Host 用 show stat 每个 old server row 的 scur（当前 session 数）做有界轮询，并要求连续多个采样为零；show servers conn 官方定位为 debugging，不作为安全门禁。长连接超时则保留 old，返回 pending/degraded 或 needs_reconciliation，不能强制 stop。连接排空后重新验证 route、candidate ID/health，再 stop old；stop 后 inspect 完整容器 ID 和 stopped 状态，最后才提交 previous_retired。任何路由/身份/Router/审计不确定性都保留 reservation。[HAProxy set server drain 语义](https://www.haproxy.com/documentation/haproxy-runtime-api/reference/set-server/) · [show stat scur 语义](https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-stat/) · [show servers conn 的调试用途](https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-conn/)
 
 ## 5. Crash recovery
 
@@ -136,6 +143,8 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 - Docker user-defined bridge: https://docs.docker.com/engine/network/ and https://docs.docker.com/engine/network/drivers/bridge/
 - HAProxy Runtime API / in-memory state: https://www.haproxy.com/documentation/haproxy-runtime-api/
 - set server: https://www.haproxy.com/documentation/haproxy-runtime-api/reference/set-server/
-- show servers state / stat / conn: https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-state/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-stat/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-conn/
+- use-server in TCP/HTTP mode: https://docs.haproxy.org/3.4/configuration.html
+- show servers state / show stat (scur): https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-state/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-stat/
+- show servers conn (diagnostic only): https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-conn/
 - set map / prepare map / commit map: https://www.haproxy.com/documentation/haproxy-runtime-api/reference/set-map/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/prepare-map/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/commit-map/
 - Unix socket security: https://www.haproxy.com/documentation/haproxy-configuration-manual/new/latest/management/
