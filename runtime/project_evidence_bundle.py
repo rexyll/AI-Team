@@ -76,6 +76,13 @@ def _get(value: Any, name: str, default: Any = None) -> Any:
 
 def _tool_record_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     arguments = record.get("arguments", {})
+    supplied_digest = record.get("arguments_sha256")
+    if supplied_digest is not None:
+        if not isinstance(supplied_digest, str) or not _SHA256.fullmatch(supplied_digest):
+            raise ValueError("tool evidence arguments_sha256 is invalid")
+        arguments_digest = supplied_digest
+    else:
+        arguments_digest = _sha256_value(arguments)
     summary = {
         "execution_id": record.get("execution_id"),
         "task_id": record.get("task_id"),
@@ -85,7 +92,7 @@ def _tool_record_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "started_at": record.get("started_at"),
         "completed_at": record.get("completed_at"),
         # Arguments may contain paths or user input. Store only a stable digest.
-        "arguments_sha256": _sha256_value(arguments),
+        "arguments_sha256": arguments_digest,
         "duration_seconds": _duration_seconds(
             record.get("started_at"), record.get("completed_at")
         ),
