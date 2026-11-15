@@ -292,3 +292,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 CI #305 follow-up | CI #305 仅剩一项测试错误：测试先验证 append 拒绝 stopped 记录，随后又尝试将未入库的该 ID 设为 active，生产 API 正确抛出 KeyError。移除不成立的第二断言，保留非 running 入库拒绝与错误 scope 激活拒绝两项有效覆盖。 | CI #306 待验证 |
+
+
+| 2026-11-15 | T21.6.3 read-only crash recovery classification | 新增纯函数 `classify_replacement_recovery`：根据 journal phase 输出只读处置分类、必须重新观测的 provider/health/route 检查及缺失 runtime identity；prepared/candidate_started 不推断外部动作未发生，traffic_switched 必须 route read-back 后才允许考虑 retire，needs_reconciliation 要求人工决策，终态不恢复。所有阶段均 automatic_action=none；不调用 provider、不改流量、不 abort/retire、不修改 journal。 | 新增 `runtime/deployment_recovery.py`、`tests/test_deployment_recovery.py`；更新部署架构文档；CI 待验证 |

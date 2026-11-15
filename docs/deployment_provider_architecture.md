@@ -96,3 +96,10 @@ This pointer records host-observed traffic ownership only. It is not a liveness 
 ### Replacement journal implementation status correction
 
 The host SQLite store now implements `begin_replacement`, `update_replacement`, `get_replacement`, and `list_active_replacements`. The initial phase must be `prepared`; a partial unique index reserves each provider/project/environment scope while any operation is non-terminal. Phase changes use expected-phase CAS and a fixed transition graph. Scope, target/previous deployment IDs, operation ID, creation time, and already-recorded runtime/route identities cannot be rewritten. `needs_reconciliation` remains active and blocks a second operation; only `aborted` and `previous_retired` release the reservation. This journal survives host process restart but does not itself resume or reconcile provider operations. No automatic recovery worker or Docker replacement implementation exists.
+
+
+### Read-only crash-recovery classification
+
+The new `runtime/deployment_recovery.py` module classifies a persisted replacement snapshot into required observations only. Early phases (`prepared` and `candidate_started`) require provider inspection because a crash can occur after an external side effect but before its journal update. `candidate_healthy` requires fresh health and effective-route read-back. `traffic_switched` requires authoritative route read-back confirming the candidate identity before any old-runtime retirement. `needs_reconciliation` requires explicit operator review; terminal phases need no recovery action.
+
+The assessment reports missing immutable runtime identities instead of inferring them, and every result declares `automatic_action="none"`. This is deliberately not a recovery worker: it performs no provider calls, route changes, aborts, retirements, or journal mutations. The scope reservation remains in place for `needs_reconciliation`; Local Docker rollback remains unsupported until a real host-owned router and provider implementation exist.
