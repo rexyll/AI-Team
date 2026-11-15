@@ -1203,6 +1203,12 @@ class ProjectOrchestrator:
             "verdict": verdict,
             "status": str(status),
             "message_head": str(message or "")[:1500],
+            "executed_tool_calls": qa_data.get("executed_tool_calls", 0),
+            "tool_execution_history": (
+                list(qa_data.get("tool_execution_history") or [])
+                if isinstance(qa_data.get("tool_execution_history"), list)
+                else []
+            ),
         }
         self._emit_project_event(
             "project.qa_completed",
@@ -1219,6 +1225,7 @@ class ProjectOrchestrator:
             "verdict": qa.get("verdict"),
             "status": qa.get("status"),
             "message_head": str(qa.get("message_head") or "")[:1200],
+            "executed_tool_calls": qa.get("executed_tool_calls", 0),
         }
 
     def _run_security_phase(self, manifest_root: Path) -> dict[str, Any]:
