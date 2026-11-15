@@ -19,25 +19,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install production dependencies from the verified hash lock
-        shell: bash
-        run: |
-          python -m venv .venv-prod
-          .venv-prod/bin/python -m pip install --disable-pip-version-check "pip==25.3"
-          .venv-prod/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-linux-py314.lock
-
-      - name: Install pinned Trivy scanner
-        uses: aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7
-        with:
-          version: 0.76.2
-
       - name: Restrict scanner network egress
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
@@ -57,6 +38,25 @@ jobs:
             results-receiver.actions.githubusercontent.com:443
             pipelines.actions.githubusercontent.com:443
             *.blob.core.windows.net:443
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install production dependencies from the verified hash lock
+        shell: bash
+        run: |
+          python -m venv .venv-prod
+          .venv-prod/bin/python -m pip install --disable-pip-version-check "pip==25.3"
+          .venv-prod/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-linux-py314.lock
+
+      - name: Install pinned Trivy scanner
+        uses: aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7
+        with:
+          version: 0.76.2
 
       - name: Scan production lock for vulnerabilities and licenses
         shell: bash
