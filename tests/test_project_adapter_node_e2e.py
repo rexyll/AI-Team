@@ -151,20 +151,68 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
             },
         ]
     )
-    tester_llm = MockLLM(
-        response=(
-            "TEST_PASSED\n"
-            "依据 DeveloperResult 中实际 pytest 命令和退出码，"
-            "两个计算测试均通过；未执行证据之外的测试。"
-        )
-    )
-    reviewer_llm = MockLLM(
-        response=(
-            "APPROVED\n"
-            "实现包含 add 函数，测试覆盖正数与负数场景；"
-            "Tester 已基于实际执行证据通过。"
-        )
-    )
+    class _EvidenceAwareTesterLLM(MockLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.evidence_accepted = False
+
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system_prompt: str = "",
+            temperature: float = 0.2,
+            max_tokens: int = 4096,
+        ) -> str:
+            self.evidence_accepted = (
+                "exit_code=0" in prompt
+                and "2 passed" in prompt
+                and "test_calculator.py" in prompt
+            )
+            self.response = (
+                "TEST_PASSED\\n实际 pytest 结果为 2 passed，退出码为 0。"
+                if self.evidence_accepted
+                else "TEST_FAILED\\n缺少成功的实际 pytest 执行证据。"
+            )
+            return super().generate(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    class _EvidenceAwareReviewerLLM(MockLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.evidence_accepted = False
+
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system_prompt: str = "",
+            temperature: float = 0.2,
+            max_tokens: int = 4096,
+        ) -> str:
+            self.evidence_accepted = (
+                "TEST_PASSED" in prompt
+                and "exit_code=0" in prompt
+                and "2 passed" in prompt
+            )
+            self.response = (
+                "APPROVED\\nTester 结论与实际 pytest 证据一致。"
+                if self.evidence_accepted
+                else "REVISION_REQUIRED\\nTester 或实际 pytest 证据不足。"
+            )
+            return super().generate(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    tester_llm = _EvidenceAwareTesterLLM()
+    reviewer_llm = _EvidenceAwareReviewerLLM()
     developer = DeveloperAgent(
         AgentConfig(role="developer", model="deterministic-mock"),
         llm=developer_llm,
@@ -223,7 +271,13 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
     assert reviewer_result["status"] == "approved"
     assert len(developer_llm.tool_call_turns) == 3
     assert len(tester_llm.calls) == 1
+    assert tester_llm.evidence_accepted is True
+    assert "exit_code=0" in tester_llm.calls[0]["prompt"]
+    assert "2 passed" in tester_llm.calls[0]["prompt"]
     assert len(reviewer_llm.calls) == 1
+    assert reviewer_llm.evidence_accepted is True
+    assert "TEST_PASSED" in reviewer_llm.calls[0]["prompt"]
+    assert "2 passed" in reviewer_llm.calls[0]["prompt"]
 
 
 @pytest.mark.skipif(
