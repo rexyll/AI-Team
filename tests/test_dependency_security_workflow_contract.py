@@ -14,7 +14,7 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
     assert "branches: [main]" in workflow
     assert "runs-on: ubuntu-latest" in workflow
     assert "aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7" in workflow
-    assert "version: 0.76.2" in workflow
+    assert "version: v0.76.2" in workflow
     assert "step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c" in workflow
     assert "egress-policy: block" in workflow
     assert "disable-telemetry: true" in workflow
