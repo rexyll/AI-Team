@@ -65,6 +65,90 @@ def test_docker_runner_uses_argv_without_shell(monkeypatch):
     assert observed["timeout"] == 3
 
 
+def test_docker_runner_with_input_uses_argv_without_shell(monkeypatch):
+    observed = {}
+
+    def fake_run(args, **kwargs):
+        observed["args"] = args
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, "runtime api response", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = SubprocessDockerRunner("/opt/docker").execute_input(
+        ["exec", "-i", "router-container", "socat", "STDIO",
+         "UNIX-CONNECT:/run/haproxy/admin.sock"],
+        input_text="show info\\n", cwd=None, timeout=4,
+    )
+    assert result.stdout == "runtime api response"
+    assert observed["args"] == [
+        "/opt/docker", "exec", "-i", "router-container", "socat",
+        "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock",
+    ]
+    assert observed["input"] == "show info\\n"
+    assert observed["shell"] is False
+    assert observed["timeout"] == 4
+
+
+def test_docker_runner_with_input_rejects_nul_and_oversized_payload(monkeypatch):
+    called = False
+    def fake_run(args, **kwargs):
+        nonlocal called
+        called = True
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    runner = SubprocessDockerRunner("/opt/docker")
+    with pytest.raises(ValueError, match="without NUL"):
+        runner.execute_input(["exec", "-i", "router"], input_text="show info\\x00", cwd=None, timeout=1)
+    with pytest.raises(ValueError, match="65536"):
+        runner.execute_input(["exec", "-i", "router"], input_text="x" * 65537, cwd=None, timeout=1)
+    assert called is False
+
+
+def test_host_input_execution_requires_runner_stdin_capability():
+    runner = FakeRunner()
+    provider = LocalDockerProvider(runner)
+    result, error = provider.execute_host_input(
+        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
+        input_text="show info\\n",
+    )
+    assert result is None
+    assert "does not support stdin" in error
+    assert runner.calls == []
+
+
+def test_host_input_execution_uses_input_runner_without_shell():
+    class InputRunner:
+        def __init__(self):
+            self.calls = []
+        def execute(self, args, *, cwd, timeout):
+            raise AssertionError("execute() must not be used for stdin")
+        def execute_input(self, args, *, input_text, cwd, timeout):
+            self.calls.append((list(args), input_text, cwd, timeout))
+            return ok("router response")
+    runner = InputRunner()
+    provider = LocalDockerProvider(runner)
+    result, error = provider.execute_host_input(
+        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
+        input_text="show info\\n", timeout=3,
+    )
+    assert error is None
+    assert result.stdout == "router response"
+    assert runner.calls == [(
+        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
+        "show info\\n", None, 3.0,
+    )]
+
+
+def test_host_input_execution_rejects_unsafe_argv_and_payload():
+    provider = LocalDockerProvider(FakeRunner())
+    with pytest.raises(ValueError, match="non-empty strings"):
+        provider.execute_host_input(["exec", "", "router"], input_text="show info\\n")
+    with pytest.raises(ValueError, match="without NUL"):
+        provider.execute_host_input(["exec", "-i", "router"], input_text="show info\\x00")
+    with pytest.raises(ValueError, match="65536"):
+        provider.execute_host_input(["exec", "-i", "router"], input_text="x" * 65537)
+
+
 def test_missing_docker_executable_is_unavailable(tmp_path):
     (tmp_path / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
     provider = LocalDockerProvider(FakeRunner(FileNotFoundError()), timeout=2)

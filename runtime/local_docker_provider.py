@@ -45,6 +45,15 @@ class DockerCommandRunner(Protocol):
     ) -> DockerCommandResult: ...
 
 
+class DockerCommandRunnerWithInput(Protocol):
+    """Optional Host-only stdin capability; never exposed through Agent tools."""
+
+    def execute_input(
+        self, args: Sequence[str], *, input_text: str,
+        cwd: str | None, timeout: float
+    ) -> DockerCommandResult: ...
+
+
 class SubprocessDockerRunner:
     """Production runner: argv only, no shell, no implicit privilege escalation."""
 
@@ -61,6 +70,34 @@ class SubprocessDockerRunner:
         completed = subprocess.run(
             [self.executable, *args],
             cwd=cwd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            shell=False,
+            check=False,
+        )
+        return DockerCommandResult(
+            completed.returncode,
+            (completed.stdout or "")[-_OUTPUT_LIMIT:],
+            (completed.stderr or "")[-_OUTPUT_LIMIT:],
+        )
+
+    def execute_input(
+        self, args: Sequence[str], *, input_text: str,
+        cwd: str | None, timeout: float
+    ) -> DockerCommandResult:
+        """Execute fixed argv with bounded stdin; never invoke a shell."""
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if not isinstance(input_text, str) or "\x00" in input_text:
+            raise ValueError("input_text must be a string without NUL bytes")
+        if len(input_text.encode("utf-8")) > 65536:
+            raise ValueError("Docker stdin payload exceeds 65536 UTF-8 bytes")
+        completed = subprocess.run(
+            [self.executable, *args],
+            cwd=cwd,
+            input=input_text,
             capture_output=True,
             text=True,
             errors="replace",
@@ -111,6 +148,42 @@ class LocalDockerProvider:
             return None, "Docker executable not found"
         except subprocess.TimeoutExpired:
             return None, f"Docker command timed out after {self.timeout:g} seconds"
+        except OSError as exc:
+            return None, f"Docker command could not start: {type(exc).__name__}"
+        return result, None
+
+    def execute_host_input(
+        self, args: Sequence[str], *, input_text: str,
+        cwd: str | None = None, timeout: float | None = None
+    ) -> tuple[DockerCommandResult | None, str | None]:
+        """Run a Host Docker operation with bounded stdin and fixed argv.
+
+        The caller must build input_text through an allowlisted command builder.
+        No shell or shell pipe is used.
+        """
+        if isinstance(args, (str, bytes)) or not isinstance(args, Sequence) or not args:
+            raise ValueError("Docker args must be a non-empty sequence of strings")
+        if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in args):
+            raise ValueError("Docker args must contain non-empty strings without NUL bytes")
+        if not isinstance(input_text, str) or "\x00" in input_text:
+            raise ValueError("input_text must be a string without NUL bytes")
+        if len(input_text.encode("utf-8")) > 65536:
+            raise ValueError("Docker stdin payload exceeds 65536 UTF-8 bytes")
+        effective_timeout = self.timeout if timeout is None else timeout
+        if not isinstance(effective_timeout, (int, float)) or effective_timeout <= 0:
+            raise ValueError("timeout must be positive")
+        executor = getattr(self.runner, "execute_input", None)
+        if not callable(executor):
+            return None, "configured Docker runner does not support stdin execution"
+        try:
+            result = executor(
+                args, input_text=input_text, cwd=cwd,
+                timeout=float(effective_timeout)
+            )
+        except FileNotFoundError:
+            return None, "Docker executable not found"
+        except subprocess.TimeoutExpired:
+            return None, f"Docker command timed out after {effective_timeout:g} seconds"
         except OSError as exc:
             return None, f"Docker command could not start: {type(exc).__name__}"
         return result, None
