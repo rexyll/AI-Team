@@ -966,61 +966,111 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
 
 
 
-class _PythonE2EDeveloper:
-    role = "developer"
+def _make_python_cli_project_developer_agent():
+    """Use the production DeveloperAgent to scaffold and test the Python CLI project."""
+    from agents.developer import DeveloperAgent
+    from runtime.agent_config import AgentConfig
+    from runtime.llm.mock import MockLLM
 
-    def run(self, task):
-        # The production Orchestrator activates a task lease as workspace scope.
-        root = resolve_workspace_path(".")
-        package = root / "sample_app"
-        package.mkdir(parents=True, exist_ok=True)
-        tests = root / "tests"
-        tests.mkdir(parents=True, exist_ok=True)
-        (root / "pyproject.toml").write_text(
-            "[build-system]\nrequires = ['setuptools>=75']\n"
-            "build-backend = 'setuptools.build_meta'\n"
-            "[project]\nname = 'ai-team-orchestrator-cli-e2e'\n"
-            "version = '0.1.0'\nrequires-python = '>=3.10'\n"
-            "[project.scripts]\nsample-cli = 'sample_app.cli:main'\n"
-            "[tool.setuptools.packages.find]\nwhere = ['.']\n",
-            encoding="utf-8",
-        )
-        (root / "requirements.txt").write_text("", encoding="utf-8")
-        (package / "__init__.py").write_text("", encoding="utf-8")
-        (package / "cli.py").write_text(
-            "import argparse\n\n"
-            "def main():\n"
-            "    parser = argparse.ArgumentParser()\n"
-            "    parser.add_argument('--value', type=int, required=True)\n"
-            "    args = parser.parse_args()\n"
-            "    print(args.value * 2)\n\n"
-            "if __name__ == '__main__':\n"
-            "    main()\n",
-            encoding="utf-8",
-        )
-        (tests / "test_cli.py").write_text(
-            "import subprocess\nimport sys\n\n"
-            "def test_cli_success_and_invalid_input():\n"
-            "    ok = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', '21'], "
-            "capture_output=True, text=True, check=False)\n"
-            "    assert ok.returncode == 0\n"
-            "    assert ok.stdout.strip() == '42'\n"
-            "    bad = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', 'nope'], "
-            "capture_output=True, text=True, check=False)\n"
-            "    assert bad.returncode != 0\n",
-            encoding="utf-8",
-        )
-        (root / "README.md").write_text(
-            "# Sample CLI\n\nInstall with pip install -e . and run "
-            "sample-cli --value 21; expected output: 42.\n",
-            encoding="utf-8",
-        )
-        return {
-            "status": "completed",
-            "agent": "developer",
-            "task_id": task.id,
-            "message": "Created the installable Python CLI package and executable tests.",
-        }
+    pyproject = (
+        "[build-system]\n"
+        "requires = ['setuptools>=75']\n"
+        "build-backend = 'setuptools.build_meta'\n"
+        "[project]\n"
+        "name = 'ai-team-orchestrator-cli-e2e'\n"
+        "version = '0.1.0'\n"
+        "requires-python = '>=3.10'\n"
+        "[project.scripts]\n"
+        "sample-cli = 'sample_app.cli:main'\n"
+        "[tool.setuptools.packages.find]\n"
+        "where = ['.']\n"
+    )
+    cli_source = (
+        "import argparse\n\n"
+        "def main():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--value', type=int, required=True)\n"
+        "    args = parser.parse_args()\n"
+        "    print(args.value * 2)\n\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+    test_source = (
+        "import subprocess\n"
+        "import sys\n\n"
+        "def test_cli_success_and_invalid_input():\n"
+        "    ok = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', '21'], "
+        "capture_output=True, text=True, check=False)\n"
+        "    assert ok.returncode == 0\n"
+        "    assert ok.stdout.strip() == '42'\n"
+        "    bad = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', 'nope'], "
+        "capture_output=True, text=True, check=False)\n"
+        "    assert bad.returncode != 0\n"
+    )
+    readme = (
+        "# Sample CLI\n\nInstall with pip install -e . and run "
+        "sample-cli --value 21; expected output: 42.\n"
+    )
+    bootstrap_source = (
+        "from pathlib import Path\n"
+        "files = {\n"
+        f"    'pyproject.toml': {pyproject!r},\n"
+        "    'requirements.txt': '',\n"
+        "    'sample_app/__init__.py': '',\n"
+        f"    'sample_app/cli.py': {cli_source!r},\n"
+        f"    'tests/test_cli.py': {test_source!r},\n"
+        f"    'README.md': {readme!r},\n"
+        "}\n"
+        "root = Path.cwd()\n"
+        "for relative, content in files.items():\n"
+        "    target = root / relative\n"
+        "    target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    target.write_text(content, encoding='utf-8')\n"
+        "Path(__file__).unlink()\n"
+    )
+    llm = MockLLM(
+        tool_script=[
+            {
+                "tool_calls": [{
+                    "call_id": "developer-write-python-bootstrap",
+                    "name": "write_file",
+                    "arguments": json.dumps({
+                        "path": "bootstrap-project.py",
+                        "content": bootstrap_source,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-run-python-bootstrap",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "python bootstrap-project.py",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-test-python-cli",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "python -m pytest -q tests/test_cli.py",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+        ]
+    )
+    return (
+        DeveloperAgent(
+            AgentConfig(role="developer", model="deterministic-mock"),
+            llm=llm,
+        ),
+        llm,
+    )
 
 
 @pytest.mark.skipif(
@@ -1053,6 +1103,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         title="Implement the Python CLI application",
         description="Create an installable CLI package with executable tests.",
     )
+    developer_agent, developer_llm = _make_python_cli_project_developer_agent()
     qa_agent = _make_qa_agent(
         folder="cli",
         list_path="cli/sample_app",
@@ -1072,7 +1123,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
             ),
         ),
         ("planner", planner_agent),
-        ("developer", _PythonE2EDeveloper()),
+        ("developer", developer_agent),
         ("tester", _E2ETester()),
         ("reviewer", _E2EReviewer()),
         (
@@ -1112,6 +1163,27 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     task = project.last_task_manager.get_all_tasks()[0]
     assert "pyproject.toml" in task.context["workspace_merge"]["added"]
     assert "sample_app/cli.py" in task.context["workspace_merge"]["added"]
+    assert "bootstrap-project.py" not in task.context["workspace_merge"]["added"]
+    developer_records = developer_agent.tool_execution_history.to_dict()
+    developer_writes = [record for record in developer_records if record["tool_name"] == "write_file"]
+    developer_commands = [record for record in developer_records if record["tool_name"] == "run_command"]
+    assert len(developer_writes) == 1
+    assert all(record["status"] == "completed" for record in developer_records)
+    developer_command_sequence = [
+        record["arguments"]["command"] for record in developer_commands
+    ]
+    assert len(developer_command_sequence) >= 2
+    assert developer_command_sequence[-2:] == [
+        "python bootstrap-project.py",
+        "python -m pytest -q tests/test_cli.py",
+    ]
+    assert all("exit_code=0" in str(record["output"]) for record in developer_commands)
+    assert any(
+        record["arguments"]["command"] == "python -m pytest -q tests/test_cli.py"
+        and "1 passed" in str(record["output"])
+        for record in developer_commands
+    )
+    assert len(developer_llm.tool_call_turns) >= 3
     assert project.last_delivery is not None
     integration = project.last_delivery["integration"]
     assert integration["status"] == "passed"
@@ -1172,7 +1244,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         role_execution={
             "analyst": "requirement_analyst_mock_llm",
             "planner": "production_planner_agent_mock_llm",
-            "developer": "scripted_test_double",
+            "developer": "production_developer_agent_mock_llm",
             "tester": "scripted_test_double",
             "reviewer": "scripted_test_double",
             "doc_writer": "mock_llm_observed_junit_mapping",
