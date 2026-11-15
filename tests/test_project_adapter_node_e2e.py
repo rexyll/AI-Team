@@ -296,3 +296,172 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert package["archive"]
     assert Path(package["archive"]).is_file()
     assert project.last_delivery["security"]["verdict"] == "SEC_PASSED"
+
+
+
+class _PythonE2EPlanner:
+    role = "planner"
+
+    def run(self, task):
+        return {
+            "status": "completed",
+            "agent": "planner",
+            "task_id": task.id,
+            "plan": {
+                "project": "python-cli-orchestrator-e2e",
+                "summary": "Deterministic Python CLI delivery through ProjectOrchestrator",
+                "tasks": [{
+                    "id": "TASK-PYTHON-CLI-001",
+                    "title": "Implement the Python CLI application",
+                    "description": "Create an installable CLI package with executable tests.",
+                    "role": "developer",
+                    "dependencies": [],
+                }],
+            },
+        }
+
+
+class _PythonE2EDeveloper:
+    role = "developer"
+
+    def run(self, task):
+        # The production Orchestrator activates a task lease as workspace scope.
+        root = resolve_workspace_path(".")
+        package = root / "sample_app"
+        package.mkdir(parents=True, exist_ok=True)
+        tests = root / "tests"
+        tests.mkdir(parents=True, exist_ok=True)
+        (root / "pyproject.toml").write_text(
+            "[build-system]\nrequires = ['setuptools>=75']\n"
+            "build-backend = 'setuptools.build_meta'\n"
+            "[project]\nname = 'ai-team-orchestrator-cli-e2e'\n"
+            "version = '0.1.0'\nrequires-python = '>=3.10'\n"
+            "[project.scripts]\nsample-cli = 'sample_app.cli:main'\n"
+            "[tool.setuptools.packages.find]\nwhere = ['.']\n",
+            encoding="utf-8",
+        )
+        (root / "requirements.txt").write_text("", encoding="utf-8")
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "cli.py").write_text(
+            "import argparse\n\n"
+            "def main():\n"
+            "    parser = argparse.ArgumentParser()\n"
+            "    parser.add_argument('--value', type=int, required=True)\n"
+            "    args = parser.parse_args()\n"
+            "    print(args.value * 2)\n\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n",
+            encoding="utf-8",
+        )
+        (tests / "test_cli.py").write_text(
+            "import subprocess\nimport sys\n\n"
+            "def test_cli_success_and_invalid_input():\n"
+            "    ok = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', '21'], "
+            "capture_output=True, text=True, check=False)\n"
+            "    assert ok.returncode == 0\n"
+            "    assert ok.stdout.strip() == '42'\n"
+            "    bad = subprocess.run([sys.executable, '-m', 'sample_app.cli', '--value', 'nope'], "
+            "capture_output=True, text=True, check=False)\n"
+            "    assert bad.returncode != 0\n",
+            encoding="utf-8",
+        )
+        (root / "README.md").write_text(
+            "# Sample CLI\n\nInstall with pip install -e . and run "
+            "sample-cli --value 21; expected output: 42.\n",
+            encoding="utf-8",
+        )
+        return {
+            "status": "completed",
+            "agent": "developer",
+            "task_id": task.id,
+            "message": "Created the installable Python CLI package and executable tests.",
+        }
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="full production ProjectOrchestrator + Python CLI E2E runs on Windows toolchain CI",
+)
+def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    from agents.doc_writer import DocWriterAgent
+    from core.project_orchestrator import ProjectOrchestrator
+    from runtime.agent_config import AgentConfig
+    from runtime.agent_router import AgentRouter
+    from runtime.llm.mock import MockLLM
+    from security.workspace import WorkspaceSandbox
+
+    monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTERS", "1")
+    monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTER", "python")
+    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "0")
+    monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
+
+    sandbox = WorkspaceSandbox(tmp_path)
+    router = AgentRouter()
+    for role, agent in (
+        ("planner", _PythonE2EPlanner()),
+        ("developer", _PythonE2EDeveloper()),
+        ("tester", _E2ETester()),
+        ("reviewer", _E2EReviewer()),
+        (
+            "doc_writer",
+            DocWriterAgent(
+                AgentConfig(role="doc_writer", model="deterministic-mock"),
+                llm=MockLLM("# Deterministic Python CLI delivery documentation\n"),
+                sandbox=sandbox,
+            ),
+        ),
+    ):
+        router.register(role, agent)
+
+    project = ProjectOrchestrator(
+        agent_router=router,
+        project_id="T21-8-PYTHON-CLI-E2E",
+        deliverable_dir="cli",
+        sandbox=sandbox,
+    )
+    result = project.run(
+        "Create an installable Python CLI package with reproducible setup, "
+        "a documented command, tests for valid and invalid input, and a package. "
+        "Do not publish or deploy it."
+    )
+
+    assert result.success, result
+    assert result.total_tasks == 1
+    assert result.completed_tasks == 1
+    task = project.last_task_manager.get_all_tasks()[0]
+    assert "pyproject.toml" in task.context["workspace_merge"]["added"]
+    assert "sample_app/cli.py" in task.context["workspace_merge"]["added"]
+    assert project.last_delivery is not None
+    integration = project.last_delivery["integration"]
+    assert integration["status"] in {"passed", "skipped"}
+    adapter = integration["adapter"]
+    assert adapter["status"] == "passed", adapter
+    assert adapter["adapter"] == "python"
+    assert set(adapter["actions"]) == {"install", "build", "test", "smoke", "package"}
+    assert all(item["status"] == "passed" for item in adapter["actions"].values())
+    assert all(
+        item["tool_name"] == "run_command"
+        for item in adapter["tool_execution_history"]
+    )
+
+    root = tmp_path / "cli"
+    executable = root / ".venv" / "Scripts" / "sample-cli.exe"
+    assert executable.is_file()
+    completed = subprocess.run(
+        [str(executable), "--value", "21"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "42"
+    assert Path(project.last_delivery["manifest"]).is_file()
+    package = project.last_delivery["package"]
+    assert package["archive"]
+    assert Path(package["archive"]).is_file()
+    assert project.last_delivery["security"]["verdict"] == "SEC_PASSED"
