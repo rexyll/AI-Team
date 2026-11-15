@@ -88,3 +88,29 @@ def test_factory_keeps_token_out_of_runtime_representation():
     assert runtime.repository == "acme/widget"
     assert runtime.pull_request_number == 12
     assert "service=" not in repr(runtime)
+
+
+def test_factory_accepts_explicit_pr_number_without_pr_environment_variable():
+    environment = {
+        "AI_TEAM_GITHUB_TOKEN": "ghp-test-secret-value",
+        "AI_TEAM_GITHUB_REPOSITORY": "acme/widget",
+    }
+    runtime = create_github_scm_runtime(
+        environ=environment,
+        pull_request_number=27,
+        transport_factory=lambda token: FakeTransport(),
+    )
+
+    assert runtime is not None
+    assert runtime.pull_request_number == 27
+
+
+def test_explicit_pr_number_overrides_environment_value():
+    runtime = create_github_scm_runtime(
+        environ=_environment(AI_TEAM_GITHUB_PULL_REQUEST="12"),
+        pull_request_number=27,
+        transport_factory=lambda token: FakeTransport(),
+    )
+
+    assert runtime is not None
+    assert runtime.pull_request_number == 27
