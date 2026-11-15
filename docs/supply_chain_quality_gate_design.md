@@ -86,11 +86,11 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 
 #### T21.7.4 扫描工具与网络边界（实施决策）
 
-- 漏洞扫描采用 `pip-audit`，直接扫描仓库生产 lock（不重新解析、不自动修复），使用 OSV 服务；`--strict` 与完整 hash lock 用于确保依赖收集失败时不被当作 clean。官方项目支持 requirements 输入、OSV/PyPI 多服务及 JSON 输出；其安全模型明确指出在线服务不可用时扫描不能被视为成功。参考：[pip-audit README](https://github.com/pypa/pip-audit/blob/main/README.md)。
-- 许可证扫描采用 `pip-licenses` 从独立 production venv 的已安装 distribution metadata 收集报告；扫描工具本身及其依赖不计入 production license set。报告必须覆盖每个 production lock component，unknown/empty/unrecognized license 由本仓库策略检查器 fail-closed。`pip-licenses` 支持 JSON、选择目标 Python 环境及不同 metadata 来源；其 `allow-only` 对多许可证条目采用“至少一项匹配”的语义，因此不直接用它作为合规门禁，而由项目检查器确保每个表达式/条目都获准。参考：[pip-licenses PyPI documentation](https://pypi.org/project/pip-licenses/)。
-- 在线扫描 job 限定 Ubuntu Linux（Harden-Runner block-mode egress enforcement）；Windows CI 仍只运行本地测试，不访问漏洞数据库。扫描依赖在启用 egress block 前通过 hash lock 安装，真正查询漏洞数据库的步骤只允许访问 `api.osv.dev:443`；GitHub Actions 必需的 checkout/API/artifact endpoints 需按实际审计确定并明确列入 allowlist。Harden-Runner 的 Community block mode 仅支持 GitHub-hosted Linux runner；其 DoH egress bypass advisory 的修复版本为 v2.16.0，实施时固定到已修复的、不可变 commit SHA，而非浮动 tag。参考：[Harden-Runner](https://github.com/step-security/harden-runner)、[GHSA-46g3-37rh-v698](https://github.com/step-security/harden-runner/security/advisories/GHSA-46g3-37rh-v698)。
-- 每次扫描记录 UTC 时间、commit SHA、目标 lock SHA-256、scanner/version、OSV service/endpoint、数据库可用性/更新时间证据、漏洞结果和许可证报告。当前 OSV API 响应不一定提供可验证的全局数据库更新时间；若无法从可信来源取得 freshness 证据，状态必须是 `unknown` 并阻断发布门禁，不能用扫描时间伪装数据库更新时间。
-- 首轮只生成报告并审查许可证表达式，不自动升级、不自动忽略漏洞、不自动批准未知许可证；任何豁免都需明确 ID、责任人、到期日和理由。
+- 采用 Aqua Security Trivy 作为统一扫描器：当前 Trivy Python coverage 明确支持 pip 包的 vulnerability 与 license scanner；漏洞数据由 Trivy DB 提供，DB metadata 暴露 `UpdatedAt`、`NextUpdate`、`DownloadedAt`，可对数据库 freshness 做机器校验。扫描目标是 production lock + 由该 lock 安装的独立 production venv，不扫描开发工具集，避免把开发依赖误报为产品运行时依赖。参考：[Trivy Python coverage](https://trivy.dev/docs/latest/guide/coverage/language/python/)、[Trivy license scanner](https://trivy.dev/docs/latest/guide/scanner/license/)、[Trivy DB metadata](https://github.com/aquasecurity/trivy/blob/main/pkg/db/db.go)。
+- Trivy 使用固定版本与不可变 action SHA；数据库固定从 `ghcr.io/aquasecurity/trivy-db:2` 获取，禁止 fallback 到未声明的 registry。漏洞扫描不忽略 unfixed 项；license scan 将 `UNKNOWN`、`RECIPROCAL`、`RESTRICTED`、`FORBIDDEN` 视为阻断项，`NOTICE`、`PERMISSIVE`、`UNENCUMBERED` 允许，除非项目后续批准更严格策略。未知许可证不允许静默豁免。
+- 在线扫描 job 限定 Ubuntu Linux。依赖安装与 Trivy binary 安装在扫描前完成；扫描开始前启用 Harden-Runner `egress-policy: block`，只允许 Trivy DB registry 及 GitHub Actions 必需 endpoints。Windows CI 继续只运行本地测试，不访问漏洞数据库。Harden-Runner Community block mode 只支持 GitHub-hosted Linux runner；其 DoH egress bypass advisory 的修复版本为 v2.16.0，实施时固定已修复版本的不可变 commit SHA。参考：[Harden-Runner](https://github.com/step-security/harden-runner)、[GHSA-46g3-37rh-v698](https://github.com/step-security/harden-runner/security/advisories/GHSA-46g3-37rh-v698)。
+- 每次扫描记录 UTC 时间、commit SHA、production lock SHA-256、Trivy version、DB schema/version、`UpdatedAt`、`NextUpdate`、`DownloadedAt`、扫描目标、漏洞与许可证结果。DB 缺失、下载失败、metadata 缺字段、更新时间超过 24 小时或已越过 `NextUpdate` 均 fail-closed；scanner unavailable、JSON 解析失败也不得视为 clean。
+- 首轮只生成报告并审查所有结果，不自动升级、不自动忽略漏洞、不自动批准未知许可证；任何豁免都需明确 ID、责任人、到期日和理由。
 
 ### T21.7.4 漏洞与许可证策略
 - 仅在 CI 明确声明的网络出口白名单中运行锁文件扫描；应用交付运行时继续保持无隐式网络查询。
