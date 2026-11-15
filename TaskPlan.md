@@ -228,7 +228,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - [ ] **T21.7 供应链与质量门禁增强**（现状评审完成；T21.7.1 可复现依赖锁定已完成并通过双平台 CI；T21.7.1 与 T21.7.2 已完成；T21.7.3–T21.7.4 待实施；详见 `docs/supply_chain_quality_gate_design.md`）
   - [x] T21.7.1：生产/开发依赖完整锁定与哈希校验，CI 使用可复现输入（2026-11-15 完成；Linux/Windows Python 3.14 四份 lock；pip 25.3 + `--require-hashes`；完整回归/安全回归/Windows smoke 全绿）。
   - [x] T21.7.2：生成 CycloneDX 1.6 JSON SBOM，并绑定 lock/artifact/build-evidence digest（2026-11-15 完成；锁文件组件/PURL/SHA-256、declared-only partial、隐私最小化 build evidence、ZIP 外 provenance sidecar、篡改校验均有测试）。
-  - T21.7.3：先采集覆盖率基线，再按模块风险设阈值；性能预算需受控 runner 基线；压力测试 opt-in 且有界。
+  - T21.7.3：先采集覆盖率基线，再按模块风险设阈值；性能预算需受控 runner 基线；压力测试 opt-in 且有界（实施中：加入 coverage.py 到开发依赖，等待双平台锁重新生成后接入 CI 覆盖率报告）。
   - T21.7.4：仅在 CI 显式网络出口白名单下执行漏洞/许可证扫描；scanner unavailable、数据库过期、未知许可证不得视为 clean。
   - 验收：锁/哈希不符、SBOM schema 错误、阈值阻断、工具不可用、网络拒绝、许可证冲突等场景均如实输出；不得引入自动依赖升级或隐式公网出口。
 - [ ] **T21.8 Real Project E2E**
