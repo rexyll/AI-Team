@@ -15,8 +15,9 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
     assert "runs-on: ubuntu-latest" in workflow
     assert "aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7" in workflow
     assert "version: v0.76.2" in workflow
-    assert "step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c" in workflow
+    assert "step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1" in workflow
     assert "egress-policy: block" in workflow
+    assert "allowed-endpoints: >" in workflow
     assert "disable-telemetry: true" in workflow
     assert "api.osv.dev:443" in workflow
     assert "osv-vulnerabilities.storage.googleapis.com:443" in workflow
