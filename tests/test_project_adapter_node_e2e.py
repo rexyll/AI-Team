@@ -74,6 +74,160 @@ def _write_e2e_evidence(
 
 @pytest.mark.skipif(
     os.name != "nt",
+    reason="DeveloperAgent run_command uses the Windows PowerShell execution boundary",
+)
+def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evidence(
+    tmp_path: Path,
+) -> None:
+    """Exercise real role agents and evidence lineage around an actual pytest run."""
+    from agents.developer import DeveloperAgent
+    from agents.reviewer import ReviewerAgent
+    from agents.tester import TesterAgent
+    from runtime.agent_config import AgentConfig
+    from runtime.agent_router import AgentRouter
+    from runtime.task import Task
+    from runtime.task_manager import TaskManager
+    from runtime.workflow import TaskWorkflow
+    from runtime.provenance import provenance_from_value
+
+    task = Task(
+        id="TASK-PRODUCTION-AGENT-PIPELINE-001",
+        title="Implement and verify a small calculator module",
+        description=(
+            "Create calculator.py with an add function, create pytest coverage "
+            "for positive and negative values, and run the exact test command."
+        ),
+        role="developer",
+    )
+    developer_llm = MockLLM(
+        tool_script=[
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "developer-write-module",
+                        "name": "write_file",
+                        "arguments": json.dumps(
+                            {
+                                "path": "calculator.py",
+                                "content": (
+                                    "def add(left: int, right: int) -> int:\\n"
+                                    "    return left + right\\n"
+                                ),
+                            }
+                        ),
+                    },
+                    {
+                        "call_id": "developer-write-tests",
+                        "name": "write_file",
+                        "arguments": json.dumps(
+                            {
+                                "path": "tests/test_calculator.py",
+                                "content": (
+                                    "from calculator import add\\n\\n"
+                                    "def test_add_positive_values():\\n"
+                                    "    assert add(20, 22) == 42\\n\\n"
+                                    "def test_add_negative_values():\\n"
+                                    "    assert add(-1, 1) == 0\\n"
+                                ),
+                            }
+                        ),
+                    },
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "developer-run-pytest",
+                        "name": "run_command",
+                        "arguments": json.dumps(
+                            {
+                                "command": "python -m pytest -q tests/test_calculator.py",
+                                "cwd": ".",
+                                "timeout": 90,
+                            }
+                        ),
+                    }
+                ]
+            },
+        ]
+    )
+    tester_llm = MockLLM(
+        response=(
+            "TEST_PASSED\\n"
+            "依据 DeveloperResult 中实际 pytest 命令和退出码，"
+            "两个计算测试均通过；未执行证据之外的测试。"
+        )
+    )
+    reviewer_llm = MockLLM(
+        response=(
+            "APPROVED\\n"
+            "实现包含 add 函数，测试覆盖正数与负数场景；"
+            "Tester 已基于实际执行证据通过。"
+        )
+    )
+    developer = DeveloperAgent(
+        AgentConfig(role="developer", model="deterministic-mock"),
+        llm=developer_llm,
+    )
+    tester = TesterAgent(
+        AgentConfig(role="tester", model="deterministic-mock"),
+        llm=tester_llm,
+    )
+    reviewer = ReviewerAgent(
+        AgentConfig(role="reviewer", model="deterministic-mock"),
+        llm=reviewer_llm,
+    )
+    router = AgentRouter()
+    router.register(developer)
+    router.register(tester)
+    router.register(reviewer)
+    manager = TaskManager([task])
+    workflow = TaskWorkflow(
+        task_manager=manager,
+        developer=developer,
+        tester=tester,
+        reviewer=reviewer,
+        agent_router=router,
+        max_review_rounds=1,
+    )
+
+    with workspace_scope(tmp_path):
+        completed = workflow.execute(task.id)
+
+    assert completed.status == "completed", completed.error
+    assert (tmp_path / "calculator.py").is_file()
+    assert (tmp_path / "tests" / "test_calculator.py").is_file()
+
+    developer_result = completed.result
+    assert developer_result["status"] == "completed"
+    developer_data = developer_result["data"]
+    assert developer_data["validation"]["test_command_count"] == 1
+    assert developer_data["validation"]["files_changed_count"] == 2
+    assert len(developer_data["tests"]) == 1
+    test_evidence = developer_data["tests"][0]
+    assert test_evidence["command"] == "python -m pytest -q tests/test_calculator.py"
+    assert test_evidence["result"].startswith("exit_code=0\\n")
+    assert "2 passed" in test_evidence["result"]
+
+    developer_provenance = provenance_from_value(developer_result)
+    tester_feedback = completed.context["tester_feedback"]
+    tester_provenance = provenance_from_value(tester_feedback)
+    reviewer_result = completed.review_result
+    reviewer_provenance = provenance_from_value(reviewer_result)
+    assert developer_provenance is not None
+    assert tester_provenance is not None
+    assert reviewer_provenance is not None
+    assert tester_provenance.parent_evidence_id == developer_provenance.evidence_id
+    assert reviewer_provenance.parent_evidence_id == tester_provenance.evidence_id
+    assert completed.test_result["status"] == "passed"
+    assert reviewer_result["status"] == "approved"
+    assert len(developer_llm.tool_call_turns) == 2
+    assert len(tester_llm.calls) == 1
+    assert len(reviewer_llm.calls) == 1
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
     reason="production Node.js adapter E2E runs on the Windows toolchain CI job",
 )
 def test_node_web_adapter_executes_real_npm_lifecycle_through_tool_boundary(
