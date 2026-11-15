@@ -40,6 +40,12 @@ CLI_OUTPUT_MODES = ("text", "json")
 DEFAULT_KNOWLEDGE_BASE = "knowledge"
 
 
+def _read_host_confirmation(prompt: str) -> str:
+    """Prompt on stderr so JSON-mode commands keep stdout machine-readable."""
+    print(prompt, file=sys.stderr, flush=True)
+    return input().strip()
+
+
 def _ensure_log_safe_streams() -> None:
     """Make console logging resilient to unencodable characters."""
     for stream in (sys.stdout, sys.stderr):
@@ -740,22 +746,23 @@ def main() -> int:
             head_sha = scm_runtime.service.get_local_head_sha(
                 args.scm_local_repository
             )
-            print(
+            preview = (
                 f"Repository: {scm_runtime.repository}\n"
                 f"Local repository: {args.scm_local_repository}\n"
                 f"Push: {args.scm_head_branch} @ {head_sha}\n"
                 f"PR: {args.scm_head_branch} -> {args.scm_base_branch}\n"
                 f"Title: {args.scm_pr_title}"
             )
-            push_confirmation = input(
+            print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
+            push_confirmation = _read_host_confirmation(
                 "Type 'yes' to approve pushing this exact HEAD to the target branch: "
-            ).strip()
+            )
             if push_confirmation != "yes":
                 print("[SCM] Push cancelled; no remote write was performed.")
                 return 3
-            pr_confirmation = input(
+            pr_confirmation = _read_host_confirmation(
                 "Type 'yes' separately to approve creating/updating this pull request: "
-            ).strip()
+            )
             if pr_confirmation != "yes":
                 print("[SCM] PR creation cancelled; no remote write was performed.")
                 return 3
