@@ -63,8 +63,9 @@ class DeploymentHistoryStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(deployments)")}
             if "project" not in columns:
                 db.execute("ALTER TABLE deployments ADD COLUMN project TEXT")
+            db.execute("DROP INDEX IF EXISTS idx_deployments_scope")
             db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_deployments_scope "
+                "CREATE INDEX idx_deployments_scope "
                 "ON deployments(provider, environment, project, sequence DESC)"
             )
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
