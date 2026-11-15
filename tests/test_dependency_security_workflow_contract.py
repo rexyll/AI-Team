@@ -18,8 +18,8 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
     assert "step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c" in workflow
     assert "egress-policy: block" in workflow
     assert "disable-telemetry: true" in workflow
-    assert "mirror.gcr.io:443" in workflow
-    assert "pkg-containers.githubusercontent.com:443" in workflow
+    assert "api.osv.dev:443" in workflow
+    assert "osv-vulnerabilities.storage.googleapis.com:443" in workflow
     assert "actions-results-receiver-production.githubapp.com:443" in workflow
     assert "results-receiver.actions.githubusercontent.com:443" in workflow
     assert "pipelines.actions.githubusercontent.com:443" in workflow
@@ -35,24 +35,30 @@ def test_dependency_security_scans_only_production_lock_and_fails_closed():
 
     assert "actions/checkout@v4" in prepare
     assert "requirements-linux-py314.lock" in prepare
-    assert "requirements-dev-linux-py314.lock" not in prepare
+    assert "requirements-dev-linux-py314.lock" in prepare
     assert "--require-hashes" in prepare
     assert "aquasecurity/setup-trivy@" in prepare
+    assert "scan-tools" in prepare
     assert "Package production scan input" in prepare
 
     assert "Restrict scanner network egress" in scan
     assert scan.index("Restrict scanner network egress") < scan.index("Download prepared scan input")
     assert "actions/checkout@v4" not in scan
     assert "requirements-dev-linux-py314.lock" not in scan
-    assert "--skip-version-check" in scan
-    assert "--disable-telemetry" in scan
-    assert "--db-repository mirror.gcr.io/aquasec/trivy-db:2" in scan
-    assert "--scanners vuln" in scan
+    assert "python -m pip_audit" in scan
+    assert "--vulnerability-service osv" in scan
+    assert "--no-deps" in scan
+    assert "--disable-pip" in scan
+    assert "--require-hashes" in scan
+    assert "--strict" in scan
     assert "--scanners license" in scan
-    assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in scan
-    assert "--severity UNKNOWN,MEDIUM,HIGH,CRITICAL" in scan
-    assert "check_trivy_db_freshness.py" in scan
+    assert "--exit-code 0" in scan
+    assert "check_osv_db_freshness.py" in scan
+    assert "check_trivy_license_policy.py" in scan
     assert "--max-age-hours 24" in scan
+    assert "mirror.gcr.io" not in scan
+    assert "ghcr.io" not in scan
+    assert "pypi.org" not in scan
     assert "if: always()" in scan
     assert "retention-days: 30" in scan
 
