@@ -270,7 +270,9 @@ with SQLite `mode=ro`; it never creates a missing database or modifies
 existing deployment state.
 
 This startup hook currently inventories the `docker-local` provider only.
-It does not run Docker commands, inspect containers, change traffic, abort or
-resume a replacement, update a journal, or release a scope reservation.
+The startup inventory does not run Docker commands. The separate
+`--deployment-recovery-inspect` command explicitly inspects recorded
+immutable container IDs, but does not change traffic, abort or resume a
+replacement, update a journal, or release a scope reservation.
 `needs_reconciliation` remains locked. It is a startup detection hook, not an
 automatic recovery or safe Docker rollback implementation.

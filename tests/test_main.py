@@ -64,6 +64,15 @@ def test_build_parser_accepts_deployment_recovery_inventory():
     assert args.deployment_history == "C:/host/deployments.sqlite3"
     assert args.deployment_recovery_inventory is True
 
+def test_build_parser_accepts_deployment_recovery_inspect():
+    parser = main.build_parser()
+    args = parser.parse_args([
+        "--deployment-history", "C:/host/deployments.sqlite3",
+        "--deployment-recovery-inspect",
+    ])
+    assert args.deployment_recovery_inspect is True
+
+
 
 
 def test_build_parser_accepts_json_output():
@@ -546,3 +555,47 @@ def _seed_pending_replacement_for_cli_test(path):
         previous_runtime_id=previous.container_id,
     ))
     return history
+
+
+def test_main_deployment_recovery_inspect_is_explicit_and_json(tmp_path, monkeypatch, capsys):
+    report = {
+        "status": "ok",
+        "provider": "docker-local",
+        "history_path": str(tmp_path / "deployments.sqlite3"),
+        "unfinished_replacements": 1,
+        "observations": [{
+            "operation_id": "operation-inspect",
+            "previous_runtime": {
+                "status": "verified",
+                "runtime_state": "running",
+                "health_status": "healthy",
+            },
+            "candidate_runtime": None,
+            "route_readback_status": "not_available",
+            "automatic_recovery_allowed": False,
+        }],
+        "route_readback_available": False,
+        "automatic_recovery_allowed": False,
+    }
+
+    class FakeHostRuntime:
+        def __init__(self, history_path, *, create_if_missing=True):
+            assert create_if_missing is False
+
+        def inspect_recovery(self):
+            return report
+
+    monkeypatch.setattr(main, "DeploymentHostRuntime", FakeHostRuntime)
+    monkeypatch.delenv("AI_TEAM_DEPLOYMENT_HISTORY", raising=False)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py",
+        "--deployment-history", str(tmp_path / "deployments.sqlite3"),
+        "--deployment-recovery-inspect",
+        "--output", "json",
+    ])
+
+    assert main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["route_readback_available"] is False
+    assert payload["automatic_recovery_allowed"] is False
+    assert payload["observations"][0]["previous_runtime"]["status"] == "verified"

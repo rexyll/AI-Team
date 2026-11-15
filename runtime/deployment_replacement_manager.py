@@ -16,6 +16,7 @@ from runtime.deployment_provider import (
     DeploymentOperationResult,
     DeploymentRecord,
     DeploymentRequest,
+    DeploymentRuntimeInspection,
     HealthCheckResult,
 )
 from runtime.deployment_recovery import (
@@ -78,6 +79,23 @@ class DeploymentRecoveryInventoryItem:
     recovery_assessment: ReplacementRecoveryAssessment
     external_state_verified: bool = False
     automatic_recovery_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class DeploymentRecoveryRuntimeInspectionItem:
+    """Provider observations for an unfinished replacement; never a resolution."""
+
+    operation_id: str
+    phase: str
+    previous_deployment_id: str
+    target_deployment_id: str
+    previous_record_present: bool
+    candidate_record_present: bool
+    inspection_supported: bool
+    previous_runtime: DeploymentRuntimeInspection | None
+    candidate_runtime: DeploymentRuntimeInspection | None
+    route_readback_status: Literal["not_available"] = "not_available"
+    automatic_recovery_allowed: Literal[False] = False
 
 
 def _now() -> str:
@@ -279,6 +297,83 @@ class HostDeploymentReplacementManager:
                 )
             )
         return tuple(inventory)
+
+    def inspect_recovery_runtimes(
+        self,
+        *,
+        project: str | None = None,
+        environment: str | None = None,
+    ) -> tuple[DeploymentRecoveryRuntimeInspectionItem, ...]:
+        """Inspect recorded runtimes for unfinished operations without mutation.
+
+        This optional external probe is deliberately separate from the
+        SQLite-only startup inventory. It reads each recorded runtime by the
+        provider's immutable identity when the provider exposes
+        inspect_runtime(). It does not read or change traffic routing and
+        cannot authorize candidate retirement or reconciliation.
+        """
+        snapshots = self.history.list_replacement_recovery_snapshots(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+        )
+        inspector = getattr(self.provider, "inspect_runtime", None)
+        inspection_supported = callable(inspector)
+
+        def inspect(record: DeploymentRecord | None) -> DeploymentRuntimeInspection | None:
+            if record is None or not inspection_supported:
+                return None
+            try:
+                observation = inspector(record)
+            except Exception as exc:
+                return DeploymentRuntimeInspection(
+                    provider=self.provider.name,
+                    deployment_id=record.deployment_id,
+                    expected_runtime_id=record.container_id,
+                    observed_runtime_id=None,
+                    identity_match=False,
+                    status="unavailable",
+                    runtime_state="unknown",
+                    health_status="unavailable",
+                    checked_at=self._clock(),
+                    probe="host provider inspection",
+                    detail=f"Provider inspection raised {type(exc).__name__}",
+                )
+            if (
+                not isinstance(observation, DeploymentRuntimeInspection)
+                or observation.provider != self.provider.name
+                or observation.deployment_id != record.deployment_id
+                or observation.expected_runtime_id != record.container_id
+            ):
+                return DeploymentRuntimeInspection(
+                    provider=self.provider.name,
+                    deployment_id=record.deployment_id,
+                    expected_runtime_id=record.container_id,
+                    observed_runtime_id=None,
+                    identity_match=False,
+                    status="invalid_response",
+                    runtime_state="unknown",
+                    health_status="unknown",
+                    checked_at=self._clock(),
+                    probe="host provider inspection",
+                    detail="Provider inspection did not match the requested host record",
+                )
+            return observation
+
+        return tuple(
+            DeploymentRecoveryRuntimeInspectionItem(
+                operation_id=snapshot.journal.operation_id,
+                phase=snapshot.journal.phase,
+                previous_deployment_id=snapshot.journal.previous_deployment_id,
+                target_deployment_id=snapshot.journal.target_deployment_id,
+                previous_record_present=snapshot.previous is not None,
+                candidate_record_present=snapshot.candidate is not None,
+                inspection_supported=inspection_supported,
+                previous_runtime=inspect(snapshot.previous),
+                candidate_runtime=inspect(snapshot.candidate),
+            )
+            for snapshot in snapshots
+        )
 
     def replace(
         self,

@@ -209,6 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Standalone read-only report of unfinished deployment replacements from --deployment-history or AI_TEAM_DEPLOYMENT_HISTORY.",
     )
     parser.add_argument(
+        "--deployment-recovery-inspect",
+        action="store_true",
+        help="Explicitly inspect recorded immutable Docker container IDs for unfinished replacements; does not inspect traffic routing or authorize recovery.",
+    )
+    parser.add_argument(
         "--scm-poll-pr",
         metavar="NUMBER",
         type=int,
@@ -726,6 +731,7 @@ def main() -> int:
         or args.scm_publish_pr
         or args.scm_merge_pr is not None
         or args.deployment_recovery_inventory
+        or args.deployment_recovery_inspect
     ):
         parser.error("the following arguments are required: requirement")
 
@@ -733,7 +739,12 @@ def main() -> int:
         args.deployment_history or os.environ.get("AI_TEAM_DEPLOYMENT_HISTORY")
     )
 
-    if args.deployment_recovery_inventory:
+    if args.deployment_recovery_inventory and args.deployment_recovery_inspect:
+        parser.error(
+            "--deployment-recovery-inventory and --deployment-recovery-inspect are mutually exclusive"
+        )
+
+    if args.deployment_recovery_inventory or args.deployment_recovery_inspect:
         if any((
             args.requirement is not None,
             args.requirements_file is not None,
@@ -760,33 +771,59 @@ def main() -> int:
             args.hotfix_project is not None,
             args.defect_intake is not None,
         )):
-            parser.error("--deployment-recovery-inventory is standalone")
+            parser.error("--deployment-recovery-* is standalone")
         if not deployment_history_path:
             parser.error(
-                "--deployment-recovery-inventory requires --deployment-history "
+                "--deployment-recovery-* requires --deployment-history "
                 "or AI_TEAM_DEPLOYMENT_HISTORY"
             )
         try:
-            startup = DeploymentHostRuntime(
+            host_runtime = DeploymentHostRuntime(
                 deployment_history_path,
                 create_if_missing=False,
-            ).start()
+            )
+            report = (
+                host_runtime.inspect_recovery()
+                if args.deployment_recovery_inspect
+                else host_runtime.start().to_dict()
+            )
         except Exception as exc:
             print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
         if args.output == "json":
-            print(json.dumps(startup.to_dict(), ensure_ascii=False, sort_keys=True))
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        elif args.deployment_recovery_inspect:
+            print(
+                f"[Deployment-Recovery-Inspect] provider={report['provider']} "
+                f"unfinished={report['unfinished_replacements']} "
+                "route_readback=not_available recovery=disabled"
+            )
+            for item in report["observations"]:
+                previous = item["previous_runtime"]
+                candidate = item["candidate_runtime"]
+                previous_summary = (
+                    f"{previous['status']}/{previous['runtime_state']}/{previous['health_status']}"
+                    if previous else "not_recorded"
+                )
+                candidate_summary = (
+                    f"{candidate['status']}/{candidate['runtime_state']}/{candidate['health_status']}"
+                    if candidate else "not_recorded"
+                )
+                print(
+                    f"  {item['operation_id']}: previous={previous_summary} "
+                    f"candidate={candidate_summary} route=not_available recovery=disabled"
+                )
         else:
             print(
-                f"[Deployment-Recovery] provider={startup.provider} "
-                f"history={startup.history_path} "
-                f"unfinished={len(startup.inventory)}"
+                f"[Deployment-Recovery] provider={report['provider']} "
+                f"history={report['history_path']} "
+                f"unfinished={report['unfinished_replacements']}"
             )
-            for item in startup.inventory:
+            for item in report["inventory"]:
                 print(
-                    f"  {item.operation_id}: phase={item.phase} "
-                    f"classification={item.classification} "
-                    f"active={item.active_deployment_id or 'none'}"
+                    f"  {item['operation_id']}: phase={item['phase']} "
+                    f"classification={item['classification']} "
+                    f"active={item['active_deployment_id'] or 'none'}"
                 )
         return 0
 

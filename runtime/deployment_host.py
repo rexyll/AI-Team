@@ -14,6 +14,7 @@ from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_replacement import DeploymentReplacementProvider
 from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
+    DeploymentRecoveryRuntimeInspectionItem,
     HostDeploymentReplacementManager,
 )
 from runtime.local_docker_provider import LocalDockerProvider
@@ -63,6 +64,28 @@ class DeploymentHostRuntime:
         name = getattr(self.provider, "name", None)
         if not isinstance(name, str) or not name.strip():
             raise ValueError("deployment provider must expose a non-empty name")
+
+    def inspect_recovery(self) -> dict:
+        """Explicitly inspect recorded containers; never mutate host state."""
+        if not self.history_path.is_file():
+            raise FileNotFoundError(
+                f"deployment history database does not exist: {self.history_path}"
+            )
+        history = DeploymentHistoryStore(self.history_path, read_only=True)
+        manager = HostDeploymentReplacementManager(
+            cast(DeploymentReplacementProvider, self.provider),
+            history,
+        )
+        observations = manager.inspect_recovery_runtimes()
+        return {
+            "status": "ok",
+            "history_path": str(history.path),
+            "provider": self.provider.name,
+            "unfinished_replacements": len(observations),
+            "observations": [asdict(item) for item in observations],
+            "route_readback_available": False,
+            "automatic_recovery_allowed": False,
+        }
 
     def start(self) -> DeploymentHostStartupResult:
         """Open the durable host store and return its read-only recovery view."""

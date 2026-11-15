@@ -13,7 +13,7 @@ from runtime.deployment_provider import (
     DeploymentRecord,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
-from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 
 
 class NoDockerCallsRunner:
@@ -133,3 +133,60 @@ def test_host_runtime_uses_read_only_sqlite_for_existing_database(tmp_path):
     readonly = DeploymentHistoryStore(path, read_only=True)
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         readonly.append(_record("must-not-write"))
+
+
+def test_host_runtime_inspects_recorded_runtime_by_immutable_id_without_route_claim(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(path)
+
+    class InspectRunner:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, args, *, cwd, timeout):
+            self.calls.append((list(args), cwd, timeout))
+            return DockerCommandResult(
+                0,
+                json.dumps({
+                    "Id": "a" * 64,
+                    "State": {"Status": "running", "Health": {"Status": "healthy"}},
+                }),
+                "",
+            )
+
+    runner = InspectRunner()
+    report = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=runner),
+    ).inspect_recovery()
+
+    assert report["unfinished_replacements"] == 1
+    observation = report["observations"][0]
+    assert observation["operation_id"] == "startup-operation-001"
+    assert observation["previous_runtime"]["status"] == "verified"
+    assert observation["previous_runtime"]["health_status"] == "healthy"
+    assert observation["candidate_runtime"] is None
+    assert observation["route_readback_status"] == "not_available"
+    assert observation["automatic_recovery_allowed"] is False
+    assert report["route_readback_available"] is False
+    assert report["automatic_recovery_allowed"] is False
+    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", "a" * 64]
+
+
+def test_host_runtime_reports_daemon_unavailable_without_authorizing_recovery(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(path)
+
+    class UnavailableRunner:
+        def execute(self, args, *, cwd, timeout):
+            return DockerCommandResult(1, "", "Cannot connect to the Docker daemon")
+
+    report = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=UnavailableRunner()),
+    ).inspect_recovery()
+
+    previous = report["observations"][0]["previous_runtime"]
+    assert previous["status"] == "unavailable"
+    assert report["route_readback_available"] is False
+    assert report["automatic_recovery_allowed"] is False

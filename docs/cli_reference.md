@@ -48,6 +48,10 @@ python main.py "<project requirement>"
   (supports `--output json`); requires an existing database at
   `--deployment-history` or the `AI_TEAM_DEPLOYMENT_HISTORY` path. Missing
   databases are not created by this standalone command.
+- `--deployment-recovery-inspect` — explicitly run read-only Docker inspection
+  for recorded immutable container IDs of unfinished operations. It does not
+  inspect traffic routing or authorize any recovery action; requires an
+  existing history database.
 - `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
   `--defect-intake`; runs hotfix tasks through integration regression, QA, the
   security audit, the release gate, a patch release and repackaging on the same
@@ -76,8 +80,11 @@ python main.py "Build a small expense tracker" --release --auto-release
 $env:AI_TEAM_DEPLOYMENT_HISTORY = "C:\\AI-Team-Host\\deployments.sqlite3"
 python main.py "Build a small expense tracker"
 
-# standalone read-only inventory
+# SQLite-only inventory (does not contact Docker)
 python main.py --deployment-recovery-inventory --output json
+
+# Explicit immutable-ID container inspection (read-only; no route proof)
+python main.py --deployment-recovery-inspect --output json
 ```
 
 ## Milestone release plans
