@@ -95,6 +95,39 @@ code 2 means the PR is blocked, closed or timed out; exit code 1 means the
 configuration/provider operation failed. The command performs no push, PR
 write, review mutation or merge.
 
+## Interactive host approval for publication
+
+The CLI exposes a separate publication command:
+
+```bash
+python main.py --scm-publish-pr \
+  --scm-local-repository /path/to/local/repository \
+  --scm-head-branch feature/my-change \
+  --scm-base-branch main \
+  --scm-pr-title "Implement my change" \
+  --scm-pr-body-file /path/to/pr-body.md
+```
+
+It requires `AI_TEAM_GITHUB_TOKEN` and
+`AI_TEAM_GITHUB_REPOSITORY=owner/name`, but does not require a default PR
+number. Before any remote write, it reads and displays the exact local HEAD SHA,
+repository, branch, base and PR title. The operator must type `yes` at two
+separate prompts: first to approve pushing that exact SHA, then to approve
+creating/updating the PR. Any other response cancels before the corresponding
+write. The host issues two separate one-use approvals scoped to the push
+(branch + exact SHA) and PR head/base pair. The provider verifies that the
+local HEAD has not changed and that `origin` points to the approved repository
+before pushing. The command is standalone and cannot be combined with a normal
+delivery invocation.
+
+Read-only PR polling needs only the minimum read permissions for pull requests,
+checks and commit statuses. Publication additionally requires GitHub repository
+write permission for contents (git push) and pull requests (create/update).
+Use a fine-grained token restricted to the target repository. Never broaden the
+token or expose its value to the interactive prompt, Agent, task context or
+logs. Merge remains a separate operation requiring a distinct approval after
+green CI and approved review.
+
 ## Current validation boundary
 
 The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. No live GitHub push, PR creation, CI read, review read or merge has been performed in this environment; that requires a host-configured GitHub token, a test repository and explicit operator approval. The implementation must not be described as live-integrated until that run is completed.
