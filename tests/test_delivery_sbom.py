@@ -205,3 +205,17 @@ def test_repository_python314_lock_is_fully_parsed(tmp_path: Path):
     assert result["status"] == "completed"
     assert result["components"] == 17
     assert all(component.get("hashes") for component in bom["components"])
+
+
+def test_declared_sbom_rejects_unexpanded_requirement_includes(tmp_path: Path):
+    _write(
+        tmp_path / "requirements.txt",
+        "-r base-requirements.txt\n"
+        "requests==2.0.0\n",
+    )
+    with pytest.raises(ValueError, match="unsupported requirement directive"):
+        write_delivery_sbom(
+            tmp_path,
+            project="sample-app",
+            build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
+        )
