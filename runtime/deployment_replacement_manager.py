@@ -35,6 +35,43 @@ class DeploymentReplacementResult:
     phase: str | None = None
     record: DeploymentRecord | None = None
 
+RecoveryInventoryClassification = Literal[
+    "journal_history_consistent",
+    "reconciliation_required",
+    "prepared_candidate_not_persisted",
+    "candidate_record_missing",
+    "candidate_identity_not_committed",
+    "active_pointer_missing",
+    "active_pointer_mismatch",
+    "journal_route_evidence_incomplete",
+    "journal_history_incomplete",
+]
+
+
+@dataclass(frozen=True)
+class DeploymentRecoveryInventoryItem:
+    """Read-only host-history snapshot for one non-terminal replacement.
+
+    This inventory deliberately does not inspect or mutate provider resources.
+    A consistent SQLite snapshot is not proof that containers or traffic routes
+    still match it; recovery always requires a later provider read-back and
+    explicit host authorization.
+    """
+
+    operation_id: str
+    provider: str
+    project: str
+    environment: str
+    phase: str
+    classification: RecoveryInventoryClassification
+    previous_deployment_id: str
+    target_deployment_id: str
+    previous_record_present: bool
+    candidate_record_present: bool
+    active_deployment_id: str | None
+    external_state_verified: bool = False
+    automatic_recovery_allowed: bool = False
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -86,6 +123,115 @@ class HostDeploymentReplacementManager:
 
     def _supports_replacement(self) -> bool:
         return all(callable(getattr(self.provider, name, None)) for name in self._REQUIRED_METHODS)
+
+    def recovery_inventory(
+        self,
+        *,
+        project: str | None = None,
+        environment: str | None = None,
+    ) -> tuple[DeploymentRecoveryInventoryItem, ...]:
+        """Return a read-only inventory of unfinished host-owned replacements.
+
+        This method is safe to call during host startup. It reads only SQLite
+        journal/history/active-pointer state and never calls the provider. In
+        particular, it does not infer that an unrecorded candidate was never
+        started, does not resume/abort a transaction, and never releases the
+        scope reservation. Provider runtime and traffic read-back must happen
+        in a separate, explicitly authorized reconciliation operation.
+        """
+        journals = self.history.list_active_replacements(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+        )
+        inventory: list[DeploymentRecoveryInventoryItem] = []
+        for journal in journals:
+            previous = self.history.get(journal.previous_deployment_id)
+            candidate = self.history.get(journal.target_deployment_id)
+            active_id: str | None = None
+            classification: RecoveryInventoryClassification
+
+            try:
+                active = self.history.active_deployment(
+                    provider=journal.provider,
+                    environment=journal.environment,
+                    project=journal.project,
+                )
+                active_id = active.deployment_id if active is not None else None
+            except Exception:
+                classification = "journal_history_incomplete"
+            else:
+                scope_matches = (
+                    journal.provider == self.provider.name
+                    and previous is not None
+                    and previous.deployment_id == journal.previous_deployment_id
+                    and previous.provider == journal.provider
+                    and previous.project == journal.project
+                    and previous.environment == journal.environment
+                    and previous.status == "running"
+                )
+                candidate_scope_matches = candidate is None or (
+                    candidate.deployment_id == journal.target_deployment_id
+                    and candidate.provider == journal.provider
+                    and candidate.project == journal.project
+                    and candidate.environment == journal.environment
+                    and candidate.status == "running"
+                )
+
+                if not scope_matches or not candidate_scope_matches:
+                    classification = "journal_history_incomplete"
+                elif active_id is None:
+                    classification = "active_pointer_missing"
+                elif candidate is not None and journal.candidate_runtime_id is None:
+                    # Crash window: candidate history may have been committed
+                    # before its immutable runtime ID was committed to journal.
+                    classification = "candidate_identity_not_committed"
+                elif candidate is None and journal.phase == "prepared":
+                    # The provider call may or may not have started before the
+                    # crash. The host cannot infer absence from missing history.
+                    classification = "prepared_candidate_not_persisted"
+                elif candidate is None:
+                    classification = "candidate_record_missing"
+                elif journal.phase == "traffic_switched" and (
+                    journal.candidate_runtime_id is None
+                    or journal.effective_traffic_target != journal.candidate_runtime_id
+                ):
+                    classification = "journal_route_evidence_incomplete"
+                elif journal.phase == "needs_reconciliation":
+                    if active_id not in {
+                        journal.previous_deployment_id,
+                        journal.target_deployment_id,
+                    }:
+                        classification = "active_pointer_mismatch"
+                    else:
+                        classification = "reconciliation_required"
+                elif journal.phase == "traffic_switched":
+                    classification = (
+                        "journal_history_consistent"
+                        if active_id == journal.target_deployment_id
+                        else "active_pointer_mismatch"
+                    )
+                elif active_id != journal.previous_deployment_id:
+                    classification = "active_pointer_mismatch"
+                else:
+                    classification = "journal_history_consistent"
+
+            inventory.append(
+                DeploymentRecoveryInventoryItem(
+                    operation_id=journal.operation_id,
+                    provider=journal.provider,
+                    project=journal.project,
+                    environment=journal.environment,
+                    phase=journal.phase,
+                    classification=classification,
+                    previous_deployment_id=journal.previous_deployment_id,
+                    target_deployment_id=journal.target_deployment_id,
+                    previous_record_present=previous is not None,
+                    candidate_record_present=candidate is not None,
+                    active_deployment_id=active_id,
+                )
+            )
+        return tuple(inventory)
 
     def replace(
         self,

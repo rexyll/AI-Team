@@ -308,3 +308,154 @@ def test_provider_without_full_replacement_contract_is_unsupported(tmp_path):
 
     assert result.status == "unsupported"
     assert history.list_active_replacements() == []
+
+
+def _replacement_journal(previous, target, *, phase="prepared", **overrides):
+    values = {
+        "operation_id": "operation-recovery",
+        "provider": previous.provider,
+        "project": previous.project,
+        "environment": previous.environment,
+        "target_deployment_id": target.deployment_id,
+        "previous_deployment_id": previous.deployment_id,
+        "phase": phase,
+        "created_at": "2026-11-15T12:03:00Z",
+        "updated_at": "2026-11-15T12:03:00Z",
+        "previous_runtime_id": "runtime:" + previous.deployment_id,
+    }
+    values.update(overrides)
+    return ReplacementJournalRecord(**values)
+
+
+def test_recovery_inventory_survives_store_reopen_without_provider_calls(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    journal = _replacement_journal(previous, target)
+    history.begin_replacement(journal)
+
+    reopened = DeploymentHistoryStore(tmp_path / "deployments.sqlite3")
+    manager = HostDeploymentReplacementManager(provider, reopened)
+
+    inventory = manager.recovery_inventory(project="demo", environment="staging")
+
+    assert len(inventory) == 1
+    item = inventory[0]
+    assert item.operation_id == journal.operation_id
+    assert item.phase == "prepared"
+    assert item.classification == "prepared_candidate_not_persisted"
+    assert item.previous_record_present is True
+    assert item.candidate_record_present is False
+    assert item.active_deployment_id == previous.deployment_id
+    assert item.external_state_verified is False
+    assert item.automatic_recovery_allowed is False
+    assert provider.calls == []
+    assert reopened.get_replacement(journal.operation_id) == journal
+    with pytest.raises(ValueError, match="scope is reserved"):
+        reopened.begin_replacement(
+            _replacement_journal(previous, _record("other-target", version="2.0"),
+                                 operation_id="operation-next")
+        )
+
+
+def test_recovery_inventory_detects_candidate_identity_commit_window(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    candidate = _record(
+        target.deployment_id, status="running", health="unknown", version=target.version
+    )
+    history.append(candidate)
+    journal = _replacement_journal(previous, target)
+    history.begin_replacement(journal)
+
+    inventory = HostDeploymentReplacementManager(
+        provider, DeploymentHistoryStore(tmp_path / "deployments.sqlite3")
+    ).recovery_inventory()
+
+    assert inventory[0].classification == "candidate_identity_not_committed"
+    assert inventory[0].candidate_record_present is True
+    assert inventory[0].active_deployment_id == previous.deployment_id
+    assert provider.calls == []
+    assert history.get_replacement(journal.operation_id) == journal
+
+
+def test_recovery_inventory_recognizes_consistent_candidate_started_state(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    candidate = _record(
+        target.deployment_id, status="running", health="unknown", version=target.version
+    )
+    history.append(candidate)
+    prepared = _replacement_journal(previous, target)
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared,
+        phase="candidate_started",
+        candidate_runtime_id="runtime:candidate",
+        updated_at="2026-11-15T12:04:00Z",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+
+    item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
+
+    assert item.classification == "journal_history_consistent"
+    assert item.phase == "candidate_started"
+    assert item.active_deployment_id == previous.deployment_id
+    assert item.external_state_verified is False
+    assert item.automatic_recovery_allowed is False
+    assert provider.calls == []
+
+
+def test_recovery_inventory_requires_candidate_pointer_after_traffic_switched(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    candidate = _record(
+        target.deployment_id, status="running", health="healthy", version=target.version
+    )
+    history.append(candidate)
+    prepared = _replacement_journal(previous, target)
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared, phase="candidate_started", candidate_runtime_id="runtime:candidate",
+        updated_at="2026-11-15T12:04:00Z",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+    healthy = replace(started, phase="candidate_healthy", updated_at="2026-11-15T12:05:00Z")
+    history.update_replacement(healthy, expected_phase="candidate_started")
+    switched = replace(
+        healthy,
+        phase="traffic_switched",
+        effective_traffic_target="runtime:candidate",
+        updated_at="2026-11-15T12:06:00Z",
+    )
+    history.update_replacement(switched, expected_phase="candidate_healthy")
+    history.set_active_deployment(
+        provider=previous.provider,
+        environment=previous.environment,
+        project=previous.project,
+        deployment_id=candidate.deployment_id,
+        expected_deployment_id=previous.deployment_id,
+    )
+
+    item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
+
+    assert item.classification == "journal_history_consistent"
+    assert item.active_deployment_id == candidate.deployment_id
+    assert item.external_state_verified is False
+    assert item.automatic_recovery_allowed is False
+    assert provider.calls == []
+
+
+def test_recovery_inventory_flags_candidate_record_missing_after_started_phase(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    prepared = _replacement_journal(previous, target)
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared,
+        phase="candidate_started",
+        candidate_runtime_id="runtime:candidate",
+        updated_at="2026-11-15T12:04:00Z",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+
+    item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
+
+    assert item.classification == "candidate_record_missing"
+    assert item.candidate_record_present is False
+    assert item.active_deployment_id == previous.deployment_id
+    assert provider.calls == []
