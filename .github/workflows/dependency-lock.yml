@@ -41,12 +41,27 @@ jobs:
         shell: bash
         run: |
           mkdir -p generated-locks
-          pip-compile --resolver=backtracking --generate-hashes --strip-extras \
+          pip-compile --no-config --index-url=https://pypi.org/simple --emit-index-url --resolver=backtracking --generate-hashes --allow-unsafe --strip-extras \
             --output-file="generated-locks/requirements-${{ matrix.platform }}-py314.lock" \
             requirements.txt
           pip-compile --resolver=backtracking --generate-hashes --strip-extras \
             --output-file="generated-locks/requirements-dev-${{ matrix.platform }}-py314.lock" \
             requirements.txt requirements-dev.txt
+
+      - name: Verify clean hash-locked installations
+        shell: bash
+        run: |
+          python -m venv .venv-lock-prod
+          python -m venv .venv-lock-dev
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            PROD_PYTHON=".venv-lock-prod/Scripts/python.exe"
+            DEV_PYTHON=".venv-lock-dev/Scripts/python.exe"
+          else
+            PROD_PYTHON=".venv-lock-prod/bin/python"
+            DEV_PYTHON=".venv-lock-dev/bin/python"
+          fi
+          "$PROD_PYTHON" -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r "generated-locks/requirements-${{ matrix.platform }}-py314.lock"
+          "$DEV_PYTHON" -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r "generated-locks/requirements-dev-${{ matrix.platform }}-py314.lock"
 
       - name: Record resolver environment
         shell: bash
