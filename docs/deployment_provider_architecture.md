@@ -180,9 +180,12 @@ docker inspect --format "{{json .}}" <persisted-immutable-container-id>
 
 It does not resolve the mutable container name, publish ports, start/stop a
 container, change a route, or update host history. The observed full container
-ID must exactly match the ID in the host record before lifecycle/health fields
-are trusted. Missing IDs and foreign-provider records are rejected before
-issuing a Docker command.
+ID must exactly match the expected ID before lifecycle/health fields are
+trusted. The optional `inspect_runtime_identity(deployment_id, runtime_id)`
+entry point also permits inspection when an ID is present in the durable
+replacement journal but the matching DeploymentRecord has not yet been
+committed. If neither the record nor journal contains a full immutable ID, no
+Docker lookup is attempted.
 
 This is a read-only provider observation, not proof of effective traffic
 routing. It must not set `external_state_verified`, authorize candidate

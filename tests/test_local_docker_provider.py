@@ -258,6 +258,36 @@ def test_inspect_runtime_keeps_lifecycle_and_health_separate(state, expected_hea
     assert result.health_status == expected_health
 
 
+def test_inspect_runtime_identity_supports_journal_id_without_history_record():
+    runtime_id = "f" * 64
+    runner = FakeRunner(ok(json.dumps({
+        "Id": runtime_id,
+        "State": {"Status": "running", "Health": {"Status": "starting"}},
+    })))
+
+    result = LocalDockerProvider(runner).inspect_runtime_identity(
+        "journal-candidate", runtime_id
+    )
+
+    assert result.status == "verified"
+    assert result.deployment_id == "journal-candidate"
+    assert result.expected_runtime_id == runtime_id
+    assert result.health_status == "unknown"
+    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", runtime_id]
+
+
+def test_inspect_runtime_identity_rejects_invalid_id_without_docker_call():
+    runner = FakeRunner()
+
+    result = LocalDockerProvider(runner).inspect_runtime_identity(
+        "journal-candidate", "candidate-container-name"
+    )
+
+    assert result.status == "invalid_response"
+    assert result.expected_runtime_id is None
+    assert runner.calls == []
+
+
 def test_inspect_runtime_reports_missing_container_by_immutable_id():
     runner = FakeRunner(failed("Error: No such object: " + "f" * 64))
 

@@ -216,6 +216,9 @@ class DeploymentRuntimeInspector(Protocol):
     name: str
 
     def inspect_runtime(self, record: DeploymentRecord) -> DeploymentRuntimeInspection: ...
+    def inspect_runtime_identity(
+        self, deployment_id: str, runtime_id: str
+    ) -> DeploymentRuntimeInspection: ...
 
 
 @dataclass(frozen=True)

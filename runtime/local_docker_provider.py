@@ -322,15 +322,7 @@ class LocalDockerProvider:
         return HealthCheckResult("unknown", _now(), "docker healthcheck", f"Health state: {docker_status!r}")
 
     def inspect_runtime(self, record: DeploymentRecord) -> DeploymentRuntimeInspection:
-        """Inspect a container by its persisted immutable ID without mutation.
-
-        This operation deliberately does not resolve the mutable deployment
-        name. It proves only whether Docker currently returns the expected
-        container identity and its local state/HEALTHCHECK observation; it
-        does not prove effective traffic routing.
-        """
-        checked_at = _now()
-        probe = "docker inspect by immutable container ID"
+        """Inspect the immutable runtime ID persisted in a host deployment record."""
         if record.provider != self.name:
             return DeploymentRuntimeInspection(
                 provider=self.name,
@@ -341,8 +333,8 @@ class LocalDockerProvider:
                 status="invalid_response",
                 runtime_state="unknown",
                 health_status="unavailable",
-                checked_at=checked_at,
-                probe=probe,
+                checked_at=_now(),
+                probe="docker inspect by immutable container ID",
                 detail="Record belongs to a different provider",
             )
         if record.container_id is None:
@@ -355,12 +347,43 @@ class LocalDockerProvider:
                 status="invalid_response",
                 runtime_state="unknown",
                 health_status="unknown",
-                checked_at=checked_at,
-                probe=probe,
+                checked_at=_now(),
+                probe="docker inspect by immutable container ID",
                 detail="Host history has no immutable container ID",
             )
+        return self.inspect_runtime_identity(record.deployment_id, record.container_id)
 
-        expected_id = record.container_id
+    def inspect_runtime_identity(
+        self,
+        deployment_id: str,
+        runtime_id: str,
+    ) -> DeploymentRuntimeInspection:
+        """Inspect a provider-issued immutable runtime ID without a history row.
+
+        This is needed for crash recovery when a runtime ID reached the durable
+        replacement journal but its DeploymentRecord has not yet been
+        committed to host history. It never resolves a mutable container name.
+        """
+        if not isinstance(deployment_id, str) or not deployment_id.strip():
+            raise ValueError("deployment_id must be a non-empty string")
+        checked_at = _now()
+        probe = "docker inspect by immutable container ID"
+        if not isinstance(runtime_id, str) or not _CONTAINER_ID.fullmatch(runtime_id):
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=deployment_id,
+                expected_runtime_id=None,
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unknown",
+                checked_at=checked_at,
+                probe=probe,
+                detail="A full immutable Docker container ID is required",
+            )
+
+        expected_id = runtime_id
         result, error = self._execute(["inspect", "--format", "{{json .}}", expected_id])
         if error:
             lowered = error.lower()
@@ -375,7 +398,7 @@ class LocalDockerProvider:
                 health = "unknown"
             return DeploymentRuntimeInspection(
                 provider=self.name,
-                deployment_id=record.deployment_id,
+                deployment_id=deployment_id,
                 expected_runtime_id=expected_id,
                 observed_runtime_id=None,
                 identity_match=False,
@@ -402,7 +425,7 @@ class LocalDockerProvider:
                 health = "unknown"
             return DeploymentRuntimeInspection(
                 provider=self.name,
-                deployment_id=record.deployment_id,
+                deployment_id=deployment_id,
                 expected_runtime_id=expected_id,
                 observed_runtime_id=None,
                 identity_match=False,
@@ -421,7 +444,7 @@ class LocalDockerProvider:
         if not isinstance(inspected, dict):
             return DeploymentRuntimeInspection(
                 provider=self.name,
-                deployment_id=record.deployment_id,
+                deployment_id=deployment_id,
                 expected_runtime_id=expected_id,
                 observed_runtime_id=None,
                 identity_match=False,
@@ -437,7 +460,7 @@ class LocalDockerProvider:
         if not isinstance(observed_id, str) or not _CONTAINER_ID.fullmatch(observed_id):
             return DeploymentRuntimeInspection(
                 provider=self.name,
-                deployment_id=record.deployment_id,
+                deployment_id=deployment_id,
                 expected_runtime_id=expected_id,
                 observed_runtime_id=None,
                 identity_match=False,
@@ -451,7 +474,7 @@ class LocalDockerProvider:
         if observed_id != expected_id:
             return DeploymentRuntimeInspection(
                 provider=self.name,
-                deployment_id=record.deployment_id,
+                deployment_id=deployment_id,
                 expected_runtime_id=expected_id,
                 observed_runtime_id=observed_id,
                 identity_match=False,
@@ -496,7 +519,7 @@ class LocalDockerProvider:
 
         return DeploymentRuntimeInspection(
             provider=self.name,
-            deployment_id=record.deployment_id,
+            deployment_id=deployment_id,
             expected_runtime_id=expected_id,
             observed_runtime_id=observed_id,
             identity_match=True,

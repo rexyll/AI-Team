@@ -190,3 +190,54 @@ def test_host_runtime_reports_daemon_unavailable_without_authorizing_recovery(tm
     assert previous["status"] == "unavailable"
     assert report["route_readback_available"] is False
     assert report["automatic_recovery_allowed"] is False
+
+
+def test_host_runtime_inspects_journal_candidate_id_when_candidate_record_is_missing(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    history = _seed_pending_replacement(path)
+    prepared = history.get_replacement("startup-operation-001")
+    started = ReplacementJournalRecord(
+        operation_id=prepared.operation_id,
+        provider=prepared.provider,
+        project=prepared.project,
+        environment=prepared.environment,
+        target_deployment_id=prepared.target_deployment_id,
+        previous_deployment_id=prepared.previous_deployment_id,
+        phase="candidate_started",
+        created_at=prepared.created_at,
+        updated_at="2026-11-15T16:10:00Z",
+        previous_runtime_id=prepared.previous_runtime_id,
+        candidate_runtime_id="b" * 64,
+    )
+    history.update_replacement(started, expected_phase="prepared")
+
+    class InspectRunner:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, args, *, cwd, timeout):
+            self.calls.append((list(args), cwd, timeout))
+            runtime_id = args[-1]
+            return DockerCommandResult(
+                0,
+                json.dumps({
+                    "Id": runtime_id,
+                    "State": {"Status": "running"},
+                }),
+                "",
+            )
+
+    runner = InspectRunner()
+    report = DeploymentHostRuntime(
+        path, provider=LocalDockerProvider(runner=runner)
+    ).inspect_recovery()
+    observation = report["observations"][0]
+
+    assert observation["candidate_record_present"] is False
+    assert observation["candidate_runtime"]["status"] == "verified"
+    assert observation["candidate_runtime"]["expected_runtime_id"] == "b" * 64
+    assert observation["candidate_runtime"]["health_status"] == "unknown"
+    assert observation["automatic_recovery_allowed"] is False
+    assert report["route_readback_available"] is False
+    assert len(runner.calls) == 2
+    assert runner.calls[1][0][-1] == "b" * 64

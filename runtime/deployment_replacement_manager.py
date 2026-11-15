@@ -91,6 +91,8 @@ class DeploymentRecoveryRuntimeInspectionItem:
     target_deployment_id: str
     previous_record_present: bool
     candidate_record_present: bool
+    previous_runtime_id: str | None
+    candidate_runtime_id: str | None
     inspection_supported: bool
     previous_runtime: DeploymentRuntimeInspection | None
     candidate_runtime: DeploymentRuntimeInspection | None
@@ -304,13 +306,11 @@ class HostDeploymentReplacementManager:
         project: str | None = None,
         environment: str | None = None,
     ) -> tuple[DeploymentRecoveryRuntimeInspectionItem, ...]:
-        """Inspect recorded runtimes for unfinished operations without mutation.
+        """Inspect recorded or journal-addressed runtimes without mutation.
 
-        This optional external probe is deliberately separate from the
-        SQLite-only startup inventory. It reads each recorded runtime by the
-        provider's immutable identity when the provider exposes
-        inspect_runtime(). It does not read or change traffic routing and
-        cannot authorize candidate retirement or reconciliation.
+        A runtime ID durably written to the journal can be inspected even when
+        the corresponding DeploymentRecord has not yet been committed. If the
+        journal also lacks an immutable ID, no mutable name lookup is attempted.
         """
         snapshots = self.history.list_replacement_recovery_snapshots(
             provider=self.provider.name,
@@ -318,45 +318,81 @@ class HostDeploymentReplacementManager:
             environment=environment,
         )
         inspector = getattr(self.provider, "inspect_runtime", None)
-        inspection_supported = callable(inspector)
+        identity_inspector = getattr(self.provider, "inspect_runtime_identity", None)
+        inspection_supported = callable(inspector) or callable(identity_inspector)
 
-        def inspect(record: DeploymentRecord | None) -> DeploymentRuntimeInspection | None:
-            if record is None or not inspection_supported:
+        def unavailable_observation(
+            deployment_id: str,
+            runtime_id: str | None,
+            *,
+            status: str,
+            detail: str,
+        ) -> DeploymentRuntimeInspection:
+            return DeploymentRuntimeInspection(
+                provider=self.provider.name,
+                deployment_id=deployment_id,
+                expected_runtime_id=runtime_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status=status,
+                runtime_state="unknown",
+                health_status="unavailable" if status == "unavailable" else "unknown",
+                checked_at=self._clock(),
+                probe="host provider inspection",
+                detail=detail,
+            )
+
+        def inspect(
+            record: DeploymentRecord | None,
+            deployment_id: str,
+            journal_runtime_id: str | None,
+        ) -> DeploymentRuntimeInspection | None:
+            history_runtime_id = record.container_id if record is not None else None
+            if (
+                history_runtime_id is not None
+                and journal_runtime_id is not None
+                and history_runtime_id != journal_runtime_id
+            ):
+                return unavailable_observation(
+                    deployment_id,
+                    journal_runtime_id,
+                    status="invalid_response",
+                    detail="Host history runtime ID does not match replacement journal identity",
+                )
+            expected_runtime_id = journal_runtime_id or history_runtime_id
+            if not inspection_supported:
                 return None
             try:
-                observation = inspector(record)
+                if (
+                    record is not None
+                    and callable(inspector)
+                    and (history_runtime_id is not None or journal_runtime_id is None)
+                ):
+                    observation = inspector(record)
+                elif expected_runtime_id is not None and callable(identity_inspector):
+                    observation = identity_inspector(deployment_id, expected_runtime_id)
+                elif record is not None and callable(inspector):
+                    observation = inspector(record)
+                else:
+                    return None
             except Exception as exc:
-                return DeploymentRuntimeInspection(
-                    provider=self.provider.name,
-                    deployment_id=record.deployment_id,
-                    expected_runtime_id=record.container_id,
-                    observed_runtime_id=None,
-                    identity_match=False,
+                return unavailable_observation(
+                    deployment_id,
+                    expected_runtime_id,
                     status="unavailable",
-                    runtime_state="unknown",
-                    health_status="unavailable",
-                    checked_at=self._clock(),
-                    probe="host provider inspection",
                     detail=f"Provider inspection raised {type(exc).__name__}",
                 )
             if (
                 not isinstance(observation, DeploymentRuntimeInspection)
                 or observation.provider != self.provider.name
-                or observation.deployment_id != record.deployment_id
-                or observation.expected_runtime_id != record.container_id
+                or observation.deployment_id != deployment_id
+                or observation.expected_runtime_id != expected_runtime_id
             ):
-                return DeploymentRuntimeInspection(
-                    provider=self.provider.name,
-                    deployment_id=record.deployment_id,
-                    expected_runtime_id=record.container_id,
-                    observed_runtime_id=None,
-                    identity_match=False,
+                return unavailable_observation(
+                    deployment_id,
+                    expected_runtime_id,
                     status="invalid_response",
-                    runtime_state="unknown",
-                    health_status="unknown",
-                    checked_at=self._clock(),
-                    probe="host provider inspection",
-                    detail="Provider inspection did not match the requested host record",
+                    detail="Provider inspection did not match the journal/history runtime identity",
                 )
             return observation
 
@@ -368,9 +404,19 @@ class HostDeploymentReplacementManager:
                 target_deployment_id=snapshot.journal.target_deployment_id,
                 previous_record_present=snapshot.previous is not None,
                 candidate_record_present=snapshot.candidate is not None,
+                previous_runtime_id=snapshot.journal.previous_runtime_id,
+                candidate_runtime_id=snapshot.journal.candidate_runtime_id,
                 inspection_supported=inspection_supported,
-                previous_runtime=inspect(snapshot.previous),
-                candidate_runtime=inspect(snapshot.candidate),
+                previous_runtime=inspect(
+                    snapshot.previous,
+                    snapshot.journal.previous_deployment_id,
+                    snapshot.journal.previous_runtime_id,
+                ),
+                candidate_runtime=inspect(
+                    snapshot.candidate,
+                    snapshot.journal.target_deployment_id,
+                    snapshot.journal.candidate_runtime_id,
+                ),
             )
             for snapshot in snapshots
         )
