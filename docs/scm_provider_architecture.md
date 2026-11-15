@@ -76,6 +76,25 @@ Merge continues to use `SCMService.merge_pull_request`, which re-reads the
 head, requires green CI and approved review, and consumes an approval scoped
 to that exact head SHA.
 
+## Read-only CLI polling
+
+The CLI exposes `--scm-poll-pr NUMBER` as a standalone read-only operation.
+Set `AI_TEAM_GITHUB_TOKEN` and `AI_TEAM_GITHUB_REPOSITORY=owner/name` in the
+host environment, then run:
+
+```bash
+python main.py --scm-poll-pr 123 --output json
+```
+
+The explicit PR number overrides `AI_TEAM_GITHUB_PULL_REQUEST` for this
+invocation, so the environment need not pin a single PR. The command cannot be
+combined with a delivery request or other operational command. It uses the
+bounded lifecycle poller and emits the observed head SHA, CI state, review
+state, attempt count and terminal status. Exit code 0 means `ready`; exit
+code 2 means the PR is blocked, closed or timed out; exit code 1 means the
+configuration/provider operation failed. The command performs no push, PR
+write, review mutation or merge.
+
 ## Current validation boundary
 
 The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. No live GitHub push, PR creation, CI read, review read or merge has been performed in this environment; that requires a host-configured GitHub token, a test repository and explicit operator approval. The implementation must not be described as live-integrated until that run is completed.
