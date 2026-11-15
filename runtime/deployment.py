@@ -146,7 +146,10 @@ def stage_deliverable_copy(deliverable_root: str | Path) -> Path:
     preventing a staging copy from importing external workspace content. The
     caller owns the returned directory and is responsible for cleaning it up.
     """
-    root = Path(deliverable_root).resolve()
+    root_input = Path(deliverable_root)
+    if root_input.is_symlink():
+        raise ValueError("deliverable root must not be a symlink")
+    root = root_input.resolve()
     if not root.is_dir():
         raise ValueError("deliverable root must be an existing directory")
     staging = Path(tempfile.mkdtemp(prefix="ai-team-deliverable-"))
