@@ -240,7 +240,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - [x] T21.7.4：仅在 CI 显式网络出口白名单下执行漏洞/许可证扫描；scanner unavailable、数据库过期、未知许可证不得视为 clean（2026-11-15 完成：pip-audit 2.10.1 + OSV API；Trivy 0.76.2 license scan；17 包、0 个已知漏洞、OSV freshness 通过；`tqdm==4.70.1` 的精确 `MPL-2.0 AND MIT` 例外经 owner 有条件批准，保留 RECIPROCAL 分类并设 2027-02-13 复审/到期；未放宽其他类别）。
   - 验收：锁/哈希不符、SBOM schema 错误、阈值阻断、工具不可用、网络拒绝、许可证冲突等场景均如实输出；不得引入自动依赖升级或隐式公网出口。
 - [x] **T21.8 Real Project E2E（确定性项目验收完成，2026-11-15）**
-  - 选取 Python CLI/API 与 Node.js Web 两类代表项目，从自然语言需求启动完整交付。  - **验收完成（确定性范围）**：Python CLI 与 Node.js Web 两个完整 ProjectOrchestrator 场景均经过生产 Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter Agent 类、task-local workspace、真实 ToolInvocationService 命令执行、adapter install/build/test/smoke/package、isolated integration、Ruff、可执行验收、QA、安全门禁与 Evidence Bundle。生产 Tester/Reviewer 仅在实际命令与成功测试摘要存在时通过，并校验 provenance 父证据链。CI #576 全绿；两份 Evidence Bundle 与 Coverage artifact 均实际上传。此完成项仅覆盖 deterministic MockLLM 项目验收，不代表 Live ProviderLLM、自主推理、浏览器验收、外部部署、人工 UAT 或签名 attestation 完成。
+  - 选取 Python CLI/API 与 Node.js Web 两类代表项目，从自然语言需求启动完整交付。
+  - **验收完成（确定性范围）**：Python CLI 与 Node.js Web 两个完整 ProjectOrchestrator 场景均经过生产 Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter Agent 类、task-local workspace、真实 ToolInvocationService 命令执行、adapter install/build/test/smoke/package、isolated integration、Ruff、可执行验收、QA、安全门禁与 Evidence Bundle。生产 Tester/Reviewer 仅在实际命令与成功测试摘要存在时通过，并校验 provenance 父证据链。CI #576 全绿；两份 Evidence Bundle 与 Coverage artifact 均实际上传。此完成项仅覆盖 deterministic MockLLM 项目验收，不代表 Live ProviderLLM、自主推理、浏览器验收、外部部署、人工 UAT 或签名 attestation 完成。
 
   - 检查需求追溯、隔离开发、构建测试、可执行验收、QA/安全、打包、发布记录与交付说明。
   - 输出能力边界报告，明确哪些步骤由本地执行、哪些依赖用户凭证/环境/人工审批。
