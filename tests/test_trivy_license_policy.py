@@ -249,3 +249,43 @@ def test_license_exception_expiry_fails_closed(tmp_path: Path):
 
     assert result["status"] == "failed"
     assert any("expired" in problem for problem in result["problems"])
+
+
+def test_license_exception_requires_scanner_classification_to_match_policy(tmp_path: Path):
+    from datetime import date
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("tqdm==4.70.1\nother-lib==2.0.0\n", encoding="utf-8")
+    policy = {
+        **POLICY,
+        "exceptions": [{
+            "package": "tqdm",
+            "version": "4.70.1",
+            "license": "MPL-2.0 AND MIT",
+            "classification": "RESTRICTED",
+            "approved_by": "repository owner (rexyll)",
+            "approved_at": "2026-11-15",
+            "expires_on": "2027-02-13",
+            "rationale": "Mismatch test.",
+            "obligations": ["Retain notices."],
+        }],
+    }
+    packages = [
+        {"Name": "tqdm", "Version": "4.70.1", "Licenses": ["MPL-2.0 AND MIT"]},
+        {"Name": "other-lib", "Version": "2.0.0", "Licenses": ["MIT"]},
+    ]
+    report = _report(packages=packages, findings=[{
+        "PkgName": "tqdm",
+        "Name": "MPL-2.0 AND MIT",
+        "Category": "reciprocal",
+        "Severity": "MEDIUM",
+    }])
+
+    result = evaluate_license_report(
+        report, _read_lock(lock), policy, as_of=date(2026, 11, 15)
+    )
+
+    assert result["status"] == "failed"
+    assert result["exceptions_applied"] == []
+    assert any("blocked" in problem for problem in result["problems"])
+    assert any("did not match" in problem for problem in result["problems"])
