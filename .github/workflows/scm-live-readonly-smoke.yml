@@ -1,0 +1,35 @@
+name: SCM live read-only smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Existing pull request number to inspect
+        required: true
+        type: string
+
+# The automatically-issued token is limited to read-only repository evidence.
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  read-only-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      AI_TEAM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AI_TEAM_GITHUB_REPOSITORY: ${{ github.repository }}
+      AI_TEAM_GITHUB_PULL_REQUEST: ${{ inputs.pull_request_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Inspect live PR, CI and review evidence
+        run: python -m scripts.scm_live_readonly_smoke

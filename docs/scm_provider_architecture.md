@@ -95,6 +95,26 @@ code 2 means the PR is blocked, closed or timed out; exit code 1 means the
 configuration/provider operation failed. The command performs no push, PR
 write, review mutation or merge.
 
+## Live read-only GitHub integration smoke
+
+Use Actions → **SCM live read-only smoke** → Run workflow, and enter an existing
+pull-request number. The manually dispatched workflow uses the repository-scoped
+`GITHUB_TOKEN` issued for that run, with only `contents: read`,
+`pull-requests: read`, `checks: read`, and `statuses: read` permissions.
+It invokes `scripts.scm_live_readonly_smoke` through the same host configuration
+factory and GitHub REST provider used by the CLI.
+
+The probe reads PR state/head SHA, check runs, combined commit status, and review
+state once. It emits a sanitized JSON record: check-run names/status/conclusions
+and timestamps are retained, but provider output summaries and error messages
+are not printed. `ok=true` means the live API observation succeeded;
+`assessment=blocked` is a valid result when CI is not green or a review is not
+approved. The workflow does not push, create/update PRs, change reviews, or merge.
+
+This proves only the live read path. Push, PR write, and merge still require a
+separate test repository, the host's explicit one-use approvals, and a dedicated
+write-enabled validation; the read-only workflow cannot exercise those paths.
+
 ## Interactive host approval for publication
 
 The CLI exposes a separate publication command:
