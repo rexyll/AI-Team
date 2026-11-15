@@ -114,3 +114,18 @@ def test_explicit_pr_number_overrides_environment_value():
 
     assert runtime is not None
     assert runtime.pull_request_number == 27
+
+
+def test_factory_can_create_publish_runtime_without_default_pr_number():
+    runtime = create_github_scm_runtime(
+        environ={
+            "AI_TEAM_GITHUB_TOKEN": "ghp-test-secret-value",
+            "AI_TEAM_GITHUB_REPOSITORY": "acme/widget",
+        },
+        require_pull_request=False,
+        transport_factory=lambda token: FakeTransport(),
+    )
+
+    assert runtime is not None
+    assert runtime.pull_request_number is None
+    assert runtime.approval_authority is not None
