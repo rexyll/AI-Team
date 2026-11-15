@@ -225,10 +225,12 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   
 ### P3：工程质量与真实项目验收
 
-- [ ] **T21.7 供应链与质量门禁增强**
-  - 增加覆盖率阈值、性能基准/预算与可选压力测试门禁。
-  - 在明确网络出口白名单下接入漏洞数据库与许可证扫描；SBOM、依赖锁定、构建来源/制品摘要可追溯。
-  - 验收：阈值阻断、工具不可用、网络拒绝、许可证冲突等场景均如实输出。
+- [ ] **T21.7 供应链与质量门禁增强**（现状评审已完成，实施未开始；详见 `docs/supply_chain_quality_gate_design.md`）
+  - T21.7.1：生产/开发依赖完整锁定与哈希校验，CI 使用可复现输入。
+  - T21.7.2：生成 SPDX 或 CycloneDX 标准 SBOM，并绑定 lock/artifact/build evidence digest。
+  - T21.7.3：先采集覆盖率基线，再按模块风险设阈值；性能预算需受控 runner 基线；压力测试 opt-in 且有界。
+  - T21.7.4：仅在 CI 显式网络出口白名单下执行漏洞/许可证扫描；scanner unavailable、数据库过期、未知许可证不得视为 clean。
+  - 验收：锁/哈希不符、SBOM schema 错误、阈值阻断、工具不可用、网络拒绝、许可证冲突等场景均如实输出；不得引入自动依赖升级或隐式公网出口。
 - [ ] **T21.8 Real Project E2E**
   - 选取 Python CLI/API 与 Node.js Web 两类代表项目，从自然语言需求启动完整交付。
   - 检查需求追溯、隔离开发、构建测试、可执行验收、QA/安全、打包、发布记录与交付说明。
@@ -313,3 +315,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 audit durability/transaction design review | 检查 SQLite history 的独立事务边界与 JSONL delivery audit 的 flush-only 行为；明确审计事件与 journal CAS 的原子性缺口、外部 ledger 的幂等恢复要求，以及本地 hash chain 必须依赖独立可信链头才能提供篡改检测。确定优先评估同一 SQLite connection/transaction 原子提交审计事件与 journal CAS，但必须另行定义同步/故障模型和外部完整性锚。 | 仅更新架构文档和计划；未新增 writer/table/mutation API；CI 待验证 |
+
+| 2026-11-15 | T21.6.3 audit design CI confirmation | CI #318（run `43684702266`，提交 `17c82d6`）与 CI #319（run `43684713460`，提交 `0bf3367`）均通过；Windows toolchain smoke 与 Python 3.14 regression 全绿。T21.6.3 仍不具备 reconciliation mutation 所需可信身份/双人审批/独立完整性锚，Local Docker rollback 继续 unsupported。 | [CI #318](https://github.com/rexyll/AI-Team/actions/runs/43684702266)、[CI #319](https://github.com/rexyll/AI-Team/actions/runs/43684713460) |
+
+
+| 2026-11-15 | T21.7 supply-chain and quality-gate assessment | 完成代码与 CI 现状盘点：已有宽松性能扩展性回归和 requirements 顶层版本 pin，但无覆盖率阈值、完整依赖锁/哈希、标准 SBOM、漏洞数据库或许可证扫描。制定四个子节点与安全边界；本记录仅完成评审，不将 T21.7 标记完成。 | 新增 `docs/supply_chain_quality_gate_design.md`；CI 待验证 |
