@@ -1,4 +1,4 @@
-""""Read-only crash-recovery classification for deployment replacement journals.
+"""Read-only crash-recovery classification for deployment replacement journals.
 
 This module never calls a provider, changes traffic, retires a runtime, or
 mutates the journal. It translates a durable phase snapshot into checks that
