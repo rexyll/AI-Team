@@ -111,3 +111,25 @@ def test_host_runtime_fails_closed_when_configured_database_is_corrupt(tmp_path)
 
     with pytest.raises(sqlite3.DatabaseError):
         DeploymentHostRuntime(path).start()
+
+
+
+def test_standalone_read_only_inventory_does_not_create_missing_database(tmp_path):
+    path = tmp_path / "missing" / "deployments.sqlite3"
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        DeploymentHostRuntime(path, create_if_missing=False).start()
+
+    assert not path.exists()
+
+
+def test_host_runtime_uses_read_only_sqlite_for_existing_database(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(path)
+
+    result = DeploymentHostRuntime(path).start()
+
+    assert len(result.inventory) == 1
+    readonly = DeploymentHistoryStore(path, read_only=True)
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        readonly.append(_record("must-not-write"))

@@ -51,10 +51,14 @@ class DeploymentHostRuntime:
         history_path: str | Path,
         *,
         provider: LocalDockerProvider | None = None,
+        create_if_missing: bool = True,
     ) -> None:
         if not isinstance(history_path, (str, Path)) or not str(history_path).strip():
             raise ValueError("history_path must be a non-empty path")
+        if not isinstance(create_if_missing, bool):
+            raise TypeError("create_if_missing must be a bool")
         self.history_path = Path(history_path).expanduser().resolve()
+        self.create_if_missing = create_if_missing
         self.provider = provider or LocalDockerProvider()
         name = getattr(self.provider, "name", None)
         if not isinstance(name, str) or not name.strip():
@@ -62,7 +66,15 @@ class DeploymentHostRuntime:
 
     def start(self) -> DeploymentHostStartupResult:
         """Open the durable host store and return its read-only recovery view."""
-        history = DeploymentHistoryStore(self.history_path)
+        if not self.history_path.is_file():
+            if not self.create_if_missing:
+                raise FileNotFoundError(
+                    f"deployment history database does not exist: {self.history_path}"
+                )
+            # First opt-in Host startup creates the private schema once. All
+            # subsequent inventory reads use SQLite URI mode=ro.
+            DeploymentHistoryStore(self.history_path)
+        history = DeploymentHistoryStore(self.history_path, read_only=True)
         # The inventory manager only consumes provider.name on this code path.
         # Its replacement operation remains disabled for LocalDockerProvider
         # because _supports_replacement() checks the full capability at runtime.

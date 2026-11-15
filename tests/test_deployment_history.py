@@ -413,3 +413,16 @@ def test_replacement_journal_rejects_invalid_phase_transition(tmp_path):
     invalid = make_replacement(phase="traffic_switched")
     with pytest.raises(ValueError, match="phase transition"):
         history.update_replacement(invalid, expected_phase="prepared")
+
+
+
+def test_read_only_history_store_requires_existing_db_and_rejects_writes(tmp_path):
+    path = tmp_path / "readonly" / "history.db"
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        DeploymentHistoryStore(path, read_only=True)
+    assert not path.exists()
+
+    DeploymentHistoryStore(path)
+    readonly = DeploymentHistoryStore(path, read_only=True)
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        readonly.append(make_record("must-not-write"))

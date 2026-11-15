@@ -51,18 +51,34 @@ class ReplacementRecoverySnapshot:
 class DeploymentHistoryStore:
     """SQLite-backed host history with transactional record replacement."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self.path = Path(path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._initialize()
-        # Deployment history can reveal project and release metadata. Restrict
-        # the database file to the current host user on POSIX systems.
-        if os.name == "posix":
-            os.chmod(self.path, 0o600)
+        if not isinstance(read_only, bool):
+            raise TypeError("read_only must be a bool")
+        self.read_only = read_only
+        if self.read_only:
+            if not self.path.is_file():
+                raise FileNotFoundError(
+                    f"deployment history database does not exist: {self.path}"
+                )
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._initialize()
+            # Deployment history can reveal project and release metadata. Restrict
+            # the database file to the current host user on POSIX systems.
+            if os.name == "posix":
+                os.chmod(self.path, 0o600)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(str(self.path), timeout=10.0)
+        if self.read_only:
+            connection = sqlite3.connect(
+                f"{self.path.as_uri()}?mode=ro",
+                uri=True,
+                timeout=10.0,
+            )
+        else:
+            connection = sqlite3.connect(str(self.path), timeout=10.0)
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA busy_timeout = 10000")

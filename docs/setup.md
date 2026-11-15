@@ -249,11 +249,13 @@ python main.py "Build a small personal expense tracker"
 
 When configured, every `main.py` process startup opens the host-owned SQLite
 store and performs a read-only inventory of unfinished replacement journals
-before dispatching the requested operation. Unfinished operations are reported
-to stderr, preserving machine-readable JSON on stdout. A corrupt configured
-database fails startup closed. The parent directory is created with private
-permissions and the SQLite database is restricted to the current user on
-POSIX systems.
+before dispatching the requested operation. The first configured Host startup
+creates the private database schema if the file does not yet exist; subsequent
+startup scans open the existing database in SQLite read-only mode. Unfinished
+operations are reported to stderr, preserving machine-readable JSON on stdout.
+A corrupt configured database fails startup closed. The parent directory is
+created with private permissions and the SQLite database is restricted to the
+current user on POSIX systems.
 
 To inspect the full inventory without running a project operation:
 
@@ -262,6 +264,10 @@ python main.py --deployment-recovery-inventory --output json
 # or explicitly select a history store
 python main.py --deployment-history C:\AI-Team-Host\deployments.sqlite3 --deployment-recovery-inventory
 ```
+
+The standalone inventory command requires an existing database and opens it
+with SQLite `mode=ro`; it never creates a missing database or modifies
+existing deployment state.
 
 This startup hook currently inventories the `docker-local` provider only.
 It does not run Docker commands, inspect containers, change traffic, abort or

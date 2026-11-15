@@ -767,7 +767,10 @@ def main() -> int:
                 "or AI_TEAM_DEPLOYMENT_HISTORY"
             )
         try:
-            startup = DeploymentHostRuntime(deployment_history_path).start()
+            startup = DeploymentHostRuntime(
+                deployment_history_path,
+                create_if_missing=False,
+            ).start()
         except Exception as exc:
             print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
             return 1

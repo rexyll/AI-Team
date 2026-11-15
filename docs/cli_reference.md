@@ -45,8 +45,9 @@ python main.py "<project requirement>"
   It can also be configured with `AI_TEAM_DEPLOYMENT_HISTORY`; when set, the
   CLI runs a read-only unfinished-replacement inventory on every process start.
 - `--deployment-recovery-inventory` — standalone read-only inventory report
-  (supports `--output json`); requires `--deployment-history` or the
-  `AI_TEAM_DEPLOYMENT_HISTORY` environment variable.
+  (supports `--output json`); requires an existing database at
+  `--deployment-history` or the `AI_TEAM_DEPLOYMENT_HISTORY` path. Missing
+  databases are not created by this standalone command.
 - `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
   `--defect-intake`; runs hotfix tasks through integration regression, QA, the
   security audit, the release gate, a patch release and repackaging on the same
