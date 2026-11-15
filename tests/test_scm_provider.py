@@ -158,7 +158,7 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
 
 def test_merge_requires_pull_request_head_metadata_and_approval():
     service, provider, authority = _service()
-    provider.pr = {}
+    provider.pr = {"state": "open", "merged": False}
     approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
 
     with pytest.raises(SCMPreflightError, match="head SHA"):
@@ -205,7 +205,7 @@ def test_merge_rejects_invalid_method():
 def test_merge_approval_is_bound_to_the_exact_head_sha():
     service, provider, authority = _service()
     approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
-    provider.pr = {"head_sha": "b" * 40}
+    provider.pr = {"head_sha": "b" * 40, "state": "open", "merged": False}
 
     with pytest.raises(SCMApprovalError, match="scope"):
         service.merge_pull_request("acme/widget", 7, approval=approval)
