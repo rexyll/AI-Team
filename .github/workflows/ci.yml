@@ -40,6 +40,61 @@ jobs:
         if: always()
         run: python tools/run_security_regression.py
 
+  coverage-baseline:
+    name: Coverage baseline (Python 3.14)
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_PROVIDER: agnes
+      DEFAULT_MODEL: ci-test-model
+      AGNES_API_KEY: ci-placeholder-not-a-secret
+      AGNES_BASE_URL: https://ci.invalid/v1
+      AGNES_MODEL: ci-test-model
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install hash-locked development dependencies
+        run: |
+          python -m pip install --disable-pip-version-check "pip==25.3"
+          python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-dev-linux-py314.lock
+
+      - name: Collect line and branch coverage baseline
+        shell: bash
+        run: |
+          test_status=0
+          coverage run --branch --source=agents,core,integration,runtime,security,tools -m pytest -q \
+            --ignore=tests/test_large_project_benchmark.py \
+            --ignore=tests/test_multi_developer_benchmark.py \
+            --ignore=tests/test_real_developer_ab_benchmark.py \
+            --ignore=tests/test_real_developer_benchmark_parallelism.py \
+            --ignore=tests/test_workflow_event_performance_contract.py \
+            --ignore=tests/test_workflow_event_performance_regression_contract.py || test_status=$?
+          coverage json --pretty-print -o coverage.json
+          coverage html -d coverage-html
+          coverage report -m
+          printf 'python=%s\n' "$(python --version)" > coverage-baseline-metadata.txt
+          printf 'commit=%s\n' "$GITHUB_SHA" >> coverage-baseline-metadata.txt
+          printf 'measurement=branch-and-line\n' >> coverage-baseline-metadata.txt
+          printf 'excluded=machine-sensitive benchmark/performance timing tests only\n' >> coverage-baseline-metadata.txt
+          exit "$test_status"
+
+      - name: Upload coverage baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline-python314
+          path: |
+            coverage.json
+            coverage-html/
+            coverage-baseline-metadata.txt
+          if-no-files-found: warn
+          retention-days: 30
+
   windows-toolchain-smoke:
     runs-on: windows-latest
     env:
