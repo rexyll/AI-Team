@@ -34,6 +34,18 @@ T21.7 尚未完成。仓库已有部分质量基线和离线依赖声明检查�
 - CI 使用锁文件安装，不再依赖无约束的临时解析结果；升级 pip 等构建工具也应固定版本或记录受控更新策略。
 - 验收：干净环境可离线/受控安装；缺包、哈希不符、平台不匹配 fail-closed。
 
+#### T21.7.1 锁文件生成与验收细则（实施决策）
+
+当前 CI 同时运行 Ubuntu 与 Windows，解释器固定为 Python 3.14。由于依赖可能发布平台专属 wheel，单一在 Linux 上解析的哈希集合不能未经验证就视为 Windows 可安装集合。因此锁定流程应按 CI 运行平台分别解析，而不是复制一份 Linux 输出给所有平台。
+
+- 输入清单与解析输出分离：保留可审查的生产/开发顶层输入；锁文件由 resolver 生成，不手工维护传递依赖版本。
+- 在 Ubuntu Python 3.14 与 Windows Python 3.14 上分别生成并验证对应锁文件；锁文件应包含完整传递依赖、环境 marker 和允许安装文件的哈希。
+- 生产与开发依赖的边界保持清晰；开发锁可以引用/包含生产依赖，但 CI 的测试环境必须由一份完整、可校验的开发锁安装，避免两次无约束解析。
+- resolver 与 bootstrap 工具（pip、pip-tools）自身也必须固定版本；具体版本须在生成任务中实际安装并验证后再提交，不在设计文档中猜测。
+- 生成任务应输出可审阅的 lock diff 和构建环境元数据（Python、OS、resolver 版本、输入清单摘要）；生成过程不自动提交或升级依赖。
+- CI 消费端使用 `pip install --require-hashes -r <platform-lock>`；不得先无约束升级 pip。锁文件缺项、哈希不匹配、平台不匹配或 resolver 失败均应阻断。
+- 在两个平台均完成 clean-environment 安装、导入/测试回归后，才可将 T21.7.1 标记完成。若当前连接器无法提供实际 resolver 执行与产物审阅，则明确保持进行中，不以文档或 CI 通过替代锁文件验收。
+
 ### T21.7.2 标准化 SBOM 与制品绑定
 - 从实际锁定安装集合和交付物依赖清单生成 SPDX 或 CycloneDX JSON，组件身份使用 PURL，无法确定的许可证/来源明确标为 unknown。
 - SBOM 纳入交付清单并与 artifact digest、lock digest、scanner/tool version 绑定。
