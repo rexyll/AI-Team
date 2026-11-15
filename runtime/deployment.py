@@ -138,17 +138,23 @@ CMD ["python", "{entry}"]
 
 
 def stage_deliverable_copy(deliverable_root: str | Path) -> Path:
-    """Copy every deliverable ``*.py`` file into a fresh temp staging directory.
+    """Copy the safe, regular-file deliverable tree into fresh staging.
 
-    Shared by the packaging smoke and the integration/regression suite so both
-    exercise the deployed layout rather than the authoring workspace. The
+    Integration and packaging smoke must exercise the deployed layout, which
+    includes static assets and project metadata as well as Python test files.
+    Mutable environments/caches are excluded and symlinks are never followed,
+    preventing a staging copy from importing external workspace content. The
     caller owns the returned directory and is responsible for cleaning it up.
     """
-    root = Path(deliverable_root)
+    root = Path(deliverable_root).resolve()
+    if not root.is_dir():
+        raise ValueError("deliverable root must be an existing directory")
     staging = Path(tempfile.mkdtemp(prefix="ai-team-deliverable-"))
-    for path in root.rglob("*.py"):
+    for path in root.rglob("*"):
         rel = path.relative_to(root)
         if _excluded(rel) or "__pycache__" in rel.parts:
+            continue
+        if path.is_symlink() or not path.is_file():
             continue
         target = staging / rel
         target.parent.mkdir(parents=True, exist_ok=True)
