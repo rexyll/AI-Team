@@ -114,6 +114,96 @@ class HealthCheckResult:
             raise TypeError("detail must be a string")
 
 
+RuntimeInspectionStatus = Literal[
+    "verified",
+    "not_found",
+    "identity_mismatch",
+    "unavailable",
+    "invalid_response",
+]
+RuntimeState = Literal[
+    "created",
+    "running",
+    "paused",
+    "restarting",
+    "removing",
+    "exited",
+    "dead",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class DeploymentRuntimeInspection:
+    """Read-only observation of one provider-issued immutable runtime identity.
+
+    Identity verification and application health are separate facts. A
+    verified immutable ID does not prove that the runtime is healthy or that
+    traffic is routed to it.
+    """
+
+    provider: str
+    deployment_id: str
+    expected_runtime_id: str
+    observed_runtime_id: str | None
+    identity_match: bool
+    status: RuntimeInspectionStatus
+    runtime_state: RuntimeState
+    health_status: HealthStatus
+    checked_at: str
+    probe: str
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("provider", "deployment_id", "expected_runtime_id", "checked_at", "probe"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.observed_runtime_id is not None and (
+            not isinstance(self.observed_runtime_id, str) or not self.observed_runtime_id.strip()
+        ):
+            raise ValueError("observed_runtime_id must be non-empty when provided")
+        if not isinstance(self.identity_match, bool):
+            raise TypeError("identity_match must be a bool")
+        if self.status not in {
+            "verified", "not_found", "identity_mismatch", "unavailable", "invalid_response"
+        }:
+            raise ValueError("invalid runtime inspection status")
+        if self.runtime_state not in {
+            "created", "running", "paused", "restarting", "removing",
+            "exited", "dead", "unknown",
+        }:
+            raise ValueError("invalid runtime state")
+        if self.health_status not in {"healthy", "unhealthy", "unknown", "unavailable"}:
+            raise ValueError("invalid health status")
+        if self.status == "verified":
+            if not self.identity_match or self.observed_runtime_id != self.expected_runtime_id:
+                raise ValueError("verified inspection must match the expected immutable runtime ID")
+        elif self.identity_match:
+            raise ValueError("non-verified inspection cannot claim an identity match")
+        if self.status == "identity_mismatch" and (
+            self.observed_runtime_id is None
+            or self.observed_runtime_id == self.expected_runtime_id
+        ):
+            raise ValueError("identity mismatch must report a different observed runtime ID")
+        if self.status == "not_found" and self.observed_runtime_id is not None:
+            raise ValueError("not-found inspection cannot report an observed runtime ID")
+        if self.health_status == "healthy" and (
+            self.status != "verified" or self.runtime_state != "running"
+        ):
+            raise ValueError("healthy requires a verified running runtime")
+        if not isinstance(self.detail, str):
+            raise TypeError("detail must be a string")
+
+
+class DeploymentRuntimeInspector(Protocol):
+    """Optional provider capability for read-only immutable runtime inspection."""
+
+    name: str
+
+    def inspect_runtime(self, record: DeploymentRecord) -> DeploymentRuntimeInspection: ...
+
+
 @dataclass(frozen=True)
 class DeploymentOperationResult:
     operation: str

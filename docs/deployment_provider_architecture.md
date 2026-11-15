@@ -160,3 +160,33 @@ Before implementing a writer, choose and test one explicit persistence design:
 3. **Integrity anchor:** for tamper evidence against an attacker who can rewrite the local database, anchor the latest digest outside that trust domain (for example a host-protected signing key or external append-only service). Key custody, rotation, verification and unavailable-anchor behavior must be specified. A hash chain whose events and head are all stored in the same writable database only detects accidental edits when a trusted expected head is available.
 
 The present milestone deliberately adds no audit database table, writer, transaction coupling, signing dependency or mutation API. The host still lacks a verified operator-authentication adapter and a durable, independently consumed two-person approval authority. Until those trust roots and the crash/failure model are implemented and tested, do not add a reconciliation operation that changes `needs_reconciliation`.
+
+
+### Read-only immutable runtime inspection (T21.6.3.3)
+
+The provider-neutral `DeploymentRuntimeInspection` contract records immutable
+identity verification separately from container lifecycle and Docker
+HEALTHCHECK state. Its status distinguishes a verified matching ID, a missing
+container, an identity mismatch, an unavailable daemon/runner and malformed
+provider output. A matching identity does not imply that the runtime is
+running or healthy; a running container without a terminal HEALTHCHECK remains
+`unknown`.
+
+`LocalDockerProvider.inspect_runtime(record)` invokes only:
+
+```text
+docker inspect --format "{{json .}}" <persisted-immutable-container-id>
+```
+
+It does not resolve the mutable container name, publish ports, start/stop a
+container, change a route, or update host history. The observed full container
+ID must exactly match the ID in the host record before lifecycle/health fields
+are trusted. Missing IDs and foreign-provider records are rejected before
+issuing a Docker command.
+
+This is a read-only provider observation, not proof of effective traffic
+routing. It must not set `external_state_verified`, authorize candidate
+retirement, release `needs_reconciliation`, or claim rollback readiness. A
+host-owned router with authoritative route read-back and an authenticated
+reconciliation approval path are still absent. Tests use a fake Docker runner;
+no daemon-backed runtime inspection is claimed.

@@ -20,6 +20,7 @@ from runtime.deployment_provider import (
     DeploymentRecord,
     DeploymentRequest,
     HealthCheckResult,
+    DeploymentRuntimeInspection,
 )
 
 DEFAULT_DOCKER_TIMEOUT = 600.0
@@ -319,6 +320,193 @@ class LocalDockerProvider:
         if docker_status == "unhealthy":
             return HealthCheckResult("unhealthy", _now(), "docker healthcheck", "Docker healthcheck reports unhealthy")
         return HealthCheckResult("unknown", _now(), "docker healthcheck", f"Health state: {docker_status!r}")
+
+    def inspect_runtime(self, record: DeploymentRecord) -> DeploymentRuntimeInspection:
+        """Inspect a container by its persisted immutable ID without mutation.
+
+        This operation deliberately does not resolve the mutable deployment
+        name. It proves only whether Docker currently returns the expected
+        container identity and its local state/HEALTHCHECK observation; it
+        does not prove effective traffic routing.
+        """
+        checked_at = _now()
+        probe = "docker inspect by immutable container ID"
+        if record.provider != self.name:
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=record.container_id or "missing-immutable-id",
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unavailable",
+                checked_at=checked_at,
+                probe=probe,
+                detail="Record belongs to a different deployment provider",
+            )
+        if record.container_id is None:
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id="missing-immutable-id",
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unknown",
+                checked_at=checked_at,
+                probe=probe,
+                detail="Host history has no immutable container ID",
+            )
+
+        expected_id = record.container_id
+        result, error = self._execute(["inspect", "--format", "{{json .}}", expected_id])
+        if error:
+            lowered = error.lower()
+            if "no such container" in lowered or "no such object" in lowered:
+                status = "not_found"
+                health = "unavailable"
+            elif self._is_unavailable(error) or "timed out" in lowered:
+                status = "unavailable"
+                health = "unavailable"
+            else:
+                status = "invalid_response"
+                health = "unknown"
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=expected_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status=status,
+                runtime_state="unknown",
+                health_status=health,
+                checked_at=checked_at,
+                probe=probe,
+                detail=error,
+            )
+
+        assert result is not None
+        output = result.stderr[-_OUTPUT_LIMIT:] or result.stdout[-_OUTPUT_LIMIT:]
+        if result.returncode != 0:
+            lowered = output.lower()
+            if "no such container" in lowered or "no such object" in lowered:
+                status = "not_found"
+                health = "unavailable"
+            elif self._is_unavailable(output):
+                status = "unavailable"
+                health = "unavailable"
+            else:
+                status = "invalid_response"
+                health = "unknown"
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=expected_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status=status,
+                runtime_state="unknown",
+                health_status=health,
+                checked_at=checked_at,
+                probe=probe,
+                detail=output or "Docker inspect failed",
+            )
+
+        try:
+            inspected = json.loads(result.stdout)
+        except (TypeError, json.JSONDecodeError):
+            inspected = None
+        if not isinstance(inspected, dict):
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=expected_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unknown",
+                checked_at=checked_at,
+                probe=probe,
+                detail="Docker returned malformed container inspection data",
+            )
+
+        observed_id = inspected.get("Id")
+        if not isinstance(observed_id, str) or not _CONTAINER_ID.fullmatch(observed_id):
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=expected_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unknown",
+                checked_at=checked_at,
+                probe=probe,
+                detail="Docker inspect did not return a valid immutable container ID",
+            )
+        if observed_id != expected_id:
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=expected_id,
+                observed_runtime_id=observed_id,
+                identity_match=False,
+                status="identity_mismatch",
+                runtime_state="unknown",
+                health_status="unavailable",
+                checked_at=checked_at,
+                probe=probe,
+                detail="Docker inspect returned a different immutable container ID",
+            )
+
+        state = inspected.get("State")
+        runtime_state = "unknown"
+        health_status = "unknown"
+        if isinstance(state, dict):
+            raw_state = state.get("Status")
+            if raw_state in {
+                "created", "running", "paused", "restarting",
+                "removing", "exited", "dead",
+            }:
+                runtime_state = raw_state
+                if runtime_state != "running":
+                    health_status = "unhealthy"
+                else:
+                    health = state.get("Health")
+                    if isinstance(health, dict):
+                        docker_health = health.get("Status")
+                        if docker_health == "healthy":
+                            health_status = "healthy"
+                        elif docker_health == "unhealthy":
+                            health_status = "unhealthy"
+                        else:
+                            health_status = "unknown"
+
+        detail = ""
+        if runtime_state == "unknown":
+            detail = "Docker identity matched but runtime state is missing or unclassified"
+        elif health_status == "unknown" and runtime_state == "running":
+            detail = "Docker HEALTHCHECK is absent or has no terminal health state"
+        elif health_status == "unhealthy":
+            detail = f"Container runtime is {runtime_state}"
+
+        return DeploymentRuntimeInspection(
+            provider=self.name,
+            deployment_id=record.deployment_id,
+            expected_runtime_id=expected_id,
+            observed_runtime_id=observed_id,
+            identity_match=True,
+            status="verified",
+            runtime_state=runtime_state,
+            health_status=health_status,
+            checked_at=checked_at,
+            probe=probe,
+            detail=detail,
+        )
 
     def stop(self, record: DeploymentRecord) -> DeploymentOperationResult:
         if record.provider != self.name:

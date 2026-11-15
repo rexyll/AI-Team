@@ -202,3 +202,165 @@ def test_rollback_is_explicitly_unsupported_until_host_history_exists():
         DeploymentRequest("/tmp", "demo", "local", "1.2.3"), record()
     )
     assert result.status == "unsupported"
+
+
+def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
+    expected_id = "f" * 64
+    runner = FakeRunner(ok(json.dumps({
+        "Id": expected_id,
+        "State": {"Status": "running", "Health": {"Status": "healthy"}},
+    })))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "verified"
+    assert result.identity_match is True
+    assert result.expected_runtime_id == expected_id
+    assert result.observed_runtime_id == expected_id
+    assert result.runtime_state == "running"
+    assert result.health_status == "healthy"
+    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", expected_id]
+
+
+def test_inspect_runtime_reports_identity_mismatch_without_trusting_name():
+    runner = FakeRunner(ok(json.dumps({
+        "Id": "e" * 64,
+        "State": {"Status": "running", "Health": {"Status": "healthy"}},
+    })))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "identity_mismatch"
+    assert result.identity_match is False
+    assert result.expected_runtime_id == "f" * 64
+    assert result.observed_runtime_id == "e" * 64
+    assert result.health_status == "unavailable"
+    assert runner.calls[0][0][-1] == "f" * 64
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_health"),
+    [
+        ({"Status": "exited"}, "unhealthy"),
+        ({"Status": "paused"}, "unhealthy"),
+        ({"Status": "running"}, "unknown"),
+        ({"Status": "running", "Health": {"Status": "starting"}}, "unknown"),
+        ({"Status": "running", "Health": {"Status": "unhealthy"}}, "unhealthy"),
+    ],
+)
+def test_inspect_runtime_keeps_lifecycle_and_health_separate(state, expected_health):
+    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64, "State": state})))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "verified"
+    assert result.identity_match is True
+    assert result.health_status == expected_health
+
+
+def test_inspect_runtime_reports_missing_container_by_immutable_id():
+    runner = FakeRunner(failed("Error: No such object: " + "f" * 64))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "not_found"
+    assert result.observed_runtime_id is None
+    assert runner.calls[0][0][-1] == "f" * 64
+
+
+def test_inspect_runtime_reports_daemon_unavailable():
+    runner = FakeRunner(failed("Cannot connect to the Docker daemon"))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "unavailable"
+    assert result.health_status == "unavailable"
+
+
+def test_inspect_runtime_rejects_malformed_json():
+    runner = FakeRunner(ok("not-json"))
+
+    result = LocalDockerProvider(runner).inspect_runtime(record())
+
+    assert result.status == "invalid_response"
+    assert result.identity_match is False
+
+
+def test_inspect_runtime_does_not_call_docker_without_immutable_id():
+    original = record()
+    legacy = DeploymentRecord(
+        original.deployment_id,
+        original.provider,
+        original.environment,
+        original.version,
+        original.artifact,
+        original.status,
+        original.health_status,
+        original.created_at,
+        project=original.project,
+    )
+    runner = FakeRunner()
+
+    result = LocalDockerProvider(runner).inspect_runtime(legacy)
+
+    assert result.status == "invalid_response"
+    assert "immutable" in result.detail.lower()
+    assert runner.calls == []
+
+
+def test_inspect_runtime_rejects_foreign_provider_before_docker_call():
+    original = record()
+    foreign_artifact = DeploymentArtifact(
+        "foreign", "image:foreign", "b" * 64, "1.2.3"
+    )
+    foreign = DeploymentRecord(
+        "foreign-container",
+        "foreign",
+        original.environment,
+        original.version,
+        foreign_artifact,
+        original.status,
+        original.health_status,
+        original.created_at,
+        project=original.project,
+        container_id=original.container_id,
+    )
+    runner = FakeRunner()
+
+    result = LocalDockerProvider(runner).inspect_runtime(foreign)
+
+    assert result.status == "invalid_response"
+    assert "different provider" in result.detail.lower()
+    assert runner.calls == []
+
+
+def test_runtime_inspection_contract_rejects_false_identity_claims():
+    from runtime.deployment_provider import DeploymentRuntimeInspection
+
+    with pytest.raises(ValueError, match="match"):
+        DeploymentRuntimeInspection(
+            provider="docker-local",
+            deployment_id="release",
+            expected_runtime_id="f" * 64,
+            observed_runtime_id="e" * 64,
+            identity_match=True,
+            status="verified",
+            runtime_state="running",
+            health_status="healthy",
+            checked_at="2026-11-15T16:00:00Z",
+            probe="test",
+        )
+
+    with pytest.raises(ValueError, match="healthy"):
+        DeploymentRuntimeInspection(
+            provider="docker-local",
+            deployment_id="release",
+            expected_runtime_id="f" * 64,
+            observed_runtime_id=None,
+            identity_match=False,
+            status="not_found",
+            runtime_state="unknown",
+            health_status="healthy",
+            checked_at="2026-11-15T16:00:00Z",
+            probe="test",
+        )
