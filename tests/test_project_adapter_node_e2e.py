@@ -598,7 +598,9 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     built_entry = root / "dist" / "index.html"
     assert built_entry.is_file()
     assert "ORCHESTRATOR-WEB-DELIVERABLE" in built_entry.read_text(encoding="utf-8")
-    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", qa_agent.llm.last_tool_assessment
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", json.dumps(
+        qa_agent.llm.last_tool_assessment, ensure_ascii=False, sort_keys=True
+    )
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
     assert all(item["status"] == "completed" for item in qa_history)
@@ -833,7 +835,9 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "42"
-    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", qa_agent.llm.last_tool_assessment
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", json.dumps(
+        qa_agent.llm.last_tool_assessment, ensure_ascii=False, sort_keys=True
+    )
     assert project.last_delivery["acceptance"]["verdict"] == "passed"
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
