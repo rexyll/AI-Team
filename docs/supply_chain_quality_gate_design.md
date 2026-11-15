@@ -68,8 +68,10 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 
 **实施与验收结果（2026-11-15）**：`runtime/delivery_sbom.py` 已接入 `core/project_orchestrator.py`。交付根目录生成 `DELIVERY_BUILD_EVIDENCE.json` 与 `DELIVERY_SBOM.cdx.json`，之后由现有 manifest/ZIP 纳入交付；ZIP 旁生成 `.provenance.json` sidecar。无锁项目明确返回 `partial`；不支持的 requirements include/direct URL 和坏锁均拒绝生成。四份仓库真实 lock（Linux/Windows × production/dev）均通过组件解析测试。CI run `43700797699` 全绿：2507 passed / 10 skipped，security 234 passed / 9 skipped，Windows smoke 1 passed。sidecar 无签名，当前只提供摘要完整性校验；许可证状态保持 unknown，漏洞扫描仍未执行。
 ### T21.7.3 覆盖率与性能预算
-- 在固定 Python 3.14 CI 环境采集覆盖率基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
-- 将现有性能测试定位为结构/扩展性回归；如增加绝对预算，必须在受控 runner 上采集多次样本、记录环境和分位数，并对噪声/基线变更留痕。
+- 在固定 Python 3.14 CI 环境采集 line + branch coverage 基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
+- 覆盖率工具 `coverage.py` 纳入开发依赖并由 Linux/Windows Python 3.14 hash lock 固定；CI 新增独立 `coverage-baseline` job，上传 JSON/HTML/metadata artifact（保留 30 天）。测量范围为 `agents, core, integration, runtime, security, tools`。独立覆盖率测量排除 6 个机器时间敏感 benchmark/performance 测试文件，避免 instrumentation 改变吞吐/并行断言；这些测试仍由原有全量 regression job 正常执行，不是跳过测试。
+- 首次 coverage artifact 生成后，按模块风险和实际覆盖数据设置门槛；目前不预设全局百分比，也不以缺少数据的模块计算伪基线。
+- 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；绝对预算需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
 - 压力测试保持 opt-in，默认 CI 有界；不可因超时或资源压力静默跳过。
 
 ### T21.7.4 漏洞与许可证策略
