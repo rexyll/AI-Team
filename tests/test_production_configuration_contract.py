@@ -57,7 +57,11 @@ def test_ci_installs_pytest_and_uses_supported_python_matrix() -> None:
 
     assert "pytest" in dev_requirements
     assert 'python-version: ["3.14"]' in workflow
-    assert "pip install -r requirements.txt -r requirements-dev.txt" in workflow
+    assert '"pip==25.3"' in workflow
+    assert "--require-hashes" in workflow
+    assert "requirements-dev-linux-py314.lock" in workflow
+    assert "requirements-dev-windows-py314.lock" in workflow
+    assert "pip install -r requirements.txt -r requirements-dev.txt" not in workflow
     assert "python -m pytest -q" in workflow
     assert "python tools/run_security_regression.py" in workflow
 
