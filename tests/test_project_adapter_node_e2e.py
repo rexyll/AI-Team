@@ -59,6 +59,14 @@ def _write_e2e_evidence(
     assert payload["task_graph"]["workspace_isolation"]["leases_merged"] == 1
     assert payload["artifacts"]["manifest"]["status"] == "available"
     assert payload["artifacts"]["package"]["recorded_sha256_matches"] is True
+    qa_invocations = [
+        item for item in payload["tool_invocations"] if item["role"] == "qa"
+    ]
+    assert len(qa_invocations) == 3
+    assert all(item["status"] == "completed" for item in qa_invocations)
+    assert payload["gates"]["qa"]["tool_invocation_count"] == 3
+    assert payload["gates"]["acceptance"]["verdict"] == "passed"
+    assert payload["gates"]["acceptance"]["executable_verdict"] == "passed"
     assert payload["tool_invocations"]
     return payload
 
