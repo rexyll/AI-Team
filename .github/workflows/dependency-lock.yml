@@ -1,0 +1,63 @@
+name: Dependency lock generation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lock:
+    name: Generate Python 3.14 lock (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+          - platform: windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned lock resolver
+        run: |
+          python -m pip install "pip==25.3"
+          python -m pip install "pip-tools==7.5.2"
+
+      - name: Resolve production and development locks with hashes
+        shell: bash
+        run: |
+          mkdir -p generated-locks
+          pip-compile --resolver=backtracking --generate-hashes --strip-extras \
+            --output-file="generated-locks/requirements-${{ matrix.platform }}-py314.lock" \
+            requirements.txt
+          pip-compile --resolver=backtracking --generate-hashes --strip-extras \
+            --output-file="generated-locks/requirements-dev-${{ matrix.platform }}-py314.lock" \
+            requirements.txt requirements-dev.txt
+
+      - name: Record resolver environment
+        shell: bash
+        run: |
+          python -VV > generated-locks/resolver-environment.txt
+          python -m pip --version >> generated-locks/resolver-environment.txt
+          pip-compile --version >> generated-locks/resolver-environment.txt
+          python -c "import platform; print(platform.platform()); print(platform.machine())" >> generated-locks/resolver-environment.txt
+          echo "platform=${{ matrix.platform }}" >> generated-locks/resolver-environment.txt
+          echo "python=3.14" >> generated-locks/resolver-environment.txt
+          echo "pip=25.3" >> generated-locks/resolver-environment.txt
+          echo "pip-tools=7.5.2" >> generated-locks/resolver-environment.txt
+
+      - name: Upload generated lock candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-lock-candidates-${{ matrix.platform }}-py314
+          path: generated-locks/
+          if-no-files-found: error
+          retention-days: 14
