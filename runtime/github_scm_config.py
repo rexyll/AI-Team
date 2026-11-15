@@ -36,6 +36,7 @@ def create_github_scm_runtime(
     *,
     environ: Mapping[str, str] | None = None,
     transport_factory: Callable[[str], object] | None = None,
+    pull_request_number: int | None = None,
 ) -> GitHubSCMRuntime | None:
     """Build an opt-in GitHub SCM service from host environment variables.
 
@@ -47,12 +48,20 @@ def create_github_scm_runtime(
     repository = (env.get(REPOSITORY_ENV) or "").strip()
     pull_request_raw = (env.get(PULL_REQUEST_ENV) or "").strip()
     token = (env.get(TOKEN_ENV) or "").strip()
+    if pull_request_number is not None:
+        if (
+            not isinstance(pull_request_number, int)
+            or isinstance(pull_request_number, bool)
+            or pull_request_number < 1
+        ):
+            raise GitHubSCMConfigurationError("pull_request_number must be a positive integer")
+        pull_request_raw = str(pull_request_number)
 
     if not repository and not pull_request_raw and not token:
         return None
     if not repository or not pull_request_raw:
         raise GitHubSCMConfigurationError(
-            f"{REPOSITORY_ENV} and {PULL_REQUEST_ENV} must be configured together"
+            f"{REPOSITORY_ENV} and a pull request number must be configured"
         )
     if not token:
         raise GitHubSCMConfigurationError(
