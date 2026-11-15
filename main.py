@@ -41,7 +41,9 @@ DEFAULT_KNOWLEDGE_BASE = "knowledge"
 
 
 def _read_host_confirmation(prompt: str) -> str:
-    """Prompt on stderr so JSON-mode commands keep stdout machine-readable."""
+    """Require a real terminal operator and keep JSON stdout machine-readable."""
+    if not callable(getattr(sys.stdin, "isatty", None)) or not sys.stdin.isatty():
+        raise RuntimeError("SCM publication requires an interactive terminal; no remote write was performed")
     print(prompt, file=sys.stderr, flush=True)
     return input().strip()
 
