@@ -243,7 +243,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
-| 2026-11-15 | T21.5.4 SCM lifecycle mock E2E | 测试实现已提交，执行/CI 待验证：覆盖 publish→poll→merge 全链路与 CI/Review/PR/HEAD/API 故障；断言失败路径不发生越权后续写操作、不自动重试，部分发布失败如实暴露。 | 新增 `tests/test_scm_lifecycle_e2e.py` |
+| 2026-11-15 | T21.5.4 SCM lifecycle mock E2E + CI 修复 | CI 已通过：修复 publish CLI 测试使用真实 `SCMService` 的测试夹具，以及 PR 创建失败路径的事件顺序断言。全量回归 2394 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows production terminal smoke 通过。仅 mock 验证，未执行真实 GitHub push/PR/merge。 | [GitHub Actions #283](https://github.com/rexyll/AI-Team/actions/runs/43672101456)；提交 `7af42e6`；`tests/test_scm_publish_cli.py`、`tests/test_scm_lifecycle_e2e.py` |
 | 2026-11-15 | T21.5.3 CI-gated interactive merge CLI | 实现完成，CI 待验证：只允许 open/unmerged + green CI + approved review；真实 TTY 二次确认、head-SHA 一次性审批、merge 前再次 preflight；未做 live merge。 | 更新 `main.py`、`runtime/scm_provider.py`、`tests/test_scm_provider.py`、`docs/scm_provider_architecture.md`；新增 `tests/test_scm_merge_cli.py` |
 | 2026-11-15 | T21.5.3 interactive publish approval CLI | 实现完成，CI 待验证：独立 `--scm-publish-pr` 入口、精确 HEAD 预览、push 与 PR 两次独立确认、双一次性审批、origin/HEAD 校验；未做 live GitHub 写操作。 | 更新 `main.py`、`runtime/github_scm_config.py`、`runtime/scm_provider.py`、`tests/test_github_scm_config.py`、`tests/test_scm_provider.py`、`docs/scm_provider_architecture.md`；新增 `tests/test_scm_publish_cli.py` |
 | 2026-11-15 | T21.5.3 PR polling CLI integration | 实现完成，CI 待验证：独立只读 `--scm-poll-pr` 命令、显式 PR 编号覆盖、JSON/文本输出及状态退出码；无 SCM 写操作，未做 live GitHub 验证。 | 更新 `main.py`、`runtime/github_scm_config.py`、`tests/test_github_scm_config.py`、`docs/scm_provider_architecture.md`；新增 `tests/test_scm_cli.py` |
