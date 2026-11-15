@@ -70,7 +70,7 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 ### T21.7.3 覆盖率与性能预算
 - 在固定 Python 3.14 CI 环境采集 line + branch coverage 基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
 - 覆盖率工具 `coverage.py` 纳入开发依赖并由 Linux/Windows Python 3.14 hash lock 固定；CI 新增独立 `coverage-baseline` job，上传 JSON/HTML/metadata artifact（保留 30 天）。测量范围为 `agents, core, integration, runtime, security, tools`。独立覆盖率测量排除 6 个机器时间敏感 benchmark/performance 测试文件，避免 instrumentation 改变吞吐/并行断言；这些测试仍由原有全量 regression job 正常执行，不是跳过测试。
-- 首次 coverage artifact（run `43701785117`，提交 `3e06220`）测得总 line coverage 84.40%（15,795/17,991 statements）、branch coverage 74.99%（4,861/6,482 branches）。该 artifact 完整生成，但当次全量/coverage 测试因新增 `coverage.py` 后 SBOM 锁组件数断言未更新而有 1 项测试失败；覆盖率数据用于初始基线参考，最终门禁仍须由修复后的全绿 run 再确认。
+- 已验证 coverage artifact（run `43702027414`，提交 `161a6fd`，artifact `14157291227`）测得总 line coverage 84.31%（15,841/18,062 statements）、branch coverage 74.88%（4,875/6,510 branches）。对应 CI 全绿：全量回归 2,513 passed / 10 skipped，覆盖率测量 2,493 passed / 10 skipped，安全回归 234 passed / 9 skipped，Windows smoke 1 passed。此前引入 coverage 后发现开发 lock 组件数断言过时（Linux 30→31、Windows 31→32），已更新为当前四份锁的真实组件数量，并在该全绿 run 中复验。
 - 按首次测量设置保守的模块风险门槛，配置位于 `config/coverage_thresholds.json`，由 `tools/check_coverage_thresholds.py` 对 coverage JSON 聚合并 fail-closed（缺失/新增未配置模块均失败）：
 
   | 模块 | 初始 line | 初始 branch | 最低 line | 最低 branch |
@@ -82,7 +82,8 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
   | tools | 67.92% | 63.56% | 65% | 58% |
 
 - 门槛是相对当前实测基线留出波动余量的模块底线，不是声称这些数值代表充分测试；后续应优先补强低覆盖高风险路径（例如 `security/process_sandbox.py`、`tools/terminal.py`），并在基线变化时审查阈值变更。暂不使用单一全局百分比。
-- 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；绝对预算需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
+- 性能现状复核：`tests/test_workflow_event_performance_contract.py` 与 `tests/test_workflow_event_performance_regression_contract.py` 检查任务/事件语义、吞吐随规模扩展的宽松比例；`tests/test_large_project_benchmark.py` 在默认 CI 中运行确定性 1,000/5,000-task 结构与 5,000-task 测量。`benchmarks/large_project_benchmark.py` 的 10,000-task 全量基准通过脚本入口 opt-in；`benchmarks/real_developer/live.py` 仅在显式调用时构造真实 Provider executor，不会被默认 CI 隐式触发。`benchmarks/multi_developer/statistics.py` 已提供重复样本 mean/median/stddev/CV 描述统计。
+- 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；当前没有已配置的固定 self-hosted performance runner，因此本节点不设机器相关绝对时间/吞吐预算。后续需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
 - 压力测试保持 opt-in，默认 CI 有界；不可因超时或资源压力静默跳过。
 
 ### T21.7.4 漏洞与许可证策略
