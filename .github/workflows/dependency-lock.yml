@@ -106,6 +106,7 @@ jobs:
 
       - name: Stage validated lock files
         run: |
+          git pull --rebase origin main
           cp artifacts/linux/requirements-linux-py314.lock .
           cp artifacts/linux/requirements-dev-linux-py314.lock .
           cp artifacts/windows/requirements-windows-py314.lock .
