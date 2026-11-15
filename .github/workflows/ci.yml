@@ -77,6 +77,7 @@ jobs:
           coverage json --pretty-print -o coverage.json
           coverage html -d coverage-html
           coverage report -m
+          python tools/check_coverage_thresholds.py coverage.json config/coverage_thresholds.json
           printf 'python=%s\n' "$(python --version)" > coverage-baseline-metadata.txt
           printf 'commit=%s\n' "$GITHUB_SHA" >> coverage-baseline-metadata.txt
           printf 'measurement=branch-and-line\n' >> coverage-baseline-metadata.txt
