@@ -321,7 +321,7 @@ class _AcceptanceAwareMockLLM(MockLLM):
 
     def generate(self, prompt: str, **kwargs) -> str:
         default = super().generate(prompt, **kwargs)
-        marker = "实际 JUnit 测试用例:\n"
+        marker = "实际 JUnit 测试用例：\n"
         if marker not in prompt:
             return default
         raw_cases = prompt.rsplit(marker, 1)[1]
@@ -344,6 +344,36 @@ class _AcceptanceAwareMockLLM(MockLLM):
             else []
         )
         return json.dumps({"schema_version": 1, "tests": tests}, ensure_ascii=False)
+
+
+def test_acceptance_aware_mock_maps_only_observed_junit_selectors():
+    llm = _AcceptanceAwareMockLLM()
+    selector = "tests.test_web_artifact::test_built_web_entry_contains_acceptance_marker"
+    prompt = (
+        "根据需求规格生成映射。\\n"
+        "实际 JUnit 测试用例：\\n"
+        + json.dumps([{"selector": selector, "status": "passed"}], ensure_ascii=False)
+    )
+
+    result = json.loads(llm.generate(prompt))
+
+    assert result == {
+        "schema_version": 1,
+        "tests": [{
+            "test_id": "AT-001",
+            "requirement_id": "REQ-001",
+            "selector": selector,
+        }],
+    }
+
+
+def test_acceptance_aware_mock_leaves_mapping_empty_without_observed_tests():
+    llm = _AcceptanceAwareMockLLM()
+    prompt = "实际 JUnit 测试用例：\\n[]"
+
+    result = json.loads(llm.generate(prompt))
+
+    assert result == {"schema_version": 1, "tests": []}
 
 
 class _ResultAwareQAMockLLM(MockLLM):
