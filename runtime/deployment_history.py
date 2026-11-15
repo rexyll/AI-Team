@@ -54,7 +54,8 @@ class DeploymentHistoryStore:
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA busy_timeout = 10000")
-            yield connection
+            with connection:
+                yield connection
         finally:
             connection.close()
 
