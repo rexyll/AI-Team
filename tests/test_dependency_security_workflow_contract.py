@@ -83,3 +83,5 @@ def test_license_policy_denies_unknown_and_requires_explicit_exceptions():
     assert policy["scanner_unavailable_policy"] == "deny"
     assert policy["stale_database_policy"] == "deny"
     assert policy["exceptions"] == []
+    assert policy["license_classification_overrides"]["PSF-2.0"]["classification"] == "NOTICE"
+    assert policy["license_classification_overrides"]["PSF-2.0"]["source"].startswith("https://spdx.org/")
