@@ -82,3 +82,45 @@ jobs:
           path: generated-locks/
           if-no-files-found: error
           retention-days: 14
+
+  commit-locks:
+    name: Commit validated platform lock files
+    needs: generate-lock
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux lock artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-lock-candidates-linux-py314
+          path: artifacts/linux
+
+      - name: Download Windows lock artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-lock-candidates-windows-py314
+          path: artifacts/windows
+
+      - name: Stage validated lock files
+        run: |
+          cp artifacts/linux/requirements-linux-py314.lock .
+          cp artifacts/linux/requirements-dev-linux-py314.lock .
+          cp artifacts/windows/requirements-windows-py314.lock .
+          cp artifacts/windows/requirements-dev-windows-py314.lock .
+          git add requirements-*-py314.lock requirements-dev-*-py314.lock
+
+      - name: Commit locks to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --cached --quiet; then
+            echo "Lock files are unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build: add verified Python 3.14 dependency locks"
+          git push origin HEAD:main
