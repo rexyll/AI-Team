@@ -135,7 +135,6 @@ def test_full_publish_poll_and_merge_lifecycle_is_ordered_and_auditable():
     assert provider.merged is True
     assert [event[0] for event in provider.events] == [
         "local_head",
-        "local_head",
         "push",
         "create_pr",
         "get_pr",
