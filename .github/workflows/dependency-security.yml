@@ -108,6 +108,8 @@ jobs:
           vulnerability_status=$?
 
           "$TRIVY" fs \
+            --skip-version-check \
+            --disable-telemetry \
             --cache-dir "$PWD/.trivy-cache" \
             --scanners license \
             --pkg-types library \
