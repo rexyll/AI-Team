@@ -18,6 +18,8 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
     assert "step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c" in workflow
     assert "egress-policy: block" in workflow
     assert "disable-telemetry: true" in workflow
+    assert "pypi.org:443" in workflow
+    assert "files.pythonhosted.org:443" in workflow
     assert "ghcr.io:443" in workflow
     assert "pkg-containers.githubusercontent.com:443" in workflow
     assert "results-receiver.actions.githubusercontent.com:443" in workflow
@@ -27,10 +29,11 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
 def test_dependency_security_scans_only_production_lock_and_fails_closed():
     workflow = WORKFLOW.read_text(encoding="utf-8-sig")
 
-    install = workflow.index("Install production dependencies from the verified hash lock")
     harden = workflow.index("Restrict scanner network egress")
+    checkout = workflow.index("- uses: actions/checkout@v4")
+    install = workflow.index("Install production dependencies from the verified hash lock")
     scan = workflow.index("Scan production lock for vulnerabilities and licenses")
-    assert install < harden < scan
+    assert harden < checkout < install < scan
 
     assert "--require-hashes -r requirements-linux-py314.lock" in workflow
     assert "requirements-dev-linux-py314.lock" not in workflow
