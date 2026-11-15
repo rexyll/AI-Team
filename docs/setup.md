@@ -27,15 +27,18 @@ If PowerShell execution policy prevents activation, use the Python executable in
 
 ## 3. Install dependencies
 
-The full agent/provider import chain requires two declared third-party dependencies:
+Install the platform-specific Python 3.14 lock. On Windows PowerShell:
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install --disable-pip-version-check "pip==25.3"
+python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-windows-py314.lock
 ```
 
-The MCP bridge is an independent external project and is not installed from this repository. Do not install an undocumented or missing MCP requirements file here.
+For the complete development/test toolchain, use `requirements-dev-windows-py314.lock` instead. On Linux, use the corresponding `requirements-linux-py314.lock` or `requirements-dev-linux-py314.lock`. The lock files contain resolved transitive dependencies and SHA-256 hashes; installation fails if a required hash is missing or does not match. These locks target Python 3.14 and their named operating system.
 
-`requirements.txt` pins the two direct provider dependencies (`openai`, `python-dotenv`). These direct pins are not yet a complete transitive dependency lock and do not provide hash verification. The development dependencies in `requirements-dev.txt` currently use version ranges. Until T21.7.1 is complete, installs resolve transitive versions from the package index and are not fully reproducible. Contract tests themselves stay network-independent through mock injection; `config/model.py` imports both packages and resolves the shared client lazily on first provider use. See `docs/production_configuration.md` for the full configuration checklist.
+`requirements.txt` and `requirements-dev.txt` remain the reviewed top-level dependency inputs; do not install them directly when reproducibility and hash verification are required. Changes to either input trigger the cross-platform lock-generation workflow, which resolves and verifies candidates before committing the updated locks to `main`.
+
+The MCP bridge is an independent external project and is not installed from this repository. Do not install an undocumented or missing MCP requirements file here. Contract tests themselves stay network-independent through mock injection; `config/model.py` imports both provider packages and resolves the shared client lazily on first provider use. See `docs/production_configuration.md` for the full configuration checklist.
 
 Verify the interpreter:
 
