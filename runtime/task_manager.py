@@ -61,6 +61,24 @@ class TaskManager:
         with self._lock:
             return list(self.tasks.values())
 
+    def add_blocked_task(self, task: Task) -> Task:
+        """Register one host-created blocked task without making it executable."""
+        if not isinstance(task, Task):
+            raise TypeError("task must be a Task")
+        if task.status != TaskStatus.BLOCKED.value:
+            raise ValueError("new proposal tasks must start blocked")
+        if not isinstance(task.dependencies, list):
+            raise TypeError("task dependencies must be a list")
+        with self._lock:
+            if task.id in self.tasks:
+                raise ValueError(f"Duplicate task id: {task.id}")
+            missing = [dependency for dependency in task.dependencies if dependency not in self.tasks]
+            if missing:
+                raise ValueError("Blocked task has unknown dependencies: " + ", ".join(missing))
+            task.validate_contract()
+            self.tasks[task.id] = task
+            return task
+
     @staticmethod
     def can_transition(current: str | TaskStatus, target: str | TaskStatus) -> bool:
         return can_transition(current, target)

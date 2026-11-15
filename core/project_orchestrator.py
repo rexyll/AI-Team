@@ -89,6 +89,7 @@ from runtime.project_adapters import (
 )
 from runtime.tool_invocation_service import ToolInvocationService
 from runtime.scm_provider import SCMService
+from runtime.scm_ci_repair import SCMCIRepairTaskFactory
 
 
 class ProjectOrchestrator:
@@ -214,6 +215,7 @@ class ProjectOrchestrator:
         self.scm_repository = scm_repository.strip() if scm_repository else None
         self.scm_pull_request_number = scm_pull_request_number
         self.last_scm_observation: dict[str, Any] | None = None
+        self.last_scm_repair_proposal: dict[str, Any] | None = None
         self._workflow_event_log = workflow_event_log
         self._workflow_event_persistence = workflow_event_persistence
         self._project_id = project_id
@@ -439,8 +441,10 @@ class ProjectOrchestrator:
             value = self.last_plan.get("project")
             if isinstance(value, str):
                 project_name = value
-        result = ProjectResult.from_task_manager(task_manager, project=project_name)
         delivery = self._run_delivery_phase(task_manager, project=project_name)
+        # SCM repair proposals may add a host-approval-gated blocked task during
+        # delivery; derive the result only after that task-graph update.
+        result = ProjectResult.from_task_manager(task_manager, project=project_name)
         if delivery is not None and delivery.get("acceptance") is not None:
             result = ProjectResult(
                 project=result.project,
@@ -498,6 +502,72 @@ class ProjectOrchestrator:
                 "error_type": type(exc).__name__,
             }
 
+    def _propose_scm_ci_repair_task(self, task_manager: TaskManager) -> dict[str, Any] | None:
+        """Attach a failed-CI repair proposal as a blocked task; never execute it."""
+        self.last_scm_repair_proposal = None
+        observation = self.last_scm_observation
+        if (
+            self.scm_service is None
+            or not isinstance(observation, dict)
+            or observation.get("ci_status") != "failure"
+        ):
+            return None
+        if self.scm_repository is None or self.scm_pull_request_number is None:
+            return {"status": "unavailable", "error_type": "SCMConfigurationError"}
+        if not isinstance(self.last_plan, dict) or not isinstance(self.last_plan.get("tasks"), list):
+            return {"status": "unavailable", "error_type": "ProjectPlanUnavailable"}
+
+        try:
+            proposal = SCMCIRepairTaskFactory(max_repair_rounds=2).propose(
+                self.scm_service,
+                task_manager,
+                repository=self.scm_repository,
+                pull_request_number=self.scm_pull_request_number,
+            )
+            result = proposal.to_dict()
+            if proposal.status == "proposed" and proposal.task is not None:
+                plan_entry = {
+                    "id": proposal.task.id,
+                    "title": proposal.task.title,
+                    "description": proposal.task.description,
+                    "role": proposal.task.role,
+                    "dependencies": [],
+                }
+                candidate_plan = {
+                    **self.last_plan,
+                    "tasks": [*self.last_plan["tasks"], plan_entry],
+                }
+                validate_plan(candidate_plan)
+                task_manager.add_blocked_task(proposal.task)
+                self.last_plan = candidate_plan
+                self._emit_project_event(
+                    "scm.ci_repair.proposed",
+                    payload={
+                        "repository": self.scm_repository,
+                        "pull_request_number": self.scm_pull_request_number,
+                        "task_id": proposal.task.id,
+                        "round": proposal.round,
+                        "evidence_sha256": proposal.evidence_sha256,
+                        "status": "awaiting_host_approval",
+                    },
+                )
+            self.last_scm_repair_proposal = result
+            if isinstance(self.last_scm_observation, dict):
+                self.last_scm_observation = {
+                    **self.last_scm_observation,
+                    "repair_proposal": {
+                        "status": result.get("status"),
+                        "task_id": result.get("task_id"),
+                        "round": result.get("round"),
+                        "evidence_sha256": result.get("evidence_sha256"),
+                    },
+                }
+            return result
+        except Exception as exc:
+            result = {"status": "unavailable", "error_type": type(exc).__name__}
+            self.last_scm_repair_proposal = result
+            return result
+
     def _run_delivery_phase(self, task_manager: TaskManager, *, project: str | None) -> dict[str, Any] | None:
         """Produce the integration evidence, document set and delivery manifest.
 
@@ -523,6 +593,7 @@ class ProjectOrchestrator:
             manifest_root = resolve_workspace_path(self.deliverable_dir or ".")
         integration = self._run_integration_phase(manifest_root)
         self.last_scm_observation = self._observe_scm_pull_request()
+        self._propose_scm_ci_repair_task(task_manager)
         qa: dict[str, Any] | None = None
         if integration is None or integration["status"] != "failed":
             qa = self._run_qa_phase(manifest_root, integration)

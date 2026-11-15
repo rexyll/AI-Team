@@ -95,6 +95,29 @@ code 2 means the PR is blocked, closed or timed out; exit code 1 means the
 configuration/provider operation failed. The command performs no push, PR
 write, review mutation or merge.
 
+## CI failure to bounded repair-task proposal
+
+After a delivery observes a failed CI status, the host re-reads the PR head and
+CI result through `SCMService` before preparing a repair task. The factory
+accepts only an open, unmerged PR whose current head has CI status `failure`.
+Pending, unknown, successful, closed, or merged PR evidence does not create a
+task.
+
+A proposal is attached to the project task graph with status `blocked`, so it
+cannot enter the ready queue. It records the PR identity, exact failed head SHA,
+commit status, up to 100 check-run status records, capture time, and a SHA-256
+digest. Check output summaries/log text are not copied into task context; the
+structured status evidence is retained and fenced as untrusted data for the
+developer. The evidence digest makes repeated polling idempotent.
+
+The default limit is two repair rounds per repository/PR, with a hard maximum
+configuration of five. An outstanding proposal blocks another proposal for
+that PR; only after the previous task reaches a terminal state can another
+round be created. Existing history must be contiguous and well-formed or the
+factory fails closed. The proposal remains blocked until a host explicitly
+approves it. This feature does not execute a developer, consume retry budget,
+rerun CI, push commits, write PR metadata, alter reviews, or merge.
+
 ## Live read-only GitHub integration smoke
 
 Use Actions → **SCM live read-only smoke** → Run workflow, and enter an existing
