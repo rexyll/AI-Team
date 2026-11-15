@@ -225,3 +225,46 @@ For each DevPlan node:
 6. Record the accepted result and commit in `DevPlan.md`.
 
 Do not mix unrelated architectural changes into a documentation or release-readiness node.
+
+
+## 10. Host deployment recovery inventory
+
+The CLI entry point is the current process-level Host lifecycle. Deployment
+history is opt-in; no database is created for ordinary users unless the host
+sets `AI_TEAM_DEPLOYMENT_HISTORY` or passes `--deployment-history`.
+
+PowerShell:
+
+```powershell
+$env:AI_TEAM_DEPLOYMENT_HISTORY = "C:\AI-Team-Host\deployments.sqlite3"
+python main.py "Build a small personal expense tracker"
+```
+
+Linux/macOS:
+
+```bash
+export AI_TEAM_DEPLOYMENT_HISTORY="$HOME/.local/share/ai-team/deployments.sqlite3"
+python main.py "Build a small personal expense tracker"
+```
+
+When configured, every `main.py` process startup opens the host-owned SQLite
+store and performs a read-only inventory of unfinished replacement journals
+before dispatching the requested operation. Unfinished operations are reported
+to stderr, preserving machine-readable JSON on stdout. A corrupt configured
+database fails startup closed. The parent directory is created with private
+permissions and the SQLite database is restricted to the current user on
+POSIX systems.
+
+To inspect the full inventory without running a project operation:
+
+```powershell
+python main.py --deployment-recovery-inventory --output json
+# or explicitly select a history store
+python main.py --deployment-history C:\AI-Team-Host\deployments.sqlite3 --deployment-recovery-inventory
+```
+
+This startup hook currently inventories the `docker-local` provider only.
+It does not run Docker commands, inspect containers, change traffic, abort or
+resume a replacement, update a journal, or release a scope reservation.
+`needs_reconciliation` remains locked. It is a startup detection hook, not an
+automatic recovery or safe Docker rollback implementation.

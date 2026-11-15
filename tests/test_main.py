@@ -52,6 +52,19 @@ def test_build_parser_defaults_to_text_output():
 
     assert args.output == "text"
 
+    
+def test_build_parser_accepts_deployment_recovery_inventory():
+    parser = main.build_parser()
+
+    args = parser.parse_args([
+        "--deployment-history", "C:/host/deployments.sqlite3",
+        "--deployment-recovery-inventory",
+    ])
+
+    assert args.deployment_history == "C:/host/deployments.sqlite3"
+    assert args.deployment_recovery_inventory is True
+
+
 
 def test_build_parser_accepts_json_output():
     parser = main.build_parser()
@@ -455,3 +468,52 @@ def test_resume_session_completes_after_answers_saved(tmp_path, monkeypatch):
     assert "已确认" in captured["clarifications"]
     reloaded = ClarificationSession.load(saved)
     assert reloaded.status == "delivered"
+
+
+def test_main_scans_configured_deployment_history_before_project_dispatch(tmp_path, monkeypatch, capsys):
+    from runtime.deployment_host import DeploymentHostRuntime
+    from tests.test_deployment_host import _seed_pending_replacement
+
+    history_path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(history_path)
+    monkeypatch.setenv("AI_TEAM_DEPLOYMENT_HISTORY", str(history_path))
+
+    class FakeResult:
+        success = True
+        status = "completed"
+        total_tasks = 0
+        completed_tasks = 0
+
+        def to_dict(self):
+            return {"success": True, "status": "completed"}
+
+    monkeypatch.setattr(main, "run_project", lambda *args, **kwargs: (FakeTaskManager([]), FakeResult()))
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "demo", "--output", "json"])
+
+    assert main.main() == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["result"]["success"] is True
+    assert "startup-operation-001:prepared_candidate_not_persisted" in captured.err
+
+
+def test_main_deployment_recovery_inventory_is_standalone_json(tmp_path, monkeypatch, capsys):
+    from tests.test_deployment_host import _seed_pending_replacement
+
+    history_path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(history_path)
+    monkeypatch.delenv("AI_TEAM_DEPLOYMENT_HISTORY", raising=False)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py",
+        "--deployment-history", str(history_path),
+        "--deployment-recovery-inventory",
+        "--output", "json",
+    ])
+
+    assert main.main() == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["unfinished_replacements"] == 1
+    assert payload["inventory"][0]["operation_id"] == "startup-operation-001"
+    assert payload["inventory"][0]["external_state_verified"] is False

@@ -41,6 +41,12 @@ python main.py "<project requirement>"
   anchor, manifest SHA-256 integrity, regression suite), write
   `monitoring/status.json`, then exit. Exits non-zero unless the status is
   `healthy`; `--output json` prints the full report.
+- `--deployment-history <path>` — opt in to host-owned deployment history.
+  It can also be configured with `AI_TEAM_DEPLOYMENT_HISTORY`; when set, the
+  CLI runs a read-only unfinished-replacement inventory on every process start.
+- `--deployment-recovery-inventory` — standalone read-only inventory report
+  (supports `--output json`); requires `--deployment-history` or the
+  `AI_TEAM_DEPLOYMENT_HISTORY` environment variable.
 - `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
   `--defect-intake`; runs hotfix tasks through integration regression, QA, the
   security audit, the release gate, a patch release and repackaging on the same
@@ -62,6 +68,15 @@ python main.py "Build a small expense tracker" --projects-base F:\workspace\proj
 python main.py "Build a small expense tracker" --dashboard runs\dashboard.html
 python main.py "Build a small expense tracker" --output json
 python main.py "Build a small expense tracker" --release --auto-release
+```
+
+```powershell
+# host startup inventory (the same check runs on every CLI startup while configured)
+$env:AI_TEAM_DEPLOYMENT_HISTORY = "C:\\AI-Team-Host\\deployments.sqlite3"
+python main.py "Build a small expense tracker"
+
+# standalone read-only inventory
+python main.py --deployment-recovery-inventory --output json
 ```
 
 ## Milestone release plans

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -15,6 +16,7 @@ from runtime.agent_factory import create_agent_router
 from runtime.github_scm_config import create_github_scm_runtime
 from runtime.scm_lifecycle import SCMLifecycleConfig, SCMLifecycleCoordinator
 from runtime.dashboard_cli import write_dashboard
+from runtime.deployment_host import DeploymentHostRuntime
 from runtime.knowledge_base import (
     DEFAULT_KNOWLEDGE_LIMIT,
     KnowledgeBase,
@@ -194,6 +196,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help="Run the post-delivery monitoring heartbeat on an existing deliverable directory and exit non-zero when the deliverable is unhealthy.",
+    )
+    parser.add_argument(
+        "--deployment-history",
+        metavar="PATH",
+        default=None,
+        help="Host-private SQLite deployment history. Also configured by AI_TEAM_DEPLOYMENT_HISTORY; when set, the CLI performs a read-only replacement-recovery inventory during startup.",
+    )
+    parser.add_argument(
+        "--deployment-recovery-inventory",
+        action="store_true",
+        help="Standalone read-only report of unfinished deployment replacements from --deployment-history or AI_TEAM_DEPLOYMENT_HISTORY.",
     )
     parser.add_argument(
         "--scm-poll-pr",
@@ -712,8 +725,88 @@ def main() -> int:
         or args.scm_poll_pr is not None
         or args.scm_publish_pr
         or args.scm_merge_pr is not None
+        or args.deployment_recovery_inventory
     ):
         parser.error("the following arguments are required: requirement")
+
+    deployment_history_path = (
+        args.deployment_history or os.environ.get("AI_TEAM_DEPLOYMENT_HISTORY")
+    )
+
+    if args.deployment_recovery_inventory:
+        if any((
+            args.requirement is not None,
+            args.requirements_file is not None,
+            args.interactive,
+            args.resume_session is not None,
+            args.analyze_only,
+            args.clarifications is not None,
+            args.change_request is not None,
+            args.revise_project is not None,
+            args.release,
+            args.release_version is not None,
+            args.auto_release,
+            args.milestone is not None,
+            args.release_history is not None,
+            args.knowledge_base is not None,
+            args.knowledge_query is not None,
+            args.knowledge_list is not None,
+            args.knowledge_extract is not None,
+            args.monitor_check is not None,
+            args.dashboard is not None,
+            args.scm_poll_pr is not None,
+            args.scm_publish_pr,
+            args.scm_merge_pr is not None,
+            args.hotfix_project is not None,
+            args.defect_intake is not None,
+        )):
+            parser.error("--deployment-recovery-inventory is standalone")
+        if not deployment_history_path:
+            parser.error(
+                "--deployment-recovery-inventory requires --deployment-history "
+                "or AI_TEAM_DEPLOYMENT_HISTORY"
+            )
+        try:
+            startup = DeploymentHostRuntime(deployment_history_path).start()
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(startup.to_dict(), ensure_ascii=False, sort_keys=True))
+        else:
+            print(
+                f"[Deployment-Recovery] provider={startup.provider} "
+                f"history={startup.history_path} "
+                f"unfinished={len(startup.inventory)}"
+            )
+            for item in startup.inventory:
+                print(
+                    f"  {item.operation_id}: phase={item.phase} "
+                    f"classification={item.classification} "
+                    f"active={item.active_deployment_id or 'none'}"
+                )
+        return 0
+
+    # main.py is the documented CLI host entry point. When deployment history
+    # is explicitly configured, every process startup performs a read-only
+    # inventory before dispatching any operation. No Docker command, route
+    # update, journal mutation, or reservation release occurs here.
+    if deployment_history_path:
+        try:
+            startup = DeploymentHostRuntime(deployment_history_path).start()
+        except Exception as exc:
+            print(f"[Deployment-Host] startup inventory failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if startup.inventory:
+            summaries = ", ".join(
+                f"{item.operation_id}:{item.classification}"
+                for item in startup.inventory
+            )
+            print(
+                f"[Deployment-Host] {len(startup.inventory)} unfinished replacement(s) "
+                f"remain reserved ({summaries}); inspect with --deployment-recovery-inventory.",
+                file=sys.stderr,
+            )
 
     if args.scm_merge_pr is not None:
         if (
