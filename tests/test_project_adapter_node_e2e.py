@@ -552,6 +552,94 @@ class _E2ETester:
         }
 
 
+def _make_python_cli_project_gate_agents():
+    """Use production Tester/Reviewer agents with pytest-evidence-sensitive decisions."""
+    from agents.reviewer import ReviewerAgent
+    from agents.tester import TesterAgent
+    from runtime.agent_config import AgentConfig
+    from runtime.llm.mock import MockLLM
+
+    class _PythonEvidenceAwareTesterLLM(MockLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.evidence_accepted = False
+
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system_prompt: str = "",
+            temperature: float = 0.2,
+            max_tokens: int = 4096,
+        ) -> str:
+            self.evidence_accepted = (
+                "python -m pytest -q tests/test_cli.py" in prompt
+                and "exit_code=0" in prompt
+                and "1 passed" in prompt
+            )
+            self.response = (
+                "TEST_PASSED\n"
+                "Developer 的实际 pytest 命令退出码为 0，CLI 测试 1 项通过。"
+                if self.evidence_accepted
+                else "TEST_FAILED\n"
+                "缺少 Python CLI pytest 的成功退出码或通过记录。"
+            )
+            return super().generate(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    class _PythonEvidenceAwareReviewerLLM(MockLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.evidence_accepted = False
+
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system_prompt: str = "",
+            temperature: float = 0.2,
+            max_tokens: int = 4096,
+        ) -> str:
+            self.evidence_accepted = (
+                "TEST_PASSED" in prompt
+                and "python -m pytest -q tests/test_cli.py" in prompt
+                and "exit_code=0" in prompt
+                and "1 passed" in prompt
+            )
+            self.response = (
+                "APPROVED\n"
+                "Tester 结论与 Developer 的实际 pytest 执行证据一致。"
+                if self.evidence_accepted
+                else "REVISION_REQUIRED\n"
+                "Tester 结论或实际 pytest 执行证据不足。"
+            )
+            return super().generate(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    tester_llm = _PythonEvidenceAwareTesterLLM()
+    reviewer_llm = _PythonEvidenceAwareReviewerLLM()
+    return (
+        TesterAgent(
+            AgentConfig(role="tester", model="deterministic-mock"),
+            llm=tester_llm,
+        ),
+        tester_llm,
+        ReviewerAgent(
+            AgentConfig(role="reviewer", model="deterministic-mock"),
+            llm=reviewer_llm,
+        ),
+        reviewer_llm,
+    )
+
+
 def _make_node_project_gate_agents():
     """Use production Tester/Reviewer agents with evidence-sensitive mock decisions."""
     from agents.reviewer import ReviewerAgent
@@ -1214,6 +1302,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         description="Create an installable CLI package with executable tests.",
     )
     developer_agent, developer_llm = _make_python_cli_project_developer_agent()
+    tester_agent, tester_llm, reviewer_agent, reviewer_llm = _make_python_cli_project_gate_agents()
     qa_agent = _make_qa_agent(
         folder="cli",
         list_path="cli/sample_app",
@@ -1234,8 +1323,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         ),
         ("planner", planner_agent),
         ("developer", developer_agent),
-        ("tester", _E2ETester()),
-        ("reviewer", _E2EReviewer()),
+        ("tester", tester_agent),
+        ("reviewer", reviewer_agent),
         (
             "doc_writer",
             DocWriterAgent(
@@ -1271,6 +1360,27 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     assert result.total_tasks == 1
     assert result.completed_tasks == 1
     task = project.last_task_manager.get_all_tasks()[0]
+    from runtime.provenance import provenance_from_value
+
+    tester_feedback = task.context["tester_feedback"]
+    developer_provenance = provenance_from_value(task.result)
+    tester_provenance = provenance_from_value(tester_feedback)
+    reviewer_provenance = provenance_from_value(task.review_result)
+    assert developer_provenance is not None
+    assert tester_provenance is not None
+    assert reviewer_provenance is not None
+    assert tester_provenance.parent_evidence_id == developer_provenance.evidence_id
+    assert reviewer_provenance.parent_evidence_id == tester_provenance.evidence_id
+    assert task.test_result["status"] == "passed"
+    assert task.review_result["status"] == "approved"
+    assert tester_llm.evidence_accepted is True
+    assert "python -m pytest -q tests/test_cli.py" in tester_llm.calls[0]["prompt"]
+    assert "exit_code=0" in tester_llm.calls[0]["prompt"]
+    assert "1 passed" in tester_llm.calls[0]["prompt"]
+    assert reviewer_llm.evidence_accepted is True
+    assert "TEST_PASSED" in reviewer_llm.calls[0]["prompt"]
+    assert "exit_code=0" in reviewer_llm.calls[0]["prompt"]
+    assert "1 passed" in reviewer_llm.calls[0]["prompt"]
     assert "pyproject.toml" in task.context["workspace_merge"]["added"]
     assert "sample_app/cli.py" in task.context["workspace_merge"]["added"]
     assert "bootstrap-project.py" not in task.context["workspace_merge"]["added"]
@@ -1355,8 +1465,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
             "analyst": "requirement_analyst_mock_llm",
             "planner": "production_planner_agent_mock_llm",
             "developer": "production_developer_agent_mock_llm",
-            "tester": "scripted_test_double",
-            "reviewer": "scripted_test_double",
+            "tester": "production_tester_agent_evidence_aware_mock_llm",
+            "reviewer": "production_reviewer_agent_evidence_aware_mock_llm",
             "doc_writer": "mock_llm_observed_junit_mapping",
             "qa": "qa_agent_mock_llm_read_execute_tools",
             "security": "deterministic_gate",
