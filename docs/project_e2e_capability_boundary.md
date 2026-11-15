@@ -2,7 +2,7 @@
 
 ## Status
 
-This report describes the deterministic Python CLI and Node.js Web orchestration scenarios implemented for T21.8. GitHub Actions run [#575](https://github.com/rexyll/AI-Team/actions/runs/43725901481), commit `57ea443`, confirms the current implementation: Regression (2,578 passed / 14 skipped), Security regression (252 passed / 9 skipped), Coverage baseline (2,558 passed / 14 skipped; all module line/branch thresholds met), and Windows Python/Node E2E (7 passed). Both `project-e2e-evidence` (8,506 bytes) and `coverage-baseline-python314` (1,921,770 bytes) artifacts were uploaded. Both complete ProjectOrchestrator scenarios now use production PlannerAgent, DeveloperAgent, TesterAgent and ReviewerAgent classes with deterministic MockLLM; Tester/Reviewer verdicts are evidence-aware and their provenance parent links are asserted. T21.8 remains in progress because deterministic MockLLM does not measure live autonomous reasoning, and browser/deployment/UAT/attestation work remains unverified.
+The deterministic Python CLI and Node.js Web ProjectOrchestrator acceptance defined for T21.8 is **complete**. GitHub Actions run [#576](https://github.com/rexyll/AI-Team/actions/runs/43726548817), commit `4879a17`, confirms the current `main`: Regression (2,578 passed / 14 skipped), Security regression (252 passed / 9 skipped), Coverage baseline (2,558 passed / 14 skipped; all module line/branch thresholds met), and Windows Python/Node E2E (7 passed). Both `project-e2e-evidence` (8,521 bytes) and `coverage-baseline-python314` (1,921,832 bytes) artifacts were uploaded. Both complete scenarios use production Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter Agent classes with deterministic/evidence-aware MockLLM; actual tool execution, command results, provenance, integration, QA, security, executable acceptance and packaging are asserted. Live ProviderLLM reasoning, browser acceptance, external deployment, signed UAT and authenticated attestation remain explicitly unverified and are not part of this deterministic completion claim.
 
 ## What the deterministic scenarios exercise
 
@@ -52,7 +52,7 @@ The canonical SHA-256 detects accidental or uncoordinated content modification. 
 
 | Level | Meaning | Current status |
 |---|---|---|
-| `deterministic_orchestration` | Both full Python/Node ProjectOrchestrator scenarios use production Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter Agent classes, production workspace/tool/adapter/integration/acceptance/security/packaging boundaries, and deterministic/evidence-aware MockLLM responses; a separate focused TaskWorkflow scenario adds independent Developer→Tester→Reviewer provenance coverage | Implemented and verified by CI #575; it is not live-provider or autonomous-reasoning evidence |
+| `deterministic_orchestration` | Both full Python/Node ProjectOrchestrator scenarios use production Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter Agent classes, production workspace/tool/adapter/integration/acceptance/security/packaging boundaries, and deterministic/evidence-aware MockLLM responses; a separate focused TaskWorkflow scenario adds independent Developer→Tester→Reviewer provenance coverage | **Complete for the defined deterministic scope**, verified by full main CI #575 and documentation re-verification #576; not live-provider or autonomous-reasoning evidence |
 | `live_provider_llm` | Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter driven by an explicitly configured real provider with host-managed credentials | Not run; requires user-managed provider credentials and explicit opt-in |
 | `external_deployment` | Real deployment to a dedicated external environment, with authenticated health/route evidence and separate operator approval | Not run; no external deployment or publication is performed by default CI |
 
@@ -60,7 +60,7 @@ The canonical SHA-256 detects accidental or uncoordinated content modification. 
 
 1. Both full ProjectOrchestrator scenarios invoke production `RequirementAnalystAgent`, `PlannerAgent`, `DeveloperAgent`, `TesterAgent`, `ReviewerAgent`, `QAAgent` and `DocWriterAgent` classes. All model responses are deterministic MockLLM responses; Tester/Reviewer mocks are evidence-aware and fail closed when the real command/result evidence is missing. Their provenance links are validated. This proves production component, tool-boundary and evidence-gate wiring, not live autonomous reasoning or provider quality.
 2. No live ProviderLLM credentials are used. Missing credentials are not interpreted as success.
-3. The Windows CI E2E job is the target execution environment (Python 3.14 and Node.js 22). The current implementation is verified by CI #575; any subsequent code or workflow commit requires its own latest main CI result before acceptance.
+3. The Windows CI E2E job is the target execution environment (Python 3.14 and Node.js 22). The completed deterministic implementation is verified by CI #575 and documentation re-verification #576; subsequent source/test/workflow changes still require their own latest main CI result.
 4. Browser-based UI acceptance is not run. A static HTML artifact check is not a browser test.
 5. No Docker image deployment, cloud deployment, traffic switch, zero-downtime replacement or rollback is performed by these scenarios.
 6. No GitHub push, PR creation/update, review mutation or merge is performed. SCM live read/write validation remains a separate T21.5 task requiring a test repository and host-issued approvals.
@@ -69,4 +69,13 @@ The canonical SHA-256 detects accidental or uncoordinated content modification. 
 
 ## Completion gate
 
-T21.8 may be marked complete only after both scenarios pass the current full main CI (including regression, security regression, coverage baseline, and Windows Python/Node E2E), both evidence files are actually produced and uploaded, the artifact schema and privacy checks pass, and this report remains aligned with the observed CI evidence. Live ProviderLLM and external deployment may remain explicitly unavailable, but must not be represented as completed or passed.
+<badge>Completed — deterministic acceptance scope</badge>
+
+The defined T21.8 deterministic acceptance gate is satisfied on `main`:
+
+- Both Python CLI and Node.js Web ProjectOrchestrator scenarios passed the full main CI, including Regression, Security regression, Coverage baseline and Windows Python/Node E2E (run [#576](https://github.com/rexyll/AI-Team/actions/runs/43726548817)).
+- Each scenario produced its own Evidence Bundle JSON; both were successfully uploaded as `project-e2e-evidence` (8,521 bytes). The coverage artifact `coverage-baseline-python314` (1,921,832 bytes) was also uploaded.
+- Evidence Bundle schema, canonical digest, privacy minimization, acceptance traceability, and failure/invalid-record contracts run in the passing regression suite.
+- This report and the acceptance record were updated to match the observed role execution modes and CI evidence.
+
+This completion applies only to deterministic MockLLM orchestration. Live ProviderLLM reasoning, browser rendering/automation, external deployment or publishing, human UAT signatures, SCM live write/merge, and authenticated evidence attestation remain **not run / not verified**. No pass or completion claim is made for those capabilities.
