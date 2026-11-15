@@ -127,7 +127,7 @@ def test_container_start_failure_is_reported():
 
 def test_deploy_requires_running_container_and_keeps_health_unknown():
     runner = FakeRunner(
-        ok("sha256:" + "a" * 64), ok("container-id\n"), ok("running\n")
+        ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"), ok(json.dumps({"Id": "d" * 64, "State": {"Status": "running"}}))
     )
     result = LocalDockerProvider(runner).deploy(
         DeploymentRequest("/tmp", "demo", "local", "1.2.3", ("8080:80",)), artifact()
@@ -135,7 +135,31 @@ def test_deploy_requires_running_container_and_keeps_health_unknown():
     assert result.status == "succeeded"
     assert result.record.status == "running"
     assert result.record.health_status == "unknown"
-    assert result.details["container_id"] == "container-id"
+    assert result.record.container_id == "d" * 64
+    assert result.details["container_id"] == "d" * 64
+
+
+def test_deploy_rejects_malformed_container_inspection():
+    runner = FakeRunner(
+        ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"), ok("not-json")
+    )
+    result = LocalDockerProvider(runner).deploy(
+        DeploymentRequest("/tmp", "demo", "local", "1.2.3"), artifact()
+    )
+    assert result.status == "failed"
+    assert "malformed" in result.message.lower()
+
+
+def test_deploy_rejects_container_id_mismatch():
+    runner = FakeRunner(
+        ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"),
+        ok(json.dumps({"Id": "e" * 64, "State": {"Status": "running"}})),
+    )
+    result = LocalDockerProvider(runner).deploy(
+        DeploymentRequest("/tmp", "demo", "local", "1.2.3"), artifact()
+    )
+    assert result.status == "failed"
+    assert "identity" in result.message.lower()
 
 
 @pytest.mark.parametrize("state,expected", [

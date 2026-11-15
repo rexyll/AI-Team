@@ -32,6 +32,7 @@ def make_record(deployment_id, *, project="demo", environment="staging", status=
     return DeploymentRecord(
         deployment_id, "docker-local", environment, "1.0", artifact,
         status, health, "2026-11-15T10:00:00Z", project=project,
+        container_id="c" * 64,
     )
 
 
@@ -46,6 +47,28 @@ def test_history_persists_and_reloads_records(tmp_path):
     history.append(expected)
     reloaded = DeploymentHistoryStore(db)
     assert reloaded.get("old") == expected
+
+
+def test_history_persists_immutable_container_identity(tmp_path):
+    db = tmp_path / "history.db"
+    history = DeploymentHistoryStore(db)
+    expected = make_record("immutable")
+    history.append(expected)
+    assert DeploymentHistoryStore(db).get("immutable").container_id == "c" * 64
+
+
+def test_rollback_candidate_requires_immutable_container_identity(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    legacy = make_record("legacy")
+    legacy = DeploymentRecord(
+        legacy.deployment_id, legacy.provider, legacy.environment, legacy.version,
+        legacy.artifact, legacy.status, legacy.health_status, legacy.created_at,
+        project=legacy.project,
+    )
+    history.append(legacy)
+    assert history.rollback_candidate(
+        provider="docker-local", environment="staging", project="demo"
+    ) is None
 
 
 def test_history_rejects_non_running_records(tmp_path):

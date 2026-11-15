@@ -26,6 +26,7 @@ DEFAULT_DOCKER_TIMEOUT = 600.0
 _OUTPUT_LIMIT = 4000
 _PORT_MAPPING = re.compile(r"^(\d{1,5}):(\d{1,5})(?:/(tcp|udp))?$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -221,16 +222,45 @@ class LocalDockerProvider:
         if result.returncode != 0:
             return self._failure("deploy", "Docker container start failed", output=result.stderr or result.stdout)
 
-        state, error = self._execute(
-            ["inspect", "--format", "{{.State.Status}}", deployment_id]
+        inspected, error = self._execute(
+            ["inspect", "--format", "{{json .}}", deployment_id]
         )
         if error:
             return self._failure("deploy", error, output=f"container={deployment_id}")
-        assert state is not None
-        if state.returncode != 0 or state.stdout.strip() != "running":
+        assert inspected is not None
+        if inspected.returncode != 0:
             return self._failure(
-                "deploy", "Container did not enter running state",
-                output=state.stderr or state.stdout,
+                "deploy", "Container inspection failed after start",
+                output=inspected.stderr or inspected.stdout,
+            )
+        try:
+            container_state = json.loads(inspected.stdout)
+        except (TypeError, json.JSONDecodeError):
+            return self._failure(
+                "deploy", "Docker returned malformed container inspection data",
+                output=inspected.stdout,
+            )
+        if not isinstance(container_state, dict):
+            return self._failure(
+                "deploy", "Docker returned malformed container inspection data",
+                output=inspected.stdout,
+            )
+        container_id = container_state.get("Id")
+        state = container_state.get("State")
+        if (
+            not isinstance(container_id, str)
+            or not _CONTAINER_ID.fullmatch(container_id)
+            or not isinstance(state, dict)
+            or state.get("Status") != "running"
+        ):
+            return self._failure(
+                "deploy", "Container identity or running state could not be verified",
+                output=inspected.stdout,
+            )
+        reported_id = result.stdout.strip()
+        if not reported_id or not container_id.startswith(reported_id):
+            return self._failure(
+                "deploy", "Docker run identity does not match inspected immutable container ID",
             )
         record = DeploymentRecord(
             deployment_id=deployment_id,
@@ -242,11 +272,12 @@ class LocalDockerProvider:
             health_status="unknown",
             created_at=_now(),
             project=request.project,
+            container_id=container_id,
         )
         return DeploymentOperationResult(
             "deploy", "succeeded", self.name, "Container started; health remains unverified",
             artifact=artifact, record=record,
-            details={"container_id": result.stdout.strip()},
+            details={"container_id": container_id},
         )
 
     def health_check(self, record: DeploymentRecord) -> HealthCheckResult:

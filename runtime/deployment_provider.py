@@ -74,6 +74,7 @@ class DeploymentRecord:
     endpoint: str | None = None
     previous_deployment_id: str | None = None
     project: str | None = None
+    container_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("deployment_id", "provider", "environment", "version", "created_at"):
@@ -82,6 +83,11 @@ class DeploymentRecord:
                 raise ValueError(f"{name} must be a non-empty string")
         if self.project is not None and (not isinstance(self.project, str) or not self.project.strip()):
             raise ValueError("project must be a non-empty string when provided")
+        if self.container_id is not None and (
+            not isinstance(self.container_id, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", self.container_id)
+        ):
+            raise ValueError("container_id must be a full lowercase Docker container ID when provided")
         if self.artifact.provider != self.provider:
             raise ValueError("deployment provider must match artifact provider")
         if self.status not in {"prepared", "running", "stopped", "failed"}:
@@ -154,5 +160,7 @@ def is_rollback_candidate(record: DeploymentRecord) -> bool:
         record.status == "running"
         and record.health_status == "healthy"
         and bool(record.deployment_id.strip())
+        and record.container_id is not None
+        and bool(re.fullmatch(r"[0-9a-f]{64}", record.container_id))
         and bool(_SHA256.fullmatch(record.artifact.digest))
     )
