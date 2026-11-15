@@ -139,8 +139,10 @@ class HostDeploymentManager:
         self.history = history
 
     def record_deployment(self, result: DeploymentOperationResult) -> DeploymentRecord:
-        if result.provider != self.provider.name or result.status != "succeeded" or result.record is None:
-            raise ValueError("only successful records from the configured provider may be persisted")
+        if result.provider != self.provider.name:
+            raise ValueError("deployment result provider does not match the configured host provider")
+        if result.status != "succeeded" or result.record is None:
+            raise ValueError("only successful deployment records from the configured provider may be persisted")
         if result.record.provider != self.provider.name or result.record.status != "running":
             raise ValueError("deployment record does not represent a running configured-provider deployment")
         self.history.append(result.record)
