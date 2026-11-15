@@ -99,6 +99,7 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 - 新增 `.github/workflows/dependency-security.yml`，拆分 prepare 与 scan jobs；scan job 使用 Harden-Runner v2.21.1 block mode，allowlist 只包含 OSV API/数据导出及 GitHub Actions 必需 endpoints。Trivy OCI DB 在 GitHub-hosted runner 上连接被拒绝后，漏洞扫描改用 `pip-audit 2.10.1` + OSV API；Trivy `0.76.2` 仅执行离线 license scan。
 - 最新完整 scan run `43703756088`（commit `3631263`）扫描 production Linux lock 的 17 个包，pip-audit 返回 0 个已知漏洞；OSV PyPI export 的 `Last-Modified` 为 `2026-11-15T09:18:04Z`，最新 advisory `MAL-2026-19942` 的 API `modified` 与导出记录一致，数据库年龄约 1.09 小时，freshness gate 通过。lock SHA-256 `2a142d5843133f0dced3926ae2b423cebc5fe7c1480dc213099aa5374c04ea3c`。报告 artifact `14156674350`。
 - Trivy 识别 17 个 production package licenses。`PSF-2.0` 从 Trivy `UNKNOWN` 经 SPDX 文本证据映射为 `NOTICE`（保留 notice）；唯一剩余阻断项为 `tqdm` 的 `MPL-2.0 AND MIT`，分类 `RECIPROCAL`。没有添加 blanket exception，也没有把该项标成 clean；需明确 license owner review 或调整依赖后，T21.7.4 才能完成。
+- 许可证审查边界：锁文件显示 `tqdm==4.70.1` 是 `openai` 的传递依赖；仓库根目录未发现项目级 `LICENSE` 文件，因此不能假设项目采用 MIT 或其他兼容许可证。Mozilla 官方 FAQ 将 MPL 2.0 描述为 file-level copyleft：对 MPL 覆盖文件的修改需按 MPL 提供源代码与通知；独立的更大作品文件可按其他许可证分发，但可执行分发仍需提供 MPL 覆盖部分的源代码。参考：[Mozilla MPL 2.0 FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)、[MPL 2.0 text](https://www.mozilla.org/en-US/MPL/2.0/)。当前保持阻断，等待项目 owner 决定是否接受该依赖及其通知/源代码义务，或更换依赖；不自动豁免。
 - 仅在 CI 明确声明的网络出口白名单中运行锁文件扫描；应用交付运行时继续保持无隐式网络查询。
 - scanner 版本、数据库更新时间、扫描目标、豁免责任人/期限与结果必须入证据；scanner unavailable、数据库过期、解析失败不能等同无漏洞。
 - 许可证策略按项目配置；未知许可证和冲突必须显式报告，不可默认批准。
