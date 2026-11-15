@@ -19,6 +19,8 @@ RecoveryDisposition = Literal[
     "terminal_no_recovery_action",
 ]
 
+_TERMINAL_PHASES = {"previous_retired", "aborted"}
+
 
 @dataclass(frozen=True)
 class ReplacementRecoveryAssessment:
@@ -40,6 +42,7 @@ def classify_replacement_recovery(
     A crash may occur after a provider side effect but before its journal
     transition. Therefore even early phases require fresh provider inspection;
     no phase authorizes automatic abort, route mutation, or runtime retirement.
+    Unknown/corrupt phases fail closed rather than being mistaken for terminal.
     """
     missing = tuple(
         name
@@ -86,9 +89,11 @@ def classify_replacement_recovery(
             "read_back_effective_traffic_target",
             "record_explicit_reconciliation_decision",
         )
-    else:
+    elif record.phase in _TERMINAL_PHASES:
         disposition = "terminal_no_recovery_action"
         checks = ()
+    else:
+        raise ValueError(f"unsupported replacement phase: {record.phase!r}")
 
     return ReplacementRecoveryAssessment(
         operation_id=record.operation_id,

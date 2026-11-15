@@ -295,3 +295,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 read-only crash recovery classification | 新增纯函数 `classify_replacement_recovery`：根据 journal phase 输出只读处置分类、必须重新观测的 provider/health/route 检查及缺失 runtime identity；prepared/candidate_started 不推断外部动作未发生，traffic_switched 必须 route read-back 后才允许考虑 retire，needs_reconciliation 要求人工决策，终态不恢复。所有阶段均 automatic_action=none；不调用 provider、不改流量、不 abort/retire、不修改 journal。 | 新增 `runtime/deployment_recovery.py`、`tests/test_deployment_recovery.py`；更新部署架构文档；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 recovery classifier hardening | CI #309（run `43681548085`）通过：Python 3.14 regression 与 Windows toolchain smoke 均成功。审查发现 classifier 的兜底分支会把未知/损坏 phase 错误归类为 terminal；现改为仅 `previous_retired`/`aborted` 明确终态，其余未知 phase 抛出 `ValueError` fail-closed。强化 prepared 与 candidate_started 的 phase-specific 检查断言，并新增未知 phase 拒绝测试。 | 本次提交后等待 CI 验证 |

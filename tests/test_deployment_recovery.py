@@ -24,13 +24,24 @@ def record(phase, **overrides):
     return ReplacementJournalRecord(**values)
 
 
-@pytest.mark.parametrize("phase", ["prepared", "candidate_started"])
-def test_pre_switch_crash_requires_provider_inspection_and_never_auto_aborts(phase):
+@pytest.mark.parametrize(
+    ("phase", "required_check"),
+    [
+        ("prepared", "inspect_provider_operation_by_operation_id"),
+        (
+            "candidate_started",
+            "inspect_candidate_and_previous_by_immutable_runtime_identity",
+        ),
+    ],
+)
+def test_pre_switch_crash_requires_phase_specific_inspection_and_never_auto_aborts(
+    phase, required_check
+):
     assessment = classify_replacement_recovery(record(phase))
     assert assessment.disposition == "pre_switch_state_requires_inspection"
-    assert "inspect_provider_operation_by_operation_id" in assessment.required_checks or (
-        "inspect_candidate_and_previous_by_immutable_runtime_identity"
-        in assessment.required_checks
+    assert required_check in assessment.required_checks
+    assert "verify_effective_traffic_target_before_any_mutation" in (
+        assessment.required_checks
     )
     assert assessment.automatic_action == "none"
 
@@ -65,11 +76,20 @@ def test_terminal_phases_require_no_recovery_action(phase):
     assert assessment.automatic_action == "none"
 
 
+def test_unknown_phase_fails_closed_instead_of_being_treated_as_terminal():
+    snapshot = record("prepared")
+    object.__setattr__(snapshot, "phase", "future_or_corrupt_phase")
+    with pytest.raises(ValueError, match="unsupported replacement phase"):
+        classify_replacement_recovery(snapshot)
+
+
 def test_missing_runtime_identities_are_reported_not_inferred():
-    assessment = classify_replacement_recovery(record(
-        "traffic_switched", candidate_runtime_id=None, previous_runtime_id=None
-    ))
+    assessment = classify_replacement_recovery(
+        record("traffic_switched", candidate_runtime_id=None, previous_runtime_id=None)
+    )
     assert assessment.missing_runtime_identities == (
-        "candidate_runtime_id", "previous_runtime_id"
+        "candidate_runtime_id",
+        "previous_runtime_id",
     )
     assert assessment.disposition == "route_readback_required_before_retire"
+    assert assessment.automatic_action == "none"
