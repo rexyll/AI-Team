@@ -8,6 +8,10 @@
   ],
   "blocked_classifications": [
     "UNKNOWN",
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL",
     "RECIPROCAL",
     "RESTRICTED",
     "FORBIDDEN"
@@ -19,7 +23,24 @@
     "HIGH",
     "CRITICAL"
   ],
-  "exceptions": [],
+  "exceptions": [
+    {
+      "package": "tqdm",
+      "version": "4.70.1",
+      "license": "MPL-2.0 AND MIT",
+      "classification": "RECIPROCAL",
+      "approved_by": "repository owner (rexyll)",
+      "approved_at": "2026-11-15",
+      "expires_on": "2027-02-13",
+      "rationale": "Maintainer-approved, narrowly scoped acceptance of the OpenAI SDK's current transitive tqdm dependency. This exception does not authorize other package versions, license expressions, or reciprocal licenses.",
+      "obligations": [
+        "Preserve upstream copyright, license, and attribution notices.",
+        "Provide recipients with MPL-2.0 and MIT license texts or authoritative license URLs when redistributing the dependency.",
+        "If MPL-covered files are modified and distributed, make the corresponding MPL-covered source available under MPL-2.0 and satisfy its notice requirements.",
+        "Reassess the dependency and this exception no later than 2027-02-13; the exception expires automatically unless explicitly renewed."
+      ]
+    }
+  ],
   "unknown_license_policy": "deny",
   "scanner_unavailable_policy": "deny",
   "stale_database_policy": "deny",
