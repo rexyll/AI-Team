@@ -55,6 +55,27 @@ CI/review reads do not require write approval. Missing, pending or unknown CI ev
 
 Git push is implemented by `HostGitOperationService`, not the Agent-visible `git_command` parser. The host verifies that `origin` resolves to the approved `owner/repository`, and pushes `HEAD` to the requested branch with a fixed, non-force refspec. Force-push, arbitrary remotes and unsafe branch names are rejected. Git credentials come from the host's Git credential configuration.
 
+## Host PR lifecycle coordinator
+
+`runtime/scm_lifecycle.py` adds a host-callable lifecycle coordinator. It
+requires two distinct, one-use approvals: one scoped to the exact local HEAD
+and target branch for push, and another scoped to the head/base pair for PR
+creation or update. The coordinator does not issue approvals and must only be
+called after an explicit operator authorization flow. Push completes before
+the PR write is attempted; if the PR write fails, the pushed branch remains
+available for a safe retry after a new PR approval.
+
+The coordinator can poll PR metadata, CI and review evidence for a bounded
+number of attempts (1–120) with a bounded interval (0–300 seconds). It returns
+one of `ready`, `ci_failed`, `changes_requested`, `closed`, or `timeout`,
+including the exact observed head SHA and CI/review states. It never retries a
+failed CI job, edits a review, pushes additional commits, or merges. A caller
+may use the structured failure evidence to prepare a proposed repair task, but
+any repair, push, PR update, or merge remains a separate approved action.
+Merge continues to use `SCMService.merge_pull_request`, which re-reads the
+head, requires green CI and approved review, and consumes an approval scoped
+to that exact head SHA.
+
 ## Current validation boundary
 
 The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. No live GitHub push, PR creation, CI read, review read or merge has been performed in this environment; that requires a host-configured GitHub token, a test repository and explicit operator approval. The implementation must not be described as live-integrated until that run is completed.
