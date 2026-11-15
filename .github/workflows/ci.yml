@@ -104,6 +104,7 @@ jobs:
       AGNES_API_KEY: ci-placeholder-not-a-secret
       AGNES_BASE_URL: https://ci.invalid/v1
       AGNES_MODEL: ci-test-model
+      AI_TEAM_E2E_EVIDENCE_DIR: "${{ runner.temp }}/ai-team-e2e-evidence"
     steps:
       - uses: actions/checkout@v4
 
@@ -130,3 +131,12 @@ jobs:
 
       - name: Production Windows Python and Node.js adapter E2E
         run: python -m pytest -q tests/test_project_adapter_windows_e2e.py tests/test_project_adapter_node_e2e.py
+
+      - name: Upload machine-readable project E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-e2e-evidence
+          path: "${{ runner.temp }}/ai-team-e2e-evidence/*.json"
+          if-no-files-found: warn
+          retention-days: 30
