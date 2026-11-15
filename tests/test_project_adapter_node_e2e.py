@@ -337,7 +337,7 @@ class _AcceptanceAwareMockLLM(MockLLM):
         return json.dumps({"schema_version": 1, "tests": tests}, ensure_ascii=False)
 
 
-def _make_qa_agent(*, folder: str, command: str, read_path: str):
+def _make_qa_agent(*, folder: str, command: str, read_path: str, list_path: str):
     from agents.qa import QAAgent
     from runtime.agent_config import AgentConfig
     from runtime.llm.mock import MockLLM
@@ -348,7 +348,7 @@ def _make_qa_agent(*, folder: str, command: str, read_path: str):
                 "tool_calls": [{
                     "call_id": f"qa-{folder}-list",
                     "name": "list_files",
-                    "arguments": json.dumps({"path": folder}),
+                    "arguments": json.dumps({"path": list_path}),
                 }]
             },
             {
@@ -425,6 +425,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
             "qa",
             _make_qa_agent(
                 folder="webapp",
+                list_path="webapp/dist",
                 read_path="webapp/dist/index.html",
                 command="npm test -- --test-reporter=dot",
             ),
@@ -453,7 +454,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert "src/index.html" in task.context["workspace_merge"]["added"]
     assert project.last_delivery is not None
     integration = project.last_delivery["integration"]
-    assert integration["status"] in {"passed", "skipped"}
+    assert integration["status"] == "passed"
     adapter = integration["adapter"]
     assert adapter["status"] == "passed", adapter
     assert adapter["adapter"] == "node"
@@ -473,7 +474,9 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert len(qa_history) == 3
     assert all(item["status"] == "completed" for item in qa_history)
     assert project.last_delivery["acceptance"]["executable_verdict"] == "passed"
-    assert project.last_delivery["acceptance"]["requirements"][0]["tests"]
+    accepted_tests = project.last_delivery["acceptance"]["requirements"][0]["tests"]
+    assert accepted_tests
+    assert all(item["status"] == "passed" for item in accepted_tests)
     assert (root / "node_modules").is_dir()
     assert Path(project.last_delivery["manifest"]).is_file()
     package = project.last_delivery["package"]
@@ -506,6 +509,10 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     )
     assert evidence["project_profile"] is not None
     assert evidence["gates"]["integration"]["adapter"]["adapter"] == "node"
+    assert evidence["gates"]["analyst"]["status"] == "available"
+    assert evidence["gates"]["qa"]["executed_tool_calls"] == 3
+    assert evidence["gates"]["acceptance"]["verdict"] == "passed"
+    assert evidence["gates"]["acceptance"]["executable_verdict"] == "passed"
     assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
 
 
@@ -637,6 +644,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
             "qa",
             _make_qa_agent(
                 folder="cli",
+                list_path="cli/sample_app",
                 read_path="cli/sample_app/cli.py",
                 command="python -m sample_app.cli --value -1",
             ),
@@ -724,4 +732,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         },
     )
     assert evidence["project_profile"]["project_type"] == "cli"
+    assert evidence["gates"]["analyst"]["status"] == "available"
+    assert evidence["gates"]["qa"]["executed_tool_calls"] == 3
+    assert evidence["gates"]["acceptance"]["verdict"] == "passed"
+    assert evidence["gates"]["acceptance"]["executable_verdict"] == "passed"
     assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
