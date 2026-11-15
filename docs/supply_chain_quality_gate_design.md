@@ -70,7 +70,18 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 ### T21.7.3 覆盖率与性能预算
 - 在固定 Python 3.14 CI 环境采集 line + branch coverage 基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
 - 覆盖率工具 `coverage.py` 纳入开发依赖并由 Linux/Windows Python 3.14 hash lock 固定；CI 新增独立 `coverage-baseline` job，上传 JSON/HTML/metadata artifact（保留 30 天）。测量范围为 `agents, core, integration, runtime, security, tools`。独立覆盖率测量排除 6 个机器时间敏感 benchmark/performance 测试文件，避免 instrumentation 改变吞吐/并行断言；这些测试仍由原有全量 regression job 正常执行，不是跳过测试。
-- 首次 coverage artifact 生成后，按模块风险和实际覆盖数据设置门槛；目前不预设全局百分比，也不以缺少数据的模块计算伪基线。
+- 首次 coverage artifact（run `43701785117`，提交 `3e06220`）测得总 line coverage 84.40%（15,795/17,991 statements）、branch coverage 74.99%（4,861/6,482 branches）。该 artifact 完整生成，但当次全量/coverage 测试因新增 `coverage.py` 后 SBOM 锁组件数断言未更新而有 1 项测试失败；覆盖率数据用于初始基线参考，最终门禁仍须由修复后的全绿 run 再确认。
+- 按首次测量设置保守的模块风险门槛，配置位于 `config/coverage_thresholds.json`，由 `tools/check_coverage_thresholds.py` 对 coverage JSON 聚合并 fail-closed（缺失/新增未配置模块均失败）：
+
+  | 模块 | 初始 line | 初始 branch | 最低 line | 最低 branch |
+  |---|---:|---:|---:|---:|
+  | agents | 86.68% | 74.32% | 80% | 68% |
+  | core | 90.05% | 74.66% | 85% | 68% |
+  | runtime | 88.67% | 75.70% | 83% | 70% |
+  | security | 74.02% | 66.22% | 70% | 60% |
+  | tools | 67.92% | 63.56% | 65% | 58% |
+
+- 门槛是相对当前实测基线留出波动余量的模块底线，不是声称这些数值代表充分测试；后续应优先补强低覆盖高风险路径（例如 `security/process_sandbox.py`、`tools/terminal.py`），并在基线变化时审查阈值变更。暂不使用单一全局百分比。
 - 现有性能测试定位为结构/扩展性回归，使用宽松比例/正确性断言，不是绝对 SLA。GitHub-hosted runner 不视为受控性能硬件；绝对预算需在固定 runner 上多次采样，记录 CPU/OS/Python/负载、median/p95 与波动，再决定是否设置门槛。
 - 压力测试保持 opt-in，默认 CI 有界；不可因超时或资源压力静默跳过。
 
