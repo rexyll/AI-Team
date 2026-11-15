@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI-Team Project E2E Evidence Bundle",
+  "description": "Privacy-minimized, unsigned evidence snapshot. SHA-256 provides integrity checking, not identity authentication or a trusted attestation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "captured_at",
+    "evidence_level",
+    "project",
+    "requirement",
+    "project_profile",
+    "task_graph",
+    "tool_invocations",
+    "gates",
+    "artifacts",
+    "release",
+    "role_execution",
+    "limitations",
+    "privacy",
+    "evidence_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_level": {
+      "enum": [
+        "deterministic_orchestration",
+        "live_provider_llm",
+        "external_deployment"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "status",
+        "success"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "success": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "character_count",
+        "ids"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "character_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "priority",
+              "has_acceptance_criteria"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^REQ-"
+              },
+              "priority": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "has_acceptance_criteria": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "project_profile": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "task_graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planned_task_count",
+        "tasks",
+        "workspace_isolation"
+      ],
+      "properties": {
+        "planned_task_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "role",
+              "status",
+              "terminal",
+              "dependencies",
+              "title_sha256",
+              "description_sha256",
+              "workspace"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "terminal": {
+                "type": "boolean"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "title_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "description_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "workspace": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "workspace_isolation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "developer_tasks",
+            "leases_observed",
+            "leases_merged",
+            "leases_discarded",
+            "leases_incomplete"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "not_applicable",
+                "passed",
+                "incomplete"
+              ]
+            },
+            "developer_tasks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "leases_observed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "leases_merged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "leases_discarded": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "leases_incomplete": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "tool_invocations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "execution_id",
+          "task_id",
+          "role",
+          "tool",
+          "status",
+          "started_at",
+          "completed_at",
+          "arguments_sha256",
+          "duration_seconds"
+        ],
+        "properties": {
+          "execution_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arguments_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest",
+        "package",
+        "sidecars",
+        "smoke"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "object"
+        },
+        "package": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "sidecars": {
+          "type": "object"
+        },
+        "smoke": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "release": {
+      "type": "object"
+    },
+    "role_execution": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_requirement_included",
+        "raw_prompt_or_analysis_included",
+        "raw_command_arguments_or_output_included",
+        "secret_values_included",
+        "local_absolute_paths_included"
+      ],
+      "properties": {
+        "raw_requirement_included": {
+          "const": false
+        },
+        "raw_prompt_or_analysis_included": {
+          "const": false
+        },
+        "raw_command_arguments_or_output_included": {
+          "const": false
+        },
+        "secret_values_included": {
+          "const": false
+        },
+        "local_absolute_paths_included": {
+          "const": false
+        }
+      }
+    },
+    "evidence_sha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
