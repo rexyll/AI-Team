@@ -1,123 +1,82 @@
 Required Notice: Copyright (c) 2026 rexyll.
 
-# PolyForm Small Business License 1.0.0
+# AI-Team Conditional Use License 1.0
 
-<https://polyformproject.org/licenses/small-business/1.0.0>
+Copyright (c) 2026 rexyll. All rights reserved except as expressly licensed below.
 
-## Acceptance
+This license provides two separate permission paths. You may rely on the Individual Noncommercial Grant for your own noncommercial purposes, or on the Small Business Grant for qualifying small-business purposes. A permission under one path does not enlarge the other.
 
-In order to get any license under these terms, you must agree
-to them as both strict obligations and conditions to all
-your licenses.
+## 1. Definitions
 
-## Copyright License
+**Licensor** means the copyright holder identified in the Required Notice above.
 
-The licensor grants you a copyright license for the
-software to do everything you might do with the software
-that would otherwise infringe the licensor's copyright
-in it for any permitted purpose.  However, you may
-only distribute the software according to [Distribution
-License](#distribution-license) and make changes or new works
-based on the software according to [Changes and New Works
-License](#changes-and-new-works-license).
+**Software** means this repository and the source code, object code, documentation, and other materials that the Licensor makes available under this license. It does not include third-party components governed by their own licenses.
 
-## Distribution License
+**You** means the individual or legal entity exercising rights under this license.
 
-The licensor grants you an additional copyright license
-to distribute copies of the software.  Your license
-to distribute covers distributing the software with
-changes and new works permitted by [Changes and New Works
-License](#changes-and-new-works-license).
+**Individual** means a natural person acting for themselves, and not on behalf of, for the benefit of, or as part of the business or operations of an organization.
 
-## Notices
+**Noncommercial Purpose** means a purpose that is not primarily intended for or directed toward commercial advantage or monetary compensation. It includes personal, educational, academic, research, hobby, and community use, provided the use is not performed for or on behalf of a business or other organization and is not used to provide goods or services for commercial advantage or monetary compensation.
 
-You must ensure that anyone who gets a copy of any part of
-the software from you also gets a copy of these terms or the
-URL for them above, as well as copies of any plain-text lines
-beginning with `Required Notice:` that the licensor provided
-with the software.  For example:
+**Small Business** has the meaning and eligibility thresholds set out in the PolyForm Small Business License 1.0.0, including its employee/independent-contractor and inflation-adjusted revenue tests.
 
-> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
+## 2. Individual Noncommercial Grant
 
-## Changes and New Works License
+The Licensor grants each Individual a worldwide, non-exclusive, royalty-free, perpetual (subject to termination under this license), non-transferable copyright license to use, reproduce, modify, create derivative works of, and distribute the Software, in source or object form, solely for Noncommercial Purposes.
 
-The licensor grants you an additional copyright license to
-make changes and new works based on the software for any
-permitted purpose.
+This grant is available to any Individual. It is not conditioned on the Individual's employer, income, location, or the size or revenue of any unrelated organization, provided the Individual is acting independently and the use itself remains a Noncommercial Purpose.
 
-## Patent License
+An Individual may share unmodified or modified copies with other people for Noncommercial Purposes, provided that each copy includes this license and the Required Notice, and that the Individual clearly identifies material modifications they made.
 
-The licensor grants you a patent license for the software that
-covers patent claims the licensor can license, or becomes able
-to license, that you would infringe by using the software.
+This grant does not authorize use by or for a company, employer, customer, or other organization, or use to obtain commercial advantage or monetary compensation. Such use must qualify separately under Section 3 or be covered by a separate written commercial license from the Licensor.
 
-## Fair Use
+## 3. Small Business Grant
 
-You may have "fair use" rights for the software under the
-law.  These terms do not limit them.
+The Licensor separately grants You the rights to use, reproduce, modify, create derivative works of, and distribute the Software for purposes permitted by the **PolyForm Small Business License 1.0.0**, subject to every condition, limitation, notice, patent, termination, and other term of that license.
 
-## Small Business
+The PolyForm Small Business License 1.0.0 is incorporated into this Section by reference and is available at:
 
-Use of the software for the benefit of your company is use for
-a permitted purpose if your company has fewer than 100 total
-individuals working as employees and independent contractors,
-and less than 1,000,000 USD (2019) total revenue in the prior
-tax year.  Adjust this revenue threshold for inflation according
-to the United States Bureau of Labor Statistics' consumer price
-index for all urban consumers, U.S. city average, for all items,
-not seasonally adjusted, with 1982–1984=100 reference base.
+https://polyformproject.org/licenses/small-business/1.0.0
 
-## No Other Rights
+This grant applies only where the use is a permitted purpose under that license, including its definition and thresholds for use for the benefit of a company. The official PolyForm Small Business License 1.0.0 terms control this grant. Nothing in this license expands those thresholds or waives any of those terms.
 
-These terms do not allow you to sublicense or transfer any of
-your licenses to anyone else, or prevent the licensor from
-granting licenses to anyone else.  These terms do not imply
-any other licenses.
+## 4. Other Commercial Use Requires Separate Permission
 
-## Patent Defense
+Any commercial, organizational, or business-benefit use that is not authorized by Section 3 requires a separate written license from the Licensor. No permission for such use is implied by access to, possession of, or contribution to the Software.
 
-If you make any written claim that the software infringes or
-contributes to infringement of any patent, your patent license
-for the software granted under these terms ends immediately. If
-your company makes such a claim, your patent license ends
-immediately for work on behalf of your company.
+## 5. Notices and Attribution
 
-## Violations
+You must retain the Required Notice and a copy of this license with every redistribution of the Software or a derivative work. You must also preserve applicable third-party copyright, license, and attribution notices. You must identify material changes made to files when redistributing modified copies.
 
-The first time you are notified in writing that you have
-violated any of these terms, or done anything with the software
-not covered by your licenses, your licenses can nonetheless
-continue if you come into full compliance with these terms,
-and take practical steps to correct past violations, within
-32 days of receiving notice.  Otherwise, all your licenses
-end immediately.
+Third-party components are not relicensed by this document and remain subject to their own licenses. See `THIRD_PARTY_NOTICES.md`.
 
-## No Liability
+## 6. Patent Rights
 
-***As far as the law allows, the software comes as is, without
-any warranty or condition, and the licensor will not be liable
-to you for any damages arising out of these terms or the use
-or nature of the software, under any kind of legal claim.***
+For the Individual Noncommercial Grant only, the Licensor grants You a worldwide, non-exclusive, royalty-free patent license, limited to patent claims licensable by the Licensor that are necessarily infringed by the Software as provided by the Licensor, to use, make, have made, and distribute the Software solely for Noncommercial Purposes.
 
-## Definitions
+Patent rights for use under Section 3 are governed exclusively by the incorporated PolyForm Small Business License 1.0.0.
 
-The **licensor** is the individual or entity offering these
-terms, and the **software** is the software the licensor makes
-available under these terms.
+If You initiate patent litigation (including a cross-claim or counterclaim) alleging that the Software or a contribution incorporated into it constitutes direct or contributory patent infringement, the patent license granted to You under Section 6 ends on the date such litigation is filed.
 
-**You** refers to the individual or entity agreeing to these
-terms.
-**Your company** is any legal entity, sole proprietorship,
-or other kind of organization that you work for, plus all
-organizations that have control over, are under the control of,
-or are under common control with that organization.  **Control**
-means ownership of substantially all the assets of an entity,
-or the power to direct its management and policies by vote,
-contract, or otherwise.  Control can be direct or indirect.
-**Your licenses** are all the licenses granted to you for the
-software under these terms.
+## 7. No Other Rights
 
-**Use** means anything you do with the software requiring one
-of your licenses.
+Except for the express grants in Sections 2 and 3, no rights are granted by implication, estoppel, exhaustion, or otherwise. The Licensor reserves all rights not expressly granted. You may not sublicense or transfer the rights granted under Section 2.
 
-© PolyForm Project Inc.
+## 8. Termination
+
+The Individual Noncommercial Grant terminates automatically if You materially violate its conditions. If the Licensor gives You written notice of a violation, the grant may be reinstated if You fully cure the violation and take practical steps to correct its effects within 30 days after receiving the notice. Termination does not affect rights already granted to recipients who received compliant copies before termination.
+
+Termination and cure for the Small Business Grant are governed by the incorporated PolyForm Small Business License 1.0.0.
+
+## 9. Disclaimer of Warranty and Limitation of Liability
+
+To the maximum extent permitted by applicable law, the Software is provided "AS IS", without warranties or conditions of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. To the maximum extent permitted by law, the Licensor will not be liable for any claim, damages, or other liability arising from, out of, or in connection with the Software or this license, whether in contract, tort, or otherwise.
+
+## 10. License Identification
+
+The project license is the **AI-Team Conditional Use License 1.0**, a custom license authored for this project. It is not an unmodified PolyForm license and is not an OSI-approved open-source license. Section 3 incorporates the official PolyForm Small Business License 1.0.0 solely for its separate qualifying small-business permission path.
+
+For clarity:
+- Individuals may use and share the Software for Noncommercial Purposes under Section 2 without a company-size or revenue test.
+- Qualifying small businesses may use the Software for permitted business purposes under Section 3 and the full PolyForm Small Business terms.
+- Other commercial use requires a separate written license.
