@@ -270,6 +270,9 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert result.success, result
     assert result.total_tasks == 1
     assert result.completed_tasks == 1
+    task = project.last_task_manager.get_all_tasks()[0]
+    assert "package.json" in task.context["workspace_merge"]["added"]
+    assert "src/index.html" in task.context["workspace_merge"]["added"]
     assert project.last_delivery is not None
     integration = project.last_delivery["integration"]
     assert integration["status"] in {"passed", "skipped"}
