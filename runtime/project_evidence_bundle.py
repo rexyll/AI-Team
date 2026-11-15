@@ -313,7 +313,7 @@ def _acceptance_summary(value: Any) -> dict[str, Any] | None:
                 {
                     "test_id": test.get("test_id"),
                     "status": test.get("status", "unknown"),
-                    "selector_sha256": _sha256_value(str(test.get("selector") or "")),
+                    "selector": test.get("selector"),
                 }
                 for test in (requirement.get("tests") or [])[:100]
                 if isinstance(test, Mapping)
