@@ -193,9 +193,9 @@ def test_repository_python314_locks_are_fully_parsed(tmp_path: Path):
     repository_root = Path(__file__).resolve().parents[1]
     cases = (
         ("requirements-linux-py314.lock", 17),
-        ("requirements-dev-linux-py314.lock", 30),
+        ("requirements-dev-linux-py314.lock", 31),
         ("requirements-windows-py314.lock", 18),
-        ("requirements-dev-windows-py314.lock", 31),
+        ("requirements-dev-windows-py314.lock", 32),
     )
     evidence_sha = hashlib.sha256(b"{}").hexdigest()
     for filename, expected_components in cases:
