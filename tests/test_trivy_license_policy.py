@@ -182,6 +182,15 @@ def test_license_policy_applies_only_exact_approved_package_version_and_expressi
         "license": "MPL-2.0 AND MIT",
         "expires_on": "2027-02-13",
         "approved_by": "repository owner (rexyll)",
+        "approved_at": "2026-11-15",
+        "classification": "RECIPROCAL",
+        "rationale": "Narrowly approved for the current OpenAI SDK transitive dependency while retaining MPL and MIT obligations.",
+        "obligations": [
+            "Retain upstream copyright and license notices.",
+            "Provide MPL-2.0 and MIT license texts or authoritative URLs on redistribution.",
+            "If MPL-covered files are modified and distributed, provide their corresponding source under MPL-2.0.",
+            "Review before 2027-02-13.",
+        ],
     }]
 
 
