@@ -95,7 +95,22 @@ def _project(tmp_path: Path):
         },
         "qa": {"status": "completed", "verdict": "QA_PASSED"},
         "security": {"status": "completed", "verdict": "SEC_PASSED", "findings": []},
-        "acceptance": {"verdict": "passed", "gaps": [], "warnings": [], "test_count": 1},
+        "acceptance": {
+            "verdict": "passed",
+            "traceability_verdict": "passed",
+            "executable_verdict": "passed",
+            "gaps": [],
+            "warnings": [],
+            "test_count": 1,
+            "requirements": [{
+                "req_id": "REQ-001",
+                "tests": [{
+                    "test_id": "AT-001",
+                    "selector": "tests.test_app::test_accepts_input",
+                    "status": "passed",
+                }],
+            }],
+        },
         "release": {"status": "not_requested"},
         "smoke": {"status": "passed"},
     }
@@ -146,6 +161,10 @@ def test_builds_privacy_minimized_bundle_with_real_artifact_hashes(tmp_path: Pat
     validate_project_evidence_bundle(bundle)
     assert bundle["project"]["id"] == "T21-8-EVIDENCE-FIXTURE"
     assert bundle["requirement"]["ids"][0]["id"] == "REQ-001"
+    acceptance = bundle["gates"]["acceptance"]
+    assert acceptance["executable_verdict"] == "passed"
+    assert acceptance["requirements"][0]["tests"][0]["test_id"] == "AT-001"
+    assert acceptance["requirements"][0]["tests"][0]["selector"] == "tests.test_app::test_accepts_input"
     assert bundle["task_graph"]["workspace_isolation"]["status"] == "passed"
     task = bundle["task_graph"]["tasks"][0]
     assert task["workspace"]["lease_id"] == "lease-0123456789abcdef"
