@@ -36,7 +36,7 @@ def artifact() -> DeploymentArtifact:
 def record() -> DeploymentRecord:
     return DeploymentRecord(
         "ai-team-container", "docker-local", "local", "1.2.3", artifact(),
-        "running", "unknown", "2026-11-15T10:00:00Z",
+        "running", "unknown", "2026-11-15T10:00:00Z", container_id="f" * 64,
     )
 
 
@@ -169,14 +169,32 @@ def test_deploy_rejects_container_id_mismatch():
     ({"Status": "exited"}, "unhealthy"),
 ])
 def test_health_check_never_assumes_missing_health_is_healthy(state, expected):
-    runner = FakeRunner(ok(json.dumps(state)))
+    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64, "State": state})))
     result = LocalDockerProvider(runner).health_check(record())
     assert result.status == expected
 
 
 def test_stop_reports_docker_failure():
-    result = LocalDockerProvider(FakeRunner(failed("no such container"))).stop(record())
+    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64})), failed("no such container"))
+    result = LocalDockerProvider(runner).stop(record())
     assert result.status == "failed"
+
+
+def test_health_check_rejects_reused_container_name():
+    runner = FakeRunner(ok(json.dumps({
+        "Id": "e" * 64, "State": {"Status": "running", "Health": {"Status": "healthy"}}
+    })))
+    result = LocalDockerProvider(runner).health_check(record())
+    assert result.status == "unavailable"
+    assert "different immutable id" in result.detail.lower()
+
+
+def test_stop_refuses_reused_container_name():
+    runner = FakeRunner(ok(json.dumps({"Id": "e" * 64})))
+    result = LocalDockerProvider(runner).stop(record())
+    assert result.status == "failed"
+    assert "immutable id" in result.message.lower()
+    assert len(runner.calls) == 1
 
 
 def test_rollback_is_explicitly_unsupported_until_host_history_exists():

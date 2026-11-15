@@ -283,8 +283,13 @@ class LocalDockerProvider:
     def health_check(self, record: DeploymentRecord) -> HealthCheckResult:
         if record.provider != self.name:
             return HealthCheckResult("unavailable", _now(), "docker inspect", "Record belongs to another provider")
+        if record.container_id is None:
+            return HealthCheckResult(
+                "unknown", _now(), "docker inspect",
+                "Historical record has no immutable container identity",
+            )
         result, error = self._execute(
-            ["inspect", "--format", "{{json .State}}", record.deployment_id]
+            ["inspect", "--format", "{{json .}}", record.deployment_id]
         )
         if error:
             status = "unavailable" if "not found" in error.lower() else "unknown"
@@ -295,9 +300,14 @@ class LocalDockerProvider:
             status = "unavailable" if self._is_unavailable(message) else "unknown"
             return HealthCheckResult(status, _now(), "docker inspect", message)
         try:
-            state = json.loads(result.stdout)
+            inspected = json.loads(result.stdout)
         except (TypeError, json.JSONDecodeError):
-            return HealthCheckResult("unknown", _now(), "docker inspect", "Docker returned invalid container state")
+            return HealthCheckResult("unknown", _now(), "docker inspect", "Docker returned invalid container inspection")
+        if not isinstance(inspected, dict):
+            return HealthCheckResult("unknown", _now(), "docker inspect", "Docker returned invalid container inspection")
+        if inspected.get("Id") != record.container_id:
+            return HealthCheckResult("unavailable", _now(), "docker inspect", "Container name resolves to a different immutable ID")
+        state = inspected.get("State")
         if not isinstance(state, dict) or state.get("Status") != "running":
             return HealthCheckResult("unhealthy", _now(), "docker inspect", "Container is not running")
         health = state.get("Health")
@@ -313,6 +323,22 @@ class LocalDockerProvider:
     def stop(self, record: DeploymentRecord) -> DeploymentOperationResult:
         if record.provider != self.name:
             return self._failure("stop", "Record belongs to a different provider")
+        if record.container_id is None:
+            return self._failure("stop", "Record has no immutable container identity")
+        inspected, error = self._execute(
+            ["inspect", "--format", "{{json .}}", record.deployment_id]
+        )
+        if error:
+            return self._failure("stop", error)
+        assert inspected is not None
+        if inspected.returncode != 0:
+            return self._failure("stop", "Docker container identity inspection failed", output=inspected.stderr)
+        try:
+            current = json.loads(inspected.stdout)
+        except (TypeError, json.JSONDecodeError):
+            return self._failure("stop", "Docker returned malformed container inspection data")
+        if not isinstance(current, dict) or current.get("Id") != record.container_id:
+            return self._failure("stop", "Container name no longer resolves to the recorded immutable ID")
         result, error = self._execute(["stop", "--time", "10", record.deployment_id])
         if error:
             return self._failure("stop", error)
