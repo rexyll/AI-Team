@@ -11,6 +11,50 @@ from runtime.tool_invocation_service import ToolInvocationService
 from security.workspace import resolve_workspace_path, workspace_scope
 
 
+def _write_e2e_evidence(project, *, tmp_path: Path, scenario: str, requirement: str) -> dict:
+    from runtime.project_evidence_bundle import (
+        validate_project_evidence_bundle,
+        write_project_evidence_bundle,
+    )
+
+    output_dir = Path(
+        os.environ.get("AI_TEAM_E2E_EVIDENCE_DIR", str(tmp_path / "evidence-artifacts"))
+    )
+    output = output_dir / f"{scenario}.evidence.json"
+    record = write_project_evidence_bundle(
+        project,
+        requirement=requirement,
+        deliverable_root=project.last_delivery["deliverable_root"],
+        output_path=output,
+        evidence_level="deterministic_orchestration",
+        role_execution={
+            "analyst": "not_registered",
+            "planner": "scripted_test_double",
+            "developer": "scripted_test_double",
+            "tester": "scripted_test_double",
+            "reviewer": "scripted_test_double",
+            "doc_writer": "mock_llm",
+            "qa": "not_registered",
+            "security": "deterministic_gate",
+            "sre": "deterministic_gate",
+        },
+        limitations=[
+            "Planner/Developer/Tester/Reviewer use scripted role doubles; full LLM reasoning is not measured.",
+            "Analyst and QA agent reasoning are not exercised in this scenario.",
+            "Live ProviderLLM and external deployment are not run.",
+        ],
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    validate_project_evidence_bundle(payload)
+    assert record["sha256"] == payload["evidence_sha256"]
+    assert payload["task_graph"]["workspace_isolation"]["status"] == "passed"
+    assert payload["task_graph"]["workspace_isolation"]["leases_merged"] == 1
+    assert payload["artifacts"]["manifest"]["status"] == "available"
+    assert payload["artifacts"]["package"]["recorded_sha256_matches"] is True
+    assert payload["tool_invocations"]
+    return payload
+
+
 @pytest.mark.skipif(
     os.name != "nt",
     reason="production Node.js adapter E2E runs on the Windows toolchain CI job",
@@ -296,6 +340,21 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert package["archive"]
     assert Path(package["archive"]).is_file()
     assert project.last_delivery["security"]["verdict"] == "SEC_PASSED"
+    lease = task.context["workspace_lease"]
+    assert lease["lease_id"]
+    assert lease["disposition"] == "merged"
+    evidence = _write_e2e_evidence(
+        project,
+        tmp_path=tmp_path,
+        scenario="node-web",
+        requirement=(
+            "Create a small Node.js Web project with a reproducible npm lockfile, "
+            "a deterministic build, an executable test, and a packaged deliverable. "
+            "Do not deploy or publish it."
+        ),
+    )
+    assert evidence["project_profile"]["project_type"] == "web"
+    assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
 
 
 
@@ -465,3 +524,18 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     assert package["archive"]
     assert Path(package["archive"]).is_file()
     assert project.last_delivery["security"]["verdict"] == "SEC_PASSED"
+    lease = task.context["workspace_lease"]
+    assert lease["lease_id"]
+    assert lease["disposition"] == "merged"
+    evidence = _write_e2e_evidence(
+        project,
+        tmp_path=tmp_path,
+        scenario="python-cli",
+        requirement=(
+            "Create an installable Python CLI package with reproducible setup, "
+            "a documented command, tests for valid and invalid input, and a package. "
+            "Do not publish or deploy it."
+        ),
+    )
+    assert evidence["project_profile"]["project_type"] == "cli"
+    assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
