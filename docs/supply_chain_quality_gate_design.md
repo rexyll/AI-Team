@@ -119,8 +119,15 @@ T21.6.3 的 reconciliation mutation 仍受可信 host 身份认证、独立双�
 
 ### T21.7.4 项目许可证与有条件依赖例外（2026-11-15）
 
-- 根目录新增 `LICENSE`，采用官方原文 [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0)，并附项目 `Required Notice`。该许可证允许符合其定义的小型企业为公司利益使用软件：员工与独立承包人员合计少于 100 人，且上一纳税年度收入低于按美国 CPI 调整的 2019 年 USD 1,000,000 门槛。未满足条件的商业用途不在该许可授权内，须另行取得许可。README 已说明该边界。该许可证并非 OSI-approved open-source license；不得宣传为无条件开源或允许所有企业免费商用。
+- 根目录新增 `LICENSE`，采用官方原文 [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0)，并附项目 `Required Notice`。该许可证允许符合其定义的小型企业为公司利益使用软件：员工与独立承包人员合计少于 100 人，且上一纳税年度收入低于按美国 CPI 调整的 2019 年 USD 1,000,000 门槛。未满足条件的商业用途不在该许可授权内，须另行取得许可。README 已说明该边界。该许可证并非 OSI-approved open-source license；不得宣传为无条件开源或允许所有企业免费商用。官方 Small Business 文本也没有单独授予一般个人/非商业用途的宽泛许可；若项目目标还包括任何个人的免费非商业使用，需要另行增加明确授权或改用/组合适当许可，不能从 Small Business 条款自行推导。
 - 新增 `THIRD_PARTY_NOTICES.md`，记录 `tqdm==4.70.1`（`openai` 传递依赖）的 `MPL-2.0 AND MIT` 表达式、上游来源和再分发义务。项目许可证不改变任何第三方依赖许可证。
 - 许可证例外只匹配 `tqdm`、`4.70.1`、精确表达式 `MPL-2.0 AND MIT` 与 `RECIPROCAL` 分类；责任人 `repository owner (rexyll)`，批准日期 2026-11-15，到期/复审日期 2027-02-13。保留原始分类并在报告中显式列出已应用例外，不把它改写为 NOTICE/PERMISSIVE；未知许可证、扫描器不可用和数据库过期仍 deny。
 - policy evaluator 已验证例外 schema、生产锁版本、精确表达式、审批日期、到期日期和非空义务清单；新增测试覆盖精确匹配、版本/表达式不匹配及过期 fail-closed。例外不能覆盖其他版本/包/许可证，也不能豁免漏洞扫描。
 - 法律边界：许可证文本按 PolyForm 官方版本原样采用并保留其条件；本仓库的项目许可证与第三方依赖许可证分别适用。许可证选择不是法律意见，商业分发前建议由专业律师审阅。
+
+
+**T21.7.4 最终验证（2026-11-15）**：
+
+- 依赖安全扫描 run `43706969720`（提交 `6f1e4e9946312cbe32a5bcaca7b8d86668d8f840`）成功；production Linux Python 3.14 lock 17/17 包完整匹配，pip-audit 2.10.1 报告 0 个已知漏洞；OSV PyPI 数据库状态 `fresh`，导出年龄 6,352 秒（小于 24h），最新 advisory `MAL-2026-19942` 与 API record 对齐；Trivy 0.76.2 识别全部 17 个包，license policy `passed`。状态文件四项均为 exit code 0。artifact `14159420157`。
+- policy result 明确保留 `tqdm==4.70.1` 的 `RECIPROCAL` 分类，并将精确表达式 `MPL-2.0 AND MIT` 标记为 `exception_applied=true`；审批日期 2026-11-15，责任人 `repository owner (rexyll)`，到期/复审日期 2027-02-13，完整理由与再分发义务进入扫描报告。未放宽其他 reciprocal/unknown licenses。
+- 同一提交主 CI run `43706969697` 全部 Job 成功：全量回归 2,530 passed / 10 skipped；安全回归 237 passed / 9 skipped；Windows toolchain smoke 成功；coverage baseline job 成功。T21.7.4 漏洞与许可证扫描节点完成。T21.7.3 的固定硬件绝对性能预算仍因缺少受控 runner 而未完成，不能将 T21.7 整体标记完成。
