@@ -331,3 +331,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.7.1 cross-platform lock resolver workflow | 新增手动触发的 GitHub Actions 工作流，在 Ubuntu/Windows Python 3.14 runner 上使用固定版本 pip 25.3 与 pip-tools 7.5.2 分别解析生产/开发依赖，生成带完整哈希的候选 lock，并上传独立 artifacts；同时记录 resolver 环境。该工作流只产出候选物，不自动提交、不切换主 CI；需检查两个平台产物、执行 require-hashes clean install 与回归后才能接纳。 | 新增 `.github/workflows/dependency-lock.yml`；提交 `8b7fae9`；等待手动 dispatch 与 artifact 审查 |
+
+
+| 2026-11-15 | T21.7.1 candidate lock review and resolver hardening | 首轮双平台 artifacts 已生成（Linux #14155067621、Windows #14155640489），但未接纳：pip-compile 报告 setuptools 未 pin，且生成头部隐式带有 --no-index。已修订生成流程，显式禁用 pip-tools 配置、固定官方 PyPI index、启用 --allow-unsafe 将 setuptools 纳入哈希锁，并在全新 venv 中分别对生产/开发锁执行 pip install --require-hashes。首轮候选仅用于审查，等待新双平台 run 重新生成并完成 clean-install 验证。 | 更新 `.github/workflows/dependency-lock.yml`；提交 `8e8ecef`、`12e27c0`；新 run 待验证 |
