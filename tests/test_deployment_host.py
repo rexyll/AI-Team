@@ -13,7 +13,7 @@ from runtime.deployment_provider import (
     DeploymentRecord,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
-from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
+from runtime.local_docker_provider import LocalDockerProvider
 
 
 class NoDockerCallsRunner:

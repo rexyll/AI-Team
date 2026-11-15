@@ -471,11 +471,8 @@ def test_resume_session_completes_after_answers_saved(tmp_path, monkeypatch):
 
 
 def test_main_scans_configured_deployment_history_before_project_dispatch(tmp_path, monkeypatch, capsys):
-    from runtime.deployment_host import DeploymentHostRuntime
-    from tests.test_deployment_host import _seed_pending_replacement
-
     history_path = tmp_path / "host" / "deployments.sqlite3"
-    _seed_pending_replacement(history_path)
+    _seed_pending_replacement_for_cli_test(history_path)
     monkeypatch.setenv("AI_TEAM_DEPLOYMENT_HISTORY", str(history_path))
 
     class FakeResult:
@@ -499,10 +496,8 @@ def test_main_scans_configured_deployment_history_before_project_dispatch(tmp_pa
 
 
 def test_main_deployment_recovery_inventory_is_standalone_json(tmp_path, monkeypatch, capsys):
-    from tests.test_deployment_host import _seed_pending_replacement
-
     history_path = tmp_path / "host" / "deployments.sqlite3"
-    _seed_pending_replacement(history_path)
+    _seed_pending_replacement_for_cli_test(history_path)
     monkeypatch.delenv("AI_TEAM_DEPLOYMENT_HISTORY", raising=False)
     monkeypatch.setattr(main.sys, "argv", [
         "main.py",
@@ -517,3 +512,37 @@ def test_main_deployment_recovery_inventory_is_standalone_json(tmp_path, monkeyp
     assert payload["unfinished_replacements"] == 1
     assert payload["inventory"][0]["operation_id"] == "startup-operation-001"
     assert payload["inventory"][0]["external_state_verified"] is False
+
+
+def _seed_pending_replacement_for_cli_test(path):
+    from runtime.deployment_history import DeploymentHistoryStore
+    from runtime.deployment_provider import DeploymentArtifact, DeploymentRecord
+    from runtime.deployment_replacement import ReplacementJournalRecord
+
+    history = DeploymentHistoryStore(path)
+    artifact = DeploymentArtifact(
+        "docker-local", "image:previous", "a" * 64, "1.0"
+    )
+    previous = DeploymentRecord(
+        "previous", "docker-local", "staging", "1.0", artifact,
+        "running", "healthy", "2026-11-15T15:00:00Z",
+        project="demo", container_id="a" * 64,
+    )
+    history.append(previous)
+    history.set_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        deployment_id="previous", expected_deployment_id=None,
+    )
+    history.begin_replacement(ReplacementJournalRecord(
+        operation_id="startup-operation-001",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        phase="prepared",
+        created_at="2026-11-15T15:01:00Z",
+        updated_at="2026-11-15T15:01:00Z",
+        previous_runtime_id=previous.container_id,
+    ))
+    return history
