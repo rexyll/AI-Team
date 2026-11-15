@@ -102,6 +102,9 @@ def test_production_checklist_documents_provider_and_runtime_contract() -> None:
 def test_setup_guide_states_real_dependency_contract() -> None:
     content = SETUP.read_text(encoding="utf-8-sig")
 
-    assert "pip install -r requirements.txt" in content
+    assert "requirements-windows-py314.lock" in content
+    assert "requirements-dev-windows-py314.lock" in content
+    assert "--require-hashes" in content
+    assert "top-level dependency inputs" in content
     # The historical claim that requirements.txt stays empty is obsolete.
     assert "keeps `requirements.txt` empty" not in content
