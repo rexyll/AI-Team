@@ -420,6 +420,7 @@ class _ResultAwareQAMockLLM(MockLLM):
         )
         self.expected_list_fragment = expected_list_fragment
         self.expected_file_fragment = expected_file_fragment
+        self.last_tool_assessment = {}
 
     def generate_with_tools(self, messages, *, tools=None, tool_choice="auto"):
         if self.remaining_tool_script_steps:
@@ -431,12 +432,31 @@ class _ResultAwareQAMockLLM(MockLLM):
             for item in messages
             if isinstance(item, dict) and item.get("role") == "tool"
         ]
+        self.last_tool_assessment = {
+            "tool_output_count": len(outputs),
+            "tool_error_count": sum("Tool error:" in item for item in outputs),
+            "list_contains_expected": (
+                len(outputs) > 0 and self.expected_list_fragment in outputs[0]
+            ),
+            "file_contains_expected": (
+                len(outputs) > 1 and self.expected_file_fragment in outputs[1]
+            ),
+            "command_exit_zero": (
+                len(outputs) > 2 and outputs[2].splitlines()[:1] == ["exit_code=0"]
+            ),
+            "command_first_line": (
+                outputs[2].splitlines()[:1] if len(outputs) > 2 else []
+            ),
+            "tool_error_prefixes": [
+                item[:240] for item in outputs if "Tool error:" in item
+            ],
+        }
         passed = (
-            len(outputs) == 3
-            and all("Tool error:" not in item for item in outputs)
-            and self.expected_list_fragment in outputs[0]
-            and self.expected_file_fragment in outputs[1]
-            and outputs[2].splitlines()[:1] == ["exit_code=0"]
+            self.last_tool_assessment["tool_output_count"] == 3
+            and self.last_tool_assessment["tool_error_count"] == 0
+            and self.last_tool_assessment["list_contains_expected"]
+            and self.last_tool_assessment["file_contains_expected"]
+            and self.last_tool_assessment["command_exit_zero"]
         )
         verdict = "QA_PASSED" if passed else "QA_FAILED"
         return LLMResponse(
@@ -495,6 +515,14 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
+    qa_agent = _make_qa_agent(
+        folder="webapp",
+        list_path="webapp/dist",
+        read_path="webapp/dist/index.html",
+        command="npm test -- --test-reporter=dot",
+        expected_list_fragment="index.html",
+        expected_file_fragment="ORCHESTRATOR-WEB-DELIVERABLE",
+    )
     router = AgentRouter()
     for role, agent in (
         (
@@ -518,14 +546,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         ),
         (
             "qa",
-            _make_qa_agent(
-                folder="webapp",
-                list_path="webapp/dist",
-                read_path="webapp/dist/index.html",
-                command="npm test -- --test-reporter=dot",
-                expected_list_fragment="index.html",
-                expected_file_fragment="ORCHESTRATOR-WEB-DELIVERABLE",
-            ),
+            qa_agent,
         ),
     ):
         router.register(role, agent)
@@ -568,7 +589,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     built_entry = root / "dist" / "index.html"
     assert built_entry.is_file()
     assert "ORCHESTRATOR-WEB-DELIVERABLE" in built_entry.read_text(encoding="utf-8")
-    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED"
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", qa_agent.llm.last_tool_assessment
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
     assert all(item["status"] == "completed" for item in qa_history)
@@ -720,6 +741,14 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
+    qa_agent = _make_qa_agent(
+        folder="cli",
+        list_path="cli/sample_app",
+        read_path="cli/sample_app/cli.py",
+        command="python -m sample_app.cli --value -1",
+        expected_list_fragment="cli.py",
+        expected_file_fragment="def main",
+    )
     router = AgentRouter()
     for role, agent in (
         (
@@ -743,14 +772,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         ),
         (
             "qa",
-            _make_qa_agent(
-                folder="cli",
-                list_path="cli/sample_app",
-                read_path="cli/sample_app/cli.py",
-                command="python -m sample_app.cli --value -1",
-                expected_list_fragment="cli.py",
-                expected_file_fragment="def main",
-            ),
+            qa_agent,
         ),
     ):
         router.register(role, agent)
@@ -801,7 +823,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "42"
-    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED"
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", qa_agent.llm.last_tool_assessment
     assert project.last_delivery["acceptance"]["verdict"] == "passed"
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
