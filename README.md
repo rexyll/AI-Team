@@ -207,3 +207,6 @@ Each DevPlan node follows:
 5. Record the accepted result and commit in `DevPlan.md`.
 
 See [`docs/setup.md`](docs/setup.md) for the detailed setup and runtime guide.
+## License
+
+This project is licensed under the [PolyForm Small Business License 1.0.0](LICENSE). It permits use, modification, and redistribution subject to its terms. Commercial use for the benefit of a company is permitted only when the company satisfies the license's small-business thresholds (fewer than 100 employees and independent contractors, and revenue below the CPI-adjusted USD 1,000,000 threshold stated in the license). Other commercial use requires separate permission from the licensor. Third-party dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
