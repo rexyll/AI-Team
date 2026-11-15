@@ -23,6 +23,7 @@ from runtime.deployment_provider import (
     HealthCheckResult,
     is_rollback_candidate,
 )
+from runtime.deployment_replacement import ReplacementJournalRecord
 
 
 def _record_to_json(record: DeploymentRecord) -> str:
@@ -34,6 +35,17 @@ def _record_from_json(payload: str) -> DeploymentRecord:
     artifact = data.pop("artifact")
     from runtime.deployment_provider import DeploymentArtifact
     return DeploymentRecord(**data, artifact=DeploymentArtifact(**artifact))
+
+
+@dataclass(frozen=True)
+class ReplacementRecoverySnapshot:
+    """One SQLite read-transaction view of a replacement and its host pointers."""
+
+    journal: ReplacementJournalRecord
+    previous: DeploymentRecord | None
+    candidate: DeploymentRecord | None
+    active_deployment_id: str | None
+    active_pointer_consistent: bool
 
 
 class DeploymentHistoryStore:
@@ -341,6 +353,98 @@ class DeploymentHistoryStore:
                 " ORDER BY created_at, operation_id", values,
             ).fetchall()
         return [self._replacement_from_json(row["record_json"]) for row in rows]
+
+    def list_replacement_recovery_snapshots(
+        self,
+        *,
+        provider: str,
+        project: str | None = None,
+        environment: str | None = None,
+    ) -> list[ReplacementRecoverySnapshot]:
+        """Read active journals, both deployment records, and route ownership
+        from one SQLite read transaction.
+
+        This prevents a startup inventory from combining a journal from one
+        phase with deployment/pointer rows committed by another Host process
+        later in the scan. It is deliberately read-only.
+        """
+        if not isinstance(provider, str) or not provider.strip():
+            raise ValueError("provider must be a non-empty string")
+        clauses = ["phase NOT IN ('previous_retired', 'aborted')", "provider = ?"]
+        values: list[str] = [provider]
+        for column, value in (("project", project), ("environment", environment)):
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{column} must be a non-empty string when provided")
+                clauses.append(f"{column} = ?")
+                values.append(value)
+
+        snapshots: list[ReplacementRecoverySnapshot] = []
+        with self._connect() as db:
+            # sqlite3 does not automatically hold a read snapshot across a
+            # sequence of SELECT statements in autocommit-style usage. Begin
+            # explicitly so all rows below share one database snapshot.
+            db.execute("BEGIN")
+            journals = db.execute(
+                "SELECT record_json FROM deployment_replacements WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY created_at, operation_id",
+                values,
+            ).fetchall()
+            for row in journals:
+                journal = self._replacement_from_json(row["record_json"])
+                previous_row = db.execute(
+                    "SELECT record_json FROM deployments WHERE deployment_id = ?",
+                    (journal.previous_deployment_id,),
+                ).fetchone()
+                candidate_row = db.execute(
+                    "SELECT record_json FROM deployments WHERE deployment_id = ?",
+                    (journal.target_deployment_id,),
+                ).fetchone()
+                previous = _record_from_json(previous_row["record_json"]) if previous_row else None
+                candidate = _record_from_json(candidate_row["record_json"]) if candidate_row else None
+
+                active_row = db.execute(
+                    """SELECT a.deployment_id, d.provider, d.environment, d.project,
+                              d.status, d.record_json
+                       FROM active_deployments AS a
+                       LEFT JOIN deployments AS d ON d.deployment_id = a.deployment_id
+                       WHERE a.provider = ? AND a.environment = ? AND a.project = ?""",
+                    (journal.provider, journal.environment, journal.project),
+                ).fetchone()
+                active_id = active_row["deployment_id"] if active_row else None
+                active_consistent = active_row is None
+                if active_row is not None and active_row["record_json"] is not None:
+                    active_record = _record_from_json(active_row["record_json"])
+                    active_consistent = (
+                        active_record.deployment_id == active_id
+                        and active_record.provider == journal.provider
+                        and active_record.environment == journal.environment
+                        and active_record.project == journal.project
+                        and active_record.status == "running"
+                        and (
+                            active_row["provider"],
+                            active_row["environment"],
+                            active_row["project"],
+                            active_row["status"],
+                        )
+                        == (
+                            journal.provider,
+                            journal.environment,
+                            journal.project,
+                            "running",
+                        )
+                    )
+                snapshots.append(
+                    ReplacementRecoverySnapshot(
+                        journal=journal,
+                        previous=previous,
+                        candidate=candidate,
+                        active_deployment_id=active_id,
+                        active_pointer_consistent=active_consistent,
+                    )
+                )
+        return snapshots
 
     def mark_stopped(self, record: DeploymentRecord) -> DeploymentRecord:
         """Commit a stopped state only after the host has verified the runtime.

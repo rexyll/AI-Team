@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from dataclasses import replace
 from pathlib import Path
 
@@ -539,4 +541,26 @@ def test_recovery_inventory_recognizes_aborted_candidate_before_terminal_journal
     assert item.automatic_recovery_allowed is False
     assert item.recovery_assessment.disposition == "pre_switch_state_requires_inspection"
     assert history.get_replacement(prepared.operation_id).phase == "candidate_started"
+    assert provider.calls == []
+
+
+def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_path, monkeypatch):
+    history, provider, _, previous, target = _setup(tmp_path)
+    journal = _replacement_journal(previous, target)
+    history.begin_replacement(journal)
+
+    original_connect = sqlite3.connect
+    connections = []
+
+    def tracked_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr("runtime.deployment_history.sqlite3.connect", tracked_connect)
+    inventory = HostDeploymentReplacementManager(provider, history).recovery_inventory()
+
+    assert len(inventory) == 1
+    assert inventory[0].classification == "prepared_candidate_not_persisted"
+    assert len(connections) == 1
     assert provider.calls == []

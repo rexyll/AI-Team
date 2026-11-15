@@ -146,26 +146,20 @@ class HostDeploymentReplacementManager:
         scope reservation. Provider runtime and traffic read-back must happen
         in a separate, explicitly authorized reconciliation operation.
         """
-        journals = self.history.list_active_replacements(
+        snapshots = self.history.list_replacement_recovery_snapshots(
             provider=self.provider.name,
             project=project,
             environment=environment,
         )
         inventory: list[DeploymentRecoveryInventoryItem] = []
-        for journal in journals:
-            previous = self.history.get(journal.previous_deployment_id)
-            candidate = self.history.get(journal.target_deployment_id)
-            active_id: str | None = None
+        for snapshot in snapshots:
+            journal = snapshot.journal
+            previous = snapshot.previous
+            candidate = snapshot.candidate
+            active_id = snapshot.active_deployment_id
             classification: RecoveryInventoryClassification
 
-            try:
-                active = self.history.active_deployment(
-                    provider=journal.provider,
-                    environment=journal.environment,
-                    project=journal.project,
-                )
-                active_id = active.deployment_id if active is not None else None
-            except Exception:
+            if not snapshot.active_pointer_consistent:
                 classification = "journal_history_incomplete"
             else:
                 scope_matches = (
