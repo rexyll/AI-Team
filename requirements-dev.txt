@@ -4,3 +4,4 @@ ruff>=0.14,<1
 mypy>=1.18,<2
 build>=1.2,<2
 setuptools>=75,<100
+coverage>=7.10,<8
