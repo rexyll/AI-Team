@@ -10,7 +10,7 @@ from typing import Any
 
 
 _REQUIREMENT = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\\s;]+)"
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)"
 )
 
 
@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         lock_components = _read_lock(args.lock_file)
         result = evaluate_license_report(report, lock_components, policy)
         args.output.write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\\n",
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
