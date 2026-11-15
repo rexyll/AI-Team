@@ -82,6 +82,15 @@ def test_license_policy_denies_unknown_and_requires_explicit_exceptions():
     assert policy["unknown_license_policy"] == "deny"
     assert policy["scanner_unavailable_policy"] == "deny"
     assert policy["stale_database_policy"] == "deny"
-    assert policy["exceptions"] == []
+    assert len(policy["exceptions"]) == 1
+    exception = policy["exceptions"][0]
+    assert exception["package"] == "tqdm"
+    assert exception["version"] == "4.70.1"
+    assert exception["license"] == "MPL-2.0 AND MIT"
+    assert exception["classification"] == "RECIPROCAL"
+    assert exception["approved_by"] == "repository owner (rexyll)"
+    assert exception["approved_at"] == "2026-11-15"
+    assert exception["expires_on"] == "2027-02-13"
+    assert len(exception["obligations"]) >= 3
     assert policy["license_classification_overrides"]["PSF-2.0"]["classification"] == "NOTICE"
     assert policy["license_classification_overrides"]["PSF-2.0"]["source"].startswith("https://spdx.org/")
