@@ -79,6 +79,14 @@ Required host-history additions before implementation: explicit active/stopped l
 
 The `DeploymentReplacementProvider` protocol separates candidate preparation/start, candidate health verification, traffic switch, effective-route read-back, old-instance retirement, and candidate abort. Each operation is keyed by a host-generated operation ID and is required to be idempotent. The protocol is declarative only: no provider currently implements it, no journal is yet persisted by `HostDeploymentManager`, and Local Docker rollback remains unsupported. This is a contract milestone, not a claim of working replacement or zero-downtime rollback.
 
+### Host-owned replacement coordinator implementation (2026-11-15)
+
+`runtime/deployment_replacement_manager.py` now implements the generic host-side transaction coordinator for providers that implement the full `DeploymentReplacementProvider` capability. It reserves the provider/project/environment scope in the SQLite replacement journal before provider side effects, verifies the previous active deployment is freshly healthy, prepares and starts a distinct candidate, persists its immutable runtime identity, requires fresh candidate health, switches traffic, and reads the effective route back. Only a read-back matching the candidate immutable runtime permits the active-deployment pointer compare-and-swap. The previous runtime is retired only after that CAS, and the provider must return an inspect-confirmed stopped record whose immutable identity matches the journal before host history is marked stopped.
+
+Before traffic switch, a failed candidate can be aborted only after read-back proves the previous route is still effective; the coordinator then requires an inspect-confirmed stopped candidate record and a second route read-back. If routing is ambiguous, abort/retirement cannot be verified, or an exception occurs after an external side effect, the coordinator preserves both runtimes and leaves the scope reserved as `needs_reconciliation`. It never guesses a rollback route. `tests/test_deployment_replacement_manager.py` exercises the transaction using a fake provider.
+
+This does **not** make Local Docker replacement or rollback available: `LocalDockerProvider` still lacks an isolated candidate network and host-owned traffic router with authoritative route read-back. The manager is a generic orchestration layer, not a real Docker integration. The read-only recovery classifier still performs no automatic provider reconciliation, and no authenticated operator/two-person approval path can release `needs_reconciliation`. No zero-downtime or Docker rollback claim is made.
+
 
 ### Durable replacement journal and concurrency reservation
 
