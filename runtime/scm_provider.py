@@ -302,7 +302,11 @@ class SCMService:
         if not callable(getter):
             raise SCMPreflightError("provider does not expose pull request head metadata")
         pull_request = getter(repository, pull_request_number)
-        head = pull_request.get("head_sha") if isinstance(pull_request, dict) else None
+        if not isinstance(pull_request, dict):
+            raise SCMPreflightError("provider returned invalid pull request metadata")
+        if pull_request.get("state") != "open" or pull_request.get("merged") is not False:
+            raise SCMPreflightError("merge blocked: pull request is not open and unmerged")
+        head = pull_request.get("head_sha")
         if not isinstance(head, str) or not _SHA.fullmatch(head):
             raise SCMPreflightError("provider returned no valid pull request head SHA")
         return head
