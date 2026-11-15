@@ -307,3 +307,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 reconciliation data contract | 新增纯数据契约：host-authenticated principal 快照、申请人与批准人分离的审批快照、精确绑定 needs_reconciliation scope/phase/deployment/runtime identity 的审批、SHA-256 与时间戳证据引用、两种受限 resolution proposal。abort_candidate 必须有 provider inspection、candidate absence、previous runtime inspection 和 previous route read-back；confirm_previous_retired 必须有 provider inspection、candidate route read-back、candidate health 和 previous retirement。严格拒绝 scope/identity 不匹配、重复/缺失证据、错误 runtime 目标和无效时间/摘要。此模块不认证身份、不签发/消费审批、不验证外部证据、不写审计、不修改 journal、不操作 provider；proposal 不是执行许可。 | 新增 runtime/deployment_reconciliation_contract.py、tests/test_deployment_reconciliation_contract.py；更新架构文档与 TaskPlan；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 reconciliation audit envelope contract | 新增纯数据审计信封：规范化 JSON payload、SHA-256 event digest、连续序号/前序 digest 链接、principal/approval/scope/runtime identity、proposal/evidence digest 与时区时间戳；验证单事件摘要与相邻事件链关系。明确无密钥签名、无受保护链头、无持久化 writer/fsync、无认证/审批消费、无 journal mutation；未锚定的无密钥 hash chain 不能抵御有能力重写整个存储的攻击。 | 新增 `runtime/deployment_reconciliation_audit.py`、`tests/test_deployment_reconciliation_audit.py`；更新部署架构文档；CI 待验证 |
