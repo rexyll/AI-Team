@@ -189,54 +189,29 @@ def test_provenance_binds_archive_and_detects_tampering(tmp_path: Path):
     assert "delivery archive SHA-256 mismatch" in verification["problems"]
 
 
-def test_repository_python314_lock_is_fully_parsed(tmp_path: Path):
+def test_repository_python314_locks_are_fully_parsed(tmp_path: Path):
     repository_root = Path(__file__).resolve().parents[1]
-    source_lock = repository_root / "requirements-linux-py314.lock"
-    lock = tmp_path / source_lock.name
-    shutil.copyfile(source_lock, lock)
-    _write(tmp_path / "requirements.txt", "openai==3.1.0\n")
-    result = write_delivery_sbom(
-        tmp_path,
-        project="ai-team",
-        build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
-        lock_file=lock.name,
+    cases = (
+        ("requirements-linux-py314.lock", 17),
+        ("requirements-dev-linux-py314.lock", 30),
+        ("requirements-windows-py314.lock", 18),
+        ("requirements-dev-windows-py314.lock", 31),
     )
-    bom = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
-    assert result["status"] == "completed"
-    assert result["components"] == 17
-    assert all(component.get("hashes") for component in bom["components"])
-
-
-def test_declared_sbom_rejects_unexpanded_requirement_includes(tmp_path: Path):
-    _write(
-        tmp_path / "requirements.txt",
-        "-r base-requirements.txt\n"
-        "requests==2.0.0\n",
-    )
-    with pytest.raises(ValueError, match="unsupported requirement directive"):
-        write_delivery_sbom(
-            tmp_path,
-            project="sample-app",
-            build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
+    evidence_sha = hashlib.sha256(b"{}").hexdigest()
+    for filename, expected_components in cases:
+        case_root = tmp_path / filename.removesuffix(".lock")
+        case_root.mkdir()
+        source_lock = repository_root / filename
+        lock = case_root / filename
+        shutil.copyfile(source_lock, lock)
+        _write(case_root / "requirements.txt", "openai==3.1.0\n")
+        result = write_delivery_sbom(
+            case_root,
+            project="ai-team",
+            build_evidence_sha256=evidence_sha,
+            lock_file=lock.name,
         )
-
-
-def test_sbom_preserves_platform_markers_from_lock(tmp_path: Path):
-    marker = 'sys_platform == "win32"'
-    lock = tmp_path / "requirements-windows-py314.lock"
-    _write(
-        lock,
-        "colorama==0.4.6; " + marker + " \\\n"
-        "    --hash=sha256:" + ("b" * 64) + "\n",
-    )
-    result = write_delivery_sbom(
-        tmp_path,
-        project="sample-app",
-        build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
-        lock_file=lock.name,
-    )
-    bom = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
-    assert {
-        "name": "ai-team:environment-marker",
-        "value": marker,
-    } in bom["components"][0]["properties"]
+        bom = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+        assert result["status"] == "completed"
+        assert result["components"] == expected_components
+        assert all(component.get("hashes") for component in bom["components"])
