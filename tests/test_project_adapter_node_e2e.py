@@ -388,6 +388,7 @@ class _ResultAwareQAMockLLM(MockLLM):
         list_path: str,
         expected_list_fragment: str,
         expected_file_fragment: str,
+        expected_command_fragment: str,
     ) -> None:
         super().__init__(
             tool_script=[
@@ -420,6 +421,7 @@ class _ResultAwareQAMockLLM(MockLLM):
         )
         self.expected_list_fragment = expected_list_fragment
         self.expected_file_fragment = expected_file_fragment
+        self.expected_command_fragment = expected_command_fragment
         self.last_tool_assessment = {}
 
     def generate_with_tools(self, messages, *, tools=None, tool_choice="auto"):
@@ -447,6 +449,9 @@ class _ResultAwareQAMockLLM(MockLLM):
             "command_first_line": (
                 outputs[2].splitlines()[:1] if len(outputs) > 2 else []
             ),
+            "command_contains_expected": (
+                len(outputs) > 2 and self.expected_command_fragment in outputs[2]
+            ),
             "tool_error_prefixes": [
                 item[:240] for item in outputs if "Tool error:" in item
             ],
@@ -457,6 +462,7 @@ class _ResultAwareQAMockLLM(MockLLM):
             and self.last_tool_assessment["list_contains_expected"]
             and self.last_tool_assessment["file_contains_expected"]
             and self.last_tool_assessment["command_exit_zero"]
+            and self.last_tool_assessment["command_contains_expected"]
         )
         verdict = "QA_PASSED" if passed else "QA_FAILED"
         return LLMResponse(
@@ -476,6 +482,7 @@ def _make_qa_agent(
     list_path: str,
     expected_list_fragment: str,
     expected_file_fragment: str,
+    expected_command_fragment: str,
 ):
     from agents.qa import QAAgent
     from runtime.agent_config import AgentConfig
@@ -487,6 +494,7 @@ def _make_qa_agent(
         list_path=list_path,
         expected_list_fragment=expected_list_fragment,
         expected_file_fragment=expected_file_fragment,
+        expected_command_fragment=expected_command_fragment,
     )
     return QAAgent(
         AgentConfig(role="qa", model="deterministic-mock"),
@@ -519,9 +527,10 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         folder="webapp",
         list_path="webapp/dist",
         read_path="webapp/dist/index.html",
-        command="npm test -- --test-reporter=dot",
+        command="npm test",
         expected_list_fragment="index.html",
         expected_file_fragment="ORCHESTRATOR-WEB-DELIVERABLE",
+        expected_command_fragment="pass 1",
     )
     router = AgentRouter()
     for role, agent in (
@@ -745,9 +754,10 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         folder="cli",
         list_path="cli/sample_app",
         read_path="cli/sample_app/cli.py",
-        command="python -m sample_app.cli --value -1",
+        command="python -m sample_app.cli --value 21",
         expected_list_fragment="cli.py",
         expected_file_fragment="def main",
+        expected_command_fragment="42",
     )
     router = AgentRouter()
     for role, agent in (
