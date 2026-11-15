@@ -818,6 +818,7 @@ def main() -> int:
             or args.defect_intake is not None
             or args.monitor_check is not None
             or args.scm_poll_pr is not None
+            or args.scm_merge_pr is not None
             or args.release_history is not None
             or args.knowledge_list is not None
             or args.knowledge_extract is not None
@@ -918,6 +919,8 @@ def main() -> int:
             or args.hotfix_project is not None
             or args.defect_intake is not None
             or args.monitor_check is not None
+            or args.scm_publish_pr
+            or args.scm_merge_pr is not None
             or args.release_history is not None
             or args.knowledge_list is not None
             or args.knowledge_extract is not None
