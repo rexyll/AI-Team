@@ -209,4 +209,10 @@ Each DevPlan node follows:
 See [`docs/setup.md`](docs/setup.md) for the detailed setup and runtime guide.
 ## License
 
-This project is licensed under the [PolyForm Small Business License 1.0.0](LICENSE). It permits use, modification, and redistribution subject to its terms. Commercial use for the benefit of a company is permitted only when the company satisfies the license's small-business thresholds (fewer than 100 employees and independent contractors, and revenue below the CPI-adjusted USD 1,000,000 threshold stated in the license). Other commercial use requires separate permission from the licensor. The standard PolyForm Small Business text does not separately grant the broad personal/non-commercial permission found in PolyForm Noncommercial; personal use outside the stated permitted purposes therefore requires separate permission. Third-party dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This project uses the **AI-Team Conditional Use License 1.0** (see [LICENSE](LICENSE)), a custom license with two distinct permission paths:
+
+- **Individual noncommercial use:** Any individual may use, modify, and share the project free of charge for personal, educational, academic, research, hobby, and other noncommercial purposes. No employer-size or revenue threshold applies, provided the individual acts independently and not for an organization or commercial advantage.
+- **Qualifying small-business use:** A business may use the project for purposes permitted by the incorporated [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0), including its employee/contractor and inflation-adjusted revenue thresholds and all other terms.
+- **Other commercial use:** Requires a separate written commercial license from the copyright holder.
+
+The project license is custom; it is **not** an unmodified PolyForm license and is **not** an OSI-approved open-source license. The two permission paths are separate: the individual grant does not authorize organizational or business-benefit use, and the small-business grant does not expand the official PolyForm eligibility conditions. Third-party dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
