@@ -13,6 +13,7 @@ from core.hotfix_runner import run_hotfix
 from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 from runtime.github_scm_config import create_github_scm_runtime
+from runtime.scm_lifecycle import SCMLifecycleConfig, SCMLifecycleCoordinator
 from runtime.dashboard_cli import write_dashboard
 from runtime.knowledge_base import (
     DEFAULT_KNOWLEDGE_LIMIT,
@@ -185,6 +186,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help="Run the post-delivery monitoring heartbeat on an existing deliverable directory and exit non-zero when the deliverable is unhealthy.",
+    )
+    parser.add_argument(
+        "--scm-poll-pr",
+        metavar="NUMBER",
+        type=int,
+        default=None,
+        help="Read-only: poll a GitHub pull request's CI and review state using host environment credentials, then exit.",
     )
     parser.add_argument(
         "--hotfix-project",
@@ -670,8 +678,53 @@ def main() -> int:
         or args.knowledge_extract is not None
         or args.monitor_check is not None
         or args.hotfix_project is not None
+        or args.scm_poll_pr is not None
     ):
         parser.error("the following arguments are required: requirement")
+
+    if args.scm_poll_pr is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.revise_project is not None
+            or args.change_request
+            or args.release
+            or args.auto_release
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
+            or args.monitor_check is not None
+            or args.release_history is not None
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+        ):
+            parser.error("--scm-poll-pr is read-only and cannot be combined with a delivery or other operation")
+        try:
+            scm_runtime = create_github_scm_runtime(
+                pull_request_number=args.scm_poll_pr
+            )
+            if scm_runtime is None:
+                raise RuntimeError("GitHub SCM is not configured")
+            coordinator = SCMLifecycleCoordinator(
+                scm_runtime.service,
+                SCMLifecycleConfig(repository=scm_runtime.repository),
+            )
+            observation = coordinator.poll_pull_request(scm_runtime.pull_request_number)
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(observation, ensure_ascii=False, sort_keys=True))
+        else:
+            print(
+                f"[SCM] PR #{observation['pull_request_number']} "
+                f"{observation['status']} | head={observation['head_sha']} "
+                f"| CI={observation['ci_status']} | Review={observation['review_status']} "
+                f"| attempts={observation['attempt']}/{observation['max_attempts']}"
+            )
+        return 0 if observation["status"] == "ready" else 2
 
     if args.monitor_check is not None:
         if (
