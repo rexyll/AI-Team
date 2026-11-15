@@ -301,3 +301,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 CI #310 与恢复边界复核 | CI #310（run `43682013985`，提交 `faf3d6c`）通过：Python 3.14 regression、Windows toolchain smoke 均成功。复核确认 `needs_reconciliation` 仍由 partial unique index 视为非终态并持续占用 scope；列表查询也保留该状态。当前不增加可直接改写事务阶段的人工“解锁”接口：在身份认证、审计主体、外部状态证据及双人/审批策略未定义前，人工备注不能改变 phase 或释放 reservation。 | 只读分类器与 durable journal 已有 CI 证据；下一步需先定义审计/授权契约再实现 reconciliation 操作 |
+
+
+| 2026-11-15 | T21.6.3 reconciliation authorization design gate | 完成现有能力盘点：SCMApprovalAuthority 是进程内、短时、一次性、按操作/仓库/目标绑定的审批，但 approved_by 仍是调用方字符串，不构成身份认证；DurableDeliveryAuditStore 是追加式 JSONL，但没有防篡改链、可信主体认证或强制持久化证明；ToolPermissionPolicy 是工具能力白名单，不是操作者身份系统。因此这些原语不能直接授权部署事务解锁。确定后续契约必须先接入可信 host-authenticated principal，再采用双人/独立审批（申请人与批准人分离）、精确 scope/operation/journal phase/runtime identity 绑定的一次性短时审批，以及只追加审计事件；每项终态决议必须附 provider 与路由 read-back 的结构化证据摘要。当前仅定义设计门槛，不新增 mutation/unlock API，不改变 journal phase 或 reservation。 | 代码/文档盘点；CI #311 已通过；下一步先定义纯数据契约与验证测试，再讨论执行接口 |
