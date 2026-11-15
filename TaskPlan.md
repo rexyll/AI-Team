@@ -310,3 +310,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 reconciliation audit envelope contract | 新增纯数据审计信封：规范化 JSON payload、SHA-256 event digest、连续序号/前序 digest 链接、principal/approval/scope/runtime identity、proposal/evidence digest 与时区时间戳；验证单事件摘要与相邻事件链关系。明确无密钥签名、无受保护链头、无持久化 writer/fsync、无认证/审批消费、无 journal mutation；未锚定的无密钥 hash chain 不能抵御有能力重写整个存储的攻击。 | 新增 `runtime/deployment_reconciliation_audit.py`、`tests/test_deployment_reconciliation_audit.py`；更新部署架构文档；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 audit durability/transaction design review | 检查 SQLite history 的独立事务边界与 JSONL delivery audit 的 flush-only 行为；明确审计事件与 journal CAS 的原子性缺口、外部 ledger 的幂等恢复要求，以及本地 hash chain 必须依赖独立可信链头才能提供篡改检测。确定优先评估同一 SQLite connection/transaction 原子提交审计事件与 journal CAS，但必须另行定义同步/故障模型和外部完整性锚。 | 仅更新架构文档和计划；未新增 writer/table/mutation API；CI 待验证 |
