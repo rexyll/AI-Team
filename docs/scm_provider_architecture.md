@@ -148,6 +148,31 @@ receives a merge approval. Cancellation and non-TTY execution perform no merge
 write. JSON output remains machine-readable; human prompts and previews go to
 stderr.
 
+## Lifecycle integration test contract
+
+`tests/test_scm_lifecycle_e2e.py` exercises the host service and lifecycle
+coordinator together with one deterministic provider fixture. The happy path
+asserts the observable operation order:
+
+1. Read the local HEAD and push only that approved SHA.
+2. Create/update the PR only after the push succeeds.
+3. Poll PR metadata, CI and review without performing writes.
+4. Re-read PR metadata and CI/review immediately before merge.
+5. Send the exact observed head SHA as GitHub's conditional merge SHA.
+
+Failure fixtures cover CI failure/pending timeout, changes requested, closed
+PRs, local HEAD drift before push, PR head drift after polling, PR closure
+after polling, PR creation API failure and merge API failure. These tests
+assert that blocked paths do not issue later writes and that provider failures
+are propagated rather than silently retried.
+
+Publication is a two-step remote saga, not an atomic GitHub transaction: if
+the push succeeds but PR creation fails, the branch remains pushed. The CLI
+reports the error and does not retry or roll back the push automatically.
+The operator can inspect the remote branch and explicitly retry PR creation
+with a new approval. Likewise, a merge API timeout may have an ambiguous
+remote outcome; callers must re-read PR state before attempting another merge.
+
 ## Current validation boundary
 
 The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. No live GitHub push, PR creation, CI read, review read or merge has been performed in this environment; that requires a host-configured GitHub token, a test repository and explicit operator approval. The implementation must not be described as live-integrated until that run is completed.
