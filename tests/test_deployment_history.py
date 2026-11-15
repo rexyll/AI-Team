@@ -232,3 +232,88 @@ def test_manager_fails_closed_without_prior_healthy_deployment(tmp_path):
     result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
     assert result.status == "failed"
     assert provider.rollback_record is None
+
+
+def test_active_deployment_is_explicit_and_not_inferred_from_history(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("old"))
+    assert history.active_deployment(
+        provider="docker-local", environment="staging", project="demo"
+    ) is None
+
+
+def test_active_deployment_compare_and_swap_switches_one_scope(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    old, new = make_record("old"), make_record("new")
+    history.append(old)
+    history.append(new)
+    assert history.set_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        deployment_id="old", expected_deployment_id=None,
+    ) == old
+    with pytest.raises(ValueError, match="compare-and-swap"):
+        history.set_active_deployment(
+            provider="docker-local", environment="staging", project="demo",
+            deployment_id="new", expected_deployment_id=None,
+        )
+    assert history.active_deployment(
+        provider="docker-local", environment="staging", project="demo"
+    ) == old
+    assert history.set_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        deployment_id="new", expected_deployment_id="old",
+    ) == new
+    assert history.active_deployment(
+        provider="docker-local", environment="staging", project="demo"
+    ) == new
+
+
+def test_active_deployment_rejects_wrong_scope_and_non_running_record(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("other-project", project="other"))
+    history.append(make_record("stopped", status="stopped"))
+    with pytest.raises(ValueError, match="exact requested scope"):
+        history.set_active_deployment(
+            provider="docker-local", environment="staging", project="demo",
+            deployment_id="other-project", expected_deployment_id=None,
+        )
+    with pytest.raises(ValueError, match="exact requested scope"):
+        history.set_active_deployment(
+            provider="docker-local", environment="staging", project="demo",
+            deployment_id="stopped", expected_deployment_id=None,
+        )
+
+
+def test_active_deployment_pointer_is_unique_across_scopes(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("one"))
+    history.set_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        deployment_id="one", expected_deployment_id=None,
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        history.set_active_deployment(
+            provider="docker-local", environment="production", project="demo",
+            deployment_id="one", expected_deployment_id=None,
+        )
+
+
+def test_active_deployment_clear_requires_matching_identity(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("active"))
+    history.set_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        deployment_id="active", expected_deployment_id=None,
+    )
+    with pytest.raises(ValueError, match="clear compare-and-swap"):
+        history.clear_active_deployment(
+            provider="docker-local", environment="staging", project="demo",
+            expected_deployment_id="stale",
+        )
+    history.clear_active_deployment(
+        provider="docker-local", environment="staging", project="demo",
+        expected_deployment_id="active",
+    )
+    assert history.active_deployment(
+        provider="docker-local", environment="staging", project="demo"
+    ) is None

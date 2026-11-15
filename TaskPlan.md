@@ -280,3 +280,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 durable replacement journal | SQLite 新增 replacement journal 表；仅 prepared 可创建事务；provider/project/environment 维度 partial unique index 保证每个 scope 最多一个非终态替换（needs_reconciliation 持续占用）；阶段更新使用 expected-phase CAS，校验允许的阶段迁移并禁止 scope/deployment/runtime identity 重写；支持重启后读取 journal。新增持久化、CAS 冲突、身份不可变、scope 隔离、终态释放与并发单赢家测试。尚未实现崩溃自动恢复、active deployment 唯一约束或 Docker router；rollback 仍 unsupported。 | 更新 `runtime/deployment_history.py`、`tests/test_deployment_replacement.py`、部署架构文档与 TaskPlan；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 explicit active deployment pointer | 增加独立 `active_deployments` 表，按 provider/environment/project 唯一定位当前 host-observed 流量归属；通过 expected-current-ID CAS 原子切换/清除，校验候选记录确属相同 scope 且 status=running；部署 ID 不能跨 scope 重复激活。旧数据库只创建空表，不从历史 running 记录推断 active。该指针不代表实时健康或路由已验证，只有 host 在路由 read-back 后才能写入；Docker rollback 继续 unsupported。 | 更新 `runtime/deployment_history.py`、`tests/test_deployment_history.py`、部署架构文档与 TaskPlan；CI 待验证 |

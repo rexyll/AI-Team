@@ -81,6 +81,16 @@ class DeploymentHistoryStore:
                 "CREATE INDEX idx_deployments_scope "
                 "ON deployments(provider, environment, project, sequence DESC)"
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS active_deployments (
+                    provider TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    deployment_id TEXT NOT NULL UNIQUE,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, environment, project)
+                )"""
+            )
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
                 raise RuntimeError("deployment history database integrity check failed")
@@ -135,6 +145,96 @@ class DeploymentHistoryStore:
             ).fetchall()
         return [_record_from_json(row["record_json"]) for row in rows]
 
+    def set_active_deployment(
+        self, *, provider: str, environment: str, project: str,
+        deployment_id: str, expected_deployment_id: str | None,
+    ) -> DeploymentRecord:
+        """CAS the host's active traffic-ownership pointer for one scope.
+
+        This records host-observed routing ownership; it does not probe traffic
+        or infer activity from historical running records. Call only after an
+        authoritative route switch/read-back (or explicit initial adoption).
+        """
+        for name, value in (("provider", provider), ("environment", environment),
+                            ("project", project), ("deployment_id", deployment_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT provider, environment, project, status, record_json "
+                "FROM deployments WHERE deployment_id = ?", (deployment_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("active deployment is not present in host history")
+            record = _record_from_json(row["record_json"])
+            if (row["provider"], row["environment"], row["project"], row["status"]) != (
+                provider, environment, project, "running"
+            ) or (record.provider, record.environment, record.project, record.status) != (
+                provider, environment, project, "running"
+            ):
+                raise ValueError("active deployment must be a running record in the exact requested scope")
+            current = db.execute(
+                "SELECT deployment_id FROM active_deployments "
+                "WHERE provider = ? AND environment = ? AND project = ?",
+                (provider, environment, project),
+            ).fetchone()
+            current_id = current["deployment_id"] if current else None
+            if current_id != expected_deployment_id:
+                raise ValueError("active deployment compare-and-swap conflict")
+            if current is None:
+                db.execute(
+                    "INSERT INTO active_deployments "
+                    "(provider, environment, project, deployment_id, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (provider, environment, project, deployment_id, record.created_at),
+                )
+            else:
+                changed = db.execute(
+                    "UPDATE active_deployments SET deployment_id = ?, updated_at = ? "
+                    "WHERE provider = ? AND environment = ? AND project = ? AND deployment_id = ?",
+                    (deployment_id, record.created_at, provider, environment, project, current_id),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("active deployment compare-and-swap conflict")
+            return record
+
+    def active_deployment(
+        self, *, provider: str, environment: str, project: str,
+    ) -> DeploymentRecord | None:
+        """Load the recorded active deployment; inconsistent state fails closed."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT a.deployment_id, d.provider, d.environment, d.project, d.status, d.record_json "
+                "FROM active_deployments AS a LEFT JOIN deployments AS d "
+                "ON d.deployment_id = a.deployment_id "
+                "WHERE a.provider = ? AND a.environment = ? AND a.project = ?",
+                (provider, environment, project),
+            ).fetchone()
+        if row is None:
+            return None
+        if row["record_json"] is None:
+            raise RuntimeError("active deployment pointer references missing history")
+        record = _record_from_json(row["record_json"])
+        if (row["provider"], row["environment"], row["project"], row["status"],
+            record.provider, record.environment, record.project, record.status) != (
+            provider, environment, project, "running", provider, environment, project, "running"
+        ) or record.deployment_id != row["deployment_id"]:
+            raise RuntimeError("active deployment pointer is inconsistent with host history")
+        return record
+
+    def clear_active_deployment(
+        self, *, provider: str, environment: str, project: str,
+        expected_deployment_id: str,
+    ) -> None:
+        """Clear a route-ownership pointer only when its identity still matches."""
+        with self._connect() as db:
+            changed = db.execute(
+                "DELETE FROM active_deployments "
+                "WHERE provider = ? AND environment = ? AND project = ? AND deployment_id = ?",
+                (provider, environment, project, expected_deployment_id),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("active deployment clear compare-and-swap conflict")
     def rollback_candidate(
         self, *, provider: str, environment: str, project: str,
         excluding_deployment_id: str | None = None
