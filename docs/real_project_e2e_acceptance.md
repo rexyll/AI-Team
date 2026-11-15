@@ -101,6 +101,21 @@ T21.8 is complete only after:
 - the evidence bundles and a capability-boundary report are committed under docs/ or the repository's established test-artifact convention;
 - any live ProviderLLM or external deployment validation that cannot be performed is explicitly listed as a remaining limitation, not silently counted as complete.
 
-## Current status
+## Current status (2026-11-15)
 
-Assessment only. The repository has reusable adapters and partial E2E coverage, but the two complete scenarios described above have not yet been demonstrated. No claim of T21.8 completion is made by this document.
+Partial execution evidence exists; T21.8 is **not complete**.
+
+- Python CLI: Windows production adapter E2E installs/builds/tests/smokes/packages a real package, executes the installed console script, checks success and invalid input, and verifies a deliberate failing test.
+- Node.js Web adapter: Windows production adapter E2E runs npm install/build/test/smoke/package and checks the built artifact and command audit.
+- Node.js Web orchestration: `test_node_web_requirement_runs_through_project_orchestrator_and_delivery` invokes the real `ProjectOrchestrator.run()` and default production `Orchestrator`/`TaskWorkflow`, executes Developer → Tester → Reviewer gates, writes the project inside a `DeveloperWorkspaceManager` task lease, merges only after task success, then runs the production Node adapter through `ToolInvocationService`, generates documentation with `DocWriterAgent` + `MockLLM`, runs deterministic security/dependency/monitoring/SRE evidence, writes the delivery manifest and creates a package. The test verifies lease merge records and produced artifacts. It runs on Windows CI with Node.js 22.
+- A Windows-specific lease merge defect was found by this test: `_fsync_file` opened staged/backup files read-only before `os.fsync`, causing `EBADF` on Windows. It now opens `rb+`; full regression, security regression, coverage baseline and Windows production E2E all pass in CI run [#43714970246](https://github.com/rexyll/AI-Team/actions/runs/43714970246).
+
+Evidence boundaries and remaining work:
+
+- The planner, developer, tester and reviewer in the orchestration E2E are deterministic scripted role doubles. Only the document writer is driven by `MockLLM`; this does **not** prove full MockLLM-driven agent reasoning or provider quality.
+- The full Python CLI scenario has not yet run through `ProjectOrchestrator` and the complete delivery phase.
+- The full Analyst → Planner → Developer → Tester/Reviewer → integration → QA/security → documentation/acceptance → package chain is not yet covered by one end-to-end scenario. Analyst and QA agent stages are not part of the current Node test.
+- A committed, machine-readable evidence bundle tying requirement IDs, task graph, lease IDs/merge results, command audit, acceptance, checksums and release gates together is still required.
+- Live ProviderLLM requires explicit user-managed credentials and remains not run. External deployment/publishing remains not run and requires a dedicated environment plus separate approval.
+
+No claim of T21.8 completion, live ProviderLLM validation, external deployment, browser-based acceptance, or zero-downtime publication is made.
