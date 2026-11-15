@@ -19,7 +19,7 @@ from typing import Any, Mapping
 from urllib.parse import quote
 
 _LOCK_PACKAGE = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\\\s]+)\s*\\?$"
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\\\s;]+)(?:\s*;\s*(?P<marker>.+?))?\s*\\?$"
 )
 _LOCK_HASH = re.compile(r"^\s*--hash=sha256:(?P<digest>[0-9a-fA-F]{64})\s*\\?$")
 _REQUIREMENT = re.compile(
@@ -86,6 +86,7 @@ def _parse_lock(path: Path) -> list[dict[str, Any]]:
             current = {
                 "name": name,
                 "version": package_match.group("version"),
+                "marker": package_match.group("marker"),
                 "hashes": set(),
             }
             packages[normalized] = current
@@ -114,6 +115,7 @@ def _parse_lock(path: Path) -> list[dict[str, Any]]:
             "hashes": hashes,
             "purl": _pypi_purl(item["name"], item["version"]),
             "resolution": "locked",
+            "marker": item["marker"],
         })
     return sorted(components, key=lambda item: item["purl"])
 
@@ -309,6 +311,11 @@ def write_delivery_sbom(
             {"name": "ai-team:resolution", "value": item["resolution"]},
             {"name": "ai-team:license-status", "value": "unknown"},
         ]
+        if item.get("marker"):
+            properties.append({
+                "name": "ai-team:environment-marker",
+                "value": item["marker"],
+            })
         if item.get("declared_requirement"):
             properties.append({
                 "name": "ai-team:declared-requirement",
