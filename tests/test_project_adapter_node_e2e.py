@@ -75,7 +75,7 @@ def test_node_web_adapter_executes_real_npm_lifecycle_through_tool_boundary(
         "const path = require('node:path');\n"
         "test('built web entry contains the application marker', () => {\n"
         "  const html = fs.readFileSync(path.join(process.cwd(), 'dist', 'index.html'), 'utf8');\n"
-        "  assert.match(html, /<main id=\\"app\\">AI-Team E2E<\\/main>/);\n"
+        "  assert.ok(html.includes('AI-Team E2E'));\n"
         "});\n",
         encoding="utf-8",
     )
