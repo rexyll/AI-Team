@@ -56,4 +56,7 @@ def test_setup_guide_does_not_reference_a_nonexistent_mcp_requirements_file() ->
 
     assert "requirements-mcp.txt" not in content
     assert "independent external project" in content
-    assert "not yet a complete transitive dependency lock" in content
+    assert "requirements-dev-windows-py314.lock" in content
+    assert "requirements-dev-linux-py314.lock" in content
+    assert "--require-hashes" in content
+    assert "top-level dependency inputs" in content
