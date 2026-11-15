@@ -289,3 +289,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 replacement journal implementation correction | 复核发现先前计划/架构文档曾把 replacement journal 记为已完成，但 `DeploymentHistoryStore` 实际缺少对应 API。现补齐 SQLite 表、scope partial unique index、prepared-only begin、允许阶段图、expected-phase CAS、不可变 scope/runtime identity 校验、重启读取与 active journal 列表；`needs_reconciliation` 持续占用 scope，终态释放。新增持久化、非法初始阶段、scope 互斥、CAS、身份篡改、终态释放和 reconciliation 阻塞测试。尚未实现自动恢复或 provider 执行器。 | CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 CI #305 follow-up | CI #305 仅剩一项测试错误：测试先验证 append 拒绝 stopped 记录，随后又尝试将未入库的该 ID 设为 active，生产 API 正确抛出 KeyError。移除不成立的第二断言，保留非 running 入库拒绝与错误 scope 激活拒绝两项有效覆盖。 | CI #306 待验证 |

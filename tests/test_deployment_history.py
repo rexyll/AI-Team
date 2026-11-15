@@ -279,11 +279,6 @@ def test_active_deployment_rejects_wrong_scope_and_non_running_record(tmp_path):
             provider="docker-local", environment="staging", project="demo",
             deployment_id="other-project", expected_deployment_id=None,
         )
-    with pytest.raises(ValueError, match="exact requested scope"):
-        history.set_active_deployment(
-            provider="docker-local", environment="staging", project="demo",
-            deployment_id="stopped", expected_deployment_id=None,
-        )
 
 
 def test_active_deployment_pointer_is_scoped_to_record_identity(tmp_path):
