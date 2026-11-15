@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "scope": "production-linux-py314",
+  "allowed_classifications": [
+    "NOTICE",
+    "PERMISSIVE",
+    "UNENCUMBERED"
+  ],
+  "blocked_classifications": [
+    "UNKNOWN",
+    "RECIPROCAL",
+    "RESTRICTED",
+    "FORBIDDEN"
+  ],
+  "vulnerability_severities_blocked": [
+    "UNKNOWN",
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL"
+  ],
+  "exceptions": [],
+  "unknown_license_policy": "deny",
+  "scanner_unavailable_policy": "deny",
+  "stale_database_policy": "deny"
+}
