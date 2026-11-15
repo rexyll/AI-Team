@@ -351,7 +351,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 ### T21.7.5 项目许可范围修订（2026-11-15）
 
-- **用户确认的产品授权目标**：任何个人均可免费进行非商业使用；符合条件的小企业可在 PolyForm Small Business 1.0.0 的全部条件下进行许可范围内的商业使用；其他商业/组织利益用途须事先取得单独书面许可。
+- **用户确认的产品授权目标**：任何个人均可免费进行非商业使用；符合条件的小企业可在 PolyForm Small Business 1.0.0 的全部条件下进行许可范围内的商业使用；未被 PolyForm Noncommercial 1.0.0 或 PolyForm Small Business 1.0.0 授权的商业用途须事先取得单独书面许可。
 - 更新根目录 `LICENSE` 为两份官方 PolyForm 许可证构成的双许可方案。Noncommercial 路径采用官方 PolyForm Noncommercial 1.0.0 原文，允许任何非商业目的，并明确包含个人研究、实验、学习、私人娱乐、爱好和业余活动；该许可不授权商业用途。Small Business 路径采用官方 PolyForm Small Business 1.0.0 原文，完整适用其全部资格门槛与条件；其他商业用途须取得单独书面许可。
 - README 与本设计文档已同步说明两条官方许可路径及适用边界；两份 PolyForm 许可证均为原版文本，项目许可证不改变第三方依赖许可。
 - 保留 `THIRD_PARTY_NOTICES.md` 对 `tqdm==4.70.1` 的 MPL-2.0 AND MIT 归属与再分发义务；项目许可不能覆盖第三方组件。
