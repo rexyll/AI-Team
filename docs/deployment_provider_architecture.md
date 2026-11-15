@@ -53,3 +53,21 @@ The first T21.6.3 increment introduces a local SQLite history store and a host m
 ### Fresh health verification before rollback delegation
 
 Persisted healthy status is historical evidence, not sufficient authorization for a later rollback. Immediately before delegating rollback, HostDeploymentManager calls the configured provider's health_check on the host-loaded candidate. The provider must re-verify its immutable runtime identity and current health. The fresh observation is persisted to host history; only an exactly healthy result permits delegation. unhealthy, unavailable, and unknown observations block rollback and update history. Provider exceptions or inability to persist the observation also block rollback. This check does not make Docker replacement supported: the current Local Docker provider still reports rollback as unsupported, and no traffic-switch/old-instance-retirement sequence is claimed.
+
+
+## Safe replacement design gate (T21.6.3)
+
+A rollback is a deployment replacement, not a call to `docker run` followed by `docker stop`. The current history model does not yet identify the authoritative active deployment or persist a replacement transaction. Therefore the generic `DeploymentProvider.rollback` method is not, by itself, proof that a provider can safely replace a deployment. HostDeploymentManager currently revalidates the historical candidate and delegates; Local Docker correctly returns `unsupported`.
+
+Before enabling any provider replacement, the following host-owned protocol must be implemented and tested as one transaction:
+
+1. **Resolve both identities:** load the target from host history and resolve exactly one current active deployment in the same provider/environment/project scope. Ambiguous or missing active state blocks replacement.
+2. **Prepare candidate:** start the target artifact as a distinct candidate instance on a controlled network. Do not publish host ports or disturb the active instance. Persist a replacement operation ID and immutable candidate runtime identity before proceeding.
+3. **Verify candidate:** probe the candidate through a host-only route, requiring fresh `healthy` status and matching immutable runtime identity. Missing health evidence is not success.
+4. **Switch traffic:** use an explicitly host-owned traffic router/proxy with an atomic or otherwise verifiable route update. A successful command response alone is insufficient; read back the effective route and verify it targets the candidate.
+5. **Retire old instance:** only after route read-back and candidate health confirmation may the old instance be stopped. Persist each phase and resulting identity.
+6. **Compensate on failure:** before traffic switch, remove only the candidate and leave the old instance untouched. If route switch is uncertain, do not stop either instance; report a recoverable/ambiguous operation and require reconciliation. If post-switch retirement fails, preserve both instances and report degraded rather than claiming rollback completion.
+
+Required host-history additions before implementation: explicit active/stopped lifecycle transitions, a single-active deployment invariant per scope, replacement-operation journal with phase and immutable identities, idempotent recovery/reconciliation after process crash, and compare-and-swap protection against concurrent replacements. The provider capability must expose prepare, candidate health, route switch/read-back, retire-old, and abort/reconcile operations; a single opaque `rollback()` call is insufficient for the host to enforce ordering.
+
+**No-go conditions:** no controlled candidate network, no host-owned router/proxy, no route read-back, no immutable identities for both instances, no durable operation journal, or concurrent/ambiguous active state. In any of these cases the provider must return `unsupported` or the manager must fail closed. No zero-downtime or safe rollback claim is permitted until a daemon-backed E2E proves both success and injected failures at every phase.
