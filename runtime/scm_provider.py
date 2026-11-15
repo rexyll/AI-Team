@@ -160,6 +160,17 @@ class SCMService:
         self._provider = provider
         self._approvals = approval_authority
 
+    def get_local_head_sha(self, local_repository: str) -> str:
+        """Read the local HEAD SHA for an operator approval preview."""
+        local_repository = _non_empty(local_repository, "local_repository")
+        getter = getattr(self._provider, "get_local_head_sha", None)
+        if not callable(getter):
+            raise SCMPreflightError("provider does not expose local HEAD inspection")
+        head_sha = getter(local_repository)
+        if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
+            raise SCMPreflightError("local repository returned no valid HEAD SHA")
+        return head_sha
+
     def push_branch(
         self, repository: str, local_repository: str, branch: str, *, approval: SCMApproval | None
     ) -> dict[str, Any]:
