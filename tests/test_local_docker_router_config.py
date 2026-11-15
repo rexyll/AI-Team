@@ -20,9 +20,9 @@ def _bindings():
 
 
 def test_initial_active_slot_map_is_fail_closed():
-    assert render_active_slot_map(None) == "active none\\n"
-    assert render_active_slot_map("slot_a") == "active slot_a\\n"
-    assert render_active_slot_map("slot_b") == "active slot_b\\n"
+    assert render_active_slot_map(None) == "active none\n"
+    assert render_active_slot_map("slot_a") == "active slot_a\n"
+    assert render_active_slot_map("slot_b") == "active slot_b\n"
     with pytest.raises(ValueError, match="active_slot"):
         render_active_slot_map("previous")
 
@@ -30,7 +30,7 @@ def test_initial_active_slot_map_is_fail_closed():
 def test_haproxy_config_has_stable_tcp_frontends_and_shared_map_selector():
     config = render_haproxy_router_config(_bindings())
 
-    assert config.startswith("global\\n")
+    assert config.startswith("global\n")
     assert f"stats socket {HAPROXY_ADMIN_SOCKET} mode 600 level admin" in config
     assert f"map({HAPROXY_ACTIVE_SLOT_MAP})" in config
     assert "frontend fe_p8080" in config
@@ -51,7 +51,7 @@ def test_each_backend_has_both_explicit_selectors_and_zero_weight_servers():
         assert f"acl active_slot_b_p{port} str(active),map(" in config
         assert f"use-server slot_b if active_slot_b_p{port}" in config
         backend_start = config.index(f"backend be_p{port}")
-        next_frontend = config.find("\\nfrontend ", backend_start)
+        next_frontend = config.find("\nfrontend ", backend_start)
         backend_text = config[backend_start:next_frontend if next_frontend >= 0 else None]
         assert backend_text.count("weight 0") == 2
         assert "server slot_a 127.0.0.1:1" in backend_text

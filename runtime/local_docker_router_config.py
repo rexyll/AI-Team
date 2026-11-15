@@ -34,7 +34,7 @@ def render_active_slot_map(active_slot: RouterSlot | None) -> str:
     if active_slot not in {None, "slot_a", "slot_b"}:
         raise ValueError("active_slot must be slot_a, slot_b, or None")
     value = active_slot if active_slot is not None else "none"
-    return f"active {value}\\n"
+    return f"active {value}\n"
 
 
 def render_haproxy_router_config(
@@ -90,4 +90,4 @@ def render_haproxy_router_config(
                 f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2"
             ),
         ])
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
