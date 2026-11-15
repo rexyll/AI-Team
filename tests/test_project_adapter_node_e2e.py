@@ -481,6 +481,8 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
     assert all(item["status"] == "completed" for item in qa_history)
+    assert all("arguments_sha256" in item for item in qa_history)
+    assert all("arguments" not in item and "output" not in item for item in qa_history)
     assert project.last_delivery["acceptance"]["executable_verdict"] == "passed"
     accepted_tests = project.last_delivery["acceptance"]["requirements"][0]["tests"]
     assert accepted_tests
@@ -708,6 +710,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     qa_history = project.last_delivery["qa"]["tool_execution_history"]
     assert len(qa_history) == 3
     assert all(item["status"] == "completed" for item in qa_history)
+    assert all("arguments_sha256" in item for item in qa_history)
+    assert all("arguments" not in item and "output" not in item for item in qa_history)
     assert project.last_delivery["acceptance"]["executable_verdict"] == "passed"
     assert project.last_delivery["acceptance"]["requirements"][0]["tests"]
     assert Path(project.last_delivery["manifest"]).is_file()
