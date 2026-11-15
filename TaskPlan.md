@@ -298,3 +298,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 recovery classifier hardening | CI #309（run `43681548085`）通过：Python 3.14 regression 与 Windows toolchain smoke 均成功。审查发现 classifier 的兜底分支会把未知/损坏 phase 错误归类为 terminal；现改为仅 `previous_retired`/`aborted` 明确终态，其余未知 phase 抛出 `ValueError` fail-closed。强化 prepared 与 candidate_started 的 phase-specific 检查断言，并新增未知 phase 拒绝测试。 | 本次提交后等待 CI 验证 |
+
+
+| 2026-11-15 | T21.6.3 CI #310 与恢复边界复核 | CI #310（run `43682013985`，提交 `faf3d6c`）通过：Python 3.14 regression、Windows toolchain smoke 均成功。复核确认 `needs_reconciliation` 仍由 partial unique index 视为非终态并持续占用 scope；列表查询也保留该状态。当前不增加可直接改写事务阶段的人工“解锁”接口：在身份认证、审计主体、外部状态证据及双人/审批策略未定义前，人工备注不能改变 phase 或释放 reservation。 | 只读分类器与 durable journal 已有 CI 证据；下一步需先定义审计/授权契约再实现 reconciliation 操作 |

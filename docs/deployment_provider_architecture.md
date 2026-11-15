@@ -103,3 +103,10 @@ The host SQLite store now implements `begin_replacement`, `update_replacement`, 
 The new `runtime/deployment_recovery.py` module classifies a persisted replacement snapshot into required observations only. Early phases (`prepared` and `candidate_started`) require provider inspection because a crash can occur after an external side effect but before its journal update. `candidate_healthy` requires fresh health and effective-route read-back. `traffic_switched` requires authoritative route read-back confirming the candidate identity before any old-runtime retirement. `needs_reconciliation` requires explicit operator review; terminal phases need no recovery action.
 
 The assessment reports missing immutable runtime identities instead of inferring them, and every result declares `automatic_action="none"`. This is deliberately not a recovery worker: it performs no provider calls, route changes, aborts, retirements, or journal mutations. The scope reservation remains in place for `needs_reconciliation`; Local Docker rollback remains unsupported until a real host-owned router and provider implementation exist.
+
+
+### Recovery classifier safety boundary
+
+The read-only recovery classifier recognizes only the explicitly supported journal phases. Only `previous_retired` and `aborted` are terminal; an unknown or corrupt phase raises `ValueError` rather than being treated as completed. This is intentionally fail-closed and complements the SQLite partial unique index: every phase other than those two terminal values continues to reserve its provider/project/environment scope.
+
+A `needs_reconciliation` record remains visible in the active-replacement query and blocks a second replacement in the same scope. There is deliberately no operator "unlock" or phase-forcing API. Before adding reconciliation mutations, the host must define operator identity/authentication, append-only audit attribution, the external provider/route evidence required for each resolution, and the applicable approval policy. A note or human decision alone must not release the reservation or assert that a runtime was safely retired.
