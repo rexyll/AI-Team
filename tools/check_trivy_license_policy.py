@@ -181,7 +181,7 @@ def evaluate_license_report(
             problems.append(f"license scan versions differ from lock: {', '.join(mismatched)}")
 
     findings: list[dict[str, Any]] = []
-    exceptions_applied: list[dict[str, str]] = []
+    exceptions_applied: list[dict[str, Any]] = []
     for item in results:
         if not isinstance(item, dict) or item.get("Class") != "license":
             continue
@@ -208,7 +208,11 @@ def evaluate_license_report(
             override = overrides.get(license_name)
             effective_category = str(override.get("classification", "")).upper() if isinstance(override, dict) else normalized_category
             exception = exceptions.get((normalized_package, package_version or "", license_name))
-            exception_applied = bool(\n                exception\n                and normalized_category in blocked\n                and str(exception.get("classification", "")).upper() == normalized_category\n            )
+            exception_applied = bool(
+                exception
+                and normalized_category in blocked
+                and str(exception.get("classification", "")).upper() == normalized_category
+            )
             record = {
                 "package": package_name,
                 "version": package_version or "",
@@ -227,6 +231,10 @@ def evaluate_license_report(
                     "license": license_name,
                     "expires_on": exception["expires_on"],
                     "approved_by": exception["approved_by"],
+                    "approved_at": exception["approved_at"],
+                    "classification": exception["classification"],
+                    "rationale": exception["rationale"],
+                    "obligations": exception["obligations"],
                 })
             if normalized_package not in lock_components:
                 problems.append(f"license finding references unlocked package: {package_name}")
@@ -239,7 +247,16 @@ def evaluate_license_report(
                     f"{package_name} license {license_name} has unrecognized category {category}"
                 )
 
-    applied_keys = {(_normalize_name(item["package"]), item["version"], item["license"]) for item in exceptions_applied}\n    for key in exceptions:\n        if key not in applied_keys:\n            problems.append(f"configured license exception did not match a scanner finding: {key[0]}=={key[1]} {key[2]}")\n\n    scanner = report.get("Trivy", {})
+    applied_keys = {
+        (_normalize_name(item["package"]), item["version"], item["license"])
+        for item in exceptions_applied
+    }
+    for key in exceptions:
+        if key not in applied_keys:
+            problems.append(
+                f"configured license exception did not match a scanner finding: "
+                f"{key[0]}=={key[1]} {key[2]}"
+            )\n\n    scanner = report.get("Trivy", {})
     scanner_version = scanner.get("Version") if isinstance(scanner, dict) else None
     if not isinstance(scanner_version, str) or not scanner_version.strip():
         problems.append("Trivy report is missing scanner version")
