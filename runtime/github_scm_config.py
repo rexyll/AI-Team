@@ -29,7 +29,8 @@ class GitHubSCMRuntime:
 
     service: SCMService = field(repr=False)
     repository: str
-    pull_request_number: int
+    pull_request_number: int | None
+    approval_authority: SCMApprovalAuthority = field(repr=False)
 
 
 def create_github_scm_runtime(
@@ -37,6 +38,7 @@ def create_github_scm_runtime(
     environ: Mapping[str, str] | None = None,
     transport_factory: Callable[[str], object] | None = None,
     pull_request_number: int | None = None,
+    require_pull_request: bool = True,
 ) -> GitHubSCMRuntime | None:
     """Build an opt-in GitHub SCM service from host environment variables.
 
@@ -59,7 +61,9 @@ def create_github_scm_runtime(
 
     if not repository and not pull_request_raw and not token:
         return None
-    if not repository or not pull_request_raw:
+    if not isinstance(require_pull_request, bool):
+        raise GitHubSCMConfigurationError("require_pull_request must be a bool")
+    if not repository or (require_pull_request and not pull_request_raw):
         raise GitHubSCMConfigurationError(
             f"{REPOSITORY_ENV} and a pull request number must be configured"
         )
@@ -74,7 +78,9 @@ def create_github_scm_runtime(
     owner, name = repository.split("/", 1)
     if owner in {".", ".."} or name in {".", ".."}:
         raise GitHubSCMConfigurationError("GitHub repository path is invalid")
-    if not pull_request_raw.isdecimal() or int(pull_request_raw) < 1:
+    if pull_request_raw and (
+        not pull_request_raw.isdecimal() or int(pull_request_raw) < 1
+    ):
         raise GitHubSCMConfigurationError(
             f"{PULL_REQUEST_ENV} must be a positive integer"
         )
@@ -82,9 +88,11 @@ def create_github_scm_runtime(
     factory = transport_factory or (lambda secret: GitHubRESTTransport(secret))
     transport = factory(token)
     provider = GitHubSCMProvider(transport)  # type: ignore[arg-type]
-    service = SCMService(provider, SCMApprovalAuthority())
+    approval_authority = SCMApprovalAuthority()
+    service = SCMService(provider, approval_authority)
     return GitHubSCMRuntime(
         service=service,
         repository=repository,
-        pull_request_number=int(pull_request_raw),
+        pull_request_number=int(pull_request_raw) if pull_request_raw else None,
+        approval_authority=approval_authority,
     )
