@@ -152,7 +152,15 @@ class QAAgent(BaseAgent):
             agent=self.role,
             task_id=task.id,
             message=content,
-            data={"qa": {"verdict": verdict, "executed_tool_calls": executed_tool_calls}},
+            data={
+                "qa": {
+                    "verdict": verdict,
+                    "executed_tool_calls": executed_tool_calls,
+                    # The host stores these immutable records for audit/evidence.
+                    # Downstream prompts receive only a bounded verdict digest.
+                    "tool_execution_history": service.history.to_dict(),
+                }
+            },
         )
 
     def _execute_tool_call(self, service: ToolInvocationService, task_id: str, tool_call: Any) -> str:
