@@ -73,6 +73,15 @@
    - 常见错误
    - 最佳实践
 
+6. **[Local Docker 蓝绿流量路由设计](./local_docker_traffic_router_design.md)**
+   - HAProxy OSS Runtime API 选型
+   - per-scope user-defined bridge network
+   - stable host ports 与双 slot
+   - atomic active-slot map / route read-back
+   - candidate health / old connection drain
+   - Router restart crash windows
+   - TCP-only v1 能力边界与迁移限制
+
 ## 原有文档
 
 - `README.md`：项目简介与快速开始
