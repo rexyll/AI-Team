@@ -119,7 +119,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 ## 8. 实施切片与验收
 
-1. T21.6.3.5.1 contracts：router provider protocol、scope/network/port binding、router/slot/route snapshot contract；纯契约无 I/O。
+1. [x] T21.6.3.5.1 contracts（2026-11-15）：新增 runtime/deployment_traffic_router.py，定义 router scope、TCP port binding、双槽位 target、Router immutable identity、route read-back、connection drain snapshot 与 Host-only DeploymentTrafficRouter protocol；纯契约无 I/O，由 tests/test_deployment_traffic_router.py 锁定端口、IP、immutable ID、active-slot/target、generation、逐端口健康和 drain 约束。
 2. T21.6.3.5.2 router bootstrap：固定 HAProxy config、user-defined network、Router image pin、Unix admin socket、固定 argv + stdin helper；fake runner 覆盖 daemon/网络/端口冲突。
 3. T21.6.3.5.3 routed deployment：应用容器不 publish，Router 唯一 publish；TCP-only validation；Router identity 与 host ports 持久化。
 4. T21.6.3.5.4 candidate + route map：双 slot、单 active-slot map、map 文件原子持久化、Runtime API command builder、read-back。
