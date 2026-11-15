@@ -18,7 +18,7 @@ def test_dependency_security_scan_uses_immutable_scanners_and_block_egress():
     assert "step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c" in workflow
     assert "egress-policy: block" in workflow
     assert "disable-telemetry: true" in workflow
-    assert "ghcr.io:443" in workflow
+    assert "mirror.gcr.io:443" in workflow
     assert "pkg-containers.githubusercontent.com:443" in workflow
     assert "actions-results-receiver-production.githubapp.com:443" in workflow
     assert "results-receiver.actions.githubusercontent.com:443" in workflow
@@ -44,6 +44,9 @@ def test_dependency_security_scans_only_production_lock_and_fails_closed():
     assert scan.index("Restrict scanner network egress") < scan.index("Download prepared scan input")
     assert "actions/checkout@v4" not in scan
     assert "requirements-dev-linux-py314.lock" not in scan
+    assert "--skip-version-check" in scan
+    assert "--disable-telemetry" in scan
+    assert "--db-repository mirror.gcr.io/aquasec/trivy-db:2" in scan
     assert "--scanners vuln" in scan
     assert "--scanners license" in scan
     assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in scan
