@@ -67,7 +67,7 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 ### T21.7.3 覆盖率与性能预算
 - 在固定 Python 3.14 CI 环境采集 line + branch coverage 基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
 - 覆盖率工具 `coverage.py` 纳入开发依赖并由 Linux/Windows Python 3.14 hash lock 固定；CI 新增独立 `coverage-baseline` job，上传 JSON/HTML/metadata artifact（保留 30 天）。测量范围为 `agents, core, integration, runtime, security, tools`。独立覆盖率测量排除 6 个机器时间敏感 benchmark/performance 测试文件，避免 instrumentation 改变吞吐/并行断言；这些测试仍由原有全量 regression job 正常执行，不是跳过测试。
-- 已验证 coverage artifact（run `43702027414`，提交 `161a6fd`，artifact `14157291227`）测得总 line coverage 84.31%（15,841/18,062 statements）、branch coverage 74.88%（4,875/6,510 branches）。对应 CI 全绿：全量回归 2,513 passed / 10 skipped，覆盖率测量 2,493 passed / 10 skipped，安全回归 234 passed / 9 skipped，Windows smoke 1 passed。此前引入 coverage 后发现开发 lock 组件数断言过时（Linux 30→31、Windows 31→32），已更新为当前四份锁的真实组件数量，并在该全绿 run 中复验。
+- 已验证 coverage artifact（run `43704029101`，提交 `fc8c934`，artifact `14158195174`）测得总 line coverage 84.40%（15,795/17,991 statements）、branch coverage 74.99%（4,861/6,482 branches）。对应 CI 全绿：全量回归 2,526 passed / 10 skipped，覆盖率测量 2,506 passed / 10 skipped，安全回归 237 passed / 9 skipped，Windows smoke 1 passed。coverage source 排除 6 个机器时间敏感 benchmark 测试文件和 3 个 CI-only helper source；helper 的单元测试仍执行。此前引入 coverage 后发现开发 lock 组件数断言过时（Linux 30→31、Windows 31→32），已更新为当前四份锁的真实组件数量，并在该全绿 run 中复验。
 - 按首次测量设置保守的模块风险门槛，配置位于 `config/coverage_thresholds.json`，由 `tools/check_coverage_thresholds.py` 对 coverage JSON 聚合并 fail-closed（缺失/新增未配置模块均失败）：
 
   | 模块 | 初始 line | 初始 branch | 最低 line | 最低 branch |
