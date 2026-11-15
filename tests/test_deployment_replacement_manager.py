@@ -459,3 +459,47 @@ def test_recovery_inventory_flags_candidate_record_missing_after_started_phase(t
     assert item.candidate_record_present is False
     assert item.active_deployment_id == previous.deployment_id
     assert provider.calls == []
+
+
+def test_recovery_inventory_recognizes_retired_previous_before_terminal_journal_commit(tmp_path):
+    history, provider, _, previous, target = _setup(tmp_path)
+    candidate = _record(
+        target.deployment_id, status="running", health="healthy", version=target.version
+    )
+    history.append(candidate)
+    prepared = _replacement_journal(previous, target)
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared,
+        phase="candidate_started",
+        candidate_runtime_id="runtime:candidate",
+        updated_at="2026-11-15T12:04:00Z",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+    healthy = replace(started, phase="candidate_healthy", updated_at="2026-11-15T12:05:00Z")
+    history.update_replacement(healthy, expected_phase="candidate_started")
+    switched = replace(
+        healthy,
+        phase="traffic_switched",
+        effective_traffic_target="runtime:candidate",
+        updated_at="2026-11-15T12:06:00Z",
+    )
+    history.update_replacement(switched, expected_phase="candidate_healthy")
+    history.set_active_deployment(
+        provider=previous.provider,
+        environment=previous.environment,
+        project=previous.project,
+        deployment_id=candidate.deployment_id,
+        expected_deployment_id=previous.deployment_id,
+    )
+    history.mark_stopped(previous)
+
+    item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
+
+    assert item.classification == "previous_retired_commit_pending"
+    assert item.phase == "traffic_switched"
+    assert item.active_deployment_id == candidate.deployment_id
+    assert item.external_state_verified is False
+    assert item.automatic_recovery_allowed is False
+    assert history.get_replacement(prepared.operation_id).phase == "traffic_switched"
+    assert provider.calls == []

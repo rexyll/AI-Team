@@ -45,6 +45,7 @@ RecoveryInventoryClassification = Literal[
     "active_pointer_mismatch",
     "journal_route_evidence_incomplete",
     "journal_history_incomplete",
+    "previous_retired_commit_pending",
 ]
 
 
@@ -168,7 +169,9 @@ class HostDeploymentReplacementManager:
                     and previous.provider == journal.provider
                     and previous.project == journal.project
                     and previous.environment == journal.environment
-                    and previous.status == "running"
+                    and previous.status in {"running", "stopped"}
+                    and isinstance(journal.previous_runtime_id, str)
+                    and bool(journal.previous_runtime_id.strip())
                 )
                 candidate_scope_matches = candidate is None or (
                     candidate.deployment_id == journal.target_deployment_id
@@ -182,7 +185,31 @@ class HostDeploymentReplacementManager:
                     classification = "journal_history_incomplete"
                 elif active_id is None:
                     classification = "active_pointer_missing"
-                elif candidate is not None and journal.candidate_runtime_id is None:
+                elif previous.status == "stopped":
+                    # mark_stopped() commits only after an inspect-confirmed
+                    # stop. A crash can occur before the terminal journal phase.
+                    retirement_committed = (
+                        journal.phase in {"traffic_switched", "needs_reconciliation"}
+                        and candidate is not None
+                        and journal.candidate_runtime_id is not None
+                        and journal.candidate_runtime_id != journal.previous_runtime_id
+                        and journal.effective_traffic_target == journal.candidate_runtime_id
+                        and active_id == journal.target_deployment_id
+                    )
+                    classification = (
+                        "previous_retired_commit_pending"
+                        if retirement_committed
+                        else "journal_history_incomplete"
+                    )
+                elif journal.phase == "prepared" and (
+                    journal.candidate_runtime_id is not None
+                    or journal.effective_traffic_target is not None
+                ):
+                    classification = "journal_history_incomplete"
+                elif candidate is not None and (
+                    journal.candidate_runtime_id is None
+                    or journal.candidate_runtime_id == journal.previous_runtime_id
+                ):
                     # Crash window: candidate history may have been committed
                     # before its immutable runtime ID was committed to journal.
                     classification = "candidate_identity_not_committed"
