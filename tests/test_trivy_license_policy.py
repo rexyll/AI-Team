@@ -129,3 +129,123 @@ def test_lock_parser_rejects_unpinned_or_unexpanded_requirements(tmp_path: Path)
         assert "unsupported lock requirement" in str(exc)
     else:
         raise AssertionError("unexpanded lock requirements must be rejected")
+
+
+def test_license_policy_applies_only_exact_approved_package_version_and_expression(tmp_path: Path):
+    from datetime import date
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("tqdm==4.70.1\nother-lib==2.0.0\n", encoding="utf-8")
+    packages = [
+        {"Name": "tqdm", "Version": "4.70.1", "Licenses": ["MPL-2.0 AND MIT"]},
+        {"Name": "other-lib", "Version": "2.0.0", "Licenses": ["MIT"]},
+    ]
+    findings = [{
+        "PkgName": "tqdm",
+        "Name": "MPL-2.0 AND MIT",
+        "Category": "reciprocal",
+        "Severity": "MEDIUM",
+    }]
+    policy = {
+        **POLICY,
+        "exceptions": [{
+            "package": "tqdm",
+            "version": "4.70.1",
+            "license": "MPL-2.0 AND MIT",
+            "classification": "RECIPROCAL",
+            "approved_by": "repository owner (rexyll)",
+            "approved_at": "2026-11-15",
+            "expires_on": "2027-02-13",
+            "rationale": "Narrowly approved for the current OpenAI SDK transitive dependency while retaining MPL and MIT obligations.",
+            "obligations": [
+                "Retain upstream copyright and license notices.",
+                "Provide MPL-2.0 and MIT license texts or authoritative URLs on redistribution.",
+                "If MPL-covered files are modified and distributed, provide their corresponding source under MPL-2.0.",
+                "Review before 2027-02-13.",
+            ],
+        }],
+    }
+    report = _report(
+        packages=packages,
+        findings=findings,
+    )
+
+    result = evaluate_license_report(
+        report, _read_lock(lock), policy, as_of=date(2026, 11, 15)
+    )
+
+    assert result["status"] == "passed"
+    assert result["problems"] == []
+    assert result["exceptions_applied"] == [{
+        "package": "tqdm",
+        "version": "4.70.1",
+        "license": "MPL-2.0 AND MIT",
+        "expires_on": "2027-02-13",
+        "approved_by": "repository owner (rexyll)",
+    }]
+
+
+def test_license_exception_does_not_match_another_version_or_license_expression(tmp_path: Path):
+    from datetime import date
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("tqdm==4.70.2\nother-lib==2.0.0\n", encoding="utf-8")
+    packages = [
+        {"Name": "tqdm", "Version": "4.70.2", "Licenses": ["MPL-2.0 AND MIT"]},
+        {"Name": "other-lib", "Version": "2.0.0", "Licenses": ["MIT"]},
+    ]
+    policy = {
+        **POLICY,
+        "exceptions": [{
+            "package": "tqdm",
+            "version": "4.70.2",
+            "license": "MPL-2.0",
+            "classification": "RECIPROCAL",
+            "approved_by": "repository owner (rexyll)",
+            "approved_at": "2026-11-15",
+            "expires_on": "2027-02-13",
+            "rationale": "Test-only narrow exception.",
+            "obligations": ["Retain notices."],
+        }],
+    }
+    report = _report(packages=packages, findings=[{
+        "PkgName": "tqdm",
+        "Name": "MPL-2.0 AND MIT",
+        "Category": "reciprocal",
+        "Severity": "MEDIUM",
+    }])
+
+    result = evaluate_license_report(
+        report, _read_lock(lock), policy, as_of=date(2026, 11, 15)
+    )
+
+    assert result["status"] == "failed"
+    assert result["exceptions_applied"] == []
+    assert any("blocked" in problem for problem in result["problems"])
+
+
+def test_license_exception_expiry_fails_closed(tmp_path: Path):
+    from datetime import date
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("tqdm==4.70.1\nother-lib==2.0.0\n", encoding="utf-8")
+    policy = {
+        **POLICY,
+        "exceptions": [{
+            "package": "tqdm",
+            "version": "4.70.1",
+            "license": "MPL-2.0 AND MIT",
+            "classification": "RECIPROCAL",
+            "approved_by": "repository owner (rexyll)",
+            "approved_at": "2026-11-15",
+            "expires_on": "2026-11-14",
+            "rationale": "Expired exception test.",
+            "obligations": ["Retain notices."],
+        }],
+    }
+    result = evaluate_license_report(
+        _report(), _read_lock(lock), policy, as_of=date(2026, 11, 15)
+    )
+
+    assert result["status"] == "failed"
+    assert any("expired" in problem for problem in result["problems"])
