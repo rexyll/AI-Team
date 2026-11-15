@@ -214,6 +214,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - T21.5.3 第三阶段已完成：新增独立 `--scm-publish-pr` CLI 发布入口。Host 先读取并展示本地 HEAD SHA、目标仓库、分支、base 和 PR 标题，再要求操作者在真实 TTY 终端分别输入 `yes` 确认精确 SHA 的 push、以及 PR create/update；非交互 stdin 或任一步拒绝均阻止相应写操作。JSON 模式下提示/预览走 stderr，stdout 保持机器可读。Host factory 可在无默认 PR 编号时创建 runtime，并将 `SCMApprovalAuthority` 保留在 host runtime（repr 隐藏）；新增 `SCMService.get_local_head_sha` 供审批前预览。发布流程仍经 `SCMLifecycleCoordinator`，provider 校验 origin 仓库与 HEAD 未漂移。新增 `tests/test_scm_publish_cli.py` 与本地 SHA 契约测试，文档说明 read-only 与 publish 所需最小 GitHub 权限差异。CI 待验证；未使用真实凭证执行 push/PR。
   - T21.5.3 第四阶段已完成：新增 `--scm-merge-pr NUMBER` / `--scm-merge-method` 独立合并命令。命令先进行 PR/CI/Review 有界轮询，仅 `ready` 才允许提示；必须在真实 TTY 输入 `yes`，随后签发绑定 `PR number + exact head SHA` 的一次性 merge approval。`SCMService.merge_pull_request` 再次检查 PR open/unmerged、CI success、Review approved，并把 expected SHA 交给 GitHub 防止 head 漂移；blocked、取消或非交互执行均不签发审批、不发送 merge 请求；poll/publish/merge 三种 SCM CLI 命令互斥，防止组合参数触发错误写路径。新增 `tests/test_scm_merge_cli.py`，加强 provider merge preflight 对 closed/already-merged PR 的拒绝测试，文档已更新。CI 待验证，未执行真实 GitHub merge。
 - [ ] **T21.6 Deployment / Operations Adapters**
+  - [x] **T21.6.1 Provider-neutral deployment contract（2026-11-15 完成）**：新增 `runtime/deployment_provider.py`，定义显式部署请求、SHA-256 内容寻址制品、部署记录、健康检查结果、四态操作结果与 host-owned `DeploymentProvider` Protocol；rollback candidate 仅接受曾运行且已验证 healthy 的记录。纯契约模块，不执行 Docker/云 I/O；新增契约校验测试与安全边界文档。
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
   - 回滚必须基于明确的上一个健康版本和可验证的部署记录。
