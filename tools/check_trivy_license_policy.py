@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -9,7 +10,7 @@ from typing import Any
 
 
 _REQUIREMENT = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)"
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\\s;]+)"
 )
 
 
@@ -37,10 +38,69 @@ def _read_lock(path: Path) -> dict[str, str]:
     return components
 
 
+def _parse_iso_date(value: Any, label: str) -> date:
+    if not isinstance(value, str):
+        raise ValueError(f"license exception {label} must be an ISO date")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"license exception {label} must be an ISO date") from exc
+
+
+def _validated_exceptions(
+    policy: dict[str, Any],
+    lock_components: dict[str, str],
+    blocked: set[str],
+    as_of: date,
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    raw_exceptions = policy.get("exceptions")
+    if not isinstance(raw_exceptions, list):
+        raise ValueError("license exceptions must be a list")
+    validated: dict[tuple[str, str, str], dict[str, Any]] = {}
+    required_strings = (
+        "package", "version", "license", "classification", "approved_by",
+        "approved_at", "expires_on", "rationale",
+    )
+    for exception in raw_exceptions:
+        if not isinstance(exception, dict):
+            raise ValueError("license exception must be an object")
+        for field in required_strings:
+            if not isinstance(exception.get(field), str) or not exception[field].strip():
+                raise ValueError(f"license exception requires non-empty {field}")
+        package = _normalize_name(exception["package"])
+        version = exception["version"]
+        license_name = exception["license"]
+        classification = exception["classification"].upper()
+        if package not in lock_components or lock_components[package] != version:
+            raise ValueError(f"license exception package/version is not in production lock: {package}=={version}")
+        if classification not in blocked:
+            raise ValueError("license exception must name an explicitly blocked classification")
+        approved_at = _parse_iso_date(exception["approved_at"], "approved_at")
+        expires_on = _parse_iso_date(exception["expires_on"], "expires_on")
+        if approved_at > as_of:
+            raise ValueError("license exception approval date is in the future")
+        if expires_on < as_of or expires_on < approved_at:
+            raise ValueError(f"license exception is expired or has invalid expiry: {package}=={version}")
+        obligations = exception.get("obligations")
+        if (
+            not isinstance(obligations, list)
+            or not obligations
+            or any(not isinstance(item, str) or not item.strip() for item in obligations)
+        ):
+            raise ValueError("license exception requires explicit redistribution obligations")
+        key = (package, version, license_name)
+        if key in validated:
+            raise ValueError(f"duplicate license exception: {package}=={version} {license_name}")
+        validated[key] = exception
+    return validated
+
+
 def evaluate_license_report(
     report: dict[str, Any],
     lock_components: dict[str, str],
     policy: dict[str, Any],
+    *,
+    as_of: date | None = None,
 ) -> dict[str, Any]:
     problems: list[str] = []
     allowed = {str(item).upper() for item in policy.get("allowed_classifications", [])}
@@ -63,8 +123,13 @@ def evaluate_license_report(
         problems.append("license policy classifications are missing or overlap")
     if policy.get("unknown_license_policy") != "deny":
         problems.append("unknown license policy must be deny")
-    if policy.get("exceptions") != []:
-        problems.append("license exceptions require a separately reviewed implementation")
+    try:
+        exceptions = _validated_exceptions(
+            policy, lock_components, blocked, as_of or datetime.now(timezone.utc).date()
+        )
+    except ValueError as exc:
+        exceptions = {}
+        problems.append(str(exc))
 
     results = report.get("Results")
     if not isinstance(results, list):
@@ -115,7 +180,8 @@ def evaluate_license_report(
         if mismatched:
             problems.append(f"license scan versions differ from lock: {', '.join(mismatched)}")
 
-    findings: list[dict[str, str]] = []
+    findings: list[dict[str, Any]] = []
+    exceptions_applied: list[dict[str, str]] = []
     for item in results:
         if not isinstance(item, dict) or item.get("Class") != "license":
             continue
@@ -136,27 +202,39 @@ def evaluate_license_report(
             )):
                 problems.append("license finding is missing package, name, category, or severity")
                 continue
+            normalized_package = _normalize_name(package_name)
             normalized_category = category.upper()
+            package_version = observed.get(normalized_package)
             override = overrides.get(license_name)
-            effective_category = normalized_category
-            if isinstance(override, dict):
-                effective_category = str(override.get("classification", "")).upper()
+            effective_category = str(override.get("classification", "")).upper() if isinstance(override, dict) else normalized_category
+            exception = exceptions.get((normalized_package, package_version or "", license_name))
+            exception_applied = bool(exception and normalized_category in blocked)
             record = {
                 "package": package_name,
+                "version": package_version or "",
                 "license": license_name,
                 "scanner_classification": normalized_category,
                 "classification": effective_category,
                 "severity": severity.upper(),
                 "override_applied": isinstance(override, dict),
+                "exception_applied": exception_applied,
             }
             findings.append(record)
-            if _normalize_name(package_name) not in lock_components:
+            if exception_applied and exception is not None:
+                exceptions_applied.append({
+                    "package": package_name,
+                    "version": package_version or "",
+                    "license": license_name,
+                    "expires_on": exception["expires_on"],
+                    "approved_by": exception["approved_by"],
+                })
+            if normalized_package not in lock_components:
                 problems.append(f"license finding references unlocked package: {package_name}")
-            if effective_category in blocked:
+            if effective_category in blocked and not exception_applied:
                 problems.append(
                     f"{package_name} license {license_name} is blocked ({effective_category})"
                 )
-            elif effective_category not in allowed:
+            elif effective_category not in allowed and effective_category not in blocked:
                 problems.append(
                     f"{package_name} license {license_name} has unrecognized category {category}"
                 )
@@ -173,6 +251,7 @@ def evaluate_license_report(
         "packages_expected": len(lock_components),
         "packages_observed": len(observed),
         "license_findings": findings,
+        "exceptions_applied": exceptions_applied,
         "problems": problems,
     }
 
@@ -193,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         lock_components = _read_lock(args.lock_file)
         result = evaluate_license_report(report, lock_components, policy)
         args.output.write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            json.dumps(result, indent=2, sort_keys=True) + "\\n",
             encoding="utf-8",
         )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
