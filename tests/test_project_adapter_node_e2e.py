@@ -491,7 +491,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
 
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTERS", "1")
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTER", "node")
-    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "0")
+    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "1")
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
@@ -552,6 +552,8 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert project.last_delivery is not None
     integration = project.last_delivery["integration"]
     assert integration["status"] == "passed"
+    assert integration["static"]["status"] == "passed"
+    assert integration["static"]["tools"]["ruff"]["status"] == "passed"
     adapter = integration["adapter"]
     assert adapter["status"] == "passed", adapter
     assert adapter["adapter"] == "node"
@@ -714,7 +716,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
 
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTERS", "1")
     monkeypatch.setenv("AI_TEAM_PROJECT_ADAPTER", "python")
-    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "0")
+    monkeypatch.setenv("AI_TEAM_STATIC_GATE", "1")
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
@@ -775,6 +777,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     assert project.last_delivery is not None
     integration = project.last_delivery["integration"]
     assert integration["status"] == "passed"
+    assert integration["static"]["status"] == "passed"
+    assert integration["static"]["tools"]["ruff"]["status"] == "passed"
     adapter = integration["adapter"]
     assert adapter["status"] == "passed", adapter
     assert adapter["adapter"] == "python"
