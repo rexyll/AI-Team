@@ -2,7 +2,7 @@
 
 ## Status
 
-This report describes the deterministic Python CLI and Node.js Web orchestration scenarios implemented for T21.8. The latest additions are committed on `main`, but their full CI run has not yet been independently confirmed. Therefore this report records implementation scope and intended evidence, not a passing acceptance verdict. T21.8 remains in progress.
+This report describes the deterministic Python CLI and Node.js Web orchestration scenarios implemented for T21.8. GitHub Actions run [#557](https://github.com/rexyll/AI-Team/actions/runs/43720847967), commit `8fda078`, confirms the current implementation: Regression, Security regression, Coverage baseline and Windows Python/Node E2E all passed. T21.8 remains in progress because Developer, Tester and Reviewer are still scripted test doubles and no live ProviderLLM or browser/deployment execution is claimed.
 
 ## What the deterministic scenarios exercise
 
@@ -11,7 +11,7 @@ Both scenarios invoke the real `ProjectOrchestrator.run()`, default `Orchestrato
 | Stage | Executed component | Evidence boundary |
 |---|---|---|
 | Requirement analysis | Real `RequirementAnalystAgent` | Runs with deterministic `MockLLM`; structured sections and REQ/AC identifiers are consumed by the existing quality checker. This is not live model reasoning. |
-| Planning | Scripted Planner test double | Supplies a bounded, deterministic one-task graph; it does not measure autonomous planning quality. |
+| Planning | Production `PlannerAgent` with deterministic `MockLLM` | Exercises the production planning prompt, model call boundary, JSON extraction/schema/dependency validation and ProjectOrchestrator plan consumption. The response is deterministic; this does not measure live autonomous planning quality. |
 | Development | Scripted Developer test double | Writes the project through the real task-local workspace lease. Successful output is merged through the real workspace manager; it does not measure autonomous code generation. |
 | Task test/review | Scripted Tester and Reviewer test doubles | Exercise the production orchestration gate wiring, but do not independently reason over the implementation. |
 | Language adapter | Production Python or Node adapter | Actual install/build/test/smoke/package commands execute through `ToolInvocationService` and the host command boundary. Dependencies remain in task-local `.venv` or `node_modules`. |
@@ -48,13 +48,13 @@ The canonical SHA-256 detects accidental or uncoordinated content modification. 
 
 | Level | Meaning | Current status |
 |---|---|---|
-| `deterministic_orchestration` | Real orchestration, workspace, adapters, tool invocation, pytest, QA wiring and packaging with deterministic MockLLM/scripted role doubles | Implemented; latest CI verification pending |
+| `deterministic_orchestration` | Real orchestration, production `PlannerAgent`, workspace, adapters, tool invocation, pytest, QA wiring and packaging with deterministic MockLLM plus scripted Developer/Tester/Reviewer | Implemented and verified by CI #557; it is not live-provider evidence |
 | `live_provider_llm` | Analyst/Planner/Developer/Tester/Reviewer/QA/DocWriter driven by an explicitly configured real provider with host-managed credentials | Not run; requires user-managed provider credentials and explicit opt-in |
 | `external_deployment` | Real deployment to a dedicated external environment, with authenticated health/route evidence and separate operator approval | Not run; no external deployment or publication is performed by default CI |
 
 ## Explicit limitations
 
-1. Planner, Developer, Tester and Reviewer use scripted test doubles. Analyst and QA use deterministic MockLLM; DocWriter uses a deterministic MockLLM. The scenarios prove production orchestration and tool-boundary wiring, not end-to-end autonomous reasoning or provider quality.
+1. Planner uses the production `PlannerAgent` class with a deterministic MockLLM response; Developer, Tester and Reviewer remain scripted test doubles. Analyst, QA and DocWriter use deterministic MockLLM. The scenarios prove production Planner prompt/validation wiring plus orchestration and tool-boundary behavior, not live autonomous reasoning or provider quality.
 2. No live ProviderLLM credentials are used. Missing credentials are not interpreted as success.
 3. The Windows CI E2E job is the target execution environment (Python 3.14 and Node.js 22). The current new commits still require a successful CI run before acceptance.
 4. Browser-based UI acceptance is not run. A static HTML artifact check is not a browser test.
