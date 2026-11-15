@@ -444,11 +444,11 @@ function write(relative, content) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, content, 'utf8');
 }
-write('package.json', JSON.stringify(packageJson, null, 2) + '\\n');
-write('package-lock.json', JSON.stringify(lock, null, 2) + '\\n');
+write('package.json', JSON.stringify(packageJson, null, 2) + '\n');
+write('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
 write(
   'src/index.html',
-  '<!doctype html><html><body><main>ORCHESTRATOR-WEB-DELIVERABLE</main></body></html>\\n'
+  '<!doctype html><html><body><main>ORCHESTRATOR-WEB-DELIVERABLE</main></body></html>\n'
 );
 write(
   'scripts/build.js',
@@ -458,7 +458,7 @@ write(
     "const root = process.cwd();",
     "fs.mkdirSync(path.join(root, 'dist'), { recursive: true });",
     "fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(root, 'dist', 'index.html'));"
-  ].join('\\n') + '\\n'
+  ].join('\n') + '\n'
 );
 write(
   'tests/app.test.js',
@@ -470,7 +470,7 @@ write(
     "  const html = fs.readFileSync('dist/index.html', 'utf8');",
     "  assert.ok(html.includes('ORCHESTRATOR-WEB-DELIVERABLE'));",
     '});'
-  ].join('\\n') + '\\n'
+  ].join('\n') + '\n'
 );
 write(
   'tests/test_web_artifact.py',
@@ -480,7 +480,7 @@ write(
     'def test_built_web_entry_contains_acceptance_marker():',
     "    html = Path('dist/index.html').read_text(encoding='utf-8')",
     "    assert 'ORCHESTRATOR-WEB-DELIVERABLE' in html"
-  ].join('\\n') + '\\n'
+  ].join('\n') + '\n'
 );
 fs.unlinkSync(__filename);
 """
