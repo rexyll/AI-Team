@@ -221,7 +221,7 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
     assert reviewer_provenance.parent_evidence_id == tester_provenance.evidence_id
     assert completed.test_result["status"] == "passed"
     assert reviewer_result["status"] == "approved"
-    assert len(developer_llm.tool_call_turns) == 2
+    assert len(developer_llm.tool_call_turns) == 3
     assert len(tester_llm.calls) == 1
     assert len(reviewer_llm.calls) == 1
 
