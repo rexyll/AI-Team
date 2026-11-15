@@ -445,7 +445,7 @@ class _ResultAwareQAMockLLM(MockLLM):
                 and lines[0].startswith('<untrusted-data source="tool.result.')
                 and lines[-1] == "</untrusted-data>"
             ):
-                parsed_outputs.append("\\n".join(lines[1:-1]))
+                parsed_outputs.append("\n".join(lines[1:-1]))
             else:
                 parsed_outputs.append(output)
         self.last_tool_assessment = {
