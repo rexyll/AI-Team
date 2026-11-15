@@ -66,6 +66,7 @@ def test_docker_runner_uses_argv_without_shell(monkeypatch):
 
 
 def test_missing_docker_executable_is_unavailable(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
     provider = LocalDockerProvider(FakeRunner(FileNotFoundError()), timeout=2)
 
     result = provider.build(request(tmp_path))
