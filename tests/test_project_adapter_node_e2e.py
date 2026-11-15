@@ -38,7 +38,7 @@ def _write_e2e_evidence(
         evidence_level="deterministic_orchestration",
         role_execution=role_execution or {
             "analyst": "not_registered",
-            "planner": "scripted_test_double",
+            "planner": "production_planner_agent_mock_llm",
             "developer": "scripted_test_double",
             "tester": "scripted_test_double",
             "reviewer": "scripted_test_double",
@@ -178,26 +178,34 @@ def test_node_web_adapter_executes_real_npm_lifecycle_through_tool_boundary(
 
 
 
-class _E2EPlanner:
-    role = "planner"
+def _make_planner_agent(
+    *,
+    project: str,
+    summary: str,
+    task_id: str,
+    title: str,
+    description: str,
+):
+    """Run the production PlannerAgent with a deterministic, schema-valid model response."""
+    from agents.planner import PlannerAgent
+    from runtime.agent_config import AgentConfig
 
-    def run(self, task):
-        return {
-            "status": "completed",
-            "agent": "planner",
-            "task_id": task.id,
-            "plan": {
-                "project": "node-web-orchestrator-e2e",
-                "summary": "Deterministic Node.js Web delivery through ProjectOrchestrator",
-                "tasks": [{
-                    "id": "TASK-NODE-WEB-001",
-                    "title": "Implement the Node.js Web application",
-                    "description": "Create a static web entry, deterministic build and executable test.",
-                    "role": "developer",
-                    "dependencies": [],
-                }],
-            },
-        }
+    plan = {
+        "project": project,
+        "summary": summary,
+        "tasks": [{
+            "id": task_id,
+            "title": title,
+            "description": description,
+            "role": "developer",
+            "dependencies": [],
+        }],
+    }
+    llm = MockLLM(response=json.dumps(plan, ensure_ascii=False))
+    return PlannerAgent(
+        AgentConfig(role="planner", model="deterministic-mock"),
+        llm=llm,
+    )
 
 
 class _E2EDeveloper:
@@ -537,6 +545,13 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
+    planner_agent = _make_planner_agent(
+        project="node-web-orchestrator-e2e",
+        summary="Deterministic Node.js Web delivery through ProjectOrchestrator",
+        task_id="TASK-NODE-WEB-001",
+        title="Implement the Node.js Web application",
+        description="Create a static web entry, deterministic build and executable test.",
+    )
     qa_agent = _make_qa_agent(
         folder="webapp",
         list_path="webapp/dist",
@@ -555,7 +570,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
                 llm=MockLLM(response=_analyst_spec("A deterministic Node.js Web project.")),
             ),
         ),
-        ("planner", _E2EPlanner()),
+        ("planner", planner_agent),
         ("developer", _E2EDeveloper()),
         ("tester", _E2ETester()),
         ("reviewer", _E2EReviewer()),
@@ -588,6 +603,9 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         )
 
     assert result.success, result
+    assert len(planner_agent.llm.calls) == 1
+    assert "Create a small Node.js Web project" in planner_agent.llm.calls[0]["prompt"]
+    assert project.last_plan["tasks"][0]["id"] == "TASK-NODE-WEB-001"
     assert result.total_tasks == 1
     assert result.completed_tasks == 1
     task = project.last_task_manager.get_all_tasks()[0]
@@ -644,7 +662,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         ),
         role_execution={
             "analyst": "requirement_analyst_mock_llm",
-            "planner": "scripted_test_double",
+            "planner": "production_planner_agent_mock_llm",
             "developer": "scripted_test_double",
             "tester": "scripted_test_double",
             "reviewer": "scripted_test_double",
@@ -662,28 +680,6 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     assert evidence["gates"]["acceptance"]["executable_verdict"] == "passed"
     assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
 
-
-
-class _PythonE2EPlanner:
-    role = "planner"
-
-    def run(self, task):
-        return {
-            "status": "completed",
-            "agent": "planner",
-            "task_id": task.id,
-            "plan": {
-                "project": "python-cli-orchestrator-e2e",
-                "summary": "Deterministic Python CLI delivery through ProjectOrchestrator",
-                "tasks": [{
-                    "id": "TASK-PYTHON-CLI-001",
-                    "title": "Implement the Python CLI application",
-                    "description": "Create an installable CLI package with executable tests.",
-                    "role": "developer",
-                    "dependencies": [],
-                }],
-            },
-        }
 
 
 class _PythonE2EDeveloper:
@@ -766,6 +762,13 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     monkeypatch.setenv("AI_TEAM_INTEGRATION_MAX_ROUNDS", "0")
 
     sandbox = WorkspaceSandbox(tmp_path)
+    planner_agent = _make_planner_agent(
+        project="python-cli-orchestrator-e2e",
+        summary="Deterministic Python CLI delivery through ProjectOrchestrator",
+        task_id="TASK-PYTHON-CLI-001",
+        title="Implement the Python CLI application",
+        description="Create an installable CLI package with executable tests.",
+    )
     qa_agent = _make_qa_agent(
         folder="cli",
         list_path="cli/sample_app",
@@ -784,7 +787,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
                 llm=MockLLM(response=_analyst_spec("An installable Python CLI project.")),
             ),
         ),
-        ("planner", _PythonE2EPlanner()),
+        ("planner", planner_agent),
         ("developer", _PythonE2EDeveloper()),
         ("tester", _E2ETester()),
         ("reviewer", _E2EReviewer()),
@@ -817,6 +820,9 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         )
 
     assert result.success, result
+    assert len(planner_agent.llm.calls) == 1
+    assert "Create an installable Python CLI package" in planner_agent.llm.calls[0]["prompt"]
+    assert project.last_plan["tasks"][0]["id"] == "TASK-PYTHON-CLI-001"
     assert result.total_tasks == 1
     assert result.completed_tasks == 1
     task = project.last_task_manager.get_all_tasks()[0]
@@ -881,7 +887,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         ),
         role_execution={
             "analyst": "requirement_analyst_mock_llm",
-            "planner": "scripted_test_double",
+            "planner": "production_planner_agent_mock_llm",
             "developer": "scripted_test_double",
             "tester": "scripted_test_double",
             "reviewer": "scripted_test_double",
