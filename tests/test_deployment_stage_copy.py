@@ -63,3 +63,18 @@ def test_stage_copy_never_follows_file_symlinks(tmp_path: Path) -> None:
         assert not (staged / "linked.txt").exists()
     finally:
         shutil.rmtree(staged, ignore_errors=True)
+
+
+
+def test_stage_copy_rejects_symlinked_deliverable_root(tmp_path: Path) -> None:
+    target = tmp_path / "real-deliverable"
+    target.mkdir()
+    (target / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    link = tmp_path / "deliverable-link"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"directory symlinks are unavailable: {type(exc).__name__}")
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        stage_deliverable_copy(link)
