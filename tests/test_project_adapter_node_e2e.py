@@ -170,9 +170,9 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
                 and "test_calculator.py" in prompt
             )
             self.response = (
-                "TEST_PASSED\\n实际 pytest 结果为 2 passed，退出码为 0。"
+                "TEST_PASSED\n实际 pytest 结果为 2 passed，退出码为 0。"
                 if self.evidence_accepted
-                else "TEST_FAILED\\n缺少成功的实际 pytest 执行证据。"
+                else "TEST_FAILED\n缺少成功的实际 pytest 执行证据。"
             )
             return super().generate(
                 prompt,
@@ -200,9 +200,9 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
                 and "2 passed" in prompt
             )
             self.response = (
-                "APPROVED\\nTester 结论与实际 pytest 证据一致。"
+                "APPROVED\nTester 结论与实际 pytest 证据一致。"
                 if self.evidence_accepted
-                else "REVISION_REQUIRED\\nTester 或实际 pytest 证据不足。"
+                else "REVISION_REQUIRED\nTester 或实际 pytest 证据不足。"
             )
             return super().generate(
                 prompt,
