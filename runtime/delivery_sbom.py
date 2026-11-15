@@ -124,10 +124,14 @@ def _parse_declared_requirements(path: Path) -> list[dict[str, Any]]:
         path.read_text(encoding="utf-8-sig").splitlines(), start=1
     ):
         line = raw_line.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
+        if not line:
             continue
-        line = line.split(";", 1)[0].strip()
-        match = _REQUIREMENT.match(line)
+        if line.startswith("-") or "://" in line or " @ " in line or line.startswith("git+"):
+            raise ValueError(f"unsupported requirement directive at line {line_number}")
+        requirement_parts = line.split(";", 1)
+        requirement = requirement_parts[0].strip()
+        marker = requirement_parts[1].strip() if len(requirement_parts) == 2 else None
+        match = _REQUIREMENT.match(requirement)
         if match is None:
             raise ValueError(f"unsupported requirement syntax at line {line_number}")
         name = match.group("name")
@@ -146,6 +150,8 @@ def _parse_declared_requirements(path: Path) -> list[dict[str, Any]]:
             "hashes": [],
             "purl": _pypi_purl(name, version),
             "resolution": "declared-pinned" if version else "declared-unresolved",
+            "declared_requirement": requirement,
+            "marker": marker,
         }
     return sorted(components.values(), key=lambda item: item["purl"])
 
@@ -303,6 +309,16 @@ def write_delivery_sbom(
             {"name": "ai-team:resolution", "value": item["resolution"]},
             {"name": "ai-team:license-status", "value": "unknown"},
         ]
+        if item.get("declared_requirement"):
+            properties.append({
+                "name": "ai-team:declared-requirement",
+                "value": item["declared_requirement"],
+            })
+        if item.get("marker"):
+            properties.append({
+                "name": "ai-team:environment-marker",
+                "value": item["marker"],
+            })
         component: dict[str, Any] = {
             "type": "library",
             "bom-ref": item["purl"],
@@ -403,6 +419,7 @@ def verify_delivery_provenance(
 
     try:
         with zipfile.ZipFile(archive, "r") as bundle:
+            member_bytes: dict[str, bytes] = {}
             for field in ("sbom", "manifest", "build_evidence", "lock"):
                 expected = record.get(field, {})
                 member = expected.get("member")
@@ -410,12 +427,32 @@ def verify_delivery_provenance(
                 if not member or not digest:
                     continue
                 try:
-                    actual = _sha256_bytes(bundle.read(member))
+                    data = bundle.read(member)
                 except KeyError:
                     problems.append(f"archive member missing: {member}")
                     continue
-                if actual != digest:
+                member_bytes[field] = data
+                if _sha256_bytes(data) != digest:
                     problems.append(f"archive member SHA-256 mismatch: {member}")
+
+            if "sbom" in member_bytes and "build_evidence" in record:
+                try:
+                    bom = json.loads(member_bytes["sbom"])
+                    properties = {
+                        item.get("name"): item.get("value")
+                        for item in bom.get("metadata", {}).get("properties", [])
+                    }
+                    expected_evidence = record["build_evidence"].get("sha256")
+                    if properties.get("ai-team:sbom:build-evidence-sha256") != expected_evidence:
+                        problems.append("SBOM build-evidence digest binding mismatch")
+                    expected_lock = record.get("lock", {}).get("sha256")
+                    sbom_lock = properties.get("ai-team:sbom:lock-sha256")
+                    if expected_lock and sbom_lock != expected_lock:
+                        problems.append("SBOM lock digest binding mismatch")
+                    if not expected_lock and properties.get("ai-team:sbom:completeness") != "partial":
+                        problems.append("SBOM without a lock is not marked partial")
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    problems.append("CycloneDX SBOM is unreadable or malformed")
     except (OSError, zipfile.BadZipFile):
         problems.append("delivery archive is unreadable")
 
