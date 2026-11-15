@@ -208,7 +208,7 @@ def evaluate_license_report(
             override = overrides.get(license_name)
             effective_category = str(override.get("classification", "")).upper() if isinstance(override, dict) else normalized_category
             exception = exceptions.get((normalized_package, package_version or "", license_name))
-            exception_applied = bool(exception and normalized_category in blocked)
+            exception_applied = bool(\n                exception\n                and normalized_category in blocked\n                and str(exception.get("classification", "")).upper() == normalized_category\n            )
             record = {
                 "package": package_name,
                 "version": package_version or "",
@@ -239,7 +239,7 @@ def evaluate_license_report(
                     f"{package_name} license {license_name} has unrecognized category {category}"
                 )
 
-    scanner = report.get("Trivy", {})
+    applied_keys = {(item["package"].lower(), item["version"], item["license"]) for item in exceptions_applied}\n    for key in exceptions:\n        if key not in applied_keys:\n            problems.append(f"configured license exception did not match a scanner finding: {key[0]}=={key[1]} {key[2]}")\n\n    scanner = report.get("Trivy", {})
     scanner_version = scanner.get("Version") if isinstance(scanner, dict) else None
     if not isinstance(scanner_version, str) or not scanner_version.strip():
         problems.append("Trivy report is missing scanner version")
