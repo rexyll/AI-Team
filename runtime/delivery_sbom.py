@@ -195,6 +195,17 @@ def _safe_evidence_summary(value: Mapping[str, Any] | None) -> dict[str, Any]:
         if isinstance(item, (str, int, float, bool)) or item is None:
             if item is not None:
                 result[key] = item
+    if isinstance(value.get("vulnerability_lookup"), Mapping):
+        lookup_status = value["vulnerability_lookup"].get("status")
+        if isinstance(lookup_status, str):
+            result["vulnerability_lookup_status"] = lookup_status
+    for source_key, target_key in (
+        ("undeclared_imports", "undeclared_import_count"),
+        ("unpinned", "unpinned_dependency_count"),
+    ):
+        items = value.get(source_key)
+        if isinstance(items, list):
+            result[target_key] = len(items)
     summary = value.get("summary")
     if isinstance(summary, Mapping):
         counts = {
