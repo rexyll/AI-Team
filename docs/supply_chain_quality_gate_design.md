@@ -53,6 +53,18 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 - SBOM 纳入交付清单并与 artifact digest、lock digest、scanner/tool version 绑定。
 - 验收：格式/schema 校验、确定性输出、缺失组件/伪造摘要/未知字段测试。
 
+#### T21.7.2 SBOM 与制品证据绑定设计（实施决策）
+
+现状边界：`runtime/dependency_scan.py` 当前的 `sbom` 字段只是对交付物顶层 `requirements.txt` 的内部摘要；它不生成 SPDX/CycloneDX，不包含 PURL、分发文件哈希、依赖闭包或许可证结论。交付流水线在 DocWriter 阶段调用该扫描，之后才生成 `DELIVERY_MANIFEST.md` 与 ZIP，因此需要明确 SBOM 与最终制品摘要之间的顺序。
+
+采用 CycloneDX 1.6 JSON，约定如下：
+
+- 交付目录内生成 `DELIVERY_SBOM.cdx.json`。优先从交付物显式指定的平台 lock 解析完整组件、版本、PyPI PURL 和 lock 中允许的 SHA-256 分发文件哈希；只有顶层 requirements 时允许生成 declared-only SBOM，但必须标记 `partial`，不得声称包含传递依赖。存在但格式错误/缺哈希的 lock 必须 fail-closed，不得退回 requirements 伪装完整。
+- 每个组件的许可证当前无法可靠推断时，使用自定义 property 明确标记 `license-status=unknown`；不填入猜测许可证。SBOM metadata properties 记录 dependency scope、requirements SHA-256、lock SHA-256（若存在）和 build-evidence SHA-256。
+- 在交付目录生成规范化的 `DELIVERY_BUILD_EVIDENCE.json`，只包含 integration、QA、安全、acceptance 等结构化结果摘要，不复制原始日志、提示词或秘密；其 SHA-256 被 SBOM 引用。
+- ZIP 的 SHA-256 不能写入 ZIP 内的 SBOM，否则形成自引用循环。故在 ZIP 完成后，ZIP 同级生成 `<archive>.provenance.json` sidecar，绑定 archive SHA-256、ZIP 内 SBOM/manifest/build-evidence/lock 成员 SHA-256。该 sidecar 是可验证的完整性记录，不带签名，不声称来源真实性或不可抵赖。
+- SBOM 与 build evidence 在 manifest 生成前写入交付目录，因此随 ZIP 一起交付并受 manifest 校验；provenance sidecar 在 ZIP 生成后输出，不加入自身所描述的 ZIP。
+- 验收覆盖 CycloneDX 结构字段、PURL/name normalization、lock hash 全量保留、缺 lock 的 partial 标记、坏 lock fail-closed、确定性输出、archive/成员篡改检测与 build-evidence digest 绑定。漏洞数据库和许可证策略扫描仍归 T21.7.4，不在此节点伪装成已执行。
 ### T21.7.3 覆盖率与性能预算
 - 在固定 Python 3.14 CI 环境采集覆盖率基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
 - 将现有性能测试定位为结构/扩展性回归；如增加绝对预算，必须在受控 runner 上采集多次样本、记录环境和分位数，并对噪声/基线变更留痕。
