@@ -190,7 +190,11 @@ def _task_summaries(project: Any) -> tuple[list[dict[str, Any]], dict[str, Any],
             return {
                 key: value.get(key)
                 for key in ("status", "verdict", "approved", "passed")
-                if isinstance(value.get(key), (str, int, float, bool)) or value.get(key) is None
+                if key in value
+                and (
+                    isinstance(value.get(key), (str, int, float, bool))
+                    or value.get(key) is None
+                )
             }
 
         summaries.append({
