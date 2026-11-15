@@ -10,18 +10,16 @@ This checklist documents the configuration facts a deployment must satisfy befor
 
 ## 2. Declared dependencies
 
-Install from the repository root:
+Install from the repository root using the Windows Python 3.14 production lock:
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install --disable-pip-version-check "pip==25.3"
+python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-windows-py314.lock
 ```
 
-`requirements.txt` pins the versions validated by the local development environment:
+The Linux Python 3.14 production equivalent is `requirements-linux-py314.lock`. For tests and development, use `requirements-dev-windows-py314.lock` or `requirements-dev-linux-py314.lock`; these include the corresponding production dependency set plus development tools. All four lock files pin the complete resolved dependency set and SHA-256 hashes. The reviewed top-level inputs remain `requirements.txt` and `requirements-dev.txt`; they are resolver inputs, not the reproducible installation interface.
 
-- `openai==3.1.0`
-- `python-dotenv==1.2.3`
-
-These are required because `config/model.py` imports both packages unconditionally. For tests and CI, install the separate development toolchain as well: `pip install -r requirements-dev.txt` (currently includes pytest). The supported CI/runtime matrix is Python 3.14; Python 3.13 is intentionally excluded because the codebase relies on PEP 649. Contract tests themselves stay network-independent through mock injection (see §3).
+The production input pins `openai==3.1.0` and `python-dotenv==1.2.3`, which `config/model.py` imports unconditionally. The supported CI/runtime matrix is Python 3.14; Python 3.13 is intentionally excluded because the codebase relies on PEP 649. Contract tests themselves stay network-independent through mock injection (see §3).
 
 ## 3. Provider configuration (multi-provider, per-role)
 
