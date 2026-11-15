@@ -7,7 +7,10 @@ as authority.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from contextlib import contextmanager
+from typing import Iterator
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -38,13 +41,22 @@ class DeploymentHistoryStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._initialize()
+        # Deployment history can reveal project and release metadata. Restrict
+        # the database file to the current host user on POSIX systems.
+        if os.name == "posix":
+            os.chmod(self.path, 0o600)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(str(self.path), timeout=10.0)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            connection.execute("PRAGMA busy_timeout = 10000")
+            yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as db:

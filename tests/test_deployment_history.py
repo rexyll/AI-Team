@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import os
+import sqlite3
 
 import pytest
 
@@ -50,6 +52,45 @@ def test_history_rejects_non_running_records(tmp_path):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     with pytest.raises(ValueError, match="running"):
         history.append(make_record("stopped", status="stopped"))
+
+
+def test_history_database_file_is_private_on_posix(tmp_path):
+    if os.name != "posix":
+        pytest.skip("POSIX file mode assertion")
+    db = tmp_path / "private" / "history.db"
+    DeploymentHistoryStore(db)
+    assert db.stat().st_mode & 0o777 == 0o600
+
+
+def test_history_serializes_concurrent_appends(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    records = [make_record(f"parallel-{index}") for index in range(24)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(history.append, records))
+    loaded = history.list_scope("docker-local", "staging", "demo")
+    assert {record.deployment_id for record in loaded} == {
+        record.deployment_id for record in records
+    }
+
+
+def test_corrupt_sqlite_database_fails_closed(tmp_path):
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"not a sqlite database")
+    with pytest.raises(sqlite3.DatabaseError):
+        DeploymentHistoryStore(db)
+
+
+def test_corrupt_record_payload_fails_closed(tmp_path):
+    db = tmp_path / "history.db"
+    history = DeploymentHistoryStore(db)
+    history.append(make_record("corrupt-record"))
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "UPDATE deployments SET record_json = ? WHERE deployment_id = ?",
+            ("{invalid-json", "corrupt-record"),
+        )
+    with pytest.raises(ValueError):
+        history.get("corrupt-record")
 
 
 def test_only_verified_healthy_previous_record_is_candidate(tmp_path):
