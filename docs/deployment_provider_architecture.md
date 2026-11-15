@@ -71,3 +71,10 @@ Before enabling any provider replacement, the following host-owned protocol must
 Required host-history additions before implementation: explicit active/stopped lifecycle transitions, a single-active deployment invariant per scope, replacement-operation journal with phase and immutable identities, idempotent recovery/reconciliation after process crash, and compare-and-swap protection against concurrent replacements. The provider capability must expose prepare, candidate health, route switch/read-back, retire-old, and abort/reconcile operations; a single opaque `rollback()` call is insufficient for the host to enforce ordering.
 
 **No-go conditions:** no controlled candidate network, no host-owned router/proxy, no route read-back, no immutable identities for both instances, no durable operation journal, or concurrent/ambiguous active state. In any of these cases the provider must return `unsupported` or the manager must fail closed. No zero-downtime or safe rollback claim is permitted until a daemon-backed E2E proves both success and injected failures at every phase.
+
+
+## Granular replacement capability contract (T21.6.3)
+
+`runtime/deployment_replacement.py` now defines a provider capability separate from the legacy opaque `rollback()` method. It specifies explicit phases (`prepared`, `candidate_started`, `candidate_healthy`, `traffic_switched`, `previous_retired`, `aborted`, `needs_reconciliation`) and a persistable journal snapshot containing the target and previous deployment IDs plus immutable runtime identities and the effective route target.
+
+The `DeploymentReplacementProvider` protocol separates candidate preparation/start, candidate health verification, traffic switch, effective-route read-back, old-instance retirement, and candidate abort. Each operation is keyed by a host-generated operation ID and is required to be idempotent. The protocol is declarative only: no provider currently implements it, no journal is yet persisted by `HostDeploymentManager`, and Local Docker rollback remains unsupported. This is a contract milestone, not a claim of working replacement or zero-downtime rollback.

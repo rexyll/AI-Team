@@ -274,3 +274,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 | 2026-11-15 | T21.6.3 rollback 即时健康复核 CI | Run #300 全部 Job 成功；regression (3.14) 与 Windows toolchain smoke 均通过。 | [GitHub Actions #300](https://github.com/rexyll/AI-Team/actions/runs/43676556207)；提交 `b807b6f` |
 | 2026-11-15 | T21.6.3 安全替换设计门禁 | 明确 rollback 必须是 host-owned replacement transaction：双实例身份、候选隔离启动、候选健康验证、路由切换与 read-back、旧实例退役、失败补偿、持久化事务日志和并发 CAS。当前 history 缺少 active deployment 状态与 replacement journal，Docker 也没有 host-owned traffic router，因此本阶段继续保持 rollback unsupported；先补齐状态模型/协议，再做 daemon-backed E2E。 | 更新 `docs/deployment_provider_architecture.md` |
+
+
+| 2026-11-15 | T21.6.3 granular replacement contract | 新增独立 `DeploymentReplacementProvider` capability，拆分 candidate prepare/start/health、traffic switch/read-back、retire previous、abort；新增 replacement phase 与双 deployment/runtime identity journal 数据契约及校验测试。该提交仅定义协议，不表示已有 provider 实现或持久化 journal；Local Docker rollback 继续 unsupported。 | 新增 `runtime/deployment_replacement.py`、`tests/test_deployment_replacement.py`；更新部署架构文档与 TaskPlan；CI 待验证 |
