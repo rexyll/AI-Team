@@ -350,8 +350,8 @@ def test_acceptance_aware_mock_maps_only_observed_junit_selectors():
     llm = _AcceptanceAwareMockLLM()
     selector = "tests.test_web_artifact::test_built_web_entry_contains_acceptance_marker"
     prompt = (
-        "根据需求规格生成映射。\\n"
-        "实际 JUnit 测试用例：\\n"
+        "根据需求规格生成映射。\n"
+        "实际 JUnit 测试用例：\n"
         + json.dumps([{"selector": selector, "status": "passed"}], ensure_ascii=False)
     )
 
@@ -369,7 +369,7 @@ def test_acceptance_aware_mock_maps_only_observed_junit_selectors():
 
 def test_acceptance_aware_mock_leaves_mapping_empty_without_observed_tests():
     llm = _AcceptanceAwareMockLLM()
-    prompt = "实际 JUnit 测试用例：\\n[]"
+    prompt = "实际 JUnit 测试用例：\n[]"
 
     result = json.loads(llm.generate(prompt))
 
