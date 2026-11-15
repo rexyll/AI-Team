@@ -58,7 +58,7 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
         lambda **kwargs: runtime,
     )
     monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
-    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
+    monkeypatch.setattr("builtins.input", lambda: "yes")
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -92,7 +92,7 @@ def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_pat
 
     monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
     monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
-    monkeypatch.setattr("builtins.input", lambda prompt: "no")
+    monkeypatch.setattr("builtins.input", lambda: "no")
     monkeypatch.setattr(
         "sys.argv",
         [
