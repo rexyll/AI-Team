@@ -128,6 +128,26 @@ token or expose its value to the interactive prompt, Agent, task context or
 logs. Merge remains a separate operation requiring a distinct approval after
 green CI and approved review.
 
+## Interactive merge approval
+
+A PR can be merged through the standalone host command:
+
+```bash
+python main.py --scm-merge-pr 123 --scm-merge-method squash
+```
+
+The command first polls the PR and proceeds only when the PR is open and
+unmerged, CI is green and the latest review is approved. It displays the exact
+head SHA and requires a real interactive TTY plus an explicit `yes`. The host
+then issues a one-use merge approval scoped to `PR-number:head-SHA` and calls
+`SCMService.merge_pull_request`. That service independently re-reads the PR,
+checks that it remains open/unmerged, rechecks CI and review, consumes the
+approval only when all preflight checks pass, and sends the expected SHA to
+GitHub to protect against branch movement. A blocked PR never prompts for or
+receives a merge approval. Cancellation and non-TTY execution perform no merge
+write. JSON output remains machine-readable; human prompts and previews go to
+stderr.
+
 ## Current validation boundary
 
 The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. No live GitHub push, PR creation, CI read, review read or merge has been performed in this environment; that requires a host-configured GitHub token, a test repository and explicit operator approval. The implementation must not be described as live-integrated until that run is completed.
