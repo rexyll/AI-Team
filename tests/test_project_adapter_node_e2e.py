@@ -578,10 +578,10 @@ def _make_node_project_gate_agents():
                 and "pass 1" in prompt
             )
             self.response = (
-                "TEST_PASSED\\n"
+                "TEST_PASSED\n"
                 "Developer 的实际 npm test 命令退出码为 0，Node 测试报告 1 项通过。"
                 if self.evidence_accepted
-                else "TEST_FAILED\\n"
+                else "TEST_FAILED\n"
                 "缺少 npm test 的成功退出码或实际测试通过记录。"
             )
             return super().generate(
@@ -611,10 +611,10 @@ def _make_node_project_gate_agents():
                 and "pass 1" in prompt
             )
             self.response = (
-                "APPROVED\\n"
+                "APPROVED\n"
                 "Tester 结论与 Developer 的实际 npm test 执行证据一致。"
                 if self.evidence_accepted
-                else "REVISION_REQUIRED\\n"
+                else "REVISION_REQUIRED\n"
                 "Tester 结论或实际 npm test 执行证据不足。"
             )
             return super().generate(
