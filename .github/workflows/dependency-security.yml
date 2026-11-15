@@ -68,7 +68,7 @@ jobs:
           egress-policy: block
           disable-telemetry: true
           allowed-endpoints: |
-            ghcr.io:443
+            mirror.gcr.io:443
             pkg-containers.githubusercontent.com:443
             api.github.com:443
             actions-results-receiver-production.githubapp.com:443
@@ -94,8 +94,10 @@ jobs:
           cp "$LOCK" .dependency-scan-target/requirements.txt
 
           "$TRIVY" fs \
+            --skip-version-check \
+            --disable-telemetry \
             --cache-dir "$PWD/.trivy-cache" \
-            --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+            --db-repository mirror.gcr.io/aquasec/trivy-db:2 \
             --scanners vuln \
             --pkg-types library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
