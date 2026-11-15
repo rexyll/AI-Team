@@ -6,8 +6,10 @@ on:
     branches: [main]
     paths:
       - requirements-linux-py314.lock
+      - requirements-dev-linux-py314.lock
       - config/dependency_license_policy.json
-      - tools/check_trivy_db_freshness.py
+      - tools/check_osv_db_freshness.py
+      - tools/check_trivy_license_policy.py
       - .github/workflows/dependency-security.yml
 
 permissions:
@@ -33,7 +35,13 @@ jobs:
           .venv-prod/bin/python -m pip install --disable-pip-version-check "pip==25.3"
           .venv-prod/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-linux-py314.lock
 
-      - name: Install pinned Trivy scanner
+      - name: Prepare hash-locked scanner tools
+        shell: bash
+        run: |
+          mkdir -p scan-input/scan-tools
+          python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --target scan-input/scan-tools --require-hashes -r requirements-dev-linux-py314.lock
+
+      - name: Install pinned Trivy license scanner
         uses: aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7
         with:
           version: v0.76.2
@@ -43,7 +51,8 @@ jobs:
         run: |
           mkdir -p scan-input/bin scan-input/tools scan-input/config
           cp requirements-linux-py314.lock scan-input/
-          cp tools/check_trivy_db_freshness.py scan-input/tools/
+          cp tools/check_osv_db_freshness.py scan-input/tools/
+          cp tools/check_trivy_license_policy.py scan-input/tools/
           cp config/dependency_license_policy.json scan-input/config/
           cp "$(command -v trivy)" scan-input/bin/trivy
           cp -a .venv-prod scan-input/.venv-prod
@@ -68,13 +77,22 @@ jobs:
           egress-policy: block
           disable-telemetry: true
           allowed-endpoints: |
-            mirror.gcr.io:443
-            pkg-containers.githubusercontent.com:443
+            api.osv.dev:443
+            osv-vulnerabilities.storage.googleapis.com:443
             api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
             actions-results-receiver-production.githubapp.com:443
             results-receiver.actions.githubusercontent.com:443
             pipelines.actions.githubusercontent.com:443
             *.blob.core.windows.net:443
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
 
       - name: Download prepared scan input
         uses: actions/download-artifact@v4
@@ -82,62 +100,67 @@ jobs:
           name: production-dependency-scan-input
           path: scan-input
 
-      - name: Scan production lock for vulnerabilities and licenses
+      - name: Scan production dependencies and validate evidence
         shell: bash
         run: |
           set +e
           tar -xzf scan-input/dependency-scan-input.tar.gz -C scan-input
+          export PYTHONPATH="$PWD/scan-input/scan-tools"
           export VIRTUAL_ENV="$PWD/scan-input/.venv-prod"
           TRIVY="$PWD/scan-input/bin/trivy"
           LOCK="$PWD/scan-input/requirements-linux-py314.lock"
           mkdir -p .dependency-scan-target
           cp "$LOCK" .dependency-scan-target/requirements.txt
 
-          "$TRIVY" fs \
-            --skip-version-check \
-            --disable-telemetry \
-            --cache-dir "$PWD/.trivy-cache" \
-            --db-repository mirror.gcr.io/aquasec/trivy-db:2 \
-            --scanners vuln \
-            --pkg-types library \
-            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-            --exit-code 1 \
+          python -m pip_audit \
+            --requirement "$LOCK" \
+            --no-deps \
+            --disable-pip \
+            --require-hashes \
+            --strict \
+            --vulnerability-service osv \
             --format json \
-            --output dependency-vulnerability-report.json \
-            .dependency-scan-target
+            --output dependency-vulnerability-report.json
           vulnerability_status=$?
 
           "$TRIVY" fs \
             --skip-version-check \
             --disable-telemetry \
-            --cache-dir "$PWD/.trivy-cache" \
             --scanners license \
             --pkg-types library \
-            --severity UNKNOWN,MEDIUM,HIGH,CRITICAL \
-            --exit-code 1 \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --exit-code 0 \
             --format json \
             --output dependency-license-report.json \
             .dependency-scan-target
-          license_status=$?
+          license_scan_status=$?
 
-          python scan-input/tools/check_trivy_db_freshness.py \
-            --metadata .trivy-cache/db/metadata.json \
+          python scan-input/tools/check_trivy_license_policy.py \
+            --report dependency-license-report.json \
             --lock-file "$LOCK" \
-            --scanner-version "$("$TRIVY" --version | head -n 1)" \
+            --policy scan-input/config/dependency_license_policy.json \
+            --output dependency-license-policy-result.json
+          license_policy_status=$?
+
+          python scan-input/tools/check_osv_db_freshness.py \
+            --lock-file "$LOCK" \
             --commit "$GITHUB_SHA" \
-            --scan-target production-linux-py314 \
+            --pip-audit-version "$(python -m pip_audit --version)" \
+            --trivy-version "$("$TRIVY" --version | head -n 1)" \
             --max-age-hours 24 \
+            --timeout-seconds 15 \
             --output dependency-scan-metadata.json
           database_status=$?
 
           {
             printf 'vulnerability_exit_code=%s\n' "$vulnerability_status"
-            printf 'license_exit_code=%s\n' "$license_status"
+            printf 'license_scan_exit_code=%s\n' "$license_scan_status"
+            printf 'license_policy_exit_code=%s\n' "$license_policy_status"
             printf 'database_freshness_exit_code=%s\n' "$database_status"
           } > dependency-scan-status.txt
           cat dependency-scan-status.txt
 
-          if [[ "$vulnerability_status" -ne 0 || "$license_status" -ne 0 || "$database_status" -ne 0 ]]; then
+          if [[ "$vulnerability_status" -ne 0 || "$license_scan_status" -ne 0 || "$license_policy_status" -ne 0 || "$database_status" -ne 0 ]]; then
             exit 1
           fi
 
@@ -149,6 +172,7 @@ jobs:
           path: |
             dependency-vulnerability-report.json
             dependency-license-report.json
+            dependency-license-policy-result.json
             dependency-scan-metadata.json
             dependency-scan-status.txt
           if-no-files-found: warn
