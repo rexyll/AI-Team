@@ -58,6 +58,7 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
         lambda **kwargs: runtime,
     )
     monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
+    monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
     monkeypatch.setattr("builtins.input", lambda: "yes")
     monkeypatch.setattr(
         "sys.argv",
@@ -92,6 +93,7 @@ def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_pat
 
     monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
     monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
     monkeypatch.setattr("builtins.input", lambda: "no")
     monkeypatch.setattr(
         "sys.argv",
@@ -121,3 +123,32 @@ def test_publish_cli_rejects_combination_with_delivery(monkeypatch):
         assert exc.code == 2
     else:
         raise AssertionError("publish command must be standalone")
+
+
+def test_publish_cli_refuses_non_interactive_stdin(monkeypatch, tmp_path, capsys):
+    body_file = tmp_path / "body.md"
+    body_file.write_text("Implementation details", encoding="utf-8")
+    runtime = SimpleNamespace(
+        service=SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+        repository="acme/widget",
+        approval_authority=SimpleNamespace(issue=lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("approval must not be issued without a terminal")
+        )),
+    )
+
+    monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
+    monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("sys.stdin", type("Pipe", (), {"isatty": lambda self: False})())
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "ai-team", "--scm-publish-pr",
+            "--scm-local-repository", "/workspace/widget",
+            "--scm-head-branch", "feature/widget",
+            "--scm-pr-title", "Add widget",
+            "--scm-pr-body-file", str(body_file),
+        ],
+    )
+
+    assert main.main() == 1
+    assert "interactive terminal" in capsys.readouterr().err
