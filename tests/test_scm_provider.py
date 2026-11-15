@@ -17,7 +17,7 @@ class FakeSCMProvider:
         self.calls = []
         self.ci = {"status": "success"}
         self.review = {"status": "approved"}
-        self.pr = {"head_sha": "a" * 40}
+        self.pr = {"head_sha": "a" * 40, "state": "open", "merged": False}
         self.local_head = "c" * 40
 
     def get_local_head_sha(self, local_repository):
@@ -226,3 +226,21 @@ def test_local_head_sha_rejects_invalid_provider_result():
 
     with pytest.raises(SCMPreflightError, match="valid HEAD SHA"):
         service.get_local_head_sha("/workspace/widget")
+
+
+@pytest.mark.parametrize(
+    "pr",
+    [
+        {"head_sha": "a" * 40, "state": "closed", "merged": False},
+        {"head_sha": "a" * 40, "state": "open", "merged": True},
+    ],
+)
+def test_merge_preflight_rejects_closed_or_already_merged_pr(pr):
+    service, provider, authority = _service()
+    provider.pr = pr
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+
+    with pytest.raises(SCMPreflightError, match="not open and unmerged"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
+
+    assert not any(call[0] == "merge" for call in provider.calls)
