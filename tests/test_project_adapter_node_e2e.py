@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime.llm.base import LLMResponse
 from runtime.llm.mock import MockLLM
 from runtime.project_adapters import ProjectAdapterExecutor, ProjectAdapterRegistry
 from runtime.tool_invocation_service import ToolInvocationService
@@ -345,47 +346,103 @@ class _AcceptanceAwareMockLLM(MockLLM):
         return json.dumps({"schema_version": 1, "tests": tests}, ensure_ascii=False)
 
 
-def _make_qa_agent(*, folder: str, command: str, read_path: str, list_path: str):
+class _ResultAwareQAMockLLM(MockLLM):
+    """Judge actual QA tool results instead of returning a canned pass."""
+
+    def __init__(
+        self,
+        *,
+        folder: str,
+        command: str,
+        read_path: str,
+        list_path: str,
+        expected_list_fragment: str,
+        expected_file_fragment: str,
+    ) -> None:
+        super().__init__(
+            tool_script=[
+                {
+                    "tool_calls": [{
+                        "call_id": f"qa-{folder}-list",
+                        "name": "list_files",
+                        "arguments": json.dumps({"path": list_path}),
+                    }]
+                },
+                {
+                    "tool_calls": [{
+                        "call_id": f"qa-{folder}-read",
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": read_path}),
+                    }]
+                },
+                {
+                    "tool_calls": [{
+                        "call_id": f"qa-{folder}-execute",
+                        "name": "run_command",
+                        "arguments": json.dumps({
+                            "command": command,
+                            "cwd": folder,
+                            "timeout": 60,
+                        }),
+                    }]
+                },
+            ]
+        )
+        self.expected_list_fragment = expected_list_fragment
+        self.expected_file_fragment = expected_file_fragment
+
+    def generate_with_tools(self, messages, *, tools=None, tool_choice="auto"):
+        if self.remaining_tool_script_steps:
+            return super().generate_with_tools(
+                messages, tools=tools, tool_choice=tool_choice
+            )
+        outputs = [
+            str(item.get("content", ""))
+            for item in messages
+            if isinstance(item, dict) and item.get("role") == "tool"
+        ]
+        passed = (
+            len(outputs) == 3
+            and all("Tool error:" not in item for item in outputs)
+            and self.expected_list_fragment in outputs[0]
+            and self.expected_file_fragment in outputs[1]
+            and outputs[2].splitlines()[:1] == ["exit_code=0"]
+        )
+        verdict = "QA_PASSED" if passed else "QA_FAILED"
+        return LLMResponse(
+            content=(
+                f"{verdict}\n"
+                "- 检查文件列表与交付入口文件。\n"
+                "- 根据实际命令退出码确认独立冒烟结果。\n"
+            )
+        )
+
+
+def _make_qa_agent(
+    *,
+    folder: str,
+    command: str,
+    read_path: str,
+    list_path: str,
+    expected_list_fragment: str,
+    expected_file_fragment: str,
+):
     from agents.qa import QAAgent
     from runtime.agent_config import AgentConfig
-    from runtime.llm.mock import MockLLM
 
-    llm = MockLLM(
-        tool_script=[
-            {
-                "tool_calls": [{
-                    "call_id": f"qa-{folder}-list",
-                    "name": "list_files",
-                    "arguments": json.dumps({"path": list_path}),
-                }]
-            },
-            {
-                "tool_calls": [{
-                    "call_id": f"qa-{folder}-read",
-                    "name": "read_file",
-                    "arguments": json.dumps({"path": read_path}),
-                }]
-            },
-            {
-                "tool_calls": [{
-                    "call_id": f"qa-{folder}-execute",
-                    "name": "run_command",
-                    "arguments": json.dumps({
-                        "command": command,
-                        "cwd": folder,
-                        "timeout": 60,
-                    }),
-                }]
-            },
-            "QA_PASSED\n- 独立读取交付物结构与入口文件。\n- 通过只读/执行工具运行边界检查命令。\n",
-        ]
+    llm = _ResultAwareQAMockLLM(
+        folder=folder,
+        command=command,
+        read_path=read_path,
+        list_path=list_path,
+        expected_list_fragment=expected_list_fragment,
+        expected_file_fragment=expected_file_fragment,
     )
     return QAAgent(
         AgentConfig(role="qa", model="deterministic-mock"),
         llm=llm,
         max_tool_iterations=4,
     )
-
 
 @pytest.mark.skipif(
     os.name != "nt",
@@ -436,6 +493,8 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
                 list_path="webapp/dist",
                 read_path="webapp/dist/index.html",
                 command="npm test -- --test-reporter=dot",
+                expected_list_fragment="index.html",
+                expected_file_fragment="ORCHESTRATOR-WEB-DELIVERABLE",
             ),
         ),
     ):
@@ -657,6 +716,8 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
                 list_path="cli/sample_app",
                 read_path="cli/sample_app/cli.py",
                 command="python -m sample_app.cli --value -1",
+                expected_list_fragment="cli.py",
+                expected_file_fragment="def main",
             ),
         ),
     ):
