@@ -416,44 +416,44 @@ def _make_planner_agent(
     )
 
 
-class _E2EDeveloper:
-    role = "developer"
+def _make_node_project_developer_agent():
+    """Use the production DeveloperAgent to create and test the Node Web project."""
+    from agents.developer import DeveloperAgent
+    from runtime.agent_config import AgentConfig
+    from runtime.llm.mock import MockLLM
 
-    def run(self, task):
-        # DeveloperWorkspaceManager activates a task-local lease as the workspace scope.
-        # Resolve the current workspace instead of writing to the canonical project root.
-        root = resolve_workspace_path(".")
-        (root / "src").mkdir(parents=True, exist_ok=True)
-        (root / "scripts").mkdir(parents=True, exist_ok=True)
-        (root / "tests").mkdir(parents=True, exist_ok=True)
-        package = {
-            "name": "ai-team-orchestrator-web-e2e",
-            "version": "1.0.0",
-            "private": True,
-            "type": "commonjs",
-            "scripts": {"build": "node scripts/build.js", "test": "node --test"},
-        }
-        (root / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-        lock = {
-            "name": package["name"],
-            "version": package["version"],
-            "lockfileVersion": 3,
-            "requires": True,
-            "packages": {"": {"name": package["name"], "version": package["version"]}},
-        }
-        (root / "package-lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
-        (root / "src" / "index.html").write_text(
+    package = {
+        "name": "ai-team-orchestrator-web-e2e",
+        "version": "1.0.0",
+        "private": True,
+        "type": "commonjs",
+        "scripts": {"build": "node scripts/build.js", "test": "node --test"},
+    }
+    lock = {
+        "name": package["name"],
+        "version": package["version"],
+        "lockfileVersion": 3,
+        "requires": True,
+        "packages": {"": {"name": package["name"], "version": package["version"]}},
+    }
+    files = [
+        ("package.json", json.dumps(package, indent=2) + "\n"),
+        ("package-lock.json", json.dumps(lock, indent=2) + "\n"),
+        (
+            "src/index.html",
             "<!doctype html><html><body><main>ORCHESTRATOR-WEB-DELIVERABLE</main></body></html>\n",
-            encoding="utf-8",
-        )
-        (root / "scripts" / "build.js").write_text(
+        ),
+        (
+            "scripts/build.js",
             "const fs = require('node:fs');\n"
             "const path = require('node:path');\n"
-            "fs.mkdirSync('dist', { recursive: true });\n"
-            "fs.copyFileSync(path.join('src', 'index.html'), path.join('dist', 'index.html'));\n",
-            encoding="utf-8",
-        )
-        (root / "tests" / "app.test.js").write_text(
+            "const root = process.cwd();\n"
+            "fs.mkdirSync(path.join(root, 'dist'), { recursive: true });\n"
+            "fs.copyFileSync(path.join(root, 'src', 'index.html'), "
+            "path.join(root, 'dist', 'index.html'));\n",
+        ),
+        (
+            "tests/app.test.js",
             "const test = require('node:test');\n"
             "const assert = require('node:assert/strict');\n"
             "const fs = require('node:fs');\n"
@@ -461,21 +461,57 @@ class _E2EDeveloper:
             "  const html = fs.readFileSync('dist/index.html', 'utf8');\n"
             "  assert.ok(html.includes('ORCHESTRATOR-WEB-DELIVERABLE'));\n"
             "});\n",
-            encoding="utf-8",
-        )
-        (root / "tests" / "test_web_artifact.py").write_text(
+        ),
+        (
+            "tests/test_web_artifact.py",
             "from pathlib import Path\n\n"
             "def test_built_web_entry_contains_acceptance_marker():\n"
             "    html = Path('dist/index.html').read_text(encoding='utf-8')\n"
             "    assert 'ORCHESTRATOR-WEB-DELIVERABLE' in html\n",
-            encoding="utf-8",
-        )
-        return {
-            "status": "completed",
-            "agent": "developer",
-            "task_id": task.id,
-            "message": "Created the locked Node.js Web fixture and executable acceptance test.",
+        ),
+    ]
+    write_calls = [
+        {
+            "call_id": f"developer-write-web-file-{index}",
+            "name": "write_file",
+            "arguments": json.dumps({"path": path, "content": content}),
         }
+        for index, (path, content) in enumerate(files, start=1)
+    ]
+    llm = MockLLM(
+        tool_script=[
+            {"tool_calls": write_calls},
+            {
+                "tool_calls": [{
+                    "call_id": "developer-build-node-web",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "npm run build",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-test-node-web",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "npm test",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+        ]
+    )
+    return (
+        DeveloperAgent(
+            AgentConfig(role="developer", model="deterministic-mock"),
+            llm=llm,
+        ),
+        llm,
+    )
 
 
 class _E2ETester:
@@ -760,6 +796,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         title="Implement the Node.js Web application",
         description="Create a static web entry, deterministic build and executable test.",
     )
+    developer_agent, developer_llm = _make_node_project_developer_agent()
     qa_agent = _make_qa_agent(
         folder="webapp",
         list_path="webapp/dist",
@@ -779,7 +816,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
             ),
         ),
         ("planner", planner_agent),
-        ("developer", _E2EDeveloper()),
+        ("developer", developer_agent),
         ("tester", _E2ETester()),
         ("reviewer", _E2EReviewer()),
         (
@@ -838,6 +875,18 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     built_entry = root / "dist" / "index.html"
     assert built_entry.is_file()
     assert "ORCHESTRATOR-WEB-DELIVERABLE" in built_entry.read_text(encoding="utf-8")
+    developer_records = developer_agent.tool_execution_history.to_dict()
+    developer_writes = [record for record in developer_records if record["tool_name"] == "write_file"]
+    developer_commands = [record for record in developer_records if record["tool_name"] == "run_command"]
+    assert len(developer_writes) == 6
+    assert all(record["status"] == "completed" for record in developer_records)
+    assert [record["arguments"]["command"] for record in developer_commands] == [
+        "npm run build",
+        "npm test",
+    ]
+    assert any("exit_code=0" in str(record["output"]) for record in developer_commands)
+    assert any("pass 1" in str(record["output"]) for record in developer_commands)
+    assert len(developer_llm.tool_call_turns) >= 3
     assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", json.dumps(
         qa_agent.llm.last_tool_assessment, ensure_ascii=False, sort_keys=True
     )
@@ -871,7 +920,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         role_execution={
             "analyst": "requirement_analyst_mock_llm",
             "planner": "production_planner_agent_mock_llm",
-            "developer": "scripted_test_double",
+            "developer": "production_developer_agent_mock_llm",
             "tester": "scripted_test_double",
             "reviewer": "scripted_test_double",
             "doc_writer": "mock_llm_observed_junit_mapping",
