@@ -115,7 +115,7 @@ def test_license_policy_rejects_unrecognized_categories_and_exceptions(tmp_path:
     )
 
     assert result["status"] == "failed"
-    assert any("exceptions require" in problem for problem in result["problems"])
+    assert any("license exception requires" in problem for problem in result["problems"])
     assert any("unrecognized category" in problem for problem in result["problems"])
 
 
