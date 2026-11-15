@@ -277,3 +277,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 granular replacement contract | 新增独立 `DeploymentReplacementProvider` capability，拆分 candidate prepare/start/health、traffic switch/read-back、retire previous、abort；新增 replacement phase 与双 deployment/runtime identity journal 数据契约及校验测试。该提交仅定义协议，不表示已有 provider 实现或持久化 journal；Local Docker rollback 继续 unsupported。 | 新增 `runtime/deployment_replacement.py`、`tests/test_deployment_replacement.py`；更新部署架构文档与 TaskPlan；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 durable replacement journal | SQLite 新增 replacement journal 表；仅 prepared 可创建事务；provider/project/environment 维度 partial unique index 保证每个 scope 最多一个非终态替换（needs_reconciliation 持续占用）；阶段更新使用 expected-phase CAS，校验允许的阶段迁移并禁止 scope/deployment/runtime identity 重写；支持重启后读取 journal。新增持久化、CAS 冲突、身份不可变、scope 隔离、终态释放与并发单赢家测试。尚未实现崩溃自动恢复、active deployment 唯一约束或 Docker router；rollback 仍 unsupported。 | 更新 `runtime/deployment_history.py`、`tests/test_deployment_replacement.py`、部署架构文档与 TaskPlan；CI 待验证 |
