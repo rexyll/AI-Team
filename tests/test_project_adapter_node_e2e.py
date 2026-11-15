@@ -417,97 +417,118 @@ def _make_planner_agent(
 
 
 def _make_node_project_developer_agent():
-    """Use the production DeveloperAgent to create and test the Node Web project."""
+    """Use the production DeveloperAgent to scaffold, build and test the Node Web project."""
     from agents.developer import DeveloperAgent
     from runtime.agent_config import AgentConfig
     from runtime.llm.mock import MockLLM
 
-    package = {
-        "name": "ai-team-orchestrator-web-e2e",
-        "version": "1.0.0",
-        "private": True,
-        "type": "commonjs",
-        "scripts": {"build": "node scripts/build.js", "test": "node --test"},
-    }
-    lock = {
-        "name": package["name"],
-        "version": package["version"],
-        "lockfileVersion": 3,
-        "requires": True,
-        "packages": {"": {"name": package["name"], "version": package["version"]}},
-    }
-    files = [
-        ("package.json", json.dumps(package, indent=2) + "\n"),
-        ("package-lock.json", json.dumps(lock, indent=2) + "\n"),
-        (
-            "src/index.html",
-            "<!doctype html><html><body><main>ORCHESTRATOR-WEB-DELIVERABLE</main></body></html>\n",
-        ),
-        (
-            "scripts/build.js",
-            "const fs = require('node:fs');\n"
-            "const path = require('node:path');\n"
-            "const root = process.cwd();\n"
-            "fs.mkdirSync(path.join(root, 'dist'), { recursive: true });\n"
-            "fs.copyFileSync(path.join(root, 'src', 'index.html'), "
-            "path.join(root, 'dist', 'index.html'));\n",
-        ),
-        (
-            "tests/app.test.js",
-            "const test = require('node:test');\n"
-            "const assert = require('node:assert/strict');\n"
-            "const fs = require('node:fs');\n"
-            "test('built application contains its acceptance marker', () => {\n"
-            "  const html = fs.readFileSync('dist/index.html', 'utf8');\n"
-            "  assert.ok(html.includes('ORCHESTRATOR-WEB-DELIVERABLE'));\n"
-            "});\n",
-        ),
-        (
-            "tests/test_web_artifact.py",
-            "from pathlib import Path\n\n"
-            "def test_built_web_entry_contains_acceptance_marker():\n"
-            "    html = Path('dist/index.html').read_text(encoding='utf-8')\n"
-            "    assert 'ORCHESTRATOR-WEB-DELIVERABLE' in html\n",
-        ),
-    ]
-    write_calls = [
-        {
-            "call_id": f"developer-write-web-file-{index}",
-            "name": "write_file",
-            "arguments": json.dumps({"path": path, "content": content}),
-        }
-        for index, (path, content) in enumerate(files, start=1)
-    ]
-    build_step = {
-        "tool_calls": [{
-            "call_id": "developer-build-node-web",
-            "name": "run_command",
-            "arguments": json.dumps({
-                "command": "npm run build",
-                "cwd": ".",
-                "timeout": 90,
-            }),
-        }]
-    }
-    test_step = {
-        "tool_calls": [{
-            "call_id": "developer-test-node-web",
-            "name": "run_command",
-            "arguments": json.dumps({
-                "command": "npm test",
-                "cwd": ".",
-                "timeout": 90,
-            }),
-        }]
-    }
-    # Keep each workspace mutation in its own tool-loop decision. The
-    # Developer progress guard then observes a new workspace revision for
-    # every file and does not mistake a same-turn write batch for stagnation.
+    bootstrap_source = r"""
+const fs = require('node:fs');
+const path = require('node:path');
+const packageJson = {
+  name: 'ai-team-orchestrator-web-e2e',
+  version: '1.0.0',
+  private: true,
+  type: 'commonjs',
+  scripts: { build: 'node scripts/build.js', test: 'node --test' }
+};
+const lock = {
+  name: packageJson.name,
+  version: packageJson.version,
+  lockfileVersion: 3,
+  requires: true,
+  packages: { '': { name: packageJson.name, version: packageJson.version } }
+};
+function write(relative, content) {
+  const target = path.resolve(process.cwd(), relative);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content, 'utf8');
+}
+write('package.json', JSON.stringify(packageJson, null, 2) + '\\n');
+write('package-lock.json', JSON.stringify(lock, null, 2) + '\\n');
+write(
+  'src/index.html',
+  '<!doctype html><html><body><main>ORCHESTRATOR-WEB-DELIVERABLE</main></body></html>\\n'
+);
+write(
+  'scripts/build.js',
+  [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const root = process.cwd();",
+    "fs.mkdirSync(path.join(root, 'dist'), { recursive: true });",
+    "fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(root, 'dist', 'index.html'));"
+  ].join('\\n') + '\\n'
+);
+write(
+  'tests/app.test.js',
+  [
+    "const test = require('node:test');",
+    "const assert = require('node:assert/strict');",
+    "const fs = require('node:fs');",
+    "test('built application contains its acceptance marker', () => {",
+    "  const html = fs.readFileSync('dist/index.html', 'utf8');",
+    "  assert.ok(html.includes('ORCHESTRATOR-WEB-DELIVERABLE'));",
+    '});'
+  ].join('\\n') + '\\n'
+);
+write(
+  'tests/test_web_artifact.py',
+  [
+    'from pathlib import Path',
+    '',
+    'def test_built_web_entry_contains_acceptance_marker():',
+    "    html = Path('dist/index.html').read_text(encoding='utf-8')",
+    "    assert 'ORCHESTRATOR-WEB-DELIVERABLE' in html"
+  ].join('\\n') + '\\n'
+);
+fs.unlinkSync(__filename);
+"""
     llm = MockLLM(
         tool_script=[
-            *({"tool_calls": [call]} for call in write_calls),
-            build_step,
-            test_step,
+            {
+                "tool_calls": [{
+                    "call_id": "developer-write-node-bootstrap",
+                    "name": "write_file",
+                    "arguments": json.dumps({
+                        "path": "bootstrap-project.js",
+                        "content": bootstrap_source,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-run-node-bootstrap",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "node bootstrap-project.js",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-build-node-web",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "npm run build",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": "developer-test-node-web",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": "npm test",
+                        "cwd": ".",
+                        "timeout": 90,
+                    }),
+                }]
+            },
         ]
     )
     return (
@@ -883,15 +904,16 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     developer_records = developer_agent.tool_execution_history.to_dict()
     developer_writes = [record for record in developer_records if record["tool_name"] == "write_file"]
     developer_commands = [record for record in developer_records if record["tool_name"] == "run_command"]
-    assert len(developer_writes) == 6
+    assert len(developer_writes) == 1
     assert all(record["status"] == "completed" for record in developer_records)
     assert [record["arguments"]["command"] for record in developer_commands] == [
+        "node bootstrap-project.js",
         "npm run build",
         "npm test",
     ]
     assert any("exit_code=0" in str(record["output"]) for record in developer_commands)
     assert any("pass 1" in str(record["output"]) for record in developer_commands)
-    assert len(developer_llm.tool_call_turns) >= 8
+    assert len(developer_llm.tool_call_turns) >= 4
     assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", json.dumps(
         qa_agent.llm.last_tool_assessment, ensure_ascii=False, sort_keys=True
     )
