@@ -188,5 +188,26 @@ class HostDeploymentManager:
                 "rollback", "failed", self.provider.name,
                 "Historical artifact provider does not match configured host provider",
             )
+        # Persisted health is only historical evidence. Re-check the immutable runtime
+        # identity and health immediately before authorizing any replacement.
+        try:
+            fresh_health = self.provider.health_check(candidate)
+        except Exception as exc:
+            return DeploymentOperationResult(
+                "rollback", "failed", self.provider.name,
+                f"Fresh rollback health verification failed: {type(exc).__name__}",
+            )
+        try:
+            self.history.update_health(candidate.deployment_id, fresh_health)
+        except Exception as exc:
+            return DeploymentOperationResult(
+                "rollback", "failed", self.provider.name,
+                f"Fresh rollback health could not be persisted: {type(exc).__name__}",
+            )
+        if fresh_health.status != "healthy":
+            return DeploymentOperationResult(
+                "rollback", "failed", self.provider.name,
+                f"Rollback candidate is no longer verified healthy ({fresh_health.status})",
+            )
         # The provider receives only the host-loaded record, never a caller record.
         return self.provider.rollback(request, candidate)

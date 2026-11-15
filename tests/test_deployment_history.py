@@ -16,9 +16,17 @@ from runtime.deployment_history import DeploymentHistoryStore, HostDeploymentMan
 class StubProvider:
     name = "docker-local"
 
-    def __init__(self, result=None):
+    def __init__(self, result=None, health_result=None):
         self.result = result
+        self.health_result = health_result or HealthCheckResult(
+            "healthy", "2026-11-15T10:02:00Z", "stub health"
+        )
+        self.health_checked = []
         self.rollback_record = None
+
+    def health_check(self, record):
+        self.health_checked.append(record)
+        return self.health_result
 
     def rollback(self, request, previous):
         self.rollback_record = previous
@@ -155,18 +163,65 @@ def test_manager_persists_only_success_from_configured_provider(tmp_path):
     assert manager.history.get("foreign") is None
 
 
-def test_manager_rollback_uses_only_host_history_record(tmp_path):
+def test_manager_rollback_rechecks_health_before_provider_call(tmp_path):
     provider = StubProvider()
     history = DeploymentHistoryStore(tmp_path / "history.db")
-    other_project = make_record("foreign-project", project="another-project")
-    history.append(other_project)
     old = make_record("old")
     history.append(old)
     manager = HostDeploymentManager(provider, history)
     result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
     assert result.status == "unsupported"
+    assert provider.health_checked == [old]
     assert provider.rollback_record == old
-    assert provider.rollback_record.project == "demo"
+    assert history.get("old").health_status == "healthy"
+
+
+@pytest.mark.parametrize("status", ["unhealthy", "unavailable", "unknown"])
+def test_manager_blocks_rollback_when_fresh_health_is_not_healthy(tmp_path, status):
+    provider = StubProvider(health_result=HealthCheckResult(
+        status, "2026-11-15T10:03:00Z", "fresh health"
+    ))
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("old"))
+    manager = HostDeploymentManager(provider, history)
+    result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
+    assert result.status == "failed"
+    assert "no longer verified healthy" in result.message
+    assert provider.health_checked
+    assert provider.rollback_record is None
+    assert history.get("old").health_status == status
+
+
+def test_manager_blocks_rollback_when_fresh_health_check_raises(tmp_path):
+    class RaisingProvider(StubProvider):
+        def health_check(self, record):
+            raise OSError("daemon unavailable")
+
+    provider = RaisingProvider()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("old"))
+    manager = HostDeploymentManager(provider, history)
+    result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
+    assert result.status == "failed"
+    assert "OSError" in result.message
+    assert provider.rollback_record is None
+    assert history.get("old").health_status == "healthy"
+
+
+def test_manager_blocks_rollback_when_fresh_health_cannot_be_persisted(tmp_path):
+    provider = StubProvider()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.append(make_record("old"))
+    manager = HostDeploymentManager(provider, history)
+
+    def fail_update(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    history.update_health = fail_update
+    result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
+    assert result.status == "failed"
+    assert "could not be persisted" in result.message
+    assert provider.rollback_record is None
 
 
 def test_manager_fails_closed_without_prior_healthy_deployment(tmp_path):
