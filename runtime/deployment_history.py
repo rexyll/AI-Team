@@ -91,6 +91,23 @@ class DeploymentHistoryStore:
                     PRIMARY KEY (provider, environment, project)
                 )"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS deployment_replacements (
+                    operation_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    record_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            db.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_replacements_one_active_scope
+                ON deployment_replacements(provider, project, environment)
+                WHERE phase NOT IN ('previous_retired', 'aborted')"""
+            )
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
                 raise RuntimeError("deployment history database integrity check failed")
@@ -235,6 +252,96 @@ class DeploymentHistoryStore:
             ).rowcount
             if changed != 1:
                 raise ValueError("active deployment clear compare-and-swap conflict")
+    def begin_replacement(self, record) -> None:
+        """Persist a new prepared replacement and reserve its scope."""
+        from runtime.deployment_replacement import ReplacementJournalRecord
+        if not isinstance(record, ReplacementJournalRecord) or record.phase != "prepared":
+            raise ValueError("replacement journal must begin in prepared phase")
+        with self._connect() as db:
+            try:
+                db.execute(
+                    """INSERT INTO deployment_replacements
+                    (operation_id, provider, project, environment, phase, record_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (record.operation_id, record.provider, record.project, record.environment,
+                     record.phase, json.dumps(asdict(record), sort_keys=True, separators=(",", ":")),
+                     record.created_at, record.updated_at),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("replacement operation already exists or scope is reserved") from exc
+
+    def update_replacement(self, record, *, expected_phase: str) -> None:
+        """Advance one journal phase using CAS and immutable identity checks."""
+        from runtime.deployment_replacement import ReplacementJournalRecord
+        if not isinstance(record, ReplacementJournalRecord):
+            raise TypeError("record must be a ReplacementJournalRecord")
+        allowed = {
+            "prepared": {"candidate_started", "aborted", "needs_reconciliation"},
+            "candidate_started": {"candidate_healthy", "aborted", "needs_reconciliation"},
+            "candidate_healthy": {"traffic_switched", "aborted", "needs_reconciliation"},
+            "traffic_switched": {"previous_retired", "needs_reconciliation"},
+            "needs_reconciliation": set(),
+            "previous_retired": set(),
+            "aborted": set(),
+        }
+        if record.phase not in allowed.get(expected_phase, set()):
+            raise ValueError("invalid replacement phase transition")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT phase, record_json FROM deployment_replacements WHERE operation_id = ?",
+                (record.operation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("replacement operation does not exist")
+            if row["phase"] != expected_phase:
+                raise ValueError("replacement phase compare-and-swap conflict")
+            current = json.loads(row["record_json"])
+            candidate = asdict(record)
+            immutable = ("operation_id", "provider", "project", "environment",
+                         "target_deployment_id", "previous_deployment_id", "created_at")
+            if any(current.get(key) != candidate.get(key) for key in immutable):
+                raise ValueError("replacement journal immutable identity changed")
+            for key in ("candidate_runtime_id", "previous_runtime_id", "effective_traffic_target"):
+                if current.get(key) is not None and current.get(key) != candidate.get(key):
+                    raise ValueError(f"replacement journal immutable {key} changed")
+            changed = db.execute(
+                """UPDATE deployment_replacements SET phase = ?, record_json = ?, updated_at = ?
+                WHERE operation_id = ? AND phase = ?""",
+                (record.phase, json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                 record.updated_at, record.operation_id, expected_phase),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("replacement phase compare-and-swap conflict")
+
+    @staticmethod
+    def _replacement_from_json(payload: str):
+        from runtime.deployment_replacement import ReplacementJournalRecord
+        return ReplacementJournalRecord(**json.loads(payload))
+
+    def get_replacement(self, operation_id: str):
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT record_json FROM deployment_replacements WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+        return self._replacement_from_json(row["record_json"]) if row else None
+
+    def list_active_replacements(self, *, provider: str | None = None,
+                                 project: str | None = None, environment: str | None = None):
+        """List non-terminal journal rows; needs_reconciliation stays active."""
+        clauses = ["phase NOT IN ('previous_retired', 'aborted')"]
+        values = []
+        for column, value in (("provider", provider), ("project", project), ("environment", environment)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                values.append(value)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT record_json FROM deployment_replacements WHERE " + " AND ".join(clauses) +
+                " ORDER BY created_at, operation_id", values,
+            ).fetchall()
+        return [self._replacement_from_json(row["record_json"]) for row in rows]
+
     def rollback_candidate(
         self, *, provider: str, environment: str, project: str,
         excluding_deployment_id: str | None = None

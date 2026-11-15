@@ -11,6 +11,7 @@ from runtime.deployment_provider import (
     DeploymentRequest, HealthCheckResult,
 )
 from runtime.deployment_history import DeploymentHistoryStore, HostDeploymentManager
+from runtime.deployment_replacement import ReplacementJournalRecord
 
 
 class StubProvider:
@@ -321,3 +322,99 @@ def test_active_deployment_clear_requires_matching_identity(tmp_path):
     assert history.active_deployment(
         provider="docker-local", environment="staging", project="demo"
     ) is None
+
+def make_replacement(**overrides):
+    values = {
+        "operation_id": "replace-001", "provider": "docker-local",
+        "project": "demo", "environment": "staging",
+        "target_deployment_id": "release-target",
+        "previous_deployment_id": "release-current", "phase": "prepared",
+        "created_at": "2026-11-15T10:00:00Z",
+        "updated_at": "2026-11-15T10:00:00Z",
+    }
+    values.update(overrides)
+    return ReplacementJournalRecord(**values)
+
+
+def test_replacement_journal_persists_and_reloads(tmp_path):
+    path = tmp_path / "history.db"
+    history = DeploymentHistoryStore(path)
+    record = make_replacement()
+    history.begin_replacement(record)
+    assert DeploymentHistoryStore(path).get_replacement(record.operation_id) == record
+
+
+def test_replacement_journal_requires_prepared_initial_phase(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    with pytest.raises(ValueError, match="prepared"):
+        history.begin_replacement(make_replacement(phase="candidate_started"))
+
+
+def test_replacement_journal_reserves_one_nonterminal_scope(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    history.begin_replacement(make_replacement())
+    with pytest.raises(ValueError, match="scope is reserved"):
+        history.begin_replacement(make_replacement(operation_id="replace-002"))
+    history.begin_replacement(make_replacement(operation_id="replace-other", project="other"))
+
+
+def test_replacement_journal_phase_update_uses_cas_and_reloads(tmp_path):
+    path = tmp_path / "history.db"
+    history = DeploymentHistoryStore(path)
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    started = make_replacement(phase="candidate_started", updated_at="2026-11-15T10:01:00Z",
+                               candidate_runtime_id="runtime-candidate")
+    history.update_replacement(started, expected_phase="prepared")
+    with pytest.raises(ValueError, match="compare-and-swap"):
+        history.update_replacement(started, expected_phase="prepared")
+    assert DeploymentHistoryStore(path).get_replacement(initial.operation_id) == started
+
+
+def test_replacement_journal_rejects_immutable_identity_rewrite(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    changed = make_replacement(phase="candidate_started", target_deployment_id="tampered")
+    with pytest.raises(ValueError, match="immutable identity"):
+        history.update_replacement(changed, expected_phase="prepared")
+
+
+def test_replacement_journal_runtime_identity_is_immutable_once_set(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    started = make_replacement(phase="candidate_started", candidate_runtime_id="runtime-1")
+    history.update_replacement(started, expected_phase="prepared")
+    changed = make_replacement(phase="candidate_healthy", candidate_runtime_id="runtime-2")
+    with pytest.raises(ValueError, match="immutable candidate_runtime_id"):
+        history.update_replacement(changed, expected_phase="candidate_started")
+
+
+def test_replacement_journal_terminal_phase_releases_scope_reservation(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    aborted = make_replacement(phase="aborted", updated_at="2026-11-15T10:01:00Z")
+    history.update_replacement(aborted, expected_phase="prepared")
+    history.begin_replacement(make_replacement(operation_id="replace-next"))
+
+
+def test_needs_reconciliation_keeps_scope_reserved(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    blocked = make_replacement(phase="needs_reconciliation")
+    history.update_replacement(blocked, expected_phase="prepared")
+    assert [r.phase for r in history.list_active_replacements()] == ["needs_reconciliation"]
+    with pytest.raises(ValueError, match="scope is reserved"):
+        history.begin_replacement(make_replacement(operation_id="replace-next"))
+
+
+def test_replacement_journal_rejects_invalid_phase_transition(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_replacement()
+    history.begin_replacement(initial)
+    invalid = make_replacement(phase="traffic_switched")
+    with pytest.raises(ValueError, match="phase transition"):
+        history.update_replacement(invalid, expected_phase="prepared")
