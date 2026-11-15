@@ -143,7 +143,9 @@ class _E2EDeveloper:
     role = "developer"
 
     def run(self, task):
-        # DeveloperWorkspaceManager activates a task-local lease as the workspace scope.\n        # Resolve the current workspace instead of writing to the canonical project root.\n        root = resolve_workspace_path(".")
+        # DeveloperWorkspaceManager activates a task-local lease as the workspace scope.
+        # Resolve the current workspace instead of writing to the canonical project root.
+        root = resolve_workspace_path(".")
         (root / "src").mkdir(parents=True, exist_ok=True)
         (root / "scripts").mkdir(parents=True, exist_ok=True)
         (root / "tests").mkdir(parents=True, exist_ok=True)
