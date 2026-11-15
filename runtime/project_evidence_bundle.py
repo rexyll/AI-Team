@@ -340,6 +340,20 @@ def _gate_summary(value: Any, *, verdict_key: str = "verdict") -> dict[str, Any]
     for field in ("gaps", "warnings", "blockers"):
         if isinstance(value.get(field), list):
             summary[f"{field}_count"] = len(value[field])
+    executed_tool_calls = value.get("executed_tool_calls")
+    if isinstance(executed_tool_calls, int) and not isinstance(executed_tool_calls, bool):
+        summary["executed_tool_calls"] = executed_tool_calls
+    history = value.get("tool_execution_history")
+    if isinstance(history, list):
+        summary["tool_invocation_count"] = len(history)
+        summary["tool_invocation_statuses"] = [
+            {
+                "tool": item.get("tool_name"),
+                "status": item.get("status"),
+            }
+            for item in history[:100]
+            if isinstance(item, Mapping)
+        ]
     return summary
 
 
@@ -445,7 +459,14 @@ def build_project_evidence_bundle(
     tasks, workspace, task_tools = _task_summaries(project)
     integration, adapter_tools = _integration_summary(delivery.get("integration"))
     tools_by_id: dict[str, dict[str, Any]] = {}
-    for record in task_tools + adapter_tools:
+    qa_evidence = delivery.get("qa")
+    qa_history = qa_evidence.get("tool_execution_history") if isinstance(qa_evidence, Mapping) else None
+    qa_tools = [
+        _tool_record_summary(item)
+        for item in qa_history
+        if isinstance(item, Mapping)
+    ] if isinstance(qa_history, list) else []
+    for record in task_tools + adapter_tools + qa_tools:
         execution_id = record["execution_id"]
         existing = tools_by_id.get(execution_id)
         if existing is not None and existing != record:
