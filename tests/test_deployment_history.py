@@ -78,8 +78,16 @@ def test_manager_persists_only_success_from_configured_provider(tmp_path):
     assert manager.record_deployment(successful(record)) == record
     with pytest.raises(ValueError, match="successful"):
         manager.record_deployment(DeploymentOperationResult("deploy", "failed", provider.name, "no"))
+    foreign_artifact = DeploymentArtifact("other", "image:foreign", "b" * 64, "1.0")
+    foreign_record = DeploymentRecord(
+        "foreign", "other", "staging", "1.0", foreign_artifact,
+        "running", "healthy", "2026-11-15T10:00:00Z",
+    )
     with pytest.raises(ValueError, match="configured"):
-        manager.record_deployment(DeploymentOperationResult("deploy", "succeeded", "other", "wrong", record=record))
+        manager.record_deployment(
+            DeploymentOperationResult("deploy", "succeeded", "other", "wrong", record=foreign_record)
+        )
+    assert manager.history.get("foreign") is None
 
 
 def test_manager_rollback_uses_only_host_history_record(tmp_path):
