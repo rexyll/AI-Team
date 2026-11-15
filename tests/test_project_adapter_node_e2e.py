@@ -478,31 +478,36 @@ def _make_node_project_developer_agent():
         }
         for index, (path, content) in enumerate(files, start=1)
     ]
+    build_step = {
+        "tool_calls": [{
+            "call_id": "developer-build-node-web",
+            "name": "run_command",
+            "arguments": json.dumps({
+                "command": "npm run build",
+                "cwd": ".",
+                "timeout": 90,
+            }),
+        }]
+    }
+    test_step = {
+        "tool_calls": [{
+            "call_id": "developer-test-node-web",
+            "name": "run_command",
+            "arguments": json.dumps({
+                "command": "npm test",
+                "cwd": ".",
+                "timeout": 90,
+            }),
+        }]
+    }
+    # Keep each workspace mutation in its own tool-loop decision. The
+    # Developer progress guard then observes a new workspace revision for
+    # every file and does not mistake a same-turn write batch for stagnation.
     llm = MockLLM(
         tool_script=[
-            {"tool_calls": write_calls},
-            {
-                "tool_calls": [{
-                    "call_id": "developer-build-node-web",
-                    "name": "run_command",
-                    "arguments": json.dumps({
-                        "command": "npm run build",
-                        "cwd": ".",
-                        "timeout": 90,
-                    }),
-                }]
-            },
-            {
-                "tool_calls": [{
-                    "call_id": "developer-test-node-web",
-                    "name": "run_command",
-                    "arguments": json.dumps({
-                        "command": "npm test",
-                        "cwd": ".",
-                        "timeout": 90,
-                    }),
-                }]
-            },
+            *({"tool_calls": [call]} for call in write_calls),
+            build_step,
+            test_step,
         ]
     )
     return (
@@ -886,7 +891,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     ]
     assert any("exit_code=0" in str(record["output"]) for record in developer_commands)
     assert any("pass 1" in str(record["output"]) for record in developer_commands)
-    assert len(developer_llm.tool_call_turns) >= 3
+    assert len(developer_llm.tool_call_turns) >= 8
     assert project.last_delivery["qa"]["verdict"] == "QA_PASSED", json.dumps(
         qa_agent.llm.last_tool_assessment, ensure_ascii=False, sort_keys=True
     )
