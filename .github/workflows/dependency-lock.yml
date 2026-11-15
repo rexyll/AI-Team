@@ -2,6 +2,12 @@ name: Dependency lock generation
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - requirements.txt
+      - requirements-dev.txt
+      - .github/workflows/dependency-lock.yml
 
 permissions:
   contents: read
