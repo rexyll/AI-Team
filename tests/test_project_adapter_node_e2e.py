@@ -110,8 +110,8 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
                             {
                                 "path": "calculator.py",
                                 "content": (
-                                    "def add(left: int, right: int) -> int:\\n"
-                                    "    return left + right\\n"
+                                    "def add(left: int, right: int) -> int:\n"
+                                    "    return left + right\n"
                                 ),
                             }
                         ),
@@ -123,11 +123,11 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
                             {
                                 "path": "tests/test_calculator.py",
                                 "content": (
-                                    "from calculator import add\\n\\n"
-                                    "def test_add_positive_values():\\n"
-                                    "    assert add(20, 22) == 42\\n\\n"
-                                    "def test_add_negative_values():\\n"
-                                    "    assert add(-1, 1) == 0\\n"
+                                    "from calculator import add\n\n"
+                                    "def test_add_positive_values():\n"
+                                    "    assert add(20, 22) == 42\n\n"
+                                    "def test_add_negative_values():\n"
+                                    "    assert add(-1, 1) == 0\n"
                                 ),
                             }
                         ),
@@ -153,14 +153,14 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
     )
     tester_llm = MockLLM(
         response=(
-            "TEST_PASSED\\n"
+            "TEST_PASSED\n"
             "依据 DeveloperResult 中实际 pytest 命令和退出码，"
             "两个计算测试均通过；未执行证据之外的测试。"
         )
     )
     reviewer_llm = MockLLM(
         response=(
-            "APPROVED\\n"
+            "APPROVED\n"
             "实现包含 add 函数，测试覆盖正数与负数场景；"
             "Tester 已基于实际执行证据通过。"
         )
@@ -206,7 +206,7 @@ def test_production_developer_tester_reviewer_pipeline_uses_real_execution_evide
     assert len(developer_data["tests"]) == 1
     test_evidence = developer_data["tests"][0]
     assert test_evidence["command"] == "python -m pytest -q tests/test_calculator.py"
-    assert test_evidence["result"].startswith("exit_code=0\\n")
+    assert test_evidence["result"].startswith("exit_code=0\n")
     assert "2 passed" in test_evidence["result"]
 
     developer_provenance = provenance_from_value(developer_result)
