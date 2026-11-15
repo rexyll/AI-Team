@@ -16,6 +16,7 @@ recorded as an unknown verdict — never silently mapped to a pass
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -158,10 +159,33 @@ class QAAgent(BaseAgent):
                     "executed_tool_calls": executed_tool_calls,
                     # The host stores these immutable records for audit/evidence.
                     # Downstream prompts receive only a bounded verdict digest.
-                    "tool_execution_history": service.history.to_dict(),
+                    "tool_execution_history": self._tool_history_digest(service),
                 }
             },
         )
+
+    @staticmethod
+    def _tool_history_digest(service: ToolInvocationService) -> list[dict[str, Any]]:
+        """Return metadata-only audit records; omit raw arguments and outputs."""
+        records: list[dict[str, Any]] = []
+        for record in service.history.to_dict():
+            encoded = json.dumps(
+                record.get("arguments", {}),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            records.append({
+                "execution_id": record["execution_id"],
+                "task_id": record["task_id"],
+                "agent_role": record["agent_role"],
+                "tool_name": record["tool_name"],
+                "started_at": record["started_at"],
+                "completed_at": record["completed_at"],
+                "status": record["status"],
+                "arguments_sha256": hashlib.sha256(encoded).hexdigest(),
+            })
+        return records
 
     def _execute_tool_call(self, service: ToolInvocationService, task_id: str, tool_call: Any) -> str:
         """Validate and execute one model-requested tool through the boundary."""
