@@ -1,9 +1,8 @@
-"""Deliverable dependency scan: offline SBOM + declaration audit.
+"""Deliverable dependency declaration audit (not a standard SBOM).
 
-Produces deterministic dependency evidence for the delivery phase:
+Produces deterministic declaration evidence for the delivery phase:
 
-- an SBOM parsed from the deliverable's ``requirements.txt`` (name, exact
-  pin or not);
+- a top-level requirements inventory (name, exact pin or not);
 - third-party imports detected from the source that are NOT declared in
   requirements (stdlib and local modules are filtered);
 - an explicit ``unavailable`` record for vulnerability-database lookups:
@@ -74,7 +73,7 @@ def _third_party_imports(root: Path) -> set[str]:
 
 
 def scan_deliverable_dependencies(deliverable_root: str | Path) -> dict[str, Any]:
-    """Build the dependency SBOM and declaration audit for one deliverable."""
+    """Build the declared-dependency inventory and import audit for one deliverable."""
     root = Path(deliverable_root)
     if not root.is_dir():
         return {"status": "skipped", "reason": "deliverable root does not exist"}
