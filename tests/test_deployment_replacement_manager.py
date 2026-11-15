@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from runtime.deployment_history import DeploymentHistoryStore
+from runtime.deployment_provider import (
+    DeploymentArtifact,
+    DeploymentOperationResult,
+    DeploymentRecord,
+    DeploymentRequest,
+    HealthCheckResult,
+)
+from runtime.deployment_replacement import ReplacementJournalRecord
+from runtime.deployment_replacement_manager import HostDeploymentReplacementManager
+
+
+def _record(deployment_id, *, status="running", health="healthy", version="1.0"):
+    artifact = DeploymentArtifact(
+        "test-provider",
+        f"image:{deployment_id}",
+        "a" * 64 if version == "1.0" else "b" * 64,
+        version,
+    )
+    return DeploymentRecord(
+        deployment_id=deployment_id,
+        provider="test-provider",
+        environment="staging",
+        version=version,
+        artifact=artifact,
+        status=status,
+        health_status=health,
+        created_at="2026-11-15T12:00:00Z",
+        project="demo",
+    )
+
+
+def _request():
+    return DeploymentRequest(
+        project_root="/tmp/demo",
+        project="demo",
+        environment="staging",
+        version="2.0",
+    )
+
+
+class FakeReplacementProvider:
+    name = "test-provider"
+
+    def __init__(
+        self,
+        *,
+        previous_health="healthy",
+        candidate_health="healthy",
+        switch_route="candidate",
+        abort_succeeds=True,
+        abort_returns_inspected_record=True,
+        retire_succeeds=True,
+        retire_returns_inspected_record=True,
+    ):
+        self.previous_health = previous_health
+        self.candidate_health = candidate_health
+        self.switch_route = switch_route
+        self.abort_succeeds = abort_succeeds
+        self.abort_returns_inspected_record = abort_returns_inspected_record
+        self.retire_succeeds = retire_succeeds
+        self.retire_returns_inspected_record = retire_returns_inspected_record
+        self.route = "runtime:previous"
+        self.calls = []
+
+    def health_check(self, record):
+        self.calls.append(("health_check", record.deployment_id))
+        return HealthCheckResult(self.previous_health, "2026-11-15T12:01:00Z", "fake previous probe")
+
+    def immutable_runtime_id(self, record):
+        runtime_id = f"runtime:{record.deployment_id}"
+        self.calls.append(("runtime_id", record.deployment_id, runtime_id))
+        return runtime_id
+
+    def prepare_candidate(self, request, target, previous, operation_id):
+        self.calls.append(("prepare", target.deployment_id, operation_id))
+        return DeploymentOperationResult("prepare_candidate", "succeeded", self.name, "prepared")
+
+    def start_candidate(self, request, target, operation_id):
+        self.calls.append(("start", target.deployment_id, operation_id))
+        candidate = _record(
+            target.deployment_id,
+            status="running",
+            health="unknown",
+            version=target.version,
+        )
+        return DeploymentOperationResult(
+            "start_candidate", "succeeded", self.name, "started", record=candidate
+        )
+
+    def verify_candidate(self, candidate):
+        self.calls.append(("verify_candidate", candidate.deployment_id))
+        return HealthCheckResult(
+            self.candidate_health,
+            "2026-11-15T12:02:00Z",
+            "fake candidate probe",
+        )
+
+    def switch_traffic(self, candidate, previous, operation_id):
+        self.calls.append(("switch_traffic", candidate.deployment_id, operation_id))
+        if self.switch_route == "candidate":
+            self.route = "runtime:" + candidate.deployment_id
+        elif self.switch_route == "unknown":
+            self.route = "runtime:unexpected"
+        return DeploymentOperationResult("switch_traffic", "succeeded", self.name, "switch attempted")
+
+    def read_traffic_target(self, request):
+        self.calls.append(("read_route", self.route))
+        return self.route
+
+    def retire_previous(self, previous, operation_id):
+        self.calls.append(("retire_previous", previous.deployment_id, operation_id))
+        status = "succeeded" if self.retire_succeeds else "failed"
+        record = replace(previous, status="stopped") if self.retire_returns_inspected_record else None
+        return DeploymentOperationResult(
+            "retire_previous", status, self.name, "retire result", record=record
+        )
+
+    def abort_candidate(self, candidate, operation_id):
+        self.calls.append(("abort_candidate", candidate.deployment_id, operation_id))
+        status = "succeeded" if self.abort_succeeds else "failed"
+        record = replace(candidate, status="stopped") if self.abort_returns_inspected_record else None
+        return DeploymentOperationResult(
+            "abort_candidate", status, self.name, "abort result", record=record
+        )
+
+
+def _setup(tmp_path: Path, provider=None):
+    history = DeploymentHistoryStore(tmp_path / "deployments.sqlite3")
+    previous = _record("previous")
+    history.append(previous)
+    history.set_active_deployment(
+        provider=previous.provider,
+        environment=previous.environment,
+        project=previous.project,
+        deployment_id=previous.deployment_id,
+        expected_deployment_id=None,
+    )
+    target = _record("candidate", status="prepared", health="unknown", version="2.0")
+    provider = provider or FakeReplacementProvider()
+    manager = HostDeploymentReplacementManager(
+        provider,
+        history,
+        clock=lambda: "2026-11-15T12:03:00Z",
+        operation_id_factory=lambda: "operation-001",
+    )
+    return history, provider, manager, previous, target
+
+
+def _active(history):
+    return history.active_deployment(
+        provider="test-provider", project="demo", environment="staging"
+    )
+
+
+def test_successful_replacement_requires_inspected_stopped_records(tmp_path):
+    history, provider, manager, previous, target = _setup(tmp_path)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "replaced"
+    assert result.phase == "previous_retired"
+    assert result.record.deployment_id == "candidate"
+    assert _active(history).deployment_id == "candidate"
+    assert history.get("previous").status == "stopped"
+    assert history.get("candidate").health_status == "healthy"
+    journal = history.get_replacement("operation-001")
+    assert journal.phase == "previous_retired"
+    assert journal.candidate_runtime_id == "runtime:candidate"
+    assert journal.previous_runtime_id == "runtime:previous"
+    assert journal.effective_traffic_target == "runtime:candidate"
+    calls = [item[0] for item in provider.calls]
+    assert calls.index("verify_candidate") < calls.index("switch_traffic")
+    assert calls.index("switch_traffic") < calls.index("read_route")
+    assert calls.index("read_route") < calls.index("retire_previous")
+
+
+def test_unhealthy_candidate_is_aborted_only_after_old_route_and_stopped_id_are_verified(tmp_path):
+    provider = FakeReplacementProvider(candidate_health="unhealthy")
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "failed"
+    assert result.phase == "aborted"
+    assert "abort_candidate" in [item[0] for item in provider.calls]
+    assert "retire_previous" not in [item[0] for item in provider.calls]
+    assert _active(history).deployment_id == "previous"
+    assert history.get("candidate").status == "stopped"
+    assert history.get_replacement("operation-001").phase == "aborted"
+
+
+def test_unknown_route_after_switch_preserves_both_instances_and_scope_reservation(tmp_path):
+    provider = FakeReplacementProvider(switch_route="unknown")
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    assert result.phase == "needs_reconciliation"
+    assert "retire_previous" not in [item[0] for item in provider.calls]
+    assert "abort_candidate" not in [item[0] for item in provider.calls]
+    assert history.get("previous").status == "running"
+    assert history.get("candidate").status == "running"
+    assert _active(history).deployment_id == "previous"
+    assert history.get_replacement("operation-001").phase == "needs_reconciliation"
+    existing = history.get_replacement("operation-001")
+    with pytest.raises(ValueError, match="scope is reserved"):
+        history.begin_replacement(
+            ReplacementJournalRecord(
+                **{
+                    **existing.__dict__,
+                    "operation_id": "operation-002",
+                    "target_deployment_id": "another-target",
+                    "phase": "prepared",
+                }
+            )
+        )
+
+
+def test_route_still_old_after_switch_attempt_aborts_candidate_without_retiring_old(tmp_path):
+    provider = FakeReplacementProvider(switch_route="previous")
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "failed"
+    assert result.phase == "aborted"
+    assert _active(history).deployment_id == "previous"
+    assert history.get("candidate").status == "stopped"
+    calls = [item[0] for item in provider.calls]
+    assert "abort_candidate" in calls
+    assert "retire_previous" not in calls
+
+
+def test_missing_stopped_record_after_abort_keeps_transaction_reserved(tmp_path):
+    provider = FakeReplacementProvider(
+        candidate_health="unhealthy",
+        abort_returns_inspected_record=False,
+    )
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    assert history.get("candidate").status == "running"
+    assert history.get_replacement("operation-001").phase == "needs_reconciliation"
+
+
+def test_failed_or_unverified_retirement_never_rolls_route_back_or_stops_candidate(tmp_path):
+    provider = FakeReplacementProvider(retire_succeeds=False)
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    assert "abort_candidate" not in [item[0] for item in provider.calls]
+    assert _active(history).deployment_id == "candidate"
+    assert history.get("previous").status == "running"
+    assert history.get("candidate").status == "running"
+
+
+def test_successful_retirement_without_stopped_inspection_record_is_not_accepted(tmp_path):
+    provider = FakeReplacementProvider(retire_returns_inspected_record=False)
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    assert history.get("previous").status == "running"
+    assert history.get("candidate").status == "running"
+    assert _active(history).deployment_id == "candidate"
+
+
+def test_unhealthy_previous_blocks_before_candidate_operations_and_without_journal(tmp_path):
+    provider = FakeReplacementProvider(previous_health="unknown")
+    history, provider, manager, previous, target = _setup(tmp_path, provider)
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "failed"
+    assert "prepare" not in [item[0] for item in provider.calls]
+    assert "start" not in [item[0] for item in provider.calls]
+    assert history.get_replacement("operation-001") is None
+    assert _active(history).deployment_id == "previous"
+
+
+def test_provider_without_full_replacement_contract_is_unsupported(tmp_path):
+    class OldProvider:
+        name = "test-provider"
+
+        def health_check(self, record):
+            raise AssertionError("unsupported providers must not be called")
+
+    history, _, _, _, target = _setup(tmp_path)
+    manager = HostDeploymentReplacementManager(
+        OldProvider(), history, operation_id_factory=lambda: "unused"
+    )
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "unsupported"
+    assert history.list_active_replacements() == []

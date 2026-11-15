@@ -1,0 +1,459 @@
+"""Host-owned deployment replacement transaction coordinator.
+
+A provider is eligible only when it can inspect immutable runtime identities,
+perform traffic switching, and read the effective route back. Local Docker
+currently lacks a traffic router and therefore deliberately remains unsupported.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from typing import Callable, Literal
+from uuid import uuid4
+
+from runtime.deployment_history import DeploymentHistoryStore
+from runtime.deployment_provider import (
+    DeploymentOperationResult,
+    DeploymentRecord,
+    DeploymentRequest,
+    HealthCheckResult,
+)
+from runtime.deployment_replacement import (
+    DeploymentReplacementProvider,
+    ReplacementJournalRecord,
+)
+
+
+ReplacementStatus = Literal["replaced", "failed", "needs_reconciliation", "unsupported"]
+
+
+@dataclass(frozen=True)
+class DeploymentReplacementResult:
+    status: ReplacementStatus
+    message: str
+    operation_id: str | None = None
+    phase: str | None = None
+    record: DeploymentRecord | None = None
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class HostDeploymentReplacementManager:
+    """Run a durable blue/green replacement transaction under host ownership.
+
+    The previous runtime is never retired until candidate health is fresh,
+    traffic read-back identifies the candidate immutable runtime, and the host
+    active pointer has been advanced with compare-and-swap. Any ambiguity after
+    an external side effect leaves both runtimes intact and reserves the scope
+    for manual reconciliation. The coordinator never guesses a rollback route.
+    """
+
+    _REQUIRED_METHODS = (
+        "health_check",
+        "immutable_runtime_id",
+        "prepare_candidate",
+        "start_candidate",
+        "verify_candidate",
+        "switch_traffic",
+        "read_traffic_target",
+        "retire_previous",
+        "abort_candidate",
+    )
+
+    def __init__(
+        self,
+        provider: DeploymentReplacementProvider,
+        history: DeploymentHistoryStore,
+        *,
+        clock: Callable[[], str] = _now,
+        operation_id_factory: Callable[[], str] | None = None,
+    ) -> None:
+        name = getattr(provider, "name", None)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("provider must expose a non-empty name")
+        if not isinstance(history, DeploymentHistoryStore):
+            raise TypeError("history must be a DeploymentHistoryStore")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        if operation_id_factory is not None and not callable(operation_id_factory):
+            raise TypeError("operation_id_factory must be callable")
+        self.provider = provider
+        self.history = history
+        self._clock = clock
+        self._operation_id_factory = operation_id_factory or (lambda: uuid4().hex)
+
+    def _supports_replacement(self) -> bool:
+        return all(callable(getattr(self.provider, name, None)) for name in self._REQUIRED_METHODS)
+
+    def replace(
+        self,
+        request: DeploymentRequest,
+        target: DeploymentRecord,
+    ) -> DeploymentReplacementResult:
+        """Replace the active scoped deployment with a prepared target record."""
+        if not isinstance(request, DeploymentRequest):
+            raise TypeError("request must be a DeploymentRequest")
+        if not isinstance(target, DeploymentRecord):
+            raise TypeError("target must be a DeploymentRecord")
+        if not self._supports_replacement():
+            return DeploymentReplacementResult(
+                "unsupported",
+                "configured provider does not implement the complete replacement capability",
+            )
+        if (
+            target.provider != self.provider.name
+            or target.project != request.project
+            or target.environment != request.environment
+            or target.version != request.version
+            or target.status != "prepared"
+        ):
+            return DeploymentReplacementResult(
+                "failed",
+                "target must be prepared and match provider/project/environment/version",
+            )
+        if self.history.get(target.deployment_id) is not None:
+            return DeploymentReplacementResult("failed", "target deployment already exists in host history")
+
+        try:
+            previous = self.history.active_deployment(
+                provider=self.provider.name,
+                environment=request.environment,
+                project=request.project,
+            )
+        except Exception as exc:
+            return DeploymentReplacementResult(
+                "failed",
+                f"active deployment history is unavailable: {type(exc).__name__}",
+            )
+        if previous is None:
+            return DeploymentReplacementResult(
+                "failed",
+                "replacement requires an explicit active deployment pointer",
+            )
+        if (
+            previous.provider != self.provider.name
+            or previous.environment != request.environment
+            or previous.project != request.project
+            or previous.status != "running"
+            or previous.deployment_id == target.deployment_id
+        ):
+            return DeploymentReplacementResult("failed", "active deployment identity is inconsistent")
+
+        try:
+            previous_health = self.provider.health_check(previous)
+            if not isinstance(previous_health, HealthCheckResult):
+                raise TypeError("provider returned an invalid previous health result")
+            previous = self.history.update_health(previous.deployment_id, previous_health)
+            if previous_health.status != "healthy":
+                return DeploymentReplacementResult(
+                    "failed",
+                    f"active deployment is not freshly healthy ({previous_health.status})",
+                )
+            previous_runtime_id = self.provider.immutable_runtime_id(previous)
+            if not isinstance(previous_runtime_id, str) or not previous_runtime_id.strip():
+                raise ValueError("provider returned no immutable previous runtime identity")
+        except Exception as exc:
+            return DeploymentReplacementResult(
+                "failed",
+                f"previous deployment preflight failed: {type(exc).__name__}",
+            )
+
+        operation_id = self._operation_id_factory()
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id_factory must return a non-empty string")
+        now = self._clock()
+        journal = ReplacementJournalRecord(
+            operation_id=operation_id,
+            provider=self.provider.name,
+            project=request.project,
+            environment=request.environment,
+            target_deployment_id=target.deployment_id,
+            previous_deployment_id=previous.deployment_id,
+            phase="prepared",
+            created_at=now,
+            updated_at=now,
+            previous_runtime_id=previous_runtime_id,
+            detail="replacement scope reserved before provider side effects",
+        )
+        try:
+            self.history.begin_replacement(journal)
+        except Exception as exc:
+            return DeploymentReplacementResult(
+                "failed",
+                f"replacement scope could not be reserved: {type(exc).__name__}",
+                operation_id=operation_id,
+            )
+
+        try:
+            prepared = self.provider.prepare_candidate(request, target, previous, operation_id)
+            if not isinstance(prepared, DeploymentOperationResult) or prepared.status != "succeeded":
+                return self._needs_reconciliation(
+                    journal,
+                    "candidate preparation did not report success",
+                )
+
+            started = self.provider.start_candidate(request, target, operation_id)
+            candidate = started.record if isinstance(started, DeploymentOperationResult) else None
+            if (
+                not isinstance(started, DeploymentOperationResult)
+                or started.status != "succeeded"
+                or not isinstance(candidate, DeploymentRecord)
+                or candidate.status != "running"
+                or candidate.deployment_id != target.deployment_id
+                or candidate.provider != self.provider.name
+                or candidate.project != request.project
+                or candidate.environment != request.environment
+                or candidate.version != target.version
+                or candidate.artifact.digest != target.artifact.digest
+            ):
+                return self._needs_reconciliation(
+                    journal,
+                    "candidate start did not return the expected running deployment identity",
+                )
+
+            candidate_runtime_id = self.provider.immutable_runtime_id(candidate)
+            if (
+                not isinstance(candidate_runtime_id, str)
+                or not candidate_runtime_id.strip()
+                or candidate_runtime_id == previous_runtime_id
+            ):
+                return self._needs_reconciliation(
+                    journal,
+                    "candidate immutable runtime identity is missing or aliases the previous runtime",
+                )
+            self.history.append(candidate)
+            journal = self._advance(
+                journal,
+                "candidate_started",
+                candidate_runtime_id=candidate_runtime_id,
+                detail="candidate started; immutable runtime identity persisted",
+            )
+
+            try:
+                candidate_health = self.provider.verify_candidate(candidate)
+                if not isinstance(candidate_health, HealthCheckResult):
+                    raise TypeError("provider returned an invalid candidate health result")
+                candidate = self.history.update_health(candidate.deployment_id, candidate_health)
+            except Exception as exc:
+                return self._abort_before_switch(
+                    request, journal, candidate, previous, previous_runtime_id,
+                    f"candidate health verification failed: {type(exc).__name__}",
+                )
+            if candidate_health.status != "healthy":
+                return self._abort_before_switch(
+                    request, journal, candidate, previous, previous_runtime_id,
+                    f"candidate health is not healthy ({candidate_health.status})",
+                )
+
+            journal = self._advance(
+                journal,
+                "candidate_healthy",
+                detail="candidate health verified healthy",
+            )
+
+            try:
+                switch_result = self.provider.switch_traffic(candidate, previous, operation_id)
+            except Exception as exc:
+                switch_error = type(exc).__name__
+            else:
+                switch_error = (
+                    "provider did not report successful traffic switch"
+                    if not isinstance(switch_result, DeploymentOperationResult)
+                    or switch_result.status != "succeeded"
+                    else ""
+                )
+
+            try:
+                effective_target = self.provider.read_traffic_target(request)
+            except Exception as exc:
+                return self._needs_reconciliation(
+                    journal,
+                    f"traffic read-back failed after switch attempt: {type(exc).__name__}",
+                )
+
+            if effective_target == previous_runtime_id:
+                return self._abort_before_switch(
+                    request,
+                    journal,
+                    candidate,
+                    previous,
+                    previous_runtime_id,
+                    switch_error or "traffic read-back confirms previous runtime remains active",
+                )
+            if effective_target != candidate_runtime_id:
+                return self._needs_reconciliation(
+                    journal,
+                    "traffic read-back is neither candidate nor previous immutable runtime",
+                )
+
+            # Read-back is authoritative even if the switch call returned an
+            # ambiguous error: it proves the effective immutable route target.
+            journal = self._advance(
+                journal,
+                "traffic_switched",
+                effective_traffic_target=candidate_runtime_id,
+                detail="traffic read-back verified candidate immutable runtime",
+            )
+            try:
+                self.history.set_active_deployment(
+                    provider=self.provider.name,
+                    environment=request.environment,
+                    project=request.project,
+                    deployment_id=candidate.deployment_id,
+                    expected_deployment_id=previous.deployment_id,
+                )
+            except Exception as exc:
+                return self._needs_reconciliation(
+                    journal,
+                    f"active deployment CAS failed after verified traffic switch: {type(exc).__name__}",
+                )
+
+            try:
+                retired = self.provider.retire_previous(previous, operation_id)
+            except Exception as exc:
+                return self._needs_reconciliation(
+                    journal,
+                    f"previous runtime retirement raised: {type(exc).__name__}",
+                )
+            if (
+                not isinstance(retired, DeploymentOperationResult)
+                or retired.status != "succeeded"
+                or not isinstance(retired.record, DeploymentRecord)
+                or retired.record.status != "stopped"
+                or retired.record.deployment_id != previous.deployment_id
+                or retired.record.provider != previous.provider
+                or retired.record.project != previous.project
+                or retired.record.environment != previous.environment
+                or retired.record.artifact.digest != previous.artifact.digest
+            ):
+                return self._needs_reconciliation(
+                    journal,
+                    "previous retirement lacks a verified stopped deployment record",
+                )
+            try:
+                retired_runtime_id = self.provider.immutable_runtime_id(retired.record)
+            except Exception as exc:
+                return self._needs_reconciliation(
+                    journal,
+                    f"previous stopped runtime identity could not be read: {type(exc).__name__}",
+                )
+            if retired_runtime_id != previous_runtime_id:
+                return self._needs_reconciliation(
+                    journal,
+                    "previous stopped record does not match the immutable runtime identity",
+                )
+
+            try:
+                self.history.mark_stopped(previous)
+                journal = self._advance(
+                    journal,
+                    "previous_retired",
+                    detail="previous runtime inspect confirmed stopped; history committed",
+                )
+            except Exception as exc:
+                return self._needs_reconciliation(
+                    journal,
+                    f"previous runtime retired but host history/journal commit failed: {type(exc).__name__}",
+                )
+            return DeploymentReplacementResult(
+                "replaced",
+                "candidate healthy; traffic read-back verified; previous runtime inspected stopped",
+                operation_id,
+                journal.phase,
+                candidate,
+            )
+        except Exception as exc:
+            return self._needs_reconciliation(
+                journal,
+                f"replacement stopped after unexpected provider/history failure: {type(exc).__name__}",
+            )
+
+    def _advance(self, journal: ReplacementJournalRecord, phase: str, **changes: str) -> ReplacementJournalRecord:
+        updated = replace(journal, phase=phase, updated_at=self._clock(), **changes)
+        self.history.update_replacement(updated, expected_phase=journal.phase)
+        return updated
+
+    def _needs_reconciliation(
+        self, journal: ReplacementJournalRecord, detail: str
+    ) -> DeploymentReplacementResult:
+        current = journal
+        if journal.phase != "needs_reconciliation":
+            try:
+                current = self._advance(journal, "needs_reconciliation", detail=detail[:1000])
+            except Exception:
+                # Preserve the existing journal phase and reservation if SQLite
+                # itself is unavailable. Never release scope on uncertain state.
+                pass
+        return DeploymentReplacementResult(
+            "needs_reconciliation", detail, journal.operation_id, current.phase
+        )
+
+    def _abort_before_switch(
+        self,
+        request: DeploymentRequest,
+        journal: ReplacementJournalRecord,
+        candidate: DeploymentRecord,
+        previous: DeploymentRecord,
+        previous_runtime_id: str,
+        reason: str,
+    ) -> DeploymentReplacementResult:
+        try:
+            route_before = self.provider.read_traffic_target(request)
+        except Exception as exc:
+            return self._needs_reconciliation(
+                journal, f"{reason}; pre-abort route read-back failed: {type(exc).__name__}"
+            )
+        if route_before != previous_runtime_id:
+            return self._needs_reconciliation(
+                journal, f"{reason}; pre-abort route does not prove previous runtime is active"
+            )
+        try:
+            aborted = self.provider.abort_candidate(candidate, journal.operation_id)
+            route_after = self.provider.read_traffic_target(request)
+        except Exception as exc:
+            return self._needs_reconciliation(
+                journal, f"{reason}; candidate abort/read-back failed: {type(exc).__name__}"
+            )
+        if (
+            not isinstance(aborted, DeploymentOperationResult)
+            or aborted.status != "succeeded"
+            or not isinstance(aborted.record, DeploymentRecord)
+            or aborted.record.status != "stopped"
+            or aborted.record.deployment_id != candidate.deployment_id
+            or aborted.record.provider != candidate.provider
+            or aborted.record.project != candidate.project
+            or aborted.record.environment != candidate.environment
+            or aborted.record.artifact.digest != candidate.artifact.digest
+        ):
+            return self._needs_reconciliation(
+                journal, f"{reason}; abort did not provide an inspected stopped candidate record"
+            )
+        try:
+            stopped_runtime_id = self.provider.immutable_runtime_id(aborted.record)
+        except Exception as exc:
+            return self._needs_reconciliation(
+                journal, f"{reason}; stopped candidate identity read failed: {type(exc).__name__}"
+            )
+        if stopped_runtime_id != journal.candidate_runtime_id:
+            return self._needs_reconciliation(
+                journal, f"{reason}; stopped candidate identity does not match its journal"
+            )
+        if route_after != previous_runtime_id:
+            return self._needs_reconciliation(
+                journal, f"{reason}; route changed or became unknown after candidate abort"
+            )
+        try:
+            self.history.mark_stopped(candidate)
+            terminal = self._advance(
+                journal,
+                "aborted",
+                effective_traffic_target=previous_runtime_id,
+                detail=f"{reason}; candidate inspect confirmed stopped and previous route remained active",
+            )
+        except Exception as exc:
+            return self._needs_reconciliation(
+                journal, f"{reason}; abort confirmed but history/journal commit failed: {type(exc).__name__}"
+            )
+        return DeploymentReplacementResult("failed", reason, journal.operation_id, terminal.phase, previous)

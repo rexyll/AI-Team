@@ -342,6 +342,43 @@ class DeploymentHistoryStore:
             ).fetchall()
         return [self._replacement_from_json(row["record_json"]) for row in rows]
 
+    def mark_stopped(self, record: DeploymentRecord) -> DeploymentRecord:
+        """Commit a stopped state only after the host has verified the runtime.
+
+        This method is a compare-and-swap over the complete persisted record.
+        The deployment must no longer be the active pointer for its scope.
+        """
+        if not isinstance(record, DeploymentRecord):
+            raise TypeError("record must be a DeploymentRecord")
+        if record.status != "running":
+            raise ValueError("only a running deployment can be marked stopped")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT record_json FROM deployments WHERE deployment_id = ?",
+                (record.deployment_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("deployment is not present in host history")
+            current = _record_from_json(row["record_json"])
+            if current != record:
+                raise ValueError("deployment history changed since the record was loaded")
+            active = db.execute(
+                "SELECT deployment_id FROM active_deployments "
+                "WHERE provider = ? AND environment = ? AND project = ?",
+                (record.provider, record.environment, record.project),
+            ).fetchone()
+            if active is not None and active["deployment_id"] == record.deployment_id:
+                raise ValueError("cannot mark the active deployment stopped")
+            stopped = replace(record, status="stopped")
+            changed = db.execute(
+                "UPDATE deployments SET status = ?, record_json = ? "
+                "WHERE deployment_id = ? AND status = 'running' AND record_json = ?",
+                ("stopped", _record_to_json(stopped), record.deployment_id, _record_to_json(record)),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("deployment status compare-and-swap conflict")
+            return stopped
+
     def rollback_candidate(
         self, *, provider: str, environment: str, project: str,
         excluding_deployment_id: str | None = None

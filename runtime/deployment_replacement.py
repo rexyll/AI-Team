@@ -98,6 +98,10 @@ class DeploymentReplacementProvider(Protocol):
 
     name: str
 
+    def health_check(self, record: DeploymentRecord) -> HealthCheckResult: ...
+
+    def immutable_runtime_id(self, record: DeploymentRecord) -> str | None: ...
+
     def prepare_candidate(
         self,
         request: DeploymentRequest,
