@@ -22,5 +22,12 @@
   "exceptions": [],
   "unknown_license_policy": "deny",
   "scanner_unavailable_policy": "deny",
-  "stale_database_policy": "deny"
+  "stale_database_policy": "deny",
+  "license_classification_overrides": {
+    "PSF-2.0": {
+      "classification": "NOTICE",
+      "source": "https://spdx.org/licenses/PSF-2.0.html",
+      "rationale": "SPDX-listed PSF 2.0 grants royalty-free redistribution and derivative works with retention of the PSF license and copyright notice; classify as NOTICE rather than UNKNOWN."
+    }
+  }
 }
