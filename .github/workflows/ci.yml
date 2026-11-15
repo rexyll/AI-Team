@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           test_status=0
-          coverage run --branch --source=agents,core,integration,runtime,security,tools -m pytest -q \
+          coverage run --branch --source=agents,core,integration,runtime,security,tools --omit=tools/check_coverage_thresholds.py,tools/check_trivy_license_policy.py,tools/check_osv_db_freshness.py -m pytest -q \
             --ignore=tests/test_large_project_benchmark.py \
             --ignore=tests/test_multi_developer_benchmark.py \
             --ignore=tests/test_real_developer_ab_benchmark.py \
@@ -81,7 +81,7 @@ jobs:
           printf 'python=%s\n' "$(python --version)" > coverage-baseline-metadata.txt
           printf 'commit=%s\n' "$GITHUB_SHA" >> coverage-baseline-metadata.txt
           printf 'measurement=branch-and-line\n' >> coverage-baseline-metadata.txt
-          printf 'excluded=machine-sensitive benchmark/performance timing tests only\n' >> coverage-baseline-metadata.txt
+          printf 'excluded=machine-sensitive benchmark/performance timing tests and CI-only helper scripts (check_coverage_thresholds.py, check_trivy_license_policy.py, check_osv_db_freshness.py)\n' >> coverage-baseline-metadata.txt
           exit "$test_status"
 
       - name: Upload coverage baseline
