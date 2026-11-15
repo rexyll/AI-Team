@@ -49,3 +49,11 @@ def test_readme_points_to_setup_and_devplan() -> None:
     assert "docs/setup.md" in content
     assert "pytest -q" in content
     assert "python main.py" in content
+
+
+def test_setup_guide_does_not_reference_a_nonexistent_mcp_requirements_file() -> None:
+    content = SETUP.read_text(encoding="utf-8-sig")
+
+    assert "requirements-mcp.txt" not in content
+    assert "independent external project" in content
+    assert "not yet a complete transitive dependency lock" in content
