@@ -34,11 +34,14 @@ def test_project_license_contains_both_complete_polyform_license_paths() -> None
             f"both PolyForm license texts must contain the {section!r} section"
         )
 
-    assert "Any noncommercial purpose is a permitted purpose." in license_text
-    assert "Personal use for research, experiment, and testing" in license_text
-    assert "fewer than 100 total" in license_text
-    assert "less than 1,000,000 USD (2019) total revenue" in license_text
-    assert "consumer price index for all urban consumers" in license_text
+    # The official text is line-wrapped for readability; compare legal phrases
+    # after normalizing whitespace without changing or shortening the license.
+    normalized_license_text = " ".join(license_text.split())
+    assert "Any noncommercial purpose is a permitted purpose." in normalized_license_text
+    assert "Personal use for research, experiment, and testing" in normalized_license_text
+    assert "fewer than 100 total" in normalized_license_text
+    assert "less than 1,000,000 USD (2019) total revenue" in normalized_license_text
+    assert "consumer price index for all urban consumers" in normalized_license_text
 
 
 def test_readme_and_third_party_notices_preserve_separate_license_boundaries() -> None:
