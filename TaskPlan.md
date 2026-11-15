@@ -347,3 +347,12 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 | 2026-11-15 | T21.7.4 conditional license approval and project LICENSE | 项目 owner 批准有条件接受 `tqdm==4.70.1` 的精确许可证表达式 `MPL-2.0 AND MIT`；配置责任人 `repository owner (rexyll)`、批准日期 2026-11-15、到期/复审日期 2027-02-13、再分发 notice 与 MPL 源码义务。策略执行器仅允许精确 package/version/expression/classification 匹配，保留 `RECIPROCAL` 原始分类并单独审计例外应用；未知许可证、过期例外、版本/表达式不匹配继续 fail-closed。新增根目录 PolyForm Small Business 1.0.0 `LICENSE`、`THIRD_PARTY_NOTICES.md`，README 与供应链设计文档说明小企业商用门槛及第三方许可边界。新增测试覆盖精确匹配、表达式/版本错配与过期。依赖扫描 run `43706969720` 与主 CI run `43706969697` 均通过；全量回归 2,530 passed / 10 skipped，安全回归 237 passed / 9 skipped，Windows smoke 与 coverage job 成功。 | policy `322893e`；evaluator `6f1e4e9`；tests `cd2c61b` / `97c13c6` / `fa99d2a`；LICENSE `21028a4`；notices `40a0da4`；README `8e2a451`（后续个人用途边界同步）；design doc `29b1bd2`（后续扫描结果同步）；scan artifact `14159420157` |
 
 | 2026-11-15 | T21.7.4 dependency/license gate completed | 最新扫描 run `43706969720`（commit `6f1e4e9`）成功：production Linux Py3.14 lock 17/17 包，pip-audit 0 vulnerabilities，OSV freshness 通过（age 6,352s，max 24h，latest advisory `MAL-2026-19942`），Trivy 0.76.2 license policy passed；四项 status exit code 均为 0。扫描 artifact `14159420157` 明确记录唯一 `exception_applied=true` 项为 `tqdm==4.70.1` / `MPL-2.0 AND MIT` / `RECIPROCAL`，批准责任人 `repository owner (rexyll)`，批准日期 2026-11-15，到期/复审 2027-02-13，通知与 MPL 源码义务随报告保留。策略只放行精确 package/version/expression/classification，未知许可证、过期例外和其他 reciprocal 项仍阻断。主 CI run `43706969697` 同一提交全绿：2,530 passed / 10 skipped，安全回归 237 passed / 9 skipped，Windows smoke、coverage job 均成功。T21.7.4 完成；T21.7.3 固定硬件绝对性能预算仍待受控 runner，因此 T21.7 整体仍未完成。 | [Dependency security run](https://github.com/rexyll/AI-Team/actions/runs/43706969720)；artifact `14159420157`；[main CI](https://github.com/rexyll/AI-Team/actions/runs/43706969697)；实现提交 `158241c`、`310df5c`、`63caa04`、`577925c`、`3a93671`、`fac6a20`、`85e82e7`、`6f1e4e9` |
+
+
+### T21.7.5 项目许可范围修订（2026-11-15）
+
+- **用户确认的产品授权目标**：任何个人均可免费进行非商业使用；符合条件的小企业可在 PolyForm Small Business 1.0.0 的全部条件下进行许可范围内的商业使用；其他商业/组织利益用途须事先取得单独书面许可。
+- 更新根目录 `LICENSE` 为自定义 **AI-Team Conditional Use License 1.0**。Section 2 明确授予自然人个人、教育、学术、研究、爱好和社区等非商业用途的使用、复制、修改、衍生和分享权；不设公司规模或个人收入门槛，但不覆盖代表雇主/组织、为组织利益或以商业优势/金钱报酬为目的的使用。Section 3 以引用方式完整纳入官方 PolyForm Small Business 1.0.0，所有资格门槛与条件照常适用；Section 4 将其他商业使用保留为单独书面许可。
+- README 与本设计文档已同步说明两条许可路径、适用边界、自定义许可身份和第三方依赖许可证不受影响的原则。不得把该许可称为未修改的 PolyForm 许可证或 OSI-approved open-source license。
+- 保留 `THIRD_PARTY_NOTICES.md` 对 `tqdm==4.70.1` 的 MPL-2.0 AND MIT 归属与再分发义务；项目许可不能覆盖第三方组件。
+- 验收待执行：检查 LICENSE/README/设计文档一致性，运行全量 CI；CI 通过前本节点不标记完成。
