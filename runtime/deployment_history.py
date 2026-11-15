@@ -11,7 +11,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from typing import Iterator
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
