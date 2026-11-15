@@ -31,6 +31,12 @@ from runtime.agent_router import AgentRouter
 from agents.analyst import run_quality_checked_analysis
 from agents.qa import parse_qa_verdict
 from runtime.delivery_manifest import write_delivery_manifest
+from runtime.delivery_sbom import (
+    build_delivery_evidence,
+    write_build_evidence,
+    write_delivery_provenance,
+    write_delivery_sbom,
+)
 from runtime.deployment import create_deployment_bundle
 from runtime.integration_verification import (
     DEFAULT_INTEGRATION_TIMEOUT,
@@ -585,6 +591,9 @@ class ProjectOrchestrator:
             "sre": None,
             "release_gate": None,
             "dependency_scan": dependency_scan,
+            "build_evidence": None,
+            "sbom": None,
+            "provenance": None,
             "usage": usage,
             "release": None,
             "monitoring": None,
@@ -627,6 +636,23 @@ class ProjectOrchestrator:
         knowledge = self._persist_knowledge(delivery, project=project)
         if knowledge is not None:
             delivery["knowledge"] = knowledge
+        build_evidence = build_delivery_evidence(
+            project=project,
+            integration=integration,
+            qa=qa,
+            security=security,
+            acceptance=acceptance,
+            dependency_scan=dependency_scan,
+            release=delivery.get("release"),
+        )
+        build_evidence_record = write_build_evidence(manifest_root, build_evidence)
+        sbom_record = write_delivery_sbom(
+            manifest_root,
+            project=project,
+            build_evidence_sha256=build_evidence_record["sha256"],
+        )
+        delivery["build_evidence"] = build_evidence_record
+        delivery["sbom"] = sbom_record
         manifest_path = write_delivery_manifest(manifest_root, project=project)
         delivery["manifest"] = str(manifest_path)
         payload = {
@@ -682,6 +708,15 @@ class ProjectOrchestrator:
             "files": bundle["files"],
             "checksum": bundle["checksum"],
         }
+        provenance = write_delivery_provenance(
+            bundle["bundle"],
+            sbom_path=sbom_record["path"],
+            manifest_path=manifest_path,
+            build_evidence_path=build_evidence_record["path"],
+            lock_path=sbom_record.get("lock_path"),
+        )
+        delivery["provenance"] = provenance
+        delivery["package"]["provenance"] = provenance["path"]
         if release is not None and release.get("status") == "released":
             release["package"] = {"archive": bundle["bundle"], "checksum": bundle["checksum"]}
         delivery["smoke"] = bundle["smoke"]
