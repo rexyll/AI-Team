@@ -304,3 +304,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 reconciliation authorization design gate | 完成现有能力盘点：SCMApprovalAuthority 是进程内、短时、一次性、按操作/仓库/目标绑定的审批，但 approved_by 仍是调用方字符串，不构成身份认证；DurableDeliveryAuditStore 是追加式 JSONL，但没有防篡改链、可信主体认证或强制持久化证明；ToolPermissionPolicy 是工具能力白名单，不是操作者身份系统。因此这些原语不能直接授权部署事务解锁。确定后续契约必须先接入可信 host-authenticated principal，再采用双人/独立审批（申请人与批准人分离）、精确 scope/operation/journal phase/runtime identity 绑定的一次性短时审批，以及只追加审计事件；每项终态决议必须附 provider 与路由 read-back 的结构化证据摘要。当前仅定义设计门槛，不新增 mutation/unlock API，不改变 journal phase 或 reservation。 | 代码/文档盘点；CI #311 已通过；下一步先定义纯数据契约与验证测试，再讨论执行接口 |
+
+
+| 2026-11-15 | T21.6.3 reconciliation data contract | 新增纯数据契约：host-authenticated principal 快照、申请人与批准人分离的审批快照、精确绑定 needs_reconciliation scope/phase/deployment/runtime identity 的审批、SHA-256 与时间戳证据引用、两种受限 resolution proposal。abort_candidate 必须有 provider inspection、candidate absence、previous runtime inspection 和 previous route read-back；confirm_previous_retired 必须有 provider inspection、candidate route read-back、candidate health 和 previous retirement。严格拒绝 scope/identity 不匹配、重复/缺失证据、错误 runtime 目标和无效时间/摘要。此模块不认证身份、不签发/消费审批、不验证外部证据、不写审计、不修改 journal、不操作 provider；proposal 不是执行许可。 | 新增 runtime/deployment_reconciliation_contract.py、tests/test_deployment_reconciliation_contract.py；更新架构文档与 TaskPlan；CI 待验证 |
