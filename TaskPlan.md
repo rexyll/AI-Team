@@ -352,7 +352,10 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 ### T21.7.5 项目许可范围修订（2026-11-15）
 
 - **用户确认的产品授权目标**：任何个人均可免费进行非商业使用；符合条件的小企业可在 PolyForm Small Business 1.0.0 的全部条件下进行许可范围内的商业使用；其他商业/组织利益用途须事先取得单独书面许可。
-- 更新根目录 `LICENSE` 为自定义 **AI-Team Conditional Use License 1.0**。Section 2 明确授予自然人个人、教育、学术、研究、爱好和社区等非商业用途的使用、复制、修改、衍生和分享权；不设公司规模或个人收入门槛，但不覆盖代表雇主/组织、为组织利益或以商业优势/金钱报酬为目的的使用。Section 3 以引用方式完整纳入官方 PolyForm Small Business 1.0.0，所有资格门槛与条件照常适用；Section 4 将其他商业使用保留为单独书面许可。
-- README 与本设计文档已同步说明两条许可路径、适用边界、自定义许可身份和第三方依赖许可证不受影响的原则。不得把该许可称为未修改的 PolyForm 许可证或 OSI-approved open-source license。
+- 更新根目录 `LICENSE` 为两份官方 PolyForm 许可证构成的双许可方案。Noncommercial 路径采用官方 PolyForm Noncommercial 1.0.0 原文，允许任何非商业目的，并明确包含个人研究、实验、学习、私人娱乐、爱好和业余活动；该许可不授权商业用途。Small Business 路径采用官方 PolyForm Small Business 1.0.0 原文，完整适用其全部资格门槛与条件；其他商业用途须取得单独书面许可。
+- README 与本设计文档已同步说明两条许可路径、适用边界、自定义许可身份和第三方依赖许可证不受影响的原则。这是两份标准 PolyForm 许可证的独立授权路径，不是自定义或修改版 PolyForm 许可证；两者均不是 OSI-approved open-source license。
 - 保留 `THIRD_PARTY_NOTICES.md` 对 `tqdm==4.70.1` 的 MPL-2.0 AND MIT 归属与再分发义务；项目许可不能覆盖第三方组件。
 - 验收待执行：检查 LICENSE/README/设计文档一致性，运行全量 CI；CI 通过前本节点不标记完成。
+
+
+**T21.7.5 许可实现方案优化（2026-11-15）**：在检查官方 PolyForm Noncommercial 1.0.0 原文后，采用比自定义许可更清晰的双官方许可路径：非商业使用选择 PolyForm Noncommercial 1.0.0；符合条件的小企业商业使用选择 PolyForm Small Business 1.0.0；其他商业使用另行书面授权。根目录 `LICENSE` 同时附两份官方文本，README 与设计文档同步更正。这样无需自行改写授权、专利、终止和责任条款。官方 Noncommercial 条款明确任何非商业目的为 permitted purpose，并明确列出个人研究、实验、学习、私人娱乐、爱好和业余活动。参考官方文本：https://polyformproject.org/licenses/noncommercial/1.0.0 。最终验收仍以最新 main CI 为准。
