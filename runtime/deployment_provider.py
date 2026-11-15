@@ -73,12 +73,15 @@ class DeploymentRecord:
     created_at: str
     endpoint: str | None = None
     previous_deployment_id: str | None = None
+    project: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("deployment_id", "provider", "environment", "version", "created_at"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a non-empty string")
+        if self.project is not None and (not isinstance(self.project, str) or not self.project.strip()):
+            raise ValueError("project must be a non-empty string when provided")
         if self.artifact.provider != self.provider:
             raise ValueError("deployment provider must match artifact provider")
         if self.status not in {"prepared", "running", "stopped", "failed"}:

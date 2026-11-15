@@ -60,9 +60,12 @@ class DeploymentHistoryStore:
                     record_json TEXT NOT NULL
                 )"""
             )
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(deployments)")}
+            if "project" not in columns:
+                db.execute("ALTER TABLE deployments ADD COLUMN project TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_deployments_scope "
-                "ON deployments(provider, environment, sequence DESC)"
+                "ON deployments(provider, environment, project, sequence DESC)"
             )
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
@@ -74,10 +77,10 @@ class DeploymentHistoryStore:
         with self._connect() as db:
             db.execute(
                 """INSERT INTO deployments
-                (deployment_id, provider, environment, status, health_status, created_at, record_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (deployment_id, provider, environment, project, status, health_status, created_at, record_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    record.deployment_id, record.provider, record.environment,
+                    record.deployment_id, record.provider, record.environment, record.project,
                     record.status, record.health_status, record.created_at,
                     _record_to_json(record),
                 ),
@@ -108,20 +111,21 @@ class DeploymentHistoryStore:
             ).fetchone()
         return _record_from_json(row["record_json"]) if row else None
 
-    def list_scope(self, provider: str, environment: str) -> list[DeploymentRecord]:
+    def list_scope(self, provider: str, environment: str, project: str) -> list[DeploymentRecord]:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT record_json FROM deployments
-                WHERE provider = ? AND environment = ?
+                WHERE provider = ? AND environment = ? AND project = ?
                 ORDER BY sequence DESC""",
-                (provider, environment),
+                (provider, environment, project),
             ).fetchall()
         return [_record_from_json(row["record_json"]) for row in rows]
 
     def rollback_candidate(
-        self, *, provider: str, environment: str, excluding_deployment_id: str | None = None
+        self, *, provider: str, environment: str, project: str,
+        excluding_deployment_id: str | None = None
     ) -> DeploymentRecord | None:
-        for record in self.list_scope(provider, environment):
+        for record in self.list_scope(provider, environment, project):
             if record.deployment_id == excluding_deployment_id:
                 continue
             if is_rollback_candidate(record):
@@ -158,7 +162,7 @@ class HostDeploymentManager:
 
     def rollback(self, request: DeploymentRequest) -> DeploymentOperationResult:
         candidate = self.history.rollback_candidate(
-            provider=self.provider.name, environment=request.environment
+            provider=self.provider.name, environment=request.environment, project=request.project
         )
         if candidate is None:
             return DeploymentOperationResult(

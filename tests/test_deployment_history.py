@@ -25,11 +25,11 @@ class StubProvider:
         )
 
 
-def make_record(deployment_id, *, environment="staging", status="running", health="healthy"):
+def make_record(deployment_id, *, project="demo", environment="staging", status="running", health="healthy"):
     artifact = DeploymentArtifact("docker-local", f"image:{deployment_id}", "a" * 64, "1.0")
     return DeploymentRecord(
         deployment_id, "docker-local", environment, "1.0", artifact,
-        status, health, "2026-11-15T10:00:00Z",
+        status, health, "2026-11-15T10:00:00Z", project=project,
     )
 
 
@@ -57,8 +57,9 @@ def test_only_verified_healthy_previous_record_is_candidate(tmp_path):
     history.append(make_record("unknown", health="unknown"))
     history.append(make_record("unhealthy", health="unhealthy"))
     history.append(make_record("healthy"))
-    assert history.rollback_candidate(provider="docker-local", environment="staging").deployment_id == "healthy"
-    assert history.rollback_candidate(provider="docker-local", environment="production") is None
+    assert history.rollback_candidate(provider="docker-local", environment="staging", project="demo").deployment_id == "healthy"
+    assert history.rollback_candidate(provider="docker-local", environment="staging", project="other") is None
+    assert history.rollback_candidate(provider="docker-local", environment="production", project="demo") is None
 
 
 def test_health_observation_updates_persisted_record(tmp_path):
@@ -93,12 +94,15 @@ def test_manager_persists_only_success_from_configured_provider(tmp_path):
 def test_manager_rollback_uses_only_host_history_record(tmp_path):
     provider = StubProvider()
     history = DeploymentHistoryStore(tmp_path / "history.db")
+    other_project = make_record("foreign-project", project="another-project")
+    history.append(other_project)
     old = make_record("old")
     history.append(old)
     manager = HostDeploymentManager(provider, history)
     result = manager.rollback(DeploymentRequest("/tmp", "demo", "staging", "2.0"))
     assert result.status == "unsupported"
     assert provider.rollback_record == old
+    assert provider.rollback_record.project == "demo"
 
 
 def test_manager_fails_closed_without_prior_healthy_deployment(tmp_path):

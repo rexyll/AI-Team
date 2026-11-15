@@ -241,6 +241,7 @@ class LocalDockerProvider:
             status="running",
             health_status="unknown",
             created_at=_now(),
+            project=request.project,
         )
         return DeploymentOperationResult(
             "deploy", "succeeded", self.name, "Container started; health remains unverified",

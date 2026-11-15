@@ -216,7 +216,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - [ ] **T21.6 Deployment / Operations Adapters**
   - [x] **T21.6.1 Provider-neutral deployment contract（2026-11-15 完成）**：新增 `runtime/deployment_provider.py`，定义显式部署请求、SHA-256 内容寻址制品、部署记录、健康检查结果、四态操作结果与 host-owned `DeploymentProvider` Protocol；rollback candidate 仅接受曾运行且已验证 healthy 的记录。纯契约模块，不执行 Docker/云 I/O；新增契约校验测试与安全边界文档。
   - [x] **T21.6.2 Local Docker Provider（2026-11-15 完成）**：新增 `runtime/local_docker_provider.py`，通过可注入 `DockerCommandRunner` 执行固定 argv；生产 runner 使用 `subprocess.run(shell=False, timeout=...)`，不使用 sudo。实现 Dockerfile build、image ID SHA-256 校验、镜像身份复核、容器 run/inspect、stop 与 Docker HEALTHCHECK 状态读取；daemon 不可用、构建/启动失败如实区分，缺少 HEALTHCHECK 保持 unknown。新增 fake-runner 测试覆盖无 Docker executable/daemon、构建失败、镜像摘要、启动失败、健康状态与 stop。Rollback 暂返回 unsupported，等待 T21.6.3 Host-owned history。Run #288 已全绿：完整回归、安全回归、Windows production terminal smoke 均通过。
-  - [ ] **T21.6.3 Host-owned deployment history and verified rollback（进行中）**：已新增 SQLite host-owned history 与 `HostDeploymentManager`，只持久化成功运行部署，记录健康状态，并从同 provider/environment 的历史记录中筛选 healthy + SHA-256 artifact 回滚候选；Agent 不提供 rollback authority。当前 Local Docker rollback 仍 unsupported，尚需补齐 project scope、不可变容器身份、数据库 schema/权限/损坏校验，以及 prepare/start/health/traffic-switch/stop-old 安全替换能力；未证明流量切换安全前不得宣称支持回滚。CI #289 暴露一处测试断言所期待的错误文案与生产错误文案不一致，正在修正并重跑。
+  - [ ] **T21.6.3 Host-owned deployment history and verified rollback（进行中）**：已新增 SQLite host-owned history 与 `HostDeploymentManager`，只持久化成功运行部署并记录健康状态；回滚候选按 provider + environment + project 三重 scope 筛选，旧数据库通过 nullable project 列迁移，缺少 project identity 的旧记录不参与回滚。Agent 不提供 rollback authority。当前 Local Docker rollback 仍 unsupported；不可变容器身份、数据库权限/损坏校验，以及 prepare/start/health/traffic-switch/stop-old 安全替换能力仍待实现；未证明流量切换安全前不得宣称支持回滚。CI #291 已通过。CI #289/#290 的失败已定位为测试构造对象不满足 DeploymentOperationResult 自身 provider 一致性约束；#291 已通过。下一步强化项目隔离和 SQLite schema 兼容性。
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
   - 回滚必须基于明确的上一个健康版本和可验证的部署记录。
@@ -243,6 +243,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 6. 如果安全边界、现有测试契约或数据兼容性无法证明，暂停该节点并记录阻塞，不以弱化测试换取通过。
 
 ## 21.4 Phase 21 执行记录
+
+| 2026-11-15 | T21.6.3 CI #291 + foreign-provider test correction | CI 全绿：regression (3.14) 与 Windows toolchain smoke 均成功；修正测试使 foreign provider record 内部一致，从而实际覆盖 HostDeploymentManager 配置 Provider 拒绝路径。 | [GitHub Actions #291](https://github.com/rexyll/AI-Team/actions/runs/43674299436)；提交 `0ea0a7a` |
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
