@@ -18,6 +18,10 @@ from runtime.deployment_provider import (
     DeploymentRequest,
     HealthCheckResult,
 )
+from runtime.deployment_recovery import (
+    ReplacementRecoveryAssessment,
+    classify_replacement_recovery,
+)
 from runtime.deployment_replacement import (
     DeploymentReplacementProvider,
     ReplacementJournalRecord,
@@ -70,6 +74,7 @@ class DeploymentRecoveryInventoryItem:
     previous_record_present: bool
     candidate_record_present: bool
     active_deployment_id: str | None
+    recovery_assessment: ReplacementRecoveryAssessment
     external_state_verified: bool = False
     automatic_recovery_allowed: bool = False
 
@@ -256,6 +261,7 @@ class HostDeploymentReplacementManager:
                     previous_record_present=previous is not None,
                     candidate_record_present=candidate is not None,
                     active_deployment_id=active_id,
+                    recovery_assessment=classify_replacement_recovery(journal),
                 )
             )
         return tuple(inventory)

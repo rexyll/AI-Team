@@ -211,6 +211,10 @@ def test_unknown_route_after_switch_preserves_both_instances_and_scope_reservati
     assert history.get("candidate").status == "running"
     assert _active(history).deployment_id == "previous"
     assert history.get_replacement("operation-001").phase == "needs_reconciliation"
+    item = manager.recovery_inventory()[0]
+    assert item.classification == "reconciliation_required"
+    assert item.recovery_assessment.disposition == "manual_reconciliation_required"
+    assert item.recovery_assessment.automatic_action == "none"
     existing = history.get_replacement("operation-001")
     with pytest.raises(ValueError, match="scope is reserved"):
         history.begin_replacement(
@@ -342,6 +346,8 @@ def test_recovery_inventory_survives_store_reopen_without_provider_calls(tmp_pat
     assert item.operation_id == journal.operation_id
     assert item.phase == "prepared"
     assert item.classification == "prepared_candidate_not_persisted"
+    assert item.recovery_assessment.disposition == "pre_switch_state_requires_inspection"
+    assert item.recovery_assessment.automatic_action == "none"
     assert item.previous_record_present is True
     assert item.candidate_record_present is False
     assert item.active_deployment_id == previous.deployment_id
@@ -395,6 +401,7 @@ def test_recovery_inventory_recognizes_consistent_candidate_started_state(tmp_pa
     item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
 
     assert item.classification == "journal_history_consistent"
+    assert item.recovery_assessment.disposition == "pre_switch_state_requires_inspection"
     assert item.phase == "candidate_started"
     assert item.active_deployment_id == previous.deployment_id
     assert item.external_state_verified is False
@@ -497,6 +504,7 @@ def test_recovery_inventory_recognizes_retired_previous_before_terminal_journal_
     item = HostDeploymentReplacementManager(provider, history).recovery_inventory()[0]
 
     assert item.classification == "previous_retired_commit_pending"
+    assert item.recovery_assessment.disposition == "route_readback_required_before_retire"
     assert item.phase == "traffic_switched"
     assert item.active_deployment_id == candidate.deployment_id
     assert item.external_state_verified is False
