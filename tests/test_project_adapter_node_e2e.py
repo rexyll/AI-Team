@@ -6,12 +6,20 @@ from pathlib import Path
 
 import pytest
 
+from runtime.llm.mock import MockLLM
 from runtime.project_adapters import ProjectAdapterExecutor, ProjectAdapterRegistry
 from runtime.tool_invocation_service import ToolInvocationService
 from security.workspace import resolve_workspace_path, workspace_scope
 
 
-def _write_e2e_evidence(project, *, tmp_path: Path, scenario: str, requirement: str) -> dict:
+def _write_e2e_evidence(
+    project,
+    *,
+    tmp_path: Path,
+    scenario: str,
+    requirement: str,
+    role_execution: dict[str, str] | None = None,
+) -> dict:
     from runtime.project_evidence_bundle import (
         validate_project_evidence_bundle,
         write_project_evidence_bundle,
@@ -27,7 +35,7 @@ def _write_e2e_evidence(project, *, tmp_path: Path, scenario: str, requirement: 
         deliverable_root=project.last_delivery["deliverable_root"],
         output_path=output,
         evidence_level="deterministic_orchestration",
-        role_execution={
+        role_execution=role_execution or {
             "analyst": "not_registered",
             "planner": "scripted_test_double",
             "developer": "scripted_test_double",
@@ -40,7 +48,7 @@ def _write_e2e_evidence(project, *, tmp_path: Path, scenario: str, requirement: 
         },
         limitations=[
             "Planner/Developer/Tester/Reviewer use scripted role doubles; full LLM reasoning is not measured.",
-            "Analyst and QA agent reasoning are not exercised in this scenario.",
+            "Analyst/QA, when registered, use deterministic MockLLM responses and do not measure live provider reasoning.",
             "Live ProviderLLM and external deployment are not run.",
         ],
     )
@@ -230,6 +238,13 @@ class _E2EDeveloper:
             "});\n",
             encoding="utf-8",
         )
+        (root / "tests" / "test_web_artifact.py").write_text(
+            "from pathlib import Path\n\n"
+            "def test_built_web_entry_contains_acceptance_marker():\n"
+            "    html = Path('dist/index.html').read_text(encoding='utf-8')\n"
+            "    assert 'ORCHESTRATOR-WEB-DELIVERABLE' in html\n",
+            encoding="utf-8",
+        )
         return {
             "status": "completed",
             "agent": "developer",
@@ -262,6 +277,108 @@ class _E2EReviewer:
         }
 
 
+def _analyst_spec(project_description: str) -> str:
+    return (
+        "# 需求规格说明（草案）\n"
+        "## 一、项目概述\n"
+        f"{project_description}\n"
+        "## 二、功能需求清单\n"
+        "- REQ-001（必须）项目必须提供可运行且可验证的主要功能。\n"
+        "  - AC-001：执行实际验收命令并检查输出与预期一致。\n"
+        "## 三、非功能需求\n"
+        "- 本地运行，不要求外部云服务。\n"
+        "## 四、验收标准\n"
+        "- AC-001：关联真实执行的测试 selector。\n"
+        "## 五、假设与约束\n"
+        "- 使用 CI 提供的受支持工具链。\n"
+        "## 六、待确认问题\n"
+        "- 无未解决问题。\n"
+    )
+
+
+class _AcceptanceAwareMockLLM(MockLLM):
+    """Use observed JUnit selectors for the acceptance mapping; never invent one."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            response=(
+                "# Deterministic project delivery documentation\n\n"
+                "REQ-001 is implemented and linked to the executed acceptance test.\n"
+                "Install: use the project setup command.\n"
+                "Run: use the documented local command.\n"
+                "Rollback: restore the previous local package.\n"
+            )
+        )
+
+    def generate(self, prompt: str, **kwargs) -> str:
+        default = super().generate(prompt, **kwargs)
+        marker = "实际 JUnit 测试用例:\n"
+        if marker not in prompt:
+            return default
+        raw_cases = prompt.rsplit(marker, 1)[1]
+        try:
+            cases = json.loads(raw_cases)
+        except (TypeError, json.JSONDecodeError):
+            cases = []
+        selectors = [
+            item.get("selector")
+            for item in cases
+            if isinstance(item, dict) and isinstance(item.get("selector"), str)
+        ]
+        tests = (
+            [{
+                "test_id": "AT-001",
+                "requirement_id": "REQ-001",
+                "selector": selectors[0],
+            }]
+            if selectors
+            else []
+        )
+        return json.dumps({"schema_version": 1, "tests": tests}, ensure_ascii=False)
+
+
+def _make_qa_agent(*, folder: str, command: str, read_path: str):
+    from agents.qa import QAAgent
+    from runtime.agent_config import AgentConfig
+    from runtime.llm.mock import MockLLM
+
+    llm = MockLLM(
+        tool_script=[
+            {
+                "tool_calls": [{
+                    "call_id": f"qa-{folder}-list",
+                    "name": "list_files",
+                    "arguments": json.dumps({"path": folder}),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": f"qa-{folder}-read",
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": read_path}),
+                }]
+            },
+            {
+                "tool_calls": [{
+                    "call_id": f"qa-{folder}-execute",
+                    "name": "run_command",
+                    "arguments": json.dumps({
+                        "command": command,
+                        "cwd": folder,
+                        "timeout": 60,
+                    }),
+                }]
+            },
+            "QA_PASSED\n- 独立读取交付物结构与入口文件。\n- 通过只读/执行工具运行边界检查命令。\n",
+        ]
+    )
+    return QAAgent(
+        AgentConfig(role="qa", model="deterministic-mock"),
+        llm=llm,
+        max_tool_iterations=4,
+    )
+
+
 @pytest.mark.skipif(
     os.name != "nt",
     reason="full production ProjectOrchestrator + npm E2E runs on Windows toolchain CI",
@@ -270,6 +387,7 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     monkeypatch, tmp_path: Path
 ) -> None:
     from agents.doc_writer import DocWriterAgent
+    from agents.analyst import RequirementAnalystAgent
     from core.project_orchestrator import ProjectOrchestrator
     from runtime.agent_config import AgentConfig
     from runtime.agent_router import AgentRouter
@@ -284,6 +402,13 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     sandbox = WorkspaceSandbox(tmp_path)
     router = AgentRouter()
     for role, agent in (
+        (
+            "analyst",
+            RequirementAnalystAgent(
+                AgentConfig(role="analyst", model="deterministic-mock"),
+                llm=MockLLM(response=_analyst_spec("A deterministic Node.js Web project.")),
+            ),
+        ),
         ("planner", _E2EPlanner()),
         ("developer", _E2EDeveloper()),
         ("tester", _E2ETester()),
@@ -292,8 +417,16 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
             "doc_writer",
             DocWriterAgent(
                 AgentConfig(role="doc_writer", model="deterministic-mock"),
-                llm=MockLLM("# Deterministic project delivery documentation\n"),
+                llm=_AcceptanceAwareMockLLM(),
                 sandbox=sandbox,
+            ),
+        ),
+        (
+            "qa",
+            _make_qa_agent(
+                folder="webapp",
+                read_path="webapp/dist/index.html",
+                command="npm test -- --test-reporter=dot",
             ),
         ),
     ):
@@ -305,11 +438,12 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
         deliverable_dir="webapp",
         sandbox=sandbox,
     )
-    result = project.run(
-        "Create a small Node.js Web project with a reproducible npm lockfile, "
-        "a deterministic build, an executable test, and a packaged deliverable. "
-        "Do not deploy or publish it."
-    )
+    with workspace_scope(tmp_path):
+        result = project.run(
+            "Create a small Node.js Web project with a reproducible npm lockfile, "
+            "a deterministic build, an executable test, and a packaged deliverable. "
+            "Do not deploy or publish it."
+        )
 
     assert result.success, result
     assert result.total_tasks == 1
@@ -334,6 +468,12 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
     built_entry = root / "dist" / "index.html"
     assert built_entry.is_file()
     assert "ORCHESTRATOR-WEB-DELIVERABLE" in built_entry.read_text(encoding="utf-8")
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED"
+    qa_history = project.last_delivery["qa"]["tool_execution_history"]
+    assert len(qa_history) == 3
+    assert all(item["status"] == "completed" for item in qa_history)
+    assert project.last_delivery["acceptance"]["executable_verdict"] == "passed"
+    assert project.last_delivery["acceptance"]["requirements"][0]["tests"]
     assert (root / "node_modules").is_dir()
     assert Path(project.last_delivery["manifest"]).is_file()
     package = project.last_delivery["package"]
@@ -352,6 +492,17 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
             "a deterministic build, an executable test, and a packaged deliverable. "
             "Do not deploy or publish it."
         ),
+        role_execution={
+            "analyst": "requirement_analyst_mock_llm",
+            "planner": "scripted_test_double",
+            "developer": "scripted_test_double",
+            "tester": "scripted_test_double",
+            "reviewer": "scripted_test_double",
+            "doc_writer": "mock_llm_observed_junit_mapping",
+            "qa": "qa_agent_mock_llm_read_execute_tools",
+            "security": "deterministic_gate",
+            "sre": "deterministic_gate",
+        },
     )
     assert evidence["project_profile"] is not None
     assert evidence["gates"]["integration"]["adapter"]["adapter"] == "node"
@@ -448,6 +599,7 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     import subprocess
 
     from agents.doc_writer import DocWriterAgent
+    from agents.analyst import RequirementAnalystAgent
     from core.project_orchestrator import ProjectOrchestrator
     from runtime.agent_config import AgentConfig
     from runtime.agent_router import AgentRouter
@@ -462,6 +614,13 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     sandbox = WorkspaceSandbox(tmp_path)
     router = AgentRouter()
     for role, agent in (
+        (
+            "analyst",
+            RequirementAnalystAgent(
+                AgentConfig(role="analyst", model="deterministic-mock"),
+                llm=MockLLM(response=_analyst_spec("An installable Python CLI project.")),
+            ),
+        ),
         ("planner", _PythonE2EPlanner()),
         ("developer", _PythonE2EDeveloper()),
         ("tester", _E2ETester()),
@@ -470,8 +629,16 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
             "doc_writer",
             DocWriterAgent(
                 AgentConfig(role="doc_writer", model="deterministic-mock"),
-                llm=MockLLM("# Deterministic Python CLI delivery documentation\n"),
+                llm=_AcceptanceAwareMockLLM(),
                 sandbox=sandbox,
+            ),
+        ),
+        (
+            "qa",
+            _make_qa_agent(
+                folder="cli",
+                read_path="cli/sample_app/cli.py",
+                command="python -m sample_app.cli --value -1",
             ),
         ),
     ):
@@ -483,11 +650,12 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
         deliverable_dir="cli",
         sandbox=sandbox,
     )
-    result = project.run(
-        "Create an installable Python CLI package with reproducible setup, "
-        "a documented command, tests for valid and invalid input, and a package. "
-        "Do not publish or deploy it."
-    )
+    with workspace_scope(tmp_path):
+        result = project.run(
+            "Create an installable Python CLI package with reproducible setup, "
+            "a documented command, tests for valid and invalid input, and a package. "
+            "Do not publish or deploy it."
+        )
 
     assert result.success, result
     assert result.total_tasks == 1
@@ -520,6 +688,12 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "42"
+    assert project.last_delivery["qa"]["verdict"] == "QA_PASSED"
+    qa_history = project.last_delivery["qa"]["tool_execution_history"]
+    assert len(qa_history) == 3
+    assert all(item["status"] == "completed" for item in qa_history)
+    assert project.last_delivery["acceptance"]["executable_verdict"] == "passed"
+    assert project.last_delivery["acceptance"]["requirements"][0]["tests"]
     assert Path(project.last_delivery["manifest"]).is_file()
     package = project.last_delivery["package"]
     assert package["archive"]
@@ -537,6 +711,17 @@ def test_python_cli_requirement_runs_through_project_orchestrator_and_delivery(
             "a documented command, tests for valid and invalid input, and a package. "
             "Do not publish or deploy it."
         ),
+        role_execution={
+            "analyst": "requirement_analyst_mock_llm",
+            "planner": "scripted_test_double",
+            "developer": "scripted_test_double",
+            "tester": "scripted_test_double",
+            "reviewer": "scripted_test_double",
+            "doc_writer": "mock_llm_observed_junit_mapping",
+            "qa": "qa_agent_mock_llm_read_execute_tools",
+            "security": "deterministic_gate",
+            "sre": "deterministic_gate",
+        },
     )
     assert evidence["project_profile"]["project_type"] == "cli"
     assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
