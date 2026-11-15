@@ -282,20 +282,16 @@ class TrafficSlotConnectionSnapshot:
             raise ValueError("invalid connection snapshot status")
         if self.drain_state not in {"ready", "drain", "maint", "unknown"}:
             raise ValueError("invalid drain_state")
-        if self.status == "verified" and (
-            self.active_connections is None
-            or not isinstance(self.active_connections, int)
-            or isinstance(self.active_connections, bool)
-            or self.active_connections < 0
-            or self.drain_state == "unknown"
-        ):
-            raise ValueError("verified connection snapshot needs a known drain state and count")
         if self.active_connections is not None and (
             not isinstance(self.active_connections, int)
             or isinstance(self.active_connections, bool)
             or self.active_connections < 0
         ):
             raise ValueError("active_connections must be a non-negative integer when provided")
+        if self.status == "verified" and (
+            self.active_connections is None or self.drain_state == "unknown"
+        ):
+            raise ValueError("verified connection snapshot needs a known drain state and count")
         _non_empty(self.checked_at, "checked_at")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
