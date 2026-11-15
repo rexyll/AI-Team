@@ -14,31 +14,11 @@ permissions:
   contents: read
 
 jobs:
-  production-dependency-scan:
-    name: Production dependency vulnerability and license scan
+  prepare-scan-input:
+    name: Prepare verified production scan input
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
-      - name: Restrict scanner network egress
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
-        with:
-          egress-policy: block
-          disable-telemetry: true
-          allowed-endpoints: |
-            pypi.org:443
-            files.pythonhosted.org:443
-            ghcr.io:443
-            pkg-containers.githubusercontent.com:443
-            github.com:443
-            api.github.com:443
-            codeload.github.com:443
-            objects.githubusercontent.com:443
-            release-assets.githubusercontent.com:443
-            raw.githubusercontent.com:443
-            results-receiver.actions.githubusercontent.com:443
-            pipelines.actions.githubusercontent.com:443
-            *.blob.core.windows.net:443
-
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.14
@@ -58,15 +38,62 @@ jobs:
         with:
           version: 0.76.2
 
+      - name: Package production scan input
+        shell: bash
+        run: |
+          mkdir -p scan-input/bin scan-input/tools scan-input/config
+          cp requirements-linux-py314.lock scan-input/
+          cp tools/check_trivy_db_freshness.py scan-input/tools/
+          cp config/dependency_license_policy.json scan-input/config/
+          cp "$(command -v trivy)" scan-input/bin/trivy
+          cp -a .venv-prod scan-input/.venv-prod
+          tar -czf dependency-scan-input.tar.gz -C scan-input .
+
+      - name: Upload prepared scan input
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dependency-scan-input
+          path: dependency-scan-input.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  scan-production-dependencies:
+    name: Scan production dependencies with restricted egress
+    needs: prepare-scan-input
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restrict scanner network egress
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: |
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
+            api.github.com:443
+            actions-results-receiver-production.githubapp.com:443
+            results-receiver.actions.githubusercontent.com:443
+            pipelines.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - name: Download prepared scan input
+        uses: actions/download-artifact@v4
+        with:
+          name: production-dependency-scan-input
+          path: scan-input
+
       - name: Scan production lock for vulnerabilities and licenses
         shell: bash
         run: |
           set +e
+          tar -xzf scan-input/dependency-scan-input.tar.gz -C scan-input
+          export VIRTUAL_ENV="$PWD/scan-input/.venv-prod"
+          TRIVY="$PWD/scan-input/bin/trivy"
+          LOCK="$PWD/scan-input/requirements-linux-py314.lock"
           mkdir -p .dependency-scan-target
-          cp requirements-linux-py314.lock .dependency-scan-target/requirements.txt
-          export VIRTUAL_ENV="$PWD/.venv-prod"
+          cp "$LOCK" .dependency-scan-target/requirements.txt
 
-          trivy fs \
+          "$TRIVY" fs \
             --cache-dir "$PWD/.trivy-cache" \
             --db-repository ghcr.io/aquasecurity/trivy-db:2 \
             --scanners vuln \
@@ -78,7 +105,7 @@ jobs:
             .dependency-scan-target
           vulnerability_status=$?
 
-          trivy fs \
+          "$TRIVY" fs \
             --cache-dir "$PWD/.trivy-cache" \
             --scanners license \
             --pkg-types library \
@@ -89,10 +116,10 @@ jobs:
             .dependency-scan-target
           license_status=$?
 
-          python tools/check_trivy_db_freshness.py \
+          python scan-input/tools/check_trivy_db_freshness.py \
             --metadata .trivy-cache/db/metadata.json \
-            --lock-file requirements-linux-py314.lock \
-            --scanner-version "$(trivy --version | head -n 1)" \
+            --lock-file "$LOCK" \
+            --scanner-version "$("$TRIVY" --version | head -n 1)" \
             --commit "$GITHUB_SHA" \
             --scan-target production-linux-py314 \
             --max-age-hours 24 \
@@ -114,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-dependency-scan-${{ github.sha }}
+          name: production-dependency-scan-\${{ github.sha }}
           path: |
             dependency-vulnerability-report.json
             dependency-license-report.json
