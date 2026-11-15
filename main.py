@@ -195,6 +195,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read-only: poll a GitHub pull request's CI and review state using host environment credentials, then exit.",
     )
     parser.add_argument(
+        "--scm-publish-pr",
+        action="store_true",
+        help="Publish a local branch and create/update its PR after two separate interactive confirmations.",
+    )
+    parser.add_argument("--scm-local-repository", metavar="PATH", default=None)
+    parser.add_argument("--scm-head-branch", metavar="BRANCH", default=None)
+    parser.add_argument("--scm-base-branch", metavar="BRANCH", default="main")
+    parser.add_argument("--scm-pr-title", metavar="TITLE", default=None)
+    parser.add_argument("--scm-pr-body-file", metavar="PATH", default=None)
+    parser.add_argument(
         "--hotfix-project",
         metavar="PATH",
         default=None,
@@ -679,8 +689,109 @@ def main() -> int:
         or args.monitor_check is not None
         or args.hotfix_project is not None
         or args.scm_poll_pr is not None
+        or args.scm_publish_pr
     ):
         parser.error("the following arguments are required: requirement")
+
+    if args.scm_publish_pr:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.revise_project is not None
+            or args.change_request
+            or args.release
+            or args.auto_release
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
+            or args.monitor_check is not None
+            or args.scm_poll_pr is not None
+            or args.release_history is not None
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+        ):
+            parser.error("--scm-publish-pr is standalone and cannot be combined with another operation")
+        missing = [
+            name for name, value in (
+                ("--scm-local-repository", args.scm_local_repository),
+                ("--scm-head-branch", args.scm_head_branch),
+                ("--scm-pr-title", args.scm_pr_title),
+                ("--scm-pr-body-file", args.scm_pr_body_file),
+            ) if not value
+        ]
+        if missing:
+            parser.error("--scm-publish-pr requires " + ", ".join(missing))
+        try:
+            scm_runtime = create_github_scm_runtime(require_pull_request=False)
+            if scm_runtime is None:
+                raise RuntimeError("GitHub SCM is not configured")
+            body = Path(args.scm_pr_body_file).read_text(encoding="utf-8")
+            if not body.strip():
+                raise ValueError("PR body file must not be empty")
+            coordinator = SCMLifecycleCoordinator(
+                scm_runtime.service,
+                SCMLifecycleConfig(
+                    repository=scm_runtime.repository,
+                    base_branch=args.scm_base_branch,
+                ),
+            )
+            head_sha = scm_runtime.service.get_local_head_sha(
+                args.scm_local_repository
+            )
+            print(
+                f"Repository: {scm_runtime.repository}\n"
+                f"Local repository: {args.scm_local_repository}\n"
+                f"Push: {args.scm_head_branch} @ {head_sha}\n"
+                f"PR: {args.scm_head_branch} -> {args.scm_base_branch}\n"
+                f"Title: {args.scm_pr_title}"
+            )
+            push_confirmation = input(
+                "Type 'yes' to approve pushing this exact HEAD to the target branch: "
+            ).strip()
+            if push_confirmation != "yes":
+                print("[SCM] Push cancelled; no remote write was performed.")
+                return 3
+            pr_confirmation = input(
+                "Type 'yes' separately to approve creating/updating this pull request: "
+            ).strip()
+            if pr_confirmation != "yes":
+                print("[SCM] PR creation cancelled; no remote write was performed.")
+                return 3
+            authority = scm_runtime.approval_authority
+            push_approval = authority.issue(
+                operation="push_branch",
+                repository=scm_runtime.repository,
+                target=f"{args.scm_head_branch}:{head_sha}",
+                approved_by="human:interactive-cli",
+            )
+            pr_approval = authority.issue(
+                operation="create_or_update_pull_request",
+                repository=scm_runtime.repository,
+                target=f"{args.scm_head_branch}:{args.scm_base_branch}",
+                approved_by="human:interactive-cli",
+            )
+            outcome = coordinator.publish_and_open_pull_request(
+                local_repository=args.scm_local_repository,
+                head_branch=args.scm_head_branch,
+                title=args.scm_pr_title,
+                body=body,
+                push_approval=push_approval,
+                pull_request_approval=pr_approval,
+            )
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(outcome, ensure_ascii=False, sort_keys=True))
+        else:
+            pull_request = outcome["pull_request"]
+            print(
+                f"[SCM] Published {outcome['repository']}:{outcome['head_branch']} "
+                f"-> PR #{pull_request['number']} ({pull_request['status']})"
+            )
+        return 0
 
     if args.scm_poll_pr is not None:
         if (
