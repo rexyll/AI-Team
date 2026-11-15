@@ -207,6 +207,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Publish a local branch and create/update its PR after two separate interactive confirmations.",
     )
+    parser.add_argument(
+        "--scm-merge-pr",
+        metavar="NUMBER",
+        type=int,
+        default=None,
+        help="Merge a PR only after fresh green CI and approved review evidence plus an interactive host confirmation.",
+    )
+    parser.add_argument(
+        "--scm-merge-method",
+        choices=("merge", "squash", "rebase"),
+        default="squash",
+        help="Merge method for --scm-merge-pr (default: squash).",
+    )
     parser.add_argument("--scm-local-repository", metavar="PATH", default=None)
     parser.add_argument("--scm-head-branch", metavar="BRANCH", default=None)
     parser.add_argument("--scm-base-branch", metavar="BRANCH", default="main")
@@ -698,8 +711,97 @@ def main() -> int:
         or args.hotfix_project is not None
         or args.scm_poll_pr is not None
         or args.scm_publish_pr
+        or args.scm_merge_pr is not None
     ):
         parser.error("the following arguments are required: requirement")
+
+    if args.scm_merge_pr is not None:
+        if (
+            args.requirement is not None
+            or args.requirements_file
+            or args.interactive
+            or args.resume_session
+            or args.analyze_only
+            or args.revise_project is not None
+            or args.change_request
+            or args.release
+            or args.auto_release
+            or args.hotfix_project is not None
+            or args.defect_intake is not None
+            or args.monitor_check is not None
+            or args.scm_poll_pr is not None
+            or args.scm_publish_pr
+            or args.release_history is not None
+            or args.knowledge_list is not None
+            or args.knowledge_extract is not None
+        ):
+            parser.error("--scm-merge-pr is standalone and cannot be combined with another operation")
+        try:
+            scm_runtime = create_github_scm_runtime(
+                pull_request_number=args.scm_merge_pr
+            )
+            if scm_runtime is None:
+                raise RuntimeError("GitHub SCM is not configured")
+            coordinator = SCMLifecycleCoordinator(
+                scm_runtime.service,
+                SCMLifecycleConfig(repository=scm_runtime.repository),
+            )
+            observation = coordinator.poll_pull_request(args.scm_merge_pr)
+            if observation["status"] != "ready":
+                if args.output == "json":
+                    print(json.dumps(observation, ensure_ascii=False, sort_keys=True))
+                else:
+                    print(
+                        f"[SCM] Merge blocked for PR #{args.scm_merge_pr}: "
+                        f"{observation['status']} (CI={observation['ci_status']}, "
+                        f"Review={observation['review_status']})"
+                    )
+                return 2
+            preview = (
+                f"Repository: {scm_runtime.repository}\n"
+                f"PR: #{args.scm_merge_pr}\n"
+                f"Head SHA: {observation['head_sha']}\n"
+                f"CI: {observation['ci_status']} | Review: {observation['review_status']}\n"
+                f"Merge method: {args.scm_merge_method}"
+            )
+            print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
+            confirmation = _read_host_confirmation(
+                "Type 'yes' to approve merging this exact PR head after fresh preflight: "
+            )
+            if confirmation != "yes":
+                print(
+                    "[SCM] Merge cancelled; no merge request was sent.",
+                    file=sys.stderr if args.output == "json" else sys.stdout,
+                )
+                return 3
+            approval = scm_runtime.approval_authority.issue(
+                operation="merge_pull_request",
+                repository=scm_runtime.repository,
+                target=f"{args.scm_merge_pr}:{observation['head_sha']}",
+                approved_by="human:interactive-cli",
+            )
+            outcome = scm_runtime.service.merge_pull_request(
+                scm_runtime.repository,
+                args.scm_merge_pr,
+                approval=approval,
+                merge_method=args.scm_merge_method,
+            )
+            result = {
+                "status": "merged",
+                "repository": scm_runtime.repository,
+                "pull_request_number": args.scm_merge_pr,
+                "head_sha": observation["head_sha"],
+                "merge_method": args.scm_merge_method,
+                "result": outcome,
+            }
+        except Exception as exc:
+            print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        if args.output == "json":
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"[SCM] PR #{args.scm_merge_pr} merged using {args.scm_merge_method}.")
+        return 0
 
     if args.scm_publish_pr:
         if (
