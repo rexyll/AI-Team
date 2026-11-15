@@ -356,6 +356,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - README 与本设计文档已同步说明两条官方许可路径及适用边界；两份 PolyForm 许可证均为原版文本，项目许可证不改变第三方依赖许可。
 - 保留 `THIRD_PARTY_NOTICES.md` 对 `tqdm==4.70.1` 的 MPL-2.0 AND MIT 归属与再分发义务；项目许可不能覆盖第三方组件。
 - 验收待执行：检查 LICENSE/README/设计文档一致性，运行全量 CI；CI 通过前本节点不标记完成。
+- 验收复核与修复（2026-11-15）：一致性检查发现根目录 `LICENSE` 的双许可说明与正文不一致——此前文件只有 PolyForm Noncommercial 1.0.0 正文，Small Business 1.0.0 仅出现在说明段落。已补齐官方 Small Business 1.0.0 完整条款，并补入 Noncommercial Notices 的示例通知；复核两份许可证分别具备完整的 Acceptance、Copyright/Distribution、Notices、Changes、Patent、Fair Use/Small Business、No Other Rights、Patent Defense、Violations、No Liability 和 Definitions 章节。新增 `tests/test_license_contract.py`，锁定两份许可证文本完整性、Noncommercial 授权范围、Small Business 人数/收入门槛、README 双路径说明及第三方依赖许可边界。LICENSE 提交 `47e2de8`，契约测试提交 `f9d60ec`；完整 CI 验收仍待确认，当前不得标记 T21.7.5 完成。
 
 
 **T21.7.5 许可实现方案优化（2026-11-15）**：最终采用两份原版官方 PolyForm 许可证：非商业用途选择 PolyForm Noncommercial 1.0.0；符合条件的小企业商业用途选择 PolyForm Small Business 1.0.0；其他商业用途另行书面授权。根目录 `LICENSE` 同时附两份官方文本，README 与设计文档同步更正。无需自行改写授权、专利、终止和责任条款。官方 Noncommercial 条款明确任何非商业目的为 permitted purpose，并列出个人研究、实验、学习、私人娱乐、爱好和业余活动。参考官方文本：https://polyformproject.org/licenses/noncommercial/1.0.0 。最终验收仍以最新 main CI 为准。
