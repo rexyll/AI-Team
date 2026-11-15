@@ -343,7 +343,7 @@ class LocalDockerProvider:
                 health_status="unavailable",
                 checked_at=checked_at,
                 probe=probe,
-                detail="Record belongs to a different deployment provider",
+                detail="Record belongs to a different provider",
             )
         if record.container_id is None:
             return DeploymentRuntimeInspection(

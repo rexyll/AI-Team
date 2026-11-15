@@ -14,7 +14,6 @@ from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_replacement import DeploymentReplacementProvider
 from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
-    DeploymentRecoveryRuntimeInspectionItem,
     HostDeploymentReplacementManager,
 )
 from runtime.local_docker_provider import LocalDockerProvider

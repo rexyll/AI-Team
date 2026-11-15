@@ -844,7 +844,7 @@ def main() -> int:
             )
             print(
                 f"[Deployment-Host] {len(startup.inventory)} unfinished replacement(s) "
-                f"remain reserved ({summaries}); inspect with --deployment-recovery-inventory.",
+                f"remain reserved ({summaries}); inspect the journal with --deployment-recovery-inventory and request Docker observations with --deployment-recovery-inspect.",
                 file=sys.stderr,
             )
 
