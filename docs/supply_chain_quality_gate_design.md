@@ -93,6 +93,12 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 - 首轮只生成报告并审查所有结果，不自动升级、不自动忽略漏洞、不自动批准未知许可证；任何豁免都需明确 ID、责任人、到期日和理由。
 
 ### T21.7.4 漏洞与许可证策略
+
+**首轮实施结果（2026-11-15，仍未完成）**：
+
+- 新增 `.github/workflows/dependency-security.yml`，拆分 prepare 与 scan jobs；scan job 使用 Harden-Runner v2.21.1 block mode，allowlist 只包含 OSV API/数据导出及 GitHub Actions 必需 endpoints。Trivy OCI DB 在 GitHub-hosted runner 上连接被拒绝后，漏洞扫描改用 `pip-audit 2.10.1` + OSV API；Trivy `0.76.2` 仅执行离线 license scan。
+- 首轮 run `43703543063`（commit `e9907d6`）扫描 production Linux lock 的 17 个包，pip-audit 返回 0 个已知漏洞；OSV PyPI export 的 `Last-Modified` 为 `2026-11-15T09:18:04Z`，最新 advisory `MAL-2026-19942` 的 API `modified` 与导出记录一致，数据库年龄约 1.05 小时，freshness gate 通过。报告 artifact `14157586073`。
+- Trivy 识别 17 个 production package licenses。`PSF-2.0` 从 Trivy `UNKNOWN` 经 SPDX 文本证据映射为 `NOTICE`（保留 notice）；`tqdm` 的 `MPL-2.0 AND MIT` 仍被分类为 `RECIPROCAL` 并阻断。没有添加 blanket exception，也没有把该项标成 clean；需明确 license owner review 或调整依赖后，T21.7.4 才能完成。
 - 仅在 CI 明确声明的网络出口白名单中运行锁文件扫描；应用交付运行时继续保持无隐式网络查询。
 - scanner 版本、数据库更新时间、扫描目标、豁免责任人/期限与结果必须入证据；scanner unavailable、数据库过期、解析失败不能等同无漏洞。
 - 许可证策略按项目配置；未知许可证和冲突必须显式报告，不可默认批准。
