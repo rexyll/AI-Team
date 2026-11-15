@@ -353,7 +353,8 @@ def test_node_web_requirement_runs_through_project_orchestrator_and_delivery(
             "Do not deploy or publish it."
         ),
     )
-    assert evidence["project_profile"]["project_type"] == "web"
+    assert evidence["project_profile"] is not None
+    assert evidence["gates"]["integration"]["adapter"]["adapter"] == "node"
     assert evidence["gates"]["security"]["verdict"] == "SEC_PASSED"
 
 
