@@ -219,3 +219,24 @@ def test_declared_sbom_rejects_unexpanded_requirement_includes(tmp_path: Path):
             project="sample-app",
             build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
         )
+
+
+def test_sbom_preserves_platform_markers_from_lock(tmp_path: Path):
+    marker = 'sys_platform == "win32"'
+    lock = tmp_path / "requirements-windows-py314.lock"
+    _write(
+        lock,
+        "colorama==0.4.6; " + marker + " \\\n"
+        "    --hash=sha256:" + ("b" * 64) + "\n",
+    )
+    result = write_delivery_sbom(
+        tmp_path,
+        project="sample-app",
+        build_evidence_sha256=hashlib.sha256(b"{}").hexdigest(),
+        lock_file=lock.name,
+    )
+    bom = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert {
+        "name": "ai-team:environment-marker",
+        "value": marker,
+    } in bom["components"][0]["properties"]
