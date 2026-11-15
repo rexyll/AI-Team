@@ -8,7 +8,7 @@ import pytest
 
 from runtime.project_adapters import ProjectAdapterExecutor, ProjectAdapterRegistry
 from runtime.tool_invocation_service import ToolInvocationService
-from security.workspace import workspace_scope
+from security.workspace import resolve_workspace_path, workspace_scope
 
 
 @pytest.mark.skipif(
@@ -143,7 +143,7 @@ class _E2EDeveloper:
     role = "developer"
 
     def run(self, task):
-        root = Path(task.context["workspace_root"])
+        # DeveloperWorkspaceManager activates a task-local lease as the workspace scope.\n        # Resolve the current workspace instead of writing to the canonical project root.\n        root = resolve_workspace_path(".")
         (root / "src").mkdir(parents=True, exist_ok=True)
         (root / "scripts").mkdir(parents=True, exist_ok=True)
         (root / "tests").mkdir(parents=True, exist_ok=True)
