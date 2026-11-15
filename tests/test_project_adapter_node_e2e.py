@@ -434,23 +434,37 @@ class _ResultAwareQAMockLLM(MockLLM):
             for item in messages
             if isinstance(item, dict) and item.get("role") == "tool"
         ]
+        # BaseAgent fences every tool result as untrusted data before passing
+        # it to the model. Parse the body only when the full expected envelope
+        # is present; malformed or unrelated wrappers remain non-passing.
+        parsed_outputs = []
+        for output in outputs:
+            lines = output.splitlines()
+            if (
+                len(lines) >= 3
+                and lines[0].startswith('<untrusted-data source="tool.result.')
+                and lines[-1] == "</untrusted-data>"
+            ):
+                parsed_outputs.append("\\n".join(lines[1:-1]))
+            else:
+                parsed_outputs.append(output)
         self.last_tool_assessment = {
             "tool_output_count": len(outputs),
             "tool_error_count": sum("Tool error:" in item for item in outputs),
             "list_contains_expected": (
-                len(outputs) > 0 and self.expected_list_fragment in outputs[0]
+                len(parsed_outputs) > 0 and self.expected_list_fragment in parsed_outputs[0]
             ),
             "file_contains_expected": (
-                len(outputs) > 1 and self.expected_file_fragment in outputs[1]
+                len(parsed_outputs) > 1 and self.expected_file_fragment in parsed_outputs[1]
             ),
             "command_exit_zero": (
-                len(outputs) > 2 and outputs[2].splitlines()[:1] == ["exit_code=0"]
+                len(parsed_outputs) > 2 and parsed_outputs[2].splitlines()[:1] == ["exit_code=0"]
             ),
             "command_first_line": (
-                outputs[2].splitlines()[:1] if len(outputs) > 2 else []
+                parsed_outputs[2].splitlines()[:1] if len(parsed_outputs) > 2 else []
             ),
             "command_contains_expected": (
-                len(outputs) > 2 and self.expected_command_fragment in outputs[2]
+                len(parsed_outputs) > 2 and self.expected_command_fragment in parsed_outputs[2]
             ),
             "tool_error_prefixes": [
                 item[:240] for item in outputs if "Tool error:" in item
