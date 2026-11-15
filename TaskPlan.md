@@ -326,3 +326,5 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.7.1 dependency lock inventory and CI confirmation | CI #322 (run `43696282821`)、#323 (`43696284854`)、#324 (`43696305155`) 均完成且成功；Python 3.14 regression 与 Windows toolchain smoke 全绿。确认 `requirements.txt` 仅 pin 两个直接依赖，`requirements-dev.txt` 仍为版本范围，CI 当前在线解析传递依赖。修正 setup 文档中不存在的 MCP requirements 引用并增加文档契约测试。完整 lock/hash 尚未生成：必须由真实 resolver 在 Python 3.14 Linux/Windows 环境解析并验证，不能手工编造版本或哈希；T21.7.1 保持进行中。 | 提交 `695c7a3`、`54635a9`、`508c296`；[CI #322](https://github.com/rexyll/AI-Team/actions/runs/43696282821)、[CI #323](https://github.com/rexyll/AI-Team/actions/runs/43696284854)、[CI #324](https://github.com/rexyll/AI-Team/actions/runs/43696305155) |
+
+| 2026-11-15 | T21.7.1 lock generation strategy | CI #325（run `43696563274`，提交 `855b1e0`）全部成功：Python 3.14 regression、安全回归及 Windows toolchain smoke 均通过。进一步确定锁文件必须按 Ubuntu/Windows Python 3.14 分别由 resolver 生成，保留生产/开发输入与解析输出分离，固定 bootstrap/resolver 工具，并由 CI 使用 `--require-hashes` 消费；在实际双平台解析、clean install 和回归验收前不切换 CI、不宣称 lock 完成。 | 更新 `docs/supply_chain_quality_gate_design.md`；[CI #325](https://github.com/rexyll/AI-Team/actions/runs/43696563274) |
