@@ -229,7 +229,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - [x] T21.7.1：生产/开发依赖完整锁定与哈希校验，CI 使用可复现输入（2026-11-15 完成；Linux/Windows Python 3.14 四份 lock；pip 25.3 + `--require-hashes`；完整回归/安全回归/Windows smoke 全绿）。
   - [x] T21.7.2：生成 CycloneDX 1.6 JSON SBOM，并绑定 lock/artifact/build-evidence digest（2026-11-15 完成；锁文件组件/PURL/SHA-256、declared-only partial、隐私最小化 build evidence、ZIP 外 provenance sidecar、篡改校验均有测试）。
   - T21.7.3：覆盖率基线与模块风险门禁已完成；绝对性能预算暂缓至受控 runner 可用（现有相对扩展性回归保留，10k-task 与真实 Provider 基准为 opt-in；默认 CI 有界）。
-  - T21.7.4：仅在 CI 显式网络出口白名单下执行漏洞/许可证扫描；scanner unavailable、数据库过期、未知许可证不得视为 clean（实施中：双平台 dev lock 已包含 pip-audit 2.10.1；首轮 production scan 17 包、0 个已知漏洞，OSV freshness 通过；license gate 仍因 tqdm 的 MPL-2.0 AND MIT reciprocal 分类阻断，待明确审批或依赖调整）。
+  - T21.7.4：仅在 CI 显式网络出口白名单下执行漏洞/许可证扫描；scanner unavailable、数据库过期、未知许可证不得视为 clean（实施中：双平台 dev lock 已包含 pip-audit 2.10.1；production scan 17 包、0 个已知漏洞，OSV freshness 通过；唯一 license blocker 为 openai 的传递依赖 tqdm（MPL-2.0 AND MIT），仓库无项目 LICENSE，等待 owner 明确是否接受其 file-level copyleft 通知/源代码义务，未自动豁免）。
   - 验收：锁/哈希不符、SBOM schema 错误、阈值阻断、工具不可用、网络拒绝、许可证冲突等场景均如实输出；不得引入自动依赖升级或隐式公网出口。
 - [ ] **T21.8 Real Project E2E**
   - 选取 Python CLI/API 与 Node.js Web 两类代表项目，从自然语言需求启动完整交付。
