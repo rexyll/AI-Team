@@ -128,6 +128,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 1. [x] T21.6.3.5.1 contracts（2026-11-15）：新增 runtime/deployment_traffic_router.py，定义 router scope、TCP port binding、双槽位 target、Router immutable identity、route read-back、connection drain snapshot 与 Host-only DeploymentTrafficRouter protocol；纯契约无 I/O，由 tests/test_deployment_traffic_router.py 锁定端口、IP、immutable ID、active-slot/target、generation、逐端口健康和 drain 约束。
 2. T21.6.3.5.2 router bootstrap：固定 HAProxy config、user-defined network、Router image pin、Unix admin socket、固定 argv + stdin helper；fake runner 覆盖 daemon/网络/端口冲突。首个子片 T21.6.3.5.2.1 已新增 SubprocessDockerRunner.execute_input() 与 Host-only LocalDockerProvider.execute_host_input()，通过 subprocess.run(input=..., shell=False) 传入有界 stdin（64 KiB，拒绝 NUL/超限）；完整 Router bootstrap 尚未实现。
+   - T21.6.3.5.2.2 pure HAProxy config builder：新增 runtime/local_docker_router_config.py 与 7 个聚焦测试，生成每端口 frontend/backend、统一 active-slot map selector、两个 weight 0 slot server、Unix admin socket；初始 map 为 active none，不允许默认负载均衡回退。纯函数，不创建文件或调用 HAProxy。
 3. T21.6.3.5.3 routed deployment：应用容器不 publish，Router 唯一 publish；TCP-only validation；Router identity 与 host ports 持久化。
 4. T21.6.3.5.4 candidate + route map：双 slot、单 active-slot map、map 文件原子持久化、Runtime API command builder、read-back。
 5. T21.6.3.5.5 coordinator integration：traffic_switch_pending、持久化 intent、atomic map switch、old drain/连接排空/inspect-confirmed retire。
