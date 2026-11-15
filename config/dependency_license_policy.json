@@ -8,10 +8,6 @@
   ],
   "blocked_classifications": [
     "UNKNOWN",
-    "LOW",
-    "MEDIUM",
-    "HIGH",
-    "CRITICAL",
     "RECIPROCAL",
     "RESTRICTED",
     "FORBIDDEN"
