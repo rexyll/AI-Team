@@ -208,6 +208,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - T21.5.1 已接入 `ProjectOrchestrator`：可注入 host-created `SCMService` 与显式 repository/PR 编号；交付阶段只读采集 PR head/state、CI 与 review，写入交付任务上下文。只有 open + unmerged + CI success + review approved 标记 `ready`；非绿标记 `blocked`，远端异常标记 `unavailable`（仅记录异常类型）；不执行 push/PR write/merge，无配置时保持旧行为。新增 `SCMService.get_pull_request` 与 `tests/test_scm_orchestrator.py`。
   - T21.5.2（主机凭证配置与 Provider 生命周期）已完成实现：新增 `runtime/github_scm_config.py`，仅从 `AI_TEAM_GITHUB_TOKEN`、`AI_TEAM_GITHUB_REPOSITORY`、`AI_TEAM_GITHUB_PULL_REQUEST` 构建 opt-in GitHub SCM runtime；未配置时保持禁用，部分配置/缺少 Token/非法 repo 或 PR 编号 fail-closed。CLI 的普通交付与持久化项目修订入口均由 host factory 创建 SCMService 并注入 ProjectOrchestrator；Token 不进入命令行参数、Agent 工具、任务上下文或 runtime repr。GitHub REST 错误详情对可能回显的 Token 做脱敏。新增配置工厂测试覆盖禁用、部分配置、Token 缺失、非法参数和 repr 泄漏；现有 REST transport 测试增强为模拟远端错误回显 Token。凭证无效/权限不足时，PR 观察按 unavailable 处理，不视为成功。当前仍未执行真实 GitHub 凭证验证；本节点 CI 状态待验证。
 
+  - T21.5.3（PR 生命周期协调与 CI/Review 有界轮询）已完成第一阶段：新增 `runtime/scm_lifecycle.py` 的 host-only `SCMLifecycleCoordinator`。发布动作要求两张独立的一次性审批（精确 HEAD 的 push approval、head/base 的 PR approval），先 push 再创建/更新 PR；不由 coordinator 签发审批。新增有界轮询（1–120 次、间隔 0–300 秒），返回 ready / ci_failed / changes_requested / closed / timeout 及对应 head SHA、CI、Review 证据。不会自动重跑 CI、修改 Review、自动修复、push 新提交或 merge；失败证据可供上层生成修复提案，写操作仍需独立审批。新增 mock lifecycle tests 与架构文档。当前仅实现 host-callable coordinator API，尚未提供交互式审批 UI/CLI，也未执行 live GitHub 测试；CI 待验证。
 - [ ] **T21.6 Deployment / Operations Adapters**
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
@@ -238,6 +239,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
+| 2026-11-15 | T21.5.3 PR lifecycle coordinator v1 | 实现完成，CI 待验证：独立 push/PR 一次性审批、host-only PR 创建/更新、CI/Review 有界轮询与结构化终态；无自动重试/修复/merge，未做 live GitHub 验证。 | 新增 `runtime/scm_lifecycle.py`、`tests/test_scm_lifecycle.py`；更新 `docs/scm_provider_architecture.md` |
 | 2026-11-15 | T21.5.2 GitHub host credential config / factory | 实现完成，CI 待验证：环境变量 opt-in factory、CLI 普通交付与项目修订接线、缺失/部分/非法配置 fail-closed、Token 不进入 Agent/task/repr、HTTP 错误回显脱敏；未进行 live GitHub 凭证验证。 | 新增 `runtime/github_scm_config.py`、`tests/test_github_scm_config.py`；更新 `main.py`、`runtime/github_scm_provider.py`、`tests/test_github_scm_provider.py`、`docs/scm_provider_architecture.md` |
 | 2026-11-14 | T21.5.1 ProjectOrchestrator SCM 接线（只读观察） | 实现完成，CI 待验证：注入式 SCMService + 显式 repo/PR 配置；交付阶段记录 PR head/state、CI、review 证据；仅全绿标记 ready，异常记录 unavailable，不执行任何写操作；无配置保持旧行为。新增 service PR metadata read 与 orchestrator contract tests。GitHub connector 当前未返回该提交的 check/status 或 workflow run，不能据此宣称测试通过。 | 提交 `7163d32`、`311a826`、`23f3b2b`、`8f52d89`、`3e3b1e8`；`tests/test_scm_provider.py`、`tests/test_scm_orchestrator.py` |
 | 2026-11-14 | 基线复核与 Phase 21 计划 | 已定义；待逐项执行 | 本文件 |
