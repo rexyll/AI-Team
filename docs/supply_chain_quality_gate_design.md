@@ -5,7 +5,7 @@
 
 ## 结论
 
-T21.7 尚未完成。仓库已有部分质量基线和离线依赖声明检查，但尚无可验证的覆盖率阈值、依赖锁文件/哈希闭环、标准化 SBOM、漏洞数据库扫描或许可证策略门禁。不能把现有性能回归测试或 requirements 直接 pin 描述为完整供应链治理。
+T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/开发依赖锁与哈希安装闭环；仍缺可验证的覆盖率阈值、标准化 SBOM、漏洞数据库扫描和许可证策略门禁。不能把现有性能回归测试或 requirements 顶层 pin 描述为完整供应链治理。
 
 ## 已有能力（经代码核对）
 
@@ -32,7 +32,7 @@ T21.7 尚未完成。仓库已有部分质量基线和离线依赖声明检查�
 - 盘点生产、开发、可选 extra 与平台条件依赖。
 - 生成解释器/平台范围明确的完整锁文件，优先采用哈希校验；更新依赖必须有显式审查流程。
 - CI 使用锁文件安装，不再依赖无约束的临时解析结果；升级 pip 等构建工具也应固定版本或记录受控更新策略。
-- 验收：干净环境可离线/受控安装；缺包、哈希不符、平台不匹配 fail-closed。
+- 验收：干净环境通过受控 PyPI index 与 `--require-hashes` 安装；缺包、哈希不符、平台不匹配 fail-closed。当前已在 Ubuntu/Windows Python 3.14 clean venv 验证。
 
 #### T21.7.1 锁文件生成与验收细则（实施决策）
 
@@ -42,7 +42,7 @@ T21.7 尚未完成。仓库已有部分质量基线和离线依赖声明检查�
 - 在 Ubuntu Python 3.14 与 Windows Python 3.14 上分别生成并验证对应锁文件；锁文件应包含完整传递依赖、环境 marker 和允许安装文件的哈希。
 - 生产与开发依赖的边界保持清晰；开发锁可以引用/包含生产依赖，但 CI 的测试环境必须由一份完整、可校验的开发锁安装，避免两次无约束解析。
 - resolver 与 bootstrap 工具（pip、pip-tools）自身也必须固定版本；具体版本须在生成任务中实际安装并验证后再提交，不在设计文档中猜测。
-- 生成任务应输出可审阅的 lock diff 和构建环境元数据（Python、OS、resolver 版本、输入清单摘要）；生成过程不自动提交或升级依赖。
+- 生成任务输出平台独立 artifacts（lock diff 与 Python、OS、resolver 版本元数据）；只有 Linux/Windows 候选都通过 clean `--require-hashes` 安装后，聚合 job 才将四份锁文件提交到 main。该流程不自动修改顶层依赖输入，也不自动升级依赖。
 - CI 消费端使用 `pip install --require-hashes -r <platform-lock>`；不得先无约束升级 pip。锁文件缺项、哈希不匹配、平台不匹配或 resolver 失败均应阻断。
 - **已验收（2026-11-15）**：GitHub Actions run `43698973027` 在 Ubuntu/Windows Python 3.14 分别生成生产/开发锁；每个平台都在全新 venv 中对两份锁执行 `pip install --require-hashes` 成功。四份锁已提交到仓库根目录（`requirements-linux-py314.lock`、`requirements-dev-linux-py314.lock`、`requirements-windows-py314.lock`、`requirements-dev-windows-py314.lock`）。CI 已固定 pip 25.3 并按平台使用开发锁；迁移后的全量回归、安全回归和 Windows smoke 均通过，见 CI run `43699240235`。
 - 锁生成工作流固定 pip 25.3 / pip-tools 7.5.2，顶层输入变更时重新解析；只有两个平台候选均通过 clean install 后，聚合 job 才将锁文件提交到 main。
