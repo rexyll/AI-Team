@@ -17,6 +17,7 @@ def record(status="running", health_status="healthy"):
         deployment_id="deploy-001", provider="docker-local", environment="local",
         version="1.2.3", artifact=artifact(), status=status,
         health_status=health_status, created_at="2026-11-15T10:00:00Z",
+        container_id="f" * 64,
     )
 
 
