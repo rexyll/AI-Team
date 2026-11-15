@@ -65,6 +65,8 @@ T21.7 尚未整体完成。T21.7.1 已完成 Python 3.14 Linux/Windows 生产/�
 - ZIP 的 SHA-256 不能写入 ZIP 内的 SBOM，否则形成自引用循环。故在 ZIP 完成后，ZIP 同级生成 `<archive>.provenance.json` sidecar，绑定 archive SHA-256、ZIP 内 SBOM/manifest/build-evidence/lock 成员 SHA-256。该 sidecar 是可验证的完整性记录，不带签名，不声称来源真实性或不可抵赖。
 - SBOM 与 build evidence 在 manifest 生成前写入交付目录，因此随 ZIP 一起交付并受 manifest 校验；provenance sidecar 在 ZIP 生成后输出，不加入自身所描述的 ZIP。
 - 验收覆盖 CycloneDX 结构字段、PURL/name normalization、lock hash 全量保留、缺 lock 的 partial 标记、坏 lock fail-closed、确定性输出、archive/成员篡改检测与 build-evidence digest 绑定。漏洞数据库和许可证策略扫描仍归 T21.7.4，不在此节点伪装成已执行。
+
+**实施与验收结果（2026-11-15）**：`runtime/delivery_sbom.py` 已接入 `core/project_orchestrator.py`。交付根目录生成 `DELIVERY_BUILD_EVIDENCE.json` 与 `DELIVERY_SBOM.cdx.json`，之后由现有 manifest/ZIP 纳入交付；ZIP 旁生成 `.provenance.json` sidecar。无锁项目明确返回 `partial`；不支持的 requirements include/direct URL 和坏锁均拒绝生成。四份仓库真实 lock（Linux/Windows × production/dev）均通过组件解析测试。CI run `43700797699` 全绿：2507 passed / 10 skipped，security 234 passed / 9 skipped，Windows smoke 1 passed。sidecar 无签名，当前只提供摘要完整性校验；许可证状态保持 unknown，漏洞扫描仍未执行。
 ### T21.7.3 覆盖率与性能预算
 - 在固定 Python 3.14 CI 环境采集覆盖率基线，按模块风险定义阈值；新增代码不得通过缩小测量范围规避门槛。
 - 将现有性能测试定位为结构/扩展性回归；如增加绝对预算，必须在受控 runner 上采集多次样本、记录环境和分位数，并对噪声/基线变更留痕。
