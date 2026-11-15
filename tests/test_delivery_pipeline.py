@@ -21,6 +21,7 @@ from core.project_orchestrator import ProjectOrchestrator
 from runtime.task import Task
 from runtime.task_manager import TaskManager
 from security.workspace import WorkspaceSandbox
+from runtime.delivery_sbom import verify_delivery_provenance
 
 
 ANALYSIS_MARKDOWN = """# 需求规格说明（草案）
@@ -166,6 +167,14 @@ def test_delivery_phase_writes_docs_and_manifest(tmp_path: Path):
     assert package["files"] >= 6  # code + docs + manifest
     assert Path(package["archive"]).is_file()
     assert delivery["smoke"]["status"] in {"passed", "skipped"}
+    assert delivery["sbom"]["format"] == "CycloneDX"
+    assert delivery["sbom"]["spec_version"] == "1.6"
+    assert delivery["sbom"]["status"] == "partial"  # fixture has no lock/requirements
+    assert (tmp_path / "e2e_flat" / "DELIVERY_SBOM.cdx.json").is_file()
+    assert (tmp_path / "e2e_flat" / "DELIVERY_BUILD_EVIDENCE.json").is_file()
+    provenance_path = Path(delivery["provenance"]["path"])
+    assert provenance_path.is_file()
+    assert verify_delivery_provenance(provenance_path)["ok"] is True
 
 
 def test_delivery_phase_is_noop_without_doc_writer(tmp_path: Path):
