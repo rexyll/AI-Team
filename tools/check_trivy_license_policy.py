@@ -239,7 +239,7 @@ def evaluate_license_report(
                     f"{package_name} license {license_name} has unrecognized category {category}"
                 )
 
-    applied_keys = {(item["package"].lower(), item["version"], item["license"]) for item in exceptions_applied}\n    for key in exceptions:\n        if key not in applied_keys:\n            problems.append(f"configured license exception did not match a scanner finding: {key[0]}=={key[1]} {key[2]}")\n\n    scanner = report.get("Trivy", {})
+    applied_keys = {(_normalize_name(item["package"]), item["version"], item["license"]) for item in exceptions_applied}\n    for key in exceptions:\n        if key not in applied_keys:\n            problems.append(f"configured license exception did not match a scanner finding: {key[0]}=={key[1]} {key[2]}")\n\n    scanner = report.get("Trivy", {})
     scanner_version = scanner.get("Version") if isinstance(scanner, dict) else None
     if not isinstance(scanner_version, str) or not scanner_version.strip():
         problems.append("Trivy report is missing scanner version")
