@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "python": "3.14",
+  "measurement": "line-and-branch",
+  "modules": {
+    "agents": {"line_percent": 80.0, "branch_percent": 68.0},
+    "core": {"line_percent": 85.0, "branch_percent": 68.0},
+    "runtime": {"line_percent": 83.0, "branch_percent": 70.0},
+    "security": {"line_percent": 70.0, "branch_percent": 60.0},
+    "tools": {"line_percent": 65.0, "branch_percent": 58.0}
+  }
+}
