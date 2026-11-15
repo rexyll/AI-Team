@@ -107,9 +107,6 @@ def test_readonly_probe_does_not_print_exception_message_or_secret(
 
 
 def test_live_smoke_workflow_uses_read_only_repository_permissions():
-    workflow = (
-        smoke.__file__.replace("scripts/scm_live_readonly_smoke.py", "")
-    )
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "scm-live-readonly-smoke.yml"
