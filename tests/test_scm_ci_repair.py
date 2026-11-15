@@ -182,7 +182,7 @@ def test_factory_rejects_unbounded_round_configuration_and_invalid_identity():
     with pytest.raises(ValueError, match="max_repair_rounds"):
         SCMCIRepairTaskFactory(max_repair_rounds=100)
     factory, service, _, manager = _setup()
-    with pytest.raises(ValueError, match="owner/name"):
+    with pytest.raises(ValueError, match="path is invalid"):
         factory.propose(service, manager, repository="../widget", pull_request_number=17)
     with pytest.raises(ValueError, match="positive integer"):
         factory.propose(service, manager, repository="acme/widget", pull_request_number=True)
