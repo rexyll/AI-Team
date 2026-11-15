@@ -44,7 +44,7 @@ jobs:
           pip-compile --no-config --index-url=https://pypi.org/simple --emit-index-url --resolver=backtracking --generate-hashes --allow-unsafe --strip-extras \
             --output-file="generated-locks/requirements-${{ matrix.platform }}-py314.lock" \
             requirements.txt
-          pip-compile --resolver=backtracking --generate-hashes --strip-extras \
+          pip-compile --no-config --index-url=https://pypi.org/simple --emit-index-url --resolver=backtracking --generate-hashes --allow-unsafe --strip-extras \
             --output-file="generated-locks/requirements-dev-${{ matrix.platform }}-py314.lock" \
             requirements.txt requirements-dev.txt
 
