@@ -1,0 +1,121 @@
+name: Dependency security scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - requirements-linux-py314.lock
+      - config/dependency_license_policy.json
+      - tools/check_trivy_db_freshness.py
+      - .github/workflows/dependency-security.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production-dependency-scan:
+    name: Production dependency vulnerability and license scan
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install production dependencies from the verified hash lock
+        shell: bash
+        run: |
+          python -m venv .venv-prod
+          .venv-prod/bin/python -m pip install --disable-pip-version-check "pip==25.3"
+          .venv-prod/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes -r requirements-linux-py314.lock
+
+      - name: Install pinned Trivy scanner
+        uses: aquasecurity/setup-trivy@a0e5e8d8f5936915ac0292775f38a64d6fabe7a7
+        with:
+          version: 0.76.2
+
+      - name: Restrict scanner network egress
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: |
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            pipelines.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      - name: Scan production lock for vulnerabilities and licenses
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .dependency-scan-target
+          cp requirements-linux-py314.lock .dependency-scan-target/requirements.txt
+          export VIRTUAL_ENV="$PWD/.venv-prod"
+
+          trivy fs \
+            --cache-dir "$PWD/.trivy-cache" \
+            --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+            --scanners vuln \
+            --pkg-types library \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --exit-code 1 \
+            --format json \
+            --output dependency-vulnerability-report.json \
+            .dependency-scan-target
+          vulnerability_status=$?
+
+          trivy fs \
+            --cache-dir "$PWD/.trivy-cache" \
+            --scanners license \
+            --pkg-types library \
+            --severity UNKNOWN,MEDIUM,HIGH,CRITICAL \
+            --exit-code 1 \
+            --format json \
+            --output dependency-license-report.json \
+            .dependency-scan-target
+          license_status=$?
+
+          python tools/check_trivy_db_freshness.py \
+            --metadata .trivy-cache/db/metadata.json \
+            --lock-file requirements-linux-py314.lock \
+            --scanner-version "$(trivy --version | head -n 1)" \
+            --commit "$GITHUB_SHA" \
+            --scan-target production-linux-py314 \
+            --max-age-hours 24 \
+            --output dependency-scan-metadata.json
+          database_status=$?
+
+          {
+            printf 'vulnerability_exit_code=%s\n' "$vulnerability_status"
+            printf 'license_exit_code=%s\n' "$license_status"
+            printf 'database_freshness_exit_code=%s\n' "$database_status"
+          } > dependency-scan-status.txt
+          cat dependency-scan-status.txt
+
+          if [[ "$vulnerability_status" -ne 0 || "$license_status" -ne 0 || "$database_status" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Publish dependency scan evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dependency-scan-\${{ github.sha }}
+          path: |
+            dependency-vulnerability-report.json
+            dependency-license-report.json
+            dependency-scan-metadata.json
+            dependency-scan-status.txt
+          if-no-files-found: warn
+          retention-days: 30
