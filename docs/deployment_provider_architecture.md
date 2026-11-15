@@ -1,42 +1,43 @@
-# Deployment Provider Contract
+# Deployment Provider Contract and Local Docker Adapter
 
 ## Scope
 
-`runtime/deployment_provider.py` defines provider-neutral request, artifact,
-deployment record, health result and operation result types plus the
-`DeploymentProvider` protocol. This is a contract-only milestone: importing it
-does not contact Docker or a cloud service and does not execute commands.
+- `runtime/deployment_provider.py` defines provider-neutral requests, immutable artifacts, deployment records, health results and operation results.
+- `runtime/local_docker_provider.py` implements the first host-owned local Docker provider.
+- The provider is not wired to Agent-facing arbitrary command execution. A host application constructs it and controls when its methods may be called.
 
-## Contract rules
+## Local Docker behavior
 
-- Every request names its project root, project, environment and version.
-  Port mappings and labels are explicit; providers must not infer them.
-- Build output is identified by provider, immutable artifact reference,
-  version and a lowercase SHA-256 digest. A mutable tag alone is not identity.
-- Every deployment record binds provider, environment, version, artifact,
-  status, health state and creation time. Host code owns persistence.
-- Results distinguish `succeeded`, `failed`, `unavailable` and
-  `unsupported`; a missing Docker daemon is not a successful no-op.
-- Health checks return an explicit state and timestamp. Unknown or unavailable
-  health is never treated as healthy.
-- Rollback candidates must be prior running deployments with verified healthy
-  status and a content-addressed artifact. The provider must still verify the
-  record against its host-owned deployment history before changing state.
+### Command boundary
+
+The production `SubprocessDockerRunner` invokes Docker with an argument vector, `shell=False`, a finite timeout and bounded output. It does not use `sudo`, shell interpolation, or an Agent-provided command string. Tests inject a fake `DockerCommandRunner`; unit tests therefore do not require a Docker daemon.
+
+A missing executable or daemon connection failure returns `unavailable`. Build, image verification, container start and stop failures return `failed` unless the daemon itself is unavailable. The provider never converts a failed command into success.
+
+### Build identity
+
+Build requires a project-root `Dockerfile`. The image tag is generated from the explicit project and version. After build, the provider inspects the image and records the immutable local Docker image ID as a lowercase SHA-256 digest. Before deployment, it inspects the tag again and requires the image ID to match the supplied artifact digest; mutable tags are not trusted as identity.
+
+### Runtime and health
+
+Deployment creates a uniquely named container with explicit port mappings and labels, then inspects it and only reports a successful start when Docker reports `running`. The initial record health is `unknown`; a running container is not proof of application health.
+
+Health checks inspect the container state. A stopped/non-running container is unhealthy. A Docker `HEALTHCHECK` status of healthy/unhealthy is preserved. Missing HEALTHCHECK, starting state, malformed inspect output or an unclassified state remains unknown; it is never promoted to healthy.
+
+Stop is explicit and bounded by the runner timeout. Rollback intentionally returns `unsupported` in this milestone: accepting an arbitrary prior record is not sufficient. T21.6.3 must add host-owned deployment history and verify the previous deployment is a valid healthy rollback candidate before changing runtime state.
 
 ## Security boundary
 
-Providers are host-owned. Agent-facing tools may request an operation only
-through an explicit host authorization path; Docker socket access is not
-delegated to an Agent and is not implemented through arbitrary
-`run_command` strings. Provider credentials, daemon handles and raw command
-execution remain outside Agent context and task records.
+Providers are host-owned. Agent-facing tools may request an operation only through an explicit host authorization path; Docker socket access is not delegated to an Agent and is not implemented through arbitrary `run_command` strings. Provider credentials, daemon handles and raw command execution remain outside Agent context and task records.
+
+## Verification
+
+Fake-runner tests cover executable/daemon unavailable, build failure, image digest verification, start failure, running-state validation, healthy/unhealthy/unknown health, stop failure and the deliberately unsupported rollback path. These tests validate command orchestration without claiming a real Docker daemon integration. A daemon-backed fixture remains part of the later container E2E milestone.
 
 ## Planned implementation sequence
 
-1. Contract and model validation (this milestone).
-2. Local Docker build/run/inspect/health/stop adapter.
-3. Host-owned deployment history and verified rollback.
-4. Container-backed E2E and CI, including daemon unavailable, build failure,
-   unhealthy deployment and rollback failure.
-5. Cloud providers remain separate future adapters; no cloud capability is
-   implied by this contract.
+1. Provider-neutral contract and model validation (T21.6.1).
+2. Local Docker build/run/inspect/health/stop adapter (T21.6.2).
+3. Host-owned deployment history and verified rollback (T21.6.3).
+4. Container-backed E2E and CI, including daemon unavailable, build failure, unhealthy deployment and rollback failure (T21.6.4).
+5. Cloud providers remain separate future adapters; no cloud capability is implied by this implementation.

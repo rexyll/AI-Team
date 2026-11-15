@@ -215,6 +215,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   - T21.5.3 第四阶段已完成：新增 `--scm-merge-pr NUMBER` / `--scm-merge-method` 独立合并命令。命令先进行 PR/CI/Review 有界轮询，仅 `ready` 才允许提示；必须在真实 TTY 输入 `yes`，随后签发绑定 `PR number + exact head SHA` 的一次性 merge approval。`SCMService.merge_pull_request` 再次检查 PR open/unmerged、CI success、Review approved，并把 expected SHA 交给 GitHub 防止 head 漂移；blocked、取消或非交互执行均不签发审批、不发送 merge 请求；poll/publish/merge 三种 SCM CLI 命令互斥，防止组合参数触发错误写路径。新增 `tests/test_scm_merge_cli.py`，加强 provider merge preflight 对 closed/already-merged PR 的拒绝测试，文档已更新。CI 待验证，未执行真实 GitHub merge。
 - [ ] **T21.6 Deployment / Operations Adapters**
   - [x] **T21.6.1 Provider-neutral deployment contract（2026-11-15 完成）**：新增 `runtime/deployment_provider.py`，定义显式部署请求、SHA-256 内容寻址制品、部署记录、健康检查结果、四态操作结果与 host-owned `DeploymentProvider` Protocol；rollback candidate 仅接受曾运行且已验证 healthy 的记录。纯契约模块，不执行 Docker/云 I/O；新增契约校验测试与安全边界文档。
+  - [ ] **T21.6.2 Local Docker Provider（实现完成，CI 待验证）**：新增 `runtime/local_docker_provider.py`，通过可注入 `DockerCommandRunner` 执行固定 argv；生产 runner 使用 `subprocess.run(shell=False, timeout=...)`，不使用 sudo。实现 Dockerfile build、image ID SHA-256 校验、镜像身份复核、容器 run/inspect、stop 与 Docker HEALTHCHECK 状态读取；daemon 不可用、构建/启动失败如实区分，缺少 HEALTHCHECK 保持 unknown。新增 fake-runner 测试覆盖无 Docker executable/daemon、构建失败、镜像摘要、启动失败、健康状态与 stop。Rollback 暂返回 unsupported，等待 T21.6.3 Host-owned history。
   - 把本地打包、容器构建、镜像扫描/发布、环境部署、健康探针、回滚拆成可替换 adapter。
   - 首批提供本地 Docker 构建/运行/健康检查；云厂商部署作为后续 provider，不宣称未接入的云能力。
   - 回滚必须基于明确的上一个健康版本和可验证的部署记录。
@@ -244,6 +245,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 | 日期 | 节点 | 结果 | 证据 |
 |---|---|---|---|
+| 2026-11-15 | T21.6.2 Local Docker Provider | 实现完成，CI 待验证；固定 argv + shell=False + timeout 的 host runner；构建以 Docker image ID SHA-256 作为制品身份，部署前复核镜像 ID；容器运行态与 Docker HEALTHCHECK 分开处理，无 HEALTHCHECK 不等于 healthy；daemon unavailable、build/start failure 明确区分；rollback 暂不支持，等待 host-owned history。 | 新增 `runtime/local_docker_provider.py`、`tests/test_local_docker_provider.py`；更新 `docs/deployment_provider_architecture.md`、`TaskPlan.md` |
 | 2026-11-15 | T21.5.4 SCM lifecycle mock E2E + CI 修复 | CI 已通过：修复 publish CLI 测试使用真实 `SCMService` 的测试夹具，以及 PR 创建失败路径的事件顺序断言。全量回归 2394 passed / 10 skipped；安全回归 234 passed / 9 skipped；Windows production terminal smoke 通过。仅 mock 验证，未执行真实 GitHub push/PR/merge。 | [GitHub Actions #283](https://github.com/rexyll/AI-Team/actions/runs/43672101456)；提交 `7af42e6`；`tests/test_scm_publish_cli.py`、`tests/test_scm_lifecycle_e2e.py` |
 | 2026-11-15 | T21.5.3 CI-gated interactive merge CLI | 实现完成，CI 待验证：只允许 open/unmerged + green CI + approved review；真实 TTY 二次确认、head-SHA 一次性审批、merge 前再次 preflight；未做 live merge。 | 更新 `main.py`、`runtime/scm_provider.py`、`tests/test_scm_provider.py`、`docs/scm_provider_architecture.md`；新增 `tests/test_scm_merge_cli.py` |
 | 2026-11-15 | T21.5.3 interactive publish approval CLI | 实现完成，CI 待验证：独立 `--scm-publish-pr` 入口、精确 HEAD 预览、push 与 PR 两次独立确认、双一次性审批、origin/HEAD 校验；未做 live GitHub 写操作。 | 更新 `main.py`、`runtime/github_scm_config.py`、`runtime/scm_provider.py`、`tests/test_github_scm_config.py`、`tests/test_scm_provider.py`、`docs/scm_provider_architecture.md`；新增 `tests/test_scm_publish_cli.py` |
