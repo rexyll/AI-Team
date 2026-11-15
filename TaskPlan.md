@@ -323,3 +323,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.7 supply-chain and quality-gate assessment | 完成代码与 CI 现状盘点：已有宽松性能扩展性回归和 requirements 顶层版本 pin，但无覆盖率阈值、完整依赖锁/哈希、标准 SBOM、漏洞数据库或许可证扫描。制定四个子节点与安全边界；本记录仅完成评审，不将 T21.7 标记完成。 | 新增 `docs/supply_chain_quality_gate_design.md`；CI 待验证 |
+
+
+| 2026-11-15 | T21.7.1 dependency lock inventory and CI confirmation | CI #322 (run `43696282821`)、#323 (`43696284854`)、#324 (`43696305155`) 均完成且成功；Python 3.14 regression 与 Windows toolchain smoke 全绿。确认 `requirements.txt` 仅 pin 两个直接依赖，`requirements-dev.txt` 仍为版本范围，CI 当前在线解析传递依赖。修正 setup 文档中不存在的 MCP requirements 引用并增加文档契约测试。完整 lock/hash 尚未生成：必须由真实 resolver 在 Python 3.14 Linux/Windows 环境解析并验证，不能手工编造版本或哈希；T21.7.1 保持进行中。 | 提交 `695c7a3`、`54635a9`、`508c296`；[CI #322](https://github.com/rexyll/AI-Team/actions/runs/43696282821)、[CI #323](https://github.com/rexyll/AI-Team/actions/runs/43696284854)、[CI #324](https://github.com/rexyll/AI-Team/actions/runs/43696305155) |
