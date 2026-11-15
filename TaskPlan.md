@@ -225,7 +225,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
   
 ### P3：工程质量与真实项目验收
 
-- [ ] **T21.7 供应链与质量门禁增强**（现状评审已完成，实施未开始；详见 `docs/supply_chain_quality_gate_design.md`）
+- [ ] **T21.7 供应链与质量门禁增强**（现状评审已完成；T21.7.1 依赖输入盘点/文档纠错进行中，完整锁文件尚未生成；详见 `docs/supply_chain_quality_gate_design.md`）
   - T21.7.1：生产/开发依赖完整锁定与哈希校验，CI 使用可复现输入。
   - T21.7.2：生成 SPDX 或 CycloneDX 标准 SBOM，并绑定 lock/artifact/build evidence digest。
   - T21.7.3：先采集覆盖率基线，再按模块风险设阈值；性能预算需受控 runner 基线；压力测试 opt-in 且有界。
@@ -244,6 +244,9 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 4. T21.5/T21.6 需要外部凭证或真实环境时，先完成接口与 mock 契约；真实集成需凭证到位后再验证。
 5. 每一节点独立提交到 `main`；不做历史分支整合，不批量重写无关模块。
 6. 如果安全边界、现有测试契约或数据兼容性无法证明，暂停该节点并记录阻塞，不以弱化测试换取通过。
+
+
+| 2026-11-15 | T21.7.1 dependency input inventory | 核对 requirements、CI 安装步骤与安装文档。确认 production requirements 仅 pin 两个直接依赖，dev requirements 使用范围约束，CI 升级 pip 后在线解析；setup guide 还引用仓库中不存在的 requirements-mcp.txt。修正文档，明确 MCP bridge 为外部项目，并如实说明当前尚无传递依赖锁/哈希验证；新增文档契约测试。完整 lock 生成暂缓，需在受控 Python 3.14 环境解析并验证 Windows/Linux 目标平台及 hash，不能猜测传递版本或伪造 hash。 | 提交 `695c7a3`、`54635a9`；CI 待验证 |
 
 ## 21.4 Phase 21 执行记录
 
