@@ -283,3 +283,6 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 | 2026-11-15 | T21.6.3 explicit active deployment pointer | 增加独立 `active_deployments` 表，按 provider/environment/project 唯一定位当前 host-observed 流量归属；通过 expected-current-ID CAS 原子切换/清除，校验候选记录确属相同 scope 且 status=running；部署 ID 不能跨 scope 重复激活。旧数据库只创建空表，不从历史 running 记录推断 active。该指针不代表实时健康或路由已验证，只有 host 在路由 read-back 后才能写入；Docker rollback 继续 unsupported。 | 更新 `runtime/deployment_history.py`、`tests/test_deployment_history.py`、部署架构文档与 TaskPlan；CI 待验证 |
+
+
+| 2026-11-15 | T21.6.3 CI #304 failure correction | 根据 regression (3.14) 的 2 个失败定位到新增测试前提错误：history.append 本来就拒绝非 running 记录；另一个测试把 scope 校验错误地期待成 SQLite 唯一约束异常。修正测试为验证既有契约和跨 scope 读取/激活拒绝，不放宽生产代码约束。 | 待 CI 复验 |

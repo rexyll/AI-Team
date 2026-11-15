@@ -271,7 +271,8 @@ def test_active_deployment_compare_and_swap_switches_one_scope(tmp_path):
 def test_active_deployment_rejects_wrong_scope_and_non_running_record(tmp_path):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     history.append(make_record("other-project", project="other"))
-    history.append(make_record("stopped", status="stopped"))
+    with pytest.raises(ValueError, match="running"):
+        history.append(make_record("stopped", status="stopped"))
     with pytest.raises(ValueError, match="exact requested scope"):
         history.set_active_deployment(
             provider="docker-local", environment="staging", project="demo",
@@ -284,14 +285,17 @@ def test_active_deployment_rejects_wrong_scope_and_non_running_record(tmp_path):
         )
 
 
-def test_active_deployment_pointer_is_unique_across_scopes(tmp_path):
+def test_active_deployment_pointer_is_scoped_to_record_identity(tmp_path):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     history.append(make_record("one"))
     history.set_active_deployment(
         provider="docker-local", environment="staging", project="demo",
         deployment_id="one", expected_deployment_id=None,
     )
-    with pytest.raises(sqlite3.IntegrityError):
+    assert history.active_deployment(
+        provider="docker-local", environment="production", project="demo"
+    ) is None
+    with pytest.raises(ValueError, match="exact requested scope"):
         history.set_active_deployment(
             provider="docker-local", environment="production", project="demo",
             deployment_id="one", expected_deployment_id=None,
