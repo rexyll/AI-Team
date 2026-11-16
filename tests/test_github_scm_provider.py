@@ -180,7 +180,7 @@ def test_create_pull_request_rejects_invalid_write_response_number():
 def test_create_pull_request_updates_existing_open_match_for_exact_sha():
     transport = FakeTransport([
         _branch_ref(),
-        [{"number": 12, "head": {"ref": "feature/a", "sha": "d" * 40}}],
+        [{"number": 12, "head": {"ref": "feature/a", "sha": "d" * 40}, "base": {"ref": "main"}}],
         _branch_ref(),
         _created_or_updated_pr(),
     ])
@@ -234,11 +234,31 @@ def test_create_pull_request_rechecks_remote_sha_after_open_pr_lookup():
 def test_create_pull_request_rejects_existing_pr_for_different_head_sha():
     transport = FakeTransport([
         _branch_ref(),
-        [{"number": 12, "head": {"ref": "feature/a", "sha": "e" * 40}}],
+        [{"number": 12, "head": {"ref": "feature/a", "sha": "e" * 40}, "base": {"ref": "main"}}],
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     with pytest.raises(GitHubAPIError, match="existing pull request head SHA"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="feature/a", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "GET"]
+
+
+def test_create_pull_request_rejects_existing_pr_for_different_base_branch():
+    transport = FakeTransport([
+        _branch_ref(),
+        [{
+            "number": 12,
+            "head": {"ref": "feature/a", "sha": "d" * 40},
+            "base": {"ref": "release"},
+        }],
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="incomplete or mismatched open pull request metadata"):
         provider.create_or_update_pull_request(
             "acme/widget", head="feature/a", base="main", title="Feature A",
             body="Body", expected_head_sha="d" * 40,

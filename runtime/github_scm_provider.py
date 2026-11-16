@@ -227,15 +227,18 @@ class GitHubSCMProvider:
             existing_head = existing[0].get("head")
             existing_head_sha = existing_head.get("sha") if isinstance(existing_head, dict) else None
             existing_head_ref = existing_head.get("ref") if isinstance(existing_head, dict) else None
+            existing_base = existing[0].get("base")
+            existing_base_ref = existing_base.get("ref") if isinstance(existing_base, dict) else None
             if (
                 not isinstance(existing_number, int)
                 or isinstance(existing_number, bool)
                 or existing_number < 1
                 or existing_head_ref != head
+                or existing_base_ref != base
                 or not isinstance(existing_head_sha, str)
                 or not re.fullmatch(r"[0-9a-fA-F]{7,64}", existing_head_sha)
             ):
-                raise GitHubAPIError("GitHub returned incomplete open pull request metadata")
+                raise GitHubAPIError("GitHub returned incomplete or mismatched open pull request metadata")
             if existing_head_sha.lower() != expected_sha:
                 raise GitHubAPIError("existing pull request head SHA does not match the approved commit")
 
