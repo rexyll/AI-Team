@@ -427,3 +427,9 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 通过 inspect -> create only when absent -> inspect 完成幂等校验；create race 和结果不明时重新 inspect，只有完整 network identity 匹配才报告成功；daemon unavailable、malformed response、scope/driver/label mismatch 均 fail closed。
 - CI #603 首次回归失败原因为新测试导入路径写错（DockerCommandResult 实际定义于 runtime.local_docker_provider）；已修正导入并清理生产模块未使用导入。CI #604（run 43790617075，commit 523ed51）全部通过：全量 regression 2,683 passed / 14 skipped；安全回归 252 passed / 9 skipped；Windows toolchain E2E 成功；Coverage 全模块门槛通过（runtime 88.39% line / 75.55% branch）。
 - 本切片不 connect app、不 publish host port、不启动 Router、不改变 route map；无真实 Docker daemon 结果时不得声称 daemon-backed 验收。
+
+### T21.6.3.5.2.5 pinned Router image recipe（2026-11-16，CI 待验收）
+
+- 新增 docker/router/Dockerfile：HAProxy Technologies haproxy-alpine 3.4.7 使用多架构 index digest pin；Alpine v3.23 socat 固定为 1.8.1.3-r0；镜像 labels 写入 image contract、HAProxy 版本、socat 包版本和 base digest。
+- 新增 tests/test_local_docker_router_image_contract.py 锁定 Dockerfile 的 digest pin、精确包版本和身份 labels；新增 router-image-smoke CI job，在 Linux Docker Engine runner 实际构建镜像并校验 HAProxy/socat 二进制版本及 labels。
+- 此项不发布镜像、不把 CI 临时镜像当作项目固定最终 artifact、不启动 Router，也不声称 config syntax 或 Runtime API/路由 E2E 已验证。最终构建 image ID 必须由 Host build step 记录并作为 immutable artifact identity。

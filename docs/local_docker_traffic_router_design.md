@@ -1,6 +1,6 @@
 # Local Docker 蓝绿流量路由设计（T21.6.3.5）
 
-> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现并通过 CI #604；Router image/container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
+> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现并通过 CI #604；Router image recipe 正在进行 pinned-build CI 验收；Router container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
 > 日期：2026-11-15；范围：单机 Docker Engine、单个 project/environment scope。
 
 ## 1. 问题与目标
@@ -132,6 +132,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
    - [x] T21.6.3.5.2.2 pure HAProxy config builder：runtime/local_docker_router_config.py 纯函数生成 TCP frontend/backend、共享 active-slot map selector、双 weight-0 server 和 Unix admin socket；初始 map active none，不含 fallback / persistence。
    - [x] T21.6.3.5.2.3 Runtime API command builder/client：runtime/haproxy_runtime_api.py 提供 allowlisted show/get/set 命令，校验 map path、identifier、IP/port、slot/state；Host client 仅对 Router immutable ID 通过固定 socat Unix socket argv 传输。CI #602 全部通过（2,666 regression passed / 14 skipped；252 security passed / 9 skipped；Windows smoke 通过；Coverage runtime 88.40% line / 75.57% branch）。
    - T21.6.3.5.2.4 scope bridge network manager：确定性 scope 网络名与 SHA-256 标签；只创建/验证 user-defined local bridge，inspect-create-inspect 后校验 immutable network ID、driver、scope、labels、Internal=false、Attachable=false；不连接 app、不发布 host port、不创建 Router（CI 待验收）。
+   - T21.6.3.5.2.5 pinned Router image recipe：新增 docker/router/Dockerfile，基于 HAProxy Technologies 3.4.7 多架构 digest pin 镜像，并固定 Alpine socat package 1.8.1.3-r0；CI 独立 Docker Engine job 构建镜像并验证 HAProxy/socat 版本和 OCI labels。该切片只验证镜像构建，不启动 Router、不发布镜像、不生成项目最终镜像 digest。
 3. T21.6.3.5.3 routed deployment：应用容器不 publish，Router 唯一 publish；TCP-only validation；Router identity 与 host ports 持久化。
 4. T21.6.3.5.4 candidate + route map：双 slot、单 active-slot map、map 文件原子持久化、Runtime API command builder、read-back。
 5. T21.6.3.5.5 coordinator integration：traffic_switch_pending、持久化 intent、atomic map switch、old drain/连接排空/inspect-confirmed retire。
@@ -140,8 +141,13 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 ## 9. 未实现边界
 
-仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client；scope network manager 已通过 CI #604（2,683 regression passed / 14 skipped；252 security passed / 9 skipped；Windows smoke 成功；runtime coverage 88.39% line / 75.55% branch）。仍无经过 digest pin 和验证的 HAProxy+socat Router image、Router container bootstrap、routed app deployment、Runtime API route read-back、traffic_switch_pending phase 或 daemon-backed E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
+仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client、通过 CI #604 的 scope network manager，以及 docker/router/Dockerfile 中的 pinned HAProxy+socat image build recipe（base image index digest + exact socat package version）。router-image-smoke 正在验证实际 Docker build 和二进制版本；尚无已发布或已记录最终 digest 的项目 Router image、Router container bootstrap、routed app deployment、Runtime API route read-back、traffic_switch_pending phase 或 daemon-backed routing E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
 ## 10. 参考资料
+
+- HAProxy Technologies verified publisher image, version 3.4.7: https://hub.docker.com/r/haproxytech/haproxy-alpine
+- HAProxy 3.4.7 multi-platform image index digest: https://hub.docker.com/layers/haproxytech/haproxy-alpine/3.4.7/images/sha256-8ee937ab858c6443525e727f1f54109633cd247b808ddc2e76b14aea673066a0
+- Alpine Linux v3.23 socat package version/license metadata: https://pkgs.alpinelinux.org/packages?branch=v3.23&name=socat
+- Docker image digest and multi-platform index semantics: https://docs.docker.com/dhi/explore/security-concepts/digests/
 
 - Docker user-defined bridge: https://docs.docker.com/engine/network/ and https://docs.docker.com/engine/network/drivers/bridge/
 - HAProxy Runtime API / in-memory state: https://www.haproxy.com/documentation/haproxy-runtime-api/
