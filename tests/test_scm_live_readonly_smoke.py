@@ -7,9 +7,10 @@ from scripts import scm_live_readonly_smoke as smoke
 
 
 class FakeService:
-    def __init__(self, *, ci_status="pending", review_status="pending"):
+    def __init__(self, *, ci_status="pending", review_status="pending", draft=False):
         self.ci_status = ci_status
         self.review_status = review_status
+        self.draft = draft
         self.calls = []
 
     def get_pull_request(self, repository, pull_request_number):
@@ -17,6 +18,7 @@ class FakeService:
         return {
             "state": "open",
             "merged": False,
+            "draft": self.draft,
             "head_sha": "a" * 40,
         }
 
@@ -84,6 +86,16 @@ def test_readonly_probe_reports_ready_only_for_open_green_approved_pr():
     assert result["assessment"] == "ready"
     assert result["blockers"] == []
     assert result["pull_request"]["head_sha"] == "a" * 40
+
+
+def test_readonly_probe_blocks_draft_pr_even_when_ci_and_review_are_green():
+    service = FakeService(ci_status="success", review_status="approved", draft=True)
+
+    result = smoke.observe(service, "acme/widget", 42)
+
+    assert result["assessment"] == "blocked"
+    assert result["blockers"] == ["pull_request_draft"]
+    assert result["pull_request"]["draft"] is True
 
 
 def test_readonly_probe_does_not_print_exception_message_or_secret(

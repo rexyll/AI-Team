@@ -20,6 +20,7 @@ class LifecycleProvider:
         self.pr_head = "c" * 40
         self.pr_state = "open"
         self.merged = False
+        self.draft = False
         self.ci = "success"
         self.review = "approved"
         self.fail_pr_create = False
@@ -46,6 +47,7 @@ class LifecycleProvider:
             "head_sha": self.pr_head,
             "state": self.pr_state,
             "merged": self.merged,
+            "draft": self.draft,
         }
 
     def get_ci_status(self, repository, commit_sha):
@@ -178,6 +180,17 @@ def test_closed_pr_stops_lifecycle_before_merge():
     observation = coordinator.poll_pull_request(23)
 
     assert observation["status"] == "closed"
+    assert not any(event[0] == "merge" for event in provider.events)
+
+
+def test_draft_pr_never_reaches_ready_or_merge():
+    provider, authority, service, coordinator = _system()
+    _publish(coordinator, authority, provider)
+    provider.draft = True
+
+    observation = coordinator.poll_pull_request(23)
+
+    assert observation["status"] == "draft"
     assert not any(event[0] == "merge" for event in provider.events)
 
 

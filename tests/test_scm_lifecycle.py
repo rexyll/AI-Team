@@ -5,10 +5,11 @@ from runtime.scm_provider import SCMApprovalAuthority, SCMService
 
 
 class FakeProvider:
-    def __init__(self, *, ci="pending", review="pending"):
+    def __init__(self, *, ci="pending", review="pending", draft=False):
         self.calls = []
         self.ci = ci
         self.review = review
+        self.draft = draft
         self.head = "a" * 40
         self.local_head = "c" * 40
 
@@ -26,7 +27,7 @@ class FakeProvider:
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))
-        return {"head_sha": self.head, "state": "open", "merged": False}
+        return {"head_sha": self.head, "state": "open", "merged": False, "draft": self.draft}
 
     def get_ci_status(self, repository, commit_sha):
         self.calls.append(("ci", repository, commit_sha))
@@ -41,8 +42,8 @@ class FakeProvider:
         return {"status": "merged"}
 
 
-def _setup(*, ci="pending", review="pending", attempts=3):
-    provider = FakeProvider(ci=ci, review=review)
+def _setup(*, ci="pending", review="pending", draft=False, attempts=3):
+    provider = FakeProvider(ci=ci, review=review, draft=draft)
     authority = SCMApprovalAuthority()
     service = SCMService(provider, authority)
     config = SCMLifecycleConfig(
@@ -97,6 +98,16 @@ def test_poll_returns_ready_only_for_open_pr_green_ci_and_approved_review():
     assert result["status"] == "ready"
     assert result["head_sha"] == "a" * 40
     assert result["attempt"] == 1
+    assert not any(call[0] in {"push", "create_pr", "merge"} for call in provider.calls)
+
+
+def test_poll_blocks_draft_pr_even_when_ci_and_review_are_green():
+    coordinator, provider, _, _ = _setup(ci="success", review="approved", draft=True)
+
+    result = coordinator.poll_pull_request(19)
+
+    assert result["status"] == "draft"
+    assert result["draft"] is True
     assert not any(call[0] in {"push", "create_pr", "merge"} for call in provider.calls)
 
 

@@ -10,7 +10,7 @@
 
 `runtime.ProjectOrchestrator` accepts an optional host-created `SCMService` together with an explicit repository and pull-request number. When configured, the delivery phase performs read-only observation after product integration verification and records the PR head SHA, PR state, CI result and latest review result in the delivery task context as `scm_observation`.
 
-This observation is informational and fail-closed: only an open, unmerged PR with successful CI and an approved review is labeled `ready`; pending/unknown/failing evidence is `blocked`; transport/provider exceptions are recorded as `unavailable` with the exception type only. It never creates a branch, pushes, creates/updates a PR or merges. SCM configuration is opt-in, so projects without it retain their existing behavior. Write operations remain explicit host actions requiring one-use approvals.
+This observation is informational and fail-closed: only an open, unmerged, non-draft PR with successful CI and an approved review is labeled `ready`; draft, pending/unknown/failing evidence is `blocked`; transport/provider exceptions are recorded as `unavailable` with the exception type only. It never creates a branch, pushes, creates/updates a PR or merges. SCM configuration is opt-in, so projects without it retain their existing behavior. Write operations remain explicit host actions requiring one-use approvals.
 
 ## Host credential configuration
 
@@ -44,12 +44,13 @@ Push, PR create/update and merge each require an `SCMApproval` issued by the hos
 
 The merge path performs deterministic preflight before consuming the merge approval:
 
+- the PR must be open, unmerged, and explicitly non-draft;
 - the PR head SHA must be available;
-- commit checks and combined commit statuses must resolve to `success`;
-- the latest review state must resolve to `approved` (a latest `changes_requested` state blocks);
+- all check-run pages and combined commit statuses must resolve to `success` (incomplete pagination is not success);
+- all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, and an incomplete bounded read remains pending;
 - only then may the host call the GitHub merge endpoint using `merge`, `squash` or `rebase`.
 
-CI/review reads do not require write approval. Missing, pending or unknown CI evidence is not treated as success.
+CI/review reads do not require write approval. Missing, pending or unknown CI evidence is not treated as success. Check runs and reviews are paginated with a bounded page limit; reaching the limit without a final page fails closed rather than reporting readiness.
 
 ## Git push boundary
 

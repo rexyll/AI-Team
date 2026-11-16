@@ -118,6 +118,31 @@ def test_create_pull_request_updates_existing_open_match():
     assert transport.calls[1][2]["title"] == "Updated"
 
 
+def test_get_pull_request_includes_draft_state_and_requires_complete_metadata():
+    transport = FakeTransport([{
+        "head": {"sha": "a" * 40},
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    assert provider.get_pull_request("acme/widget", 12) == {
+        "head_sha": "a" * 40,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }
+
+    incomplete = FakeTransport([{
+        "head": {"sha": "a" * 40},
+        "state": "open",
+        "merged": False,
+    }])
+    with pytest.raises(GitHubAPIError, match="incomplete pull request state"):
+        GitHubSCMProvider(incomplete, git_service=FakeGitService()).get_pull_request("acme/widget", 12)
+
+
 def test_ci_status_aggregates_checks_and_commit_statuses():
     transport = FakeTransport([
         {"check_runs": [
@@ -132,6 +157,29 @@ def test_ci_status_aggregates_checks_and_commit_statuses():
 
     assert result["status"] == "success"
     assert len(result["check_runs"]) == 2
+
+
+def test_ci_status_paginates_check_runs_before_reporting_failure_or_success():
+    first_page = [
+        {"name": f"check-{index}", "status": "completed", "conclusion": "success"}
+        for index in range(100)
+    ]
+    second_page = [
+        {"name": "late-failure", "status": "completed", "conclusion": "failure"}
+    ]
+    transport = FakeTransport([
+        {"check_runs": first_page},
+        {"check_runs": second_page},
+        {"state": "success", "statuses": [{"state": "success"}]},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_ci_status("acme/widget", "b" * 40)
+
+    assert result["status"] == "failure"
+    assert result["checks_complete"] is True
+    assert transport.calls[0][1].endswith("?per_page=100&page=1")
+    assert transport.calls[1][1].endswith("?per_page=100&page=2")
 
 
 def test_ci_status_is_pending_if_any_check_is_in_progress():
@@ -166,6 +214,36 @@ def test_review_status_uses_latest_review_per_user():
 
     assert result["status"] == "approved"
     assert result["review_count"] == 2
+
+
+def test_review_status_reads_later_pages_before_assessing_latest_review_per_user():
+    first_page = [
+        {
+            "user": {"login": f"reviewer-{index}"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-01-01T00:00:00Z",
+        }
+        for index in range(99)
+    ]
+    first_page.append({
+        "user": {"login": "reviewer-latest"},
+        "state": "CHANGES_REQUESTED",
+        "submitted_at": "2026-01-01T00:00:00Z",
+    })
+    second_page = [{
+        "user": {"login": "reviewer-latest"},
+        "state": "APPROVED",
+        "submitted_at": "2026-01-02T00:00:00Z",
+    }]
+    transport = FakeTransport([first_page, second_page])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "approved"
+    assert result["reviews_complete"] is True
+    assert transport.calls[0][1].endswith("?per_page=100&page=1")
+    assert transport.calls[1][1].endswith("?per_page=100&page=2")
 
 
 def test_review_status_keeps_changes_requested_as_blocker():

@@ -5,15 +5,16 @@ from runtime.scm_provider import SCMApprovalAuthority, SCMService
 
 
 class FakeProvider:
-    def __init__(self, *, ci="success", review="approved", error=False):
+    def __init__(self, *, ci="success", review="approved", draft=False, error=False):
         self.ci = ci
         self.review = review
+        self.draft = draft
         self.error = error
 
     def get_pull_request(self, repository, pull_request_number):
         if self.error:
             raise RuntimeError("remote unavailable")
-        return {"head_sha": "a" * 40, "state": "open", "merged": False}
+        return {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": self.draft}
 
     def get_ci_status(self, repository, commit_sha):
         return {"status": self.ci}
@@ -41,6 +42,7 @@ def test_project_orchestrator_records_green_read_only_scm_observation():
         "pull_request_number": 17,
         "head_sha": "a" * 40,
         "pull_request_state": "open",
+        "draft": False,
         "ci_status": "success",
         "review_status": "approved",
     }
@@ -53,6 +55,15 @@ def test_project_orchestrator_never_marks_non_green_scm_observation_ready():
 
     assert result["status"] == "blocked"
     assert result["ci_status"] == "pending"
+
+
+def test_project_orchestrator_blocks_draft_even_when_ci_and_review_are_green():
+    orchestrator = _orchestrator(FakeProvider(draft=True))
+
+    result = orchestrator._observe_scm_pull_request()
+
+    assert result["status"] == "blocked"
+    assert result["draft"] is True
 
 
 def test_project_orchestrator_records_remote_failure_without_false_green():
