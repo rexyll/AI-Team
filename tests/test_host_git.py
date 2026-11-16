@@ -1,4 +1,6 @@
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -12,6 +14,12 @@ from tools.registry import TOOL_REGISTRY
 def _service(tmp_path: Path, monkeypatch):
     workspace = tmp_path / "repo"
     workspace.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet", str(workspace)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     calls = []
 
     def fake_git(
@@ -97,6 +105,7 @@ def test_revision_rejects_option_injection(tmp_path, monkeypatch):
 
 def test_init_bypasses_repository_requirement(tmp_path, monkeypatch):
     service, workspace, calls = _service(tmp_path, monkeypatch)
+    shutil.rmtree(workspace / ".git")
 
     service.init(str(workspace))
 
