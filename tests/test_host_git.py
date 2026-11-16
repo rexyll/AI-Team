@@ -466,6 +466,44 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
     ]
 
 
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_SHALLOW_FILE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_EXEC_PATH",
+        "GIT_PREFIX",
+        "git_dir",
+    ],
+)
+def test_host_push_rejects_git_repository_context_environment_overrides(
+    tmp_path, monkeypatch, variable
+):
+    service, workspace, git_calls = _service(tmp_path, monkeypatch)
+
+    with pytest.raises(PermissionError, match="Git repository context environment overrides"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+            env={variable: "untrusted-context-override"},
+        )
+
+    # The guard runs before rev-parse or any other Git subprocess.
+    assert git_calls == []
+
+
 def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

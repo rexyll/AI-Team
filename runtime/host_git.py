@@ -163,6 +163,7 @@ class HostGitOperationService:
         if remote != "origin":
             raise ValueError("only the origin remote is supported")
         root = self._sandbox.require_directory(workspace)
+        self._reject_git_repository_context_environment_overrides(env)
         self._require_repository(root, env=env)
         # Resolve the effective push URL(s), not just the fetch URL: Git
         # permits remote.<name>.pushurl and pushInsteadOf to redirect writes.
@@ -179,6 +180,34 @@ class HostGitOperationService:
         if len(urls) != 1:
             raise RuntimeError("origin must resolve to exactly one push destination")
         return urls[0]
+
+    @staticmethod
+    def _reject_git_repository_context_environment_overrides(
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        """Reject environment values that can redirect Git's repository/object context."""
+        protected = {
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_SHALLOW_FILE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_REPLACE_REF_BASE",
+            "GIT_NO_REPLACE_OBJECTS",
+            "GIT_EXEC_PATH",
+            "GIT_PREFIX",
+        }
+        effective_env = {**os.environ, **dict(env or {})}
+        injected = [key for key in effective_env if key.upper() in protected]
+        if injected:
+            raise PermissionError(
+                "Git repository context environment overrides are not allowed for host push"
+            )
 
     @staticmethod
     def _reject_git_config_environment_overrides(
