@@ -20,6 +20,13 @@ class GitHubTransport(Protocol):
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any: ...
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Fail closed on redirects so the host Bearer token is never forwarded."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class GitHubRESTTransport:
     """Small GitHub REST client. The token is injected by host configuration."""
 
@@ -65,7 +72,11 @@ class GitHubRESTTransport:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            # The default urllib redirect handler may copy Authorization
+            # into the redirected request. Never forward host credentials to
+            # a redirect target, even when the Location appears same-origin.
+            opener = urllib.request.build_opener(_NoRedirectHandler())
+            with opener.open(request, timeout=self._timeout) as response:
                 content = response.read()
         except urllib.error.HTTPError as exc:
             try:

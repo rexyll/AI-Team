@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from unittest.mock import patch
 
 import pytest
@@ -937,19 +938,91 @@ def test_rest_transport_injects_host_token_without_returning_it():
         def read(self):
             return b'{"ok":true}'
 
-    def fake_urlopen(request, timeout):
-        captured["authorization"] = request.get_header("Authorization")
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        return Response()
+    class Opener:
+        def open(self, request, timeout):
+            captured["authorization"] = request.get_header("Authorization")
+            captured["url"] = request.full_url
+            captured["timeout"] = timeout
+            return Response()
+
+    def fake_build_opener(*handlers):
+        assert len(handlers) == 1
+        assert isinstance(handlers[0], urllib.request.HTTPRedirectHandler)
+        return Opener()
 
     transport = GitHubRESTTransport("host-secret-token")
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+    with patch("urllib.request.build_opener", side_effect=fake_build_opener):
         result = transport.request("GET", "/repos/acme/widget")
 
     assert result == {"ok": True}
     assert captured["authorization"] == "Bearer host-secret-token"
     assert captured["url"] == "https://api.github.com/repos/acme/widget"
+
+
+def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    received_authorization = []
+
+    class SinkHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received_authorization.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"received":true}')
+
+        def log_message(self, *args):
+            return None
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), SinkHandler)
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header(
+                "Location",
+                f"http://127.0.0.1:{sink.server_port}/capture",
+            )
+            self.end_headers()
+
+        def log_message(self, *args):
+            return None
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect_thread = Thread(target=redirect.serve_forever, daemon=True)
+    sink_thread = Thread(target=sink.serve_forever, daemon=True)
+    redirect_thread.start()
+    sink_thread.start()
+
+    real_build_opener = urllib.request.build_opener
+
+    def build_local_opener(*handlers):
+        # Use the real urllib opener and redirect processing, but bypass
+        # ambient proxy variables so the test stays strictly loopback-only.
+        return real_build_opener(urllib.request.ProxyHandler({}), *handlers)
+
+    monkeypatch.setattr(
+        "runtime.github_scm_provider.urllib.request.build_opener",
+        build_local_opener,
+    )
+    try:
+        transport = GitHubRESTTransport("host-secret-token")
+        # The production constructor pins api.github.com. Point the private
+        # base at loopback only for this isolated transport integration test.
+        transport._api_base = f"http://127.0.0.1:{redirect.server_port}"
+
+        with pytest.raises(GitHubAPIError, match="HTTP 302"):
+            transport.request("GET", "/repos/acme/widget")
+    finally:
+        redirect.shutdown()
+        sink.shutdown()
+        redirect.server_close()
+        sink.server_close()
+        redirect_thread.join(timeout=2)
+        sink_thread.join(timeout=2)
+
+    assert received_authorization == []
 
 
 def test_rest_transport_sanitizes_http_error_without_echoing_token():
@@ -962,10 +1035,14 @@ def test_rest_transport_sanitizes_http_error_without_echoing_token():
         def close(self):
             return None
 
+    class Opener:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden", {}, ErrorResponse()
+            )
+
     transport = GitHubRESTTransport("host-secret-token")
-    with patch("urllib.request.urlopen", side_effect=__import__("urllib.error").error.HTTPError(
-        "https://api.github.com/repos/acme/widget", 403, "Forbidden", {}, ErrorResponse()
-    )):
+    with patch("urllib.request.build_opener", return_value=Opener()):
         with pytest.raises(GitHubAPIError, match="HTTP 403") as error:
             transport.request("GET", "/repos/acme/widget")
 

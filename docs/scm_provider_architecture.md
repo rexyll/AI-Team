@@ -4,7 +4,7 @@
 
 `runtime/scm_provider.py` defines the provider-neutral `SCMProvider` contract and `SCMService` host boundary. The service exposes branch push, PR create/update, CI status, review status and merge. Provider credentials stay inside the provider implementation and are never passed to Agents.
 
-`runtime/github_scm_provider.py` implements the GitHub REST adapter. `GitHubRESTTransport` requires a host-injected token and uses HTTPS, repository-scoped endpoints, a fixed API version and sanitized errors. Tests inject a fake transport; they do not contact GitHub.
+`runtime/github_scm_provider.py` implements the GitHub REST adapter. `GitHubRESTTransport` requires a host-injected token and uses HTTPS, repository-scoped endpoints, a fixed API version and sanitized errors. It rejects all HTTP redirects rather than allowing urllib to forward the host Bearer token to another origin. Provider contract tests inject a fake transport; the redirect protection also has a real loopback-only HTTP integration test and never contacts GitHub.
 
 ## Project orchestration integration
 
