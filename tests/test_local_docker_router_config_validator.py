@@ -41,6 +41,8 @@ def test_validates_generated_config_with_verified_image_id_and_readonly_isolated
     assert result.status == "valid"
     args = runner.calls[0][0]
     assert args[:7] == ["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL"]
+    assert args[args.index("--user") + 1] == f"{os.geteuid()}:{os.stat(state.directory).st_gid}"
+    assert "uid=" in args[args.index("--tmpfs") + 1]
     assert args[args.index("--entrypoint") + 1] == "/usr/local/sbin/haproxy"
     assert args[args.index("--entrypoint") + 2] == image().image_id
     assert args[-3:] == ["-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]

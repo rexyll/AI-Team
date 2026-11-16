@@ -187,7 +187,8 @@ jobs:
               )
               if state_result.status != "persisted" or state_result.record is None:
                   raise SystemExit(f"Router config state preparation failed: {state_result.status}: {state_result.detail}")
-              config_result = LocalDockerRouterConfigValidator(LocalDockerProvider()).validate(
+              provider = LocalDockerProvider()
+          config_result = LocalDockerRouterConfigValidator(provider).validate(
                   result.identity, state_result.record,
               )
               if config_result.status != "valid":

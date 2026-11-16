@@ -61,58 +61,60 @@ class LocalDockerRouterConfigValidator:
         return True
 
     @classmethod
-    def _validate_state(cls, state: RouterStateRecord) -> tuple[Path | None, Path | None, str | None]:
+    def _validate_state(cls, state: RouterStateRecord) -> tuple[Path | None, Path | None, int | None, int | None, str | None]:
         if not isinstance(state, RouterStateRecord):
-            return None, None, "state must be a RouterStateRecord"
+            return None, None, None, None, "state must be a RouterStateRecord"
         if os.name != "posix" or not hasattr(os, "geteuid"):
-            return None, None, "unsupported: private Router state requires POSIX filesystem semantics"
+            return None, None, None, None, "unsupported: private Router state requires POSIX filesystem semantics"
         if state.directory_mode != _DIRECTORY_MODE or state.file_mode != _FILE_MODE:
-            return None, None, "Router state record permissions must be 0700/0600"
+            return None, None, None, None, "Router state record permissions must be 0700/0600"
         directory = Path(state.directory)
         config_path = Path(state.config_path)
         map_path = Path(state.active_slot_map_path)
         if not all(cls._safe_path(path) for path in (directory, config_path, map_path)):
-            return None, None, "Router state paths must be absolute and contain no symlinks or Docker mount delimiters"
+            return None, None, None, None, "Router state paths must be absolute and contain no symlinks or Docker mount delimiters"
         if config_path.parent != directory or map_path.parent != directory:
-            return None, None, "Router config/map files must be direct children of the scope directory"
+            return None, None, None, None, "Router config/map files must be direct children of the scope directory"
         if config_path.name != "haproxy.cfg" or map_path.name != "active-slot.map":
-            return None, None, "Router config/map filenames are not canonical"
+            return None, None, None, None, "Router config/map filenames are not canonical"
         try:
             directory_info = directory.lstat()
             if not stat.S_ISDIR(directory_info.st_mode) or stat.S_ISLNK(directory_info.st_mode):
-                return None, None, "Router state directory must be a real directory"
+                return None, None, None, None, "Router state directory must be a real directory"
             if directory_info.st_uid != os.geteuid() or stat.S_IMODE(directory_info.st_mode) != _DIRECTORY_MODE:
-                return None, None, "Router state directory owner/mode must be current user/0700"
+                return None, None, None, None, "Router state directory owner/mode must be current user/0700"
             contents: dict[Path, bytes] = {}
             for path, expected_hash in ((config_path, state.config_sha256), (map_path, state.active_slot_map_sha256)):
                 info = path.lstat()
                 if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-                    return None, None, f"Router state file is not a regular non-symlink file: {path.name}"
+                    return None, None, None, None, f"Router state file is not a regular non-symlink file: {path.name}"
                 if info.st_uid != os.geteuid() or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != _FILE_MODE:
-                    return None, None, f"Router state file owner/mode/link count is unsafe: {path.name}"
+                    return None, None, None, None, f"Router state file owner/mode/link count is unsafe: {path.name}"
                 raw = path.read_bytes()
                 if hashlib.sha256(raw).hexdigest() != expected_hash:
-                    return None, None, f"Router state file hash mismatch: {path.name}"
+                    return None, None, None, None, f"Router state file hash mismatch: {path.name}"
                 contents[path] = raw
             if contents[map_path] != _EXPECTED_MAP.encode("utf-8"):
-                return None, None, "Router startup map must be the fail-closed active none selector"
+                return None, None, None, None, "Router startup map must be the fail-closed active none selector"
         except OSError as exc:
-            return None, None, f"{type(exc).__name__}: {exc}"
-        return config_path, map_path, None
+            return None, None, None, None, f"{type(exc).__name__}: {exc}"
+        return config_path, map_path, directory_info.st_uid, directory_info.st_gid, None
 
     def validate(self, image: DockerRouterImageIdentity, state: RouterStateRecord) -> RouterConfigValidationResult:
         """Return valid only when pinned HAProxy accepts the exact Host files."""
         if not isinstance(image, DockerRouterImageIdentity):
             raise TypeError("image must be a DockerRouterImageIdentity")
-        config_path, map_path, state_error = self._validate_state(state)
+        config_path, map_path, owner_uid, owner_gid, state_error = self._validate_state(state)
         if state_error:
             if state_error.startswith("unsupported:"):
                 return RouterConfigValidationResult("unsupported", state_error)
             return RouterConfigValidationResult("invalid_state", state_error)
-        assert config_path is not None and map_path is not None
+        assert config_path is not None and map_path is not None and owner_uid is not None and owner_gid is not None
+        tmpfs_spec = f"/run/haproxy:rw,noexec,nosuid,nodev,size=1m,uid={owner_uid},gid={owner_gid},mode=700"
         argv = [
             "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true", "--tmpfs", _TMPFS_SPEC,
+            "--user", f"{owner_uid}:{owner_gid}",
+            "--security-opt", "no-new-privileges:true", "--tmpfs", tmpfs_spec,
             "--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly",
             "--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly",
             "--entrypoint", "/usr/local/sbin/haproxy", image.image_id,
