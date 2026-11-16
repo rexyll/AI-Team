@@ -40,7 +40,7 @@ details are sanitized to prevent an echoed credential from appearing in errors.
 
 ## Write approval
 
-Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and exact write target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A PR create/update target binds head and base plus a SHA-256 digest of the canonical title/body payload, so changing either PR text field after confirmation invalidates the approval. A merge target binds PR number, exact head SHA, base branch and selected merge method. The interactive merge preview displays head, base and method; the publication preview displays the PR payload digest. Immediately before the GitHub merge request, after the service-level one-use approval and preflight, the adapter re-reads the complete Check Runs + combined statuses and requires successful, complete CI; re-reads paginated Reviews and requires a complete approved review set anchored to the expected head; then re-reads PR metadata and requires open/unmerged/non-draft state plus the exact expected head and base before issuing PUT. The request also sends the expected head SHA, which GitHub checks atomically. GitHub's merge API does not expose atomic expected-base-ref, CI-status, or review-state preconditions, so these final rechecks narrow but cannot eliminate the race between the last read and the merge request. Repositories must configure branch protection/rulesets to require the relevant status checks and review policy for server-side enforcement; adapter preflight alone cannot guarantee that a status or approval change in the final network interval will be rejected. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
+Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and exact write target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A PR create/update target binds head branch, base branch, the exact expected pushed commit SHA, and a SHA-256 digest over that source SHA plus the canonical title/body payload. The host derives that SHA from the same one-use-approved push result; the digest therefore becomes invalid if the source commit, branch/base, title or body changes. A merge target binds PR number, exact head SHA, base branch and selected merge method. The interactive merge preview displays head, base and method; the publication preview displays the exact source SHA and an approval digest covering source SHA, branch/base, title and body. Immediately before the GitHub merge request, after the service-level one-use approval and preflight, the adapter re-reads the complete Check Runs + combined statuses and requires successful, complete CI; re-reads paginated Reviews and requires a complete approved review set anchored to the expected head; then re-reads PR metadata and requires open/unmerged/non-draft state plus the exact expected head and base before issuing PUT. The request also sends the expected head SHA, which GitHub checks atomically. PR create/update has a separate limitation: GitHub's PR API accepts a mutable branch name and exposes no atomic expected-head-SHA precondition. The provider binds host approval to the exact pushed SHA, checks the remote ref before and after lookup, and verifies the POST/PATCH response; nevertheless, a concurrent push can occur between the final ref read and write. A response mismatch is surfaced as failure and never retried automatically, but the PR may already have been created/updated; the host must re-read state and obtain a new approval before retrying. GitHub's merge API does not expose atomic expected-base-ref, CI-status, or review-state preconditions, so these final rechecks narrow but cannot eliminate the race between the last read and the merge request. Repositories must configure branch protection/rulesets to require the relevant status checks and review policy for server-side enforcement; adapter preflight alone cannot guarantee that a status or approval change in the final network interval will be rejected. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
 
 The merge path performs deterministic preflight before consuming the merge approval:
 
@@ -60,11 +60,19 @@ Git push is implemented by `HostGitOperationService`, not the Agent-visible `git
 
 `runtime/scm_lifecycle.py` adds a host-callable lifecycle coordinator. It
 requires two distinct, one-use approvals: one scoped to the exact local HEAD
-and target branch for push, and another scoped to the PR head/base plus the
-SHA-256 digest of its exact title/body payload for PR creation or update. The coordinator does not issue approvals and must only be
-called after an explicit operator authorization flow. Push completes before
-the PR write is attempted; if the PR write fails, the pushed branch remains
-available for a safe retry after a new PR approval.
+and target branch for push, and another scoped to the PR head/base, the exact
+SHA returned by the approved push, and a SHA-256 digest covering that source
+SHA plus the exact title/body payload for PR creation or update. The coordinator
+does not issue approvals and must only be called after an explicit operator
+authorization flow. Push completes before the PR write is attempted; the host
+passes the confirmed push SHA into the PR approval and provider call. The
+provider reads the remote branch ref before the open-PR lookup and again
+immediately before POST/PATCH; an existing open PR must match head ref, head
+SHA and base ref. The write response must confirm the same PR head ref/SHA and
+base ref, and SCMService independently validates the provider's created/updated
+status, PR number and head SHA before reporting success. A PR write failure
+does not trigger a hidden retry; the pushed branch remains available for a
+fresh read and a new PR approval.
 
 The coordinator can poll PR metadata, CI and review evidence for a bounded
 number of attempts (1–120) with a bounded interval (0–300 seconds). It returns
@@ -162,14 +170,20 @@ python main.py --scm-publish-pr \
 It requires `AI_TEAM_GITHUB_TOKEN` and
 `AI_TEAM_GITHUB_REPOSITORY=owner/name`, but does not require a default PR
 number. Before any remote write, it reads and displays the exact local HEAD SHA,
-repository, branch, base and PR title. The operator must type `yes` at two
+repository, branch, base, PR title, exact PR source SHA and a digest
+covering source SHA + title/body. The operator must type `yes` at two
 separate prompts: first to approve pushing that exact SHA, then to approve
-creating/updating the PR. Any other response cancels before the corresponding
-write. The host issues two separate one-use approvals scoped to the push
-(branch + exact SHA) and PR head/base/title/body digest. The provider verifies that the
-local HEAD has not changed and that `origin` points to the approved repository
-before pushing. The command is standalone and cannot be combined with a normal
-delivery invocation.
+creating/updating a PR for that same commit and displayed payload. Any other
+response cancels before the corresponding write. The host issues two separate
+one-use approvals scoped to the push (branch + exact SHA) and PR (head branch,
+base branch, expected pushed SHA and canonical title/body digest). The provider
+checks the remote branch SHA before and after open-PR lookup, validates an
+existing PR's head/base identity, and validates the POST/PATCH response against
+the approved source SHA and target branches. This narrows but cannot eliminate
+the race between the final remote-ref read and the GitHub PR write API, which
+has no atomic expected-head-SHA parameter; any post-write response mismatch is
+reported as failure without automatic retry. The command is standalone and
+cannot be combined with a normal delivery invocation.
 
 Read-only PR polling needs read access to pull requests, checks and commit
 statuses. Publication additionally requires write access to contents (git push)
