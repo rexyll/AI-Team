@@ -446,6 +446,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 新增 runtime/local_docker_router_image.py：仅用固定 Dockerfile 和 docker/router 最小构建 context，固定 tag 仅用于 build/inspect；inspect 校验完整 SHA-256 image ID、linux/amd64|arm64、OCI labels、upstream Entrypoint/Cmd。
 - 仅当 image inspect 匹配后，才按 immutable image ID 启动临时验证容器；容器使用 --network none、--read-only、--cap-drop ALL、no-new-privileges，不挂载卷、不发布端口，检查 HAProxy/socat 运行时二进制和精确版本。
 - 任一步失败均不返回可信 image identity；验证通过仅返回完整 local image ID，不创建 persistent Router container，不发布 registry artifact。
+- 下一步将 router-image-smoke CI job 改为直接调用此 Host manager 对真实 Docker Engine 执行 build/inspect/immutable-ID temp-container verify，以免只对等价 shell 命令做验证。
 
 ### T21.6.3.5.2.6 CI 修复记录（2026-11-16）
 

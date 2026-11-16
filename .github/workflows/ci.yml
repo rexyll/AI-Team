@@ -146,27 +146,32 @@ jobs:
           retention-days: 30
 
   router-image-smoke:
-    name: Pinned Router image build smoke (Docker Engine)
+    name: Host Router image build and immutable verification (Docker Engine)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Router image from pinned base and package versions
-        env:
-          ROUTER_IMAGE: ai-team-router-smoke
-        run: docker build --pull --file docker/router/Dockerfile --tag "$ROUTER_IMAGE" .
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
 
-      - name: Verify HAProxy, socat and image contract
-        shell: bash
-        env:
-          ROUTER_IMAGE: ai-team-router-smoke
+      - name: Build and verify via production Host manager against Docker Engine
         run: |
-          docker run --rm --entrypoint /bin/sh "$ROUTER_IMAGE" -ec '
-            command -v haproxy
-            command -v socat
-            haproxy -vv | grep -F "HAProxy version 3.4.7"
-            socat -V | grep -F "socat version 1.8.1.3"
-            apk info -v | grep -Fx "socat-1.8.1.3-r0"
-          '
-          test "$(docker image inspect --format '{{ index .Config.Labels "com.ai-team.router.image-contract" }}' "$ROUTER_IMAGE")" = "1"
-          test "$(docker image inspect --format '{{ index .Config.Labels "com.ai-team.router.base-image" }}' "$ROUTER_IMAGE")" = "haproxytech/haproxy-alpine@sha256:c9d745967c0651adbfdf0150a739a833a790f3b4eced1758374a6b0f3820c8d9"
+          python - <<'PY'
+          from pathlib import Path
+          from runtime.local_docker_provider import LocalDockerProvider
+          from runtime.local_docker_router_image import LocalDockerRouterImageManager
+
+          result = LocalDockerRouterImageManager(
+              LocalDockerProvider(), Path.cwd()
+          ).build_and_verify()
+          if result.status != "verified" or result.identity is None:
+              raise SystemExit(
+                  f"Router image build/verification failed: {result.status}: {result.detail}"
+              )
+          print(f"Verified immutable Router image ID: {result.identity.image_id}")
+          print(f"Platform: {result.identity.operating_system}/{result.identity.architecture}")
+          print(f"HAProxy: {result.identity.haproxy_version}")
+          print(f"socat: {result.identity.socat_package_version}")
+          PY
