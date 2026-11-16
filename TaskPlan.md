@@ -484,3 +484,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 新增 LocalDockerRouterContainerManager：先按 deterministic container name inspect；只有明确 No such object/container 才尝试创建；创建后无论 exit code 成败均 inspect 回读完整 Docker 容器配置与 immutable ID。
 - 已存在但身份/网络/端口/挂载/安全配置错配时 fail closed，不执行 stop/rm/recreate；创建竞争或 Docker 返回模糊结果时，只有 post-create exact inspect verified 才返回 existing；创建成功却无法 inspect 则不报告成功。
 - daemon unavailable / timeout / port collision / malformed inspect 均返回明确状态；不启动 app，不切换 active-slot，不删除容器、不清理 host ports。
+
+### T21.6.3.5.2.9 CI 修复记录（2026-11-16）
+
+- CI #616（run 43796074649，commit 02c88b9）全量 regression 2,740 passed / 14 skipped，security 252 passed / 9 skipped；唯一失败为新测试对固定 run argv 前缀写成 `['run']`，而实际契约正确为 `['run', '--detach']`。修复测试精确检查 inspect/run/inspect 三步顺序；Host image manager Docker Engine job 已通过。该失败不是生产 manager 行为错误。

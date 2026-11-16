@@ -124,7 +124,9 @@ def test_absent_router_is_created_and_reinspected_by_exact_name(tmp_path):
     assert result.status == "created" and result.container_id == "c" * 64
     assert runner.calls[1][0] == list(spec.run_argv)
     assert runner.calls[2][0] == ["container", "inspect", "--format", "{{json .}}", spec.container_name]
-    assert all(args[0:2] in (["container", "inspect"], ["run"]) for args, _, _ in runner.calls)
+    assert runner.calls[0][0][0:2] == ["container", "inspect"]
+    assert runner.calls[1][0][0:2] == ["run", "--detach"]
+    assert runner.calls[2][0][0:2] == ["container", "inspect"]
     assert all("rm" not in args and "stop" not in args for args, _, _ in runner.calls)
 
 
