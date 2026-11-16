@@ -150,7 +150,35 @@ class GitHubSCMProvider:
         first_line = output.splitlines()[0] if output else ""
         if first_line != "exit_code=0":
             raise GitHubAPIError("git push failed; host output is intentionally redacted")
-        return {"status": "pushed", "repository": repository, "branch": branch}
+        return {
+            "status": "pushed",
+            "repository": repository,
+            "branch": branch,
+            "head_sha": expected_head_sha,
+        }
+
+    @staticmethod
+    def _branch_ref_segment(branch: str) -> str:
+        if (
+            not isinstance(branch, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch)
+            or branch.endswith((".", "/"))
+            or "//" in branch
+            or ".." in branch
+            or "@{" in branch
+            or any(part in {"", ".", ".."} for part in branch.split("/"))
+        ):
+            raise ValueError("head must be a safe local branch name")
+        return urllib.parse.quote(branch, safe="/")
+
+    def _remote_branch_sha(self, repository: str, branch: str) -> str:
+        path = f"{self._repo_path(repository)}/git/ref/heads/{self._branch_ref_segment(branch)}"
+        result = self._transport.request("GET", path)
+        object_data = result.get("object") if isinstance(result, dict) else None
+        sha = object_data.get("sha") if isinstance(object_data, dict) else None
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
+            raise GitHubAPIError("GitHub returned an invalid remote branch reference")
+        return sha
 
     def create_or_update_pull_request(
         self,
@@ -160,14 +188,27 @@ class GitHubSCMProvider:
         base: str,
         title: str,
         body: str,
+        expected_head_sha: str,
     ) -> dict[str, Any]:
         root = self._repo_path(repository)
-        for name, value in (("head", head), ("base", base), ("title", title)):
+        for name, value in (("base", base), ("title", title)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be non-empty")
+        if not isinstance(body, str):
+            raise TypeError("body must be a string")
+        if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
+            raise ValueError("expected_head_sha must be a hexadecimal SHA")
+        expected_sha = expected_head_sha.lower()
+        # A PR API takes a mutable branch name, not a commit SHA. Anchor the
+        # approval to the remote ref, then re-read it after the open-PR lookup
+        # immediately before POST/PATCH.
+        initial_sha = self._remote_branch_sha(repository, head)
+        if initial_sha.lower() != expected_sha:
+            raise GitHubAPIError("remote head branch SHA changed after PR approval")
+
         query = urllib.parse.urlencode({
             "state": "open",
-            "head": head if ":" in head else f"{repository.split('/')[0]}:{head}",
+            "head": f"{repository.split('/')[0]}:{head}",
             "base": base,
         })
         existing = self._transport.request("GET", f"{root}/pulls?{query}")
@@ -178,12 +219,24 @@ class GitHubSCMProvider:
         existing_number: int | None = None
         if existing:
             existing_number = existing[0].get("number")
+            existing_head = existing[0].get("head")
+            existing_head_sha = existing_head.get("sha") if isinstance(existing_head, dict) else None
             if (
                 not isinstance(existing_number, int)
                 or isinstance(existing_number, bool)
                 or existing_number < 1
+                or not isinstance(existing_head_sha, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{7,64}", existing_head_sha)
             ):
-                raise GitHubAPIError("GitHub returned an invalid pull request number")
+                raise GitHubAPIError("GitHub returned incomplete open pull request metadata")
+            if existing_head_sha.lower() != expected_sha:
+                raise GitHubAPIError("existing pull request head SHA does not match the approved commit")
+
+        current_sha = self._remote_branch_sha(repository, head)
+        if current_sha.lower() != expected_sha:
+            raise GitHubAPIError("remote head branch SHA changed before PR write")
+
+        if existing_number is not None:
             result = self._transport.request(
                 "PATCH",
                 f"{root}/pulls/{existing_number}",
@@ -192,7 +245,9 @@ class GitHubSCMProvider:
             action = "updated"
         else:
             result = self._transport.request(
-                "POST", f"{root}/pulls", {"head": head, "base": base, "title": title, "body": body}
+                "POST",
+                f"{root}/pulls",
+                {"head": head, "base": base, "title": title, "body": body},
             )
             action = "created"
         result_number = result.get("number") if isinstance(result, dict) else None
@@ -203,12 +258,23 @@ class GitHubSCMProvider:
             or (existing_number is not None and result_number != existing_number)
         ):
             raise GitHubAPIError("GitHub returned an invalid pull request response")
+        result_head = result.get("head") if isinstance(result, dict) else None
+        result_head_sha = result_head.get("sha") if isinstance(result_head, dict) else None
+        if (
+            not isinstance(result_head_sha, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{7,64}", result_head_sha)
+            or result_head_sha.lower() != expected_sha
+        ):
+            raise GitHubAPIError(
+                "GitHub PR write response head SHA does not match the approved commit"
+            )
         return {
             "status": action,
-            "number": result["number"],
+            "number": result_number,
             "url": result.get("html_url"),
             "head": head,
             "base": base,
+            "head_sha": expected_sha,
         }
 
     def get_pull_request(self, repository: str, pull_request_number: int) -> dict[str, Any]:

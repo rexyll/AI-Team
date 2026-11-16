@@ -998,6 +998,7 @@ def main() -> int:
                 base=args.scm_base_branch,
                 title=args.scm_pr_title,
                 body=body,
+                expected_head_sha=head_sha,
             )
             pr_payload_sha256 = pr_approval_target.rsplit("sha256=", 1)[1]
             preview = (
@@ -1005,8 +1006,9 @@ def main() -> int:
                 f"Local repository: {args.scm_local_repository}\n"
                 f"Push: {args.scm_head_branch} @ {head_sha}\n"
                 f"PR: {args.scm_head_branch} -> {args.scm_base_branch}\n"
+                f"PR source SHA: {head_sha}\n"
                 f"Title: {args.scm_pr_title}\n"
-                f"PR content SHA-256 (title + body): {pr_payload_sha256}"
+                f"PR approval SHA-256 (source SHA + title + body): {pr_payload_sha256}"
             )
             print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
             push_confirmation = _read_host_confirmation(

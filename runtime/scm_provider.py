@@ -24,21 +24,31 @@ _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 
-def scm_pull_request_approval_target(*, head: str, base: str, title: str, body: str) -> str:
-    """Bind a PR write approval to the exact head/base/title/body payload."""
+def scm_pull_request_approval_target(
+    *, head: str, base: str, title: str, body: str, expected_head_sha: str
+) -> str:
+    """Bind a PR write approval to branch, exact pushed SHA and exact payload."""
     head = _non_empty(head, "head")
     base = _non_empty(base, "base")
     title = _non_empty(title, "title")
     if not isinstance(body, str):
         raise TypeError("body must be a string")
+    if not isinstance(expected_head_sha, str) or not _SHA.fullmatch(expected_head_sha):
+        raise ValueError("expected_head_sha must be a hexadecimal SHA")
     payload = json.dumps(
-        {"head": head, "base": base, "title": title, "body": body},
+        {
+            "head": head,
+            "base": base,
+            "title": title,
+            "body": body,
+            "expected_head_sha": expected_head_sha.lower(),
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()
-    return f"{head}:{base}:sha256={digest}"
+    return f"{head}:{base}:{expected_head_sha.lower()}:sha256={digest}"
 
 
 def scm_merge_approval_target(
@@ -176,7 +186,14 @@ class SCMProvider(Protocol):
     ) -> dict[str, Any]: ...
 
     def create_or_update_pull_request(
-        self, repository: str, *, head: str, base: str, title: str, body: str
+        self,
+        repository: str,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        expected_head_sha: str,
     ) -> dict[str, Any]: ...
 
     def get_pull_request(self, repository: str, pull_request_number: int) -> dict[str, Any]: ...
@@ -240,9 +257,14 @@ class SCMService:
             repository=repository,
             target=f"{branch}:{head_sha}",
         )
-        return self._provider.push_branch(
+        result = self._provider.push_branch(
             repository, local_repository, branch, expected_head_sha=head_sha
         )
+        if not isinstance(result, dict) or result.get("status") != "pushed":
+            raise SCMPreflightError("provider did not confirm the approved branch push")
+        # The service, not provider-supplied metadata, anchors the published
+        # branch to the exact SHA observed and approved immediately above.
+        return {**result, "head_sha": head_sha}
 
     def create_or_update_pull_request(
         self,
@@ -252,6 +274,7 @@ class SCMService:
         base: str,
         title: str,
         body: str,
+        expected_head_sha: str,
         approval: SCMApproval | None,
     ) -> dict[str, Any]:
         repository = _repository(repository)
@@ -260,11 +283,14 @@ class SCMService:
         title = _non_empty(title, "title")
         if not isinstance(body, str):
             raise TypeError("body must be a string")
+        if not isinstance(expected_head_sha, str) or not _SHA.fullmatch(expected_head_sha):
+            raise ValueError("expected_head_sha must be a hexadecimal SHA")
         target = scm_pull_request_approval_target(
             head=head,
             base=base,
             title=title,
             body=body,
+            expected_head_sha=expected_head_sha,
         )
         self._approvals.consume(
             approval,
@@ -273,7 +299,12 @@ class SCMService:
             target=target,
         )
         return self._provider.create_or_update_pull_request(
-            repository, head=head, base=base, title=title, body=body
+            repository,
+            head=head,
+            base=base,
+            title=title,
+            body=body,
+            expected_head_sha=expected_head_sha,
         )
 
     def get_pull_request(self, repository: str, pull_request_number: int) -> dict[str, Any]:

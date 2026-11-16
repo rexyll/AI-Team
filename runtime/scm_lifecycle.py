@@ -76,12 +76,16 @@ class SCMLifecycleCoordinator:
             head_branch,
             approval=push_approval,
         )
+        expected_head_sha = pushed.get("head_sha") if isinstance(pushed, dict) else None
+        if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
+            raise RuntimeError("SCM push did not return the exact approved HEAD SHA")
         pull_request = self._service.create_or_update_pull_request(
             self._config.repository,
             head=head_branch,
             base=self._config.base_branch,
             title=title,
             body=body,
+            expected_head_sha=expected_head_sha,
             approval=pull_request_approval,
         )
         return {
