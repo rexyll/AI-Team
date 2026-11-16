@@ -375,6 +375,22 @@ def test_merge_pull_request_rechecks_head_and_base_before_github_merge_endpoint(
     assert transport.calls[1][2]["sha"] == "d" * 40
 
 
+def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
+    transport = FakeTransport([None])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="invalid pull request metadata"):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET"]
+
+
 def test_merge_pull_request_blocks_base_drift_before_put():
     transport = FakeTransport([{
         "head": {"sha": "d" * 40},

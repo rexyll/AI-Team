@@ -43,8 +43,16 @@ class FakeProvider:
         self.calls.append(("review", repository, pull_request_number))
         return {"status": self.review}
 
-    def merge_pull_request(self, repository, pull_request_number, *, merge_method, expected_head_sha):
-        self.calls.append(("merge", repository, pull_request_number))
+    def merge_pull_request(
+        self,
+        repository,
+        pull_request_number,
+        *,
+        merge_method,
+        expected_head_sha,
+        expected_base_branch,
+    ):
+        self.calls.append(("merge", repository, pull_request_number, expected_base_branch))
         return {"status": "merged"}
 
 

@@ -387,6 +387,8 @@ class GitHubSCMProvider:
         expected_head_sha: str,
         expected_base_branch: str,
     ) -> dict[str, Any]:
+        if not isinstance(pull_request_number, int) or isinstance(pull_request_number, bool) or pull_request_number < 1:
+            raise ValueError("pull_request_number must be positive")
         if merge_method not in {"merge", "squash", "rebase"}:
             raise ValueError("unsupported merge method")
         if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
@@ -399,8 +401,10 @@ class GitHubSCMProvider:
         current = self._transport.request(
             "GET", f"{self._repo_path(repository)}/pulls/{pull_request_number}"
         )
-        current_head = current.get("head") if isinstance(current, dict) else None
-        current_base = current.get("base") if isinstance(current, dict) else None
+        if not isinstance(current, dict):
+            raise GitHubAPIError("GitHub returned invalid pull request metadata before merge")
+        current_head = current.get("head")
+        current_base = current.get("base")
         current_head_sha = current_head.get("sha") if isinstance(current_head, dict) else None
         current_base_branch = current_base.get("ref") if isinstance(current_base, dict) else None
         if (

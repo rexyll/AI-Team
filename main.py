@@ -900,7 +900,7 @@ def main() -> int:
             )
             print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
             confirmation = _read_host_confirmation(
-                "Type 'yes' to approve merging this exact PR head after fresh preflight: "
+                "Type 'yes' to approve merging this exact PR head into the displayed base branch after fresh preflight: "
             )
             if confirmation != "yes":
                 print(
