@@ -171,7 +171,7 @@ class SCMApprovalAuthority:
         if now.tzinfo is None:
             raise ValueError("now must be timezone-aware")
         expires = datetime.fromisoformat(approval.expires_at)
-        if now > expires:
+        if now >= expires:
             raise SCMApprovalError("SCM approval has expired")
         return approval
 
