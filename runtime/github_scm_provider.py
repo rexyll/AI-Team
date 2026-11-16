@@ -176,7 +176,12 @@ class GitHubSCMProvider:
         result = self._transport.request("GET", path)
         object_data = result.get("object") if isinstance(result, dict) else None
         sha = object_data.get("sha") if isinstance(object_data, dict) else None
-        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
+        ref_name = result.get("ref") if isinstance(result, dict) else None
+        if (
+            ref_name != f"refs/heads/{branch}"
+            or not isinstance(sha, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha)
+        ):
             raise GitHubAPIError("GitHub returned an invalid remote branch reference")
         return sha
 
@@ -221,10 +226,12 @@ class GitHubSCMProvider:
             existing_number = existing[0].get("number")
             existing_head = existing[0].get("head")
             existing_head_sha = existing_head.get("sha") if isinstance(existing_head, dict) else None
+            existing_head_ref = existing_head.get("ref") if isinstance(existing_head, dict) else None
             if (
                 not isinstance(existing_number, int)
                 or isinstance(existing_number, bool)
                 or existing_number < 1
+                or existing_head_ref != head
                 or not isinstance(existing_head_sha, str)
                 or not re.fullmatch(r"[0-9a-fA-F]{7,64}", existing_head_sha)
             ):
@@ -260,13 +267,18 @@ class GitHubSCMProvider:
             raise GitHubAPIError("GitHub returned an invalid pull request response")
         result_head = result.get("head") if isinstance(result, dict) else None
         result_head_sha = result_head.get("sha") if isinstance(result_head, dict) else None
+        result_head_ref = result_head.get("ref") if isinstance(result_head, dict) else None
+        result_base = result.get("base") if isinstance(result, dict) else None
+        result_base_ref = result_base.get("ref") if isinstance(result_base, dict) else None
         if (
-            not isinstance(result_head_sha, str)
+            result_head_ref != head
+            or not isinstance(result_head_sha, str)
             or not re.fullmatch(r"[0-9a-fA-F]{7,64}", result_head_sha)
             or result_head_sha.lower() != expected_sha
+            or result_base_ref != base
         ):
             raise GitHubAPIError(
-                "GitHub PR write response head SHA does not match the approved commit"
+                "GitHub PR write response branch, base or head SHA does not match the approved target"
             )
         return {
             "status": action,

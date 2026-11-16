@@ -307,13 +307,19 @@ class SCMService:
             expected_head_sha=expected_head_sha,
         )
         result_head_sha = result.get("head_sha") if isinstance(result, dict) else None
+        result_status = result.get("status") if isinstance(result, dict) else None
+        result_number = result.get("number") if isinstance(result, dict) else None
         if (
-            not isinstance(result_head_sha, str)
+            result_status not in {"created", "updated"}
+            or not isinstance(result_number, int)
+            or isinstance(result_number, bool)
+            or result_number < 1
+            or not isinstance(result_head_sha, str)
             or not _SHA.fullmatch(result_head_sha)
             or result_head_sha.lower() != expected_head_sha.lower()
         ):
             raise SCMPreflightError(
-                "provider did not confirm the PR write against the approved HEAD SHA"
+                "provider did not confirm a created/updated PR against the approved HEAD SHA"
             )
         return result
 

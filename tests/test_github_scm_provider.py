@@ -81,14 +81,15 @@ def test_push_branch_reports_nonzero_git_exit_code():
 
 
 def _branch_ref(sha="d" * 40):
-    return {"object": {"sha": sha}}
+    return {"ref": "refs/heads/feature/a", "object": {"sha": sha}}
 
 
 def _created_or_updated_pr(number=12, sha="d" * 40):
     return {
         "number": number,
         "html_url": f"https://github.com/acme/widget/pull/{number}",
-        "head": {"sha": sha},
+        "head": {"ref": "feature/a", "sha": sha},
+        "base": {"ref": "main"},
     }
 
 
@@ -178,7 +179,7 @@ def test_create_pull_request_rejects_invalid_write_response_number():
 def test_create_pull_request_updates_existing_open_match_for_exact_sha():
     transport = FakeTransport([
         _branch_ref(),
-        [{"number": 12, "head": {"sha": "d" * 40}}],
+        [{"number": 12, "head": {"ref": "feature/a", "sha": "d" * 40}}],
         _branch_ref(),
         _created_or_updated_pr(),
     ])
@@ -232,7 +233,7 @@ def test_create_pull_request_rechecks_remote_sha_after_open_pr_lookup():
 def test_create_pull_request_rejects_existing_pr_for_different_head_sha():
     transport = FakeTransport([
         _branch_ref(),
-        [{"number": 12, "head": {"sha": "e" * 40}}],
+        [{"number": 12, "head": {"ref": "feature/a", "sha": "e" * 40}}],
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 

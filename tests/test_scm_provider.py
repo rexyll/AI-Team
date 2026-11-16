@@ -165,6 +165,41 @@ def test_pr_write_approval_is_bound_to_exact_title_and_body(title, body):
     assert not any(call[0] == "create_pr" for call in provider.calls)
 
 
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {"status": "pending", "number": 7, "head_sha": "a" * 40},
+        {"status": "created", "number": True, "head_sha": "a" * 40},
+        {"status": "created", "number": 7, "head_sha": "b" * 40},
+    ],
+)
+def test_pr_write_fails_closed_on_malformed_provider_result(malformed_result):
+    service, provider, authority = _service()
+    provider.create_or_update_pull_request = lambda *args, **kwargs: malformed_result
+    approval = _approval(
+        authority,
+        "create_or_update_pull_request",
+        scm_pull_request_approval_target(
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="a" * 40,
+        ),
+    )
+
+    with pytest.raises(SCMPreflightError, match="provider did not confirm"):
+        service.create_or_update_pull_request(
+            "acme/widget",
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="a" * 40,
+            approval=approval,
+        )
+
+
 def test_pr_write_fails_closed_when_provider_does_not_confirm_expected_sha():
     service, provider, authority = _service()
     provider.pr_write_head_sha = "b" * 40
