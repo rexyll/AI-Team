@@ -318,3 +318,71 @@ def test_agent_git_parser_still_rejects_host_only_remote_and_push():
     for command in ("push origin HEAD:refs/heads/main", "remote get-url origin"):
         with pytest.raises(PermissionError, match="not allowed"):
             _parse_git_command(command)
+
+
+
+def test_host_push_publishes_only_the_approved_sha_to_a_real_bare_repository(tmp_path):
+    """Exercise HostGitOperationService against real local Git transport.
+
+    This verifies the subprocess/argv boundary and exact ref update without
+    pretending to exercise GitHub authentication, PR APIs, CI or reviews.
+    """
+    import os
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("Git executable is unavailable")
+
+    remote = tmp_path / "sandbox.git"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def git(*arguments, cwd=None):
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=str(cwd) if cwd is not None else None,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    git("init", "--bare", "--quiet", str(remote))
+    git("init", "--quiet", str(workspace))
+    git("config", "user.name", "Host Git Integration")
+    git("config", "user.email", "host-git@example.invalid")
+    (workspace / "payload.txt").write_text("approved host push\\n", encoding="utf-8")
+    git("add", "payload.txt", cwd=workspace)
+    git("commit", "--quiet", "-m", "approved fixture", cwd=workspace)
+
+    approved_sha = git("rev-parse", "HEAD", cwd=workspace)
+    target_branch = "feature/host-transport-integration"
+    git("remote", "add", "origin", str(remote), cwd=workspace)
+    git("config", "remote.origin.mirror", "true", cwd=workspace)
+    git("config", "push.followTags", "true", cwd=workspace)
+    git("tag", "-a", "fixture-tag", "-m", "must not be auto-pushed", cwd=workspace)
+
+    hook_marker = tmp_path / "pre-push-hook-ran"
+    hook = workspace / ".git" / "hooks" / "pre-push"
+    hook.write_text(f"#!/bin/sh\\nprintf 'called' > '{hook_marker}'\\n", encoding="utf-8")
+    os.chmod(hook, 0o700)
+
+    service = HostGitOperationService(WorkspaceSandbox(tmp_path))
+    approved_remote_url = service.remote_url(str(workspace))
+    assert approved_remote_url == str(remote)
+
+    result = service.push(
+        str(workspace),
+        branch=target_branch,
+        commit_sha=approved_sha,
+        expected_remote_url=approved_remote_url,
+    )
+
+    assert result.startswith("exit_code=0\\n")
+    assert git(
+        "--git-dir", str(remote), "rev-parse", f"refs/heads/{target_branch}"
+    ) == approved_sha
+    refs = git("--git-dir", str(remote), "for-each-ref", "--format=%(refname)")
+    assert refs.splitlines() == [f"refs/heads/{target_branch}"]
+    assert not hook_marker.exists()
