@@ -42,7 +42,9 @@ def observe(
     pull_request = service.get_pull_request(repository, pull_request_number)
     head_sha = pull_request["head_sha"]
     ci = service.get_ci_status(repository, head_sha)
-    review = service.get_review_status(repository, pull_request_number)
+    review = service.get_review_status(
+        repository, pull_request_number, expected_head_sha=head_sha
+    )
 
     pull_request_open = (
         pull_request.get("state") == "open" and pull_request.get("merged") is False

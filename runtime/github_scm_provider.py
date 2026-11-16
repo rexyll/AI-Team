@@ -223,6 +223,8 @@ class GitHubSCMProvider:
         draft = result.get("draft") if isinstance(result, dict) else None
         base = result.get("base") if isinstance(result, dict) else None
         base_branch = base.get("ref") if isinstance(base, dict) else None
+        user = result.get("user") if isinstance(result, dict) else None
+        author_login = user.get("login") if isinstance(user, dict) else None
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
             raise GitHubAPIError("GitHub returned no valid pull request head SHA")
         if (
@@ -231,6 +233,8 @@ class GitHubSCMProvider:
             or not isinstance(draft, bool)
             or not isinstance(base_branch, str)
             or not base_branch.strip()
+            or not isinstance(author_login, str)
+            or not author_login.strip()
         ):
             raise GitHubAPIError("GitHub returned incomplete pull request state metadata")
         return {
@@ -239,6 +243,7 @@ class GitHubSCMProvider:
             "merged": merged,
             "draft": draft,
             "base_branch": base_branch,
+            "author_login": author_login,
         }
 
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
@@ -368,6 +373,13 @@ class GitHubSCMProvider:
                 reviews_complete = True
                 break
 
+        # Anchor the complete review set to the current PR head after pagination.
+        # GitHub may retain an APPROVED review on an older commit when stale-review
+        # dismissal is not enabled for the repository.
+        pull_request = self.get_pull_request(repository, pull_request_number)
+        current_head_sha = pull_request["head_sha"]
+        pull_request_author = pull_request["author_login"]
+
         known_review_states = {
             "APPROVED",
             "CHANGES_REQUESTED",
@@ -382,10 +394,17 @@ class GitHubSCMProvider:
             login = user.get("login") if isinstance(user, dict) else None
             state = review.get("state")
             submitted_at = review.get("submitted_at")
+            commit_id = review.get("commit_id")
             if not isinstance(login, str) or not login or not isinstance(state, str):
                 raise GitHubAPIError("GitHub returned incomplete pull request review metadata")
             if submitted_at is not None and not isinstance(submitted_at, str):
                 raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+            if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_id):
+                raise GitHubAPIError("GitHub returned an invalid review commit SHA")
+            if commit_id.lower() != current_head_sha.lower():
+                continue
+            if login.casefold() == pull_request_author.casefold():
+                continue
             normalized_state = state.upper()
             if normalized_state not in known_review_states:
                 has_unknown_review_state = True
@@ -411,6 +430,7 @@ class GitHubSCMProvider:
             "review_count": len(latest_by_user),
             "states": states,
             "reviews_complete": reviews_complete,
+            "reviewed_head_sha": current_head_sha,
         }
 
     def merge_pull_request(

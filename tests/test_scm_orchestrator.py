@@ -5,11 +5,15 @@ from runtime.scm_provider import SCMApprovalAuthority, SCMService
 
 
 class FakeProvider:
-    def __init__(self, *, ci="success", review="approved", draft=False, error=False):
+    def __init__(
+        self, *, ci="success", review="approved", draft=False, error=False,
+        reviewed_head_sha="a" * 40,
+    ):
         self.ci = ci
         self.review = review
         self.draft = draft
         self.error = error
+        self.reviewed_head_sha = reviewed_head_sha
 
     def get_pull_request(self, repository, pull_request_number):
         if self.error:
@@ -26,7 +30,10 @@ class FakeProvider:
         return {"status": self.ci}
 
     def get_review_status(self, repository, pull_request_number):
-        return {"status": self.review}
+        return {
+            "status": self.review,
+            "reviewed_head_sha": self.reviewed_head_sha,
+        }
 
 
 def _orchestrator(provider):
@@ -52,6 +59,15 @@ def test_project_orchestrator_records_green_read_only_scm_observation():
         "ci_status": "success",
         "review_status": "approved",
     }
+
+
+def test_project_orchestrator_blocks_review_approved_for_a_different_head():
+    orchestrator = _orchestrator(FakeProvider(reviewed_head_sha="b" * 40))
+
+    result = orchestrator._observe_scm_pull_request()
+
+    assert result["status"] == "blocked"
+    assert result["review_status"] == "pending"
 
 
 def test_project_orchestrator_never_marks_non_green_scm_observation_ready():

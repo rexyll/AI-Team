@@ -44,7 +44,9 @@ class FakeSCMProvider:
 
     def get_review_status(self, repository, pull_request_number):
         self.calls.append(("review", repository, pull_request_number))
-        return self.review
+        result = dict(self.review)
+        result.setdefault("reviewed_head_sha", self.pr.get("head_sha", "a" * 40))
+        return result
 
     def merge_pull_request(
         self, repository, pull_request_number, *, merge_method, expected_head_sha, expected_base_branch
@@ -170,11 +172,29 @@ def test_pull_request_metadata_is_available_through_read_only_service():
     assert provider.calls == [("get_pr", "acme/widget", 7)]
 
 
+def test_review_status_is_pending_when_review_anchor_does_not_match_expected_ci_head():
+    service, provider, _ = _service()
+    provider.review = {
+        "status": "approved",
+        "reviewed_head_sha": "b" * 40,
+    }
+
+    result = service.get_review_status(
+        "acme/widget", 7, expected_head_sha="a" * 40
+    )
+
+    assert result["status"] == "pending"
+    assert result["head_sha_match"] is False
+
+
 def test_ci_and_review_reads_do_not_require_approval():
     service, provider, _ = _service()
 
     assert service.get_ci_status("acme/widget", "a" * 40) == {"status": "success"}
-    assert service.get_review_status("acme/widget", 7) == {"status": "approved"}
+    assert service.get_review_status("acme/widget", 7) == {
+        "status": "approved",
+        "reviewed_head_sha": "a" * 40,
+    }
     assert [call[0] for call in provider.calls] == ["ci", "review"]
 
 

@@ -320,11 +320,37 @@ class SCMService:
             raise ValueError("commit_sha must be a 7-64 character hexadecimal SHA")
         return self._provider.get_ci_status(repository, commit_sha)
 
-    def get_review_status(self, repository: str, pull_request_number: int) -> dict[str, Any]:
+    def get_review_status(
+        self,
+        repository: str,
+        pull_request_number: int,
+        *,
+        expected_head_sha: str | None = None,
+    ) -> dict[str, Any]:
         repository = _repository(repository)
         if not isinstance(pull_request_number, int) or isinstance(pull_request_number, bool) or pull_request_number < 1:
             raise ValueError("pull_request_number must be a positive integer")
-        return self._provider.get_review_status(repository, pull_request_number)
+        if expected_head_sha is not None and (
+            not isinstance(expected_head_sha, str) or not _SHA.fullmatch(expected_head_sha)
+        ):
+            raise ValueError("expected_head_sha must be a 7-64 character hexadecimal SHA")
+        result = self._provider.get_review_status(repository, pull_request_number)
+        if not isinstance(result, dict):
+            raise SCMPreflightError("provider returned invalid pull request review metadata")
+        normalized = dict(result)
+        if expected_head_sha is not None:
+            reviewed_head_sha = normalized.get("reviewed_head_sha")
+            if (
+                not isinstance(reviewed_head_sha, str)
+                or not _SHA.fullmatch(reviewed_head_sha)
+                or reviewed_head_sha.lower() != expected_head_sha.lower()
+            ):
+                # Never combine CI for one head with approval evidence for another.
+                normalized["status"] = "pending"
+                normalized["head_sha_match"] = False
+            else:
+                normalized["head_sha_match"] = True
+        return normalized
 
     def merge_pull_request(
         self,
@@ -348,7 +374,9 @@ class SCMService:
             raise SCMApprovalError("explicit host approval is required for this repository and pull request")
         head_sha, base_branch = self._provider_pr_target(repository, pull_request_number)
         ci = self.get_ci_status(repository, head_sha)
-        review = self.get_review_status(repository, pull_request_number)
+        review = self.get_review_status(
+            repository, pull_request_number, expected_head_sha=head_sha
+        )
         if ci.get("status") != "success":
             raise SCMPreflightError("merge blocked: CI status is not success")
         if review.get("status") != "approved":

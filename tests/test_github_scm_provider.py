@@ -168,6 +168,7 @@ def test_get_pull_request_includes_draft_state_and_requires_complete_metadata():
     transport = FakeTransport([{
         "head": {"sha": "a" * 40},
         "base": {"ref": "main"},
+        "user": {"login": "pr-author"},
         "state": "open",
         "merged": False,
         "draft": False,
@@ -180,16 +181,28 @@ def test_get_pull_request_includes_draft_state_and_requires_complete_metadata():
         "merged": False,
         "draft": False,
         "base_branch": "main",
+        "author_login": "pr-author",
     }
 
     incomplete = FakeTransport([{
         "head": {"sha": "a" * 40},
         "base": {"ref": "main"},
+        "user": {"login": "pr-author"},
         "state": "open",
         "merged": False,
     }])
     with pytest.raises(GitHubAPIError, match="incomplete pull request state"):
         GitHubSCMProvider(incomplete, git_service=FakeGitService()).get_pull_request("acme/widget", 12)
+
+    missing_author = FakeTransport([{
+        "head": {"sha": "a" * 40},
+        "base": {"ref": "main"},
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }])
+    with pytest.raises(GitHubAPIError, match="incomplete pull request state"):
+        GitHubSCMProvider(missing_author, git_service=FakeGitService()).get_pull_request("acme/widget", 12)
 
 
 def test_ci_status_aggregates_checks_and_commit_statuses():
@@ -348,40 +361,79 @@ def test_ci_status_fails_if_any_check_fails():
     assert provider.get_ci_status("acme/widget", "c" * 40)["status"] == "failure"
 
 
-def test_review_status_uses_latest_review_per_user():
+def _review_pr_metadata(head_sha="a" * 40, author="pr-author"):
+    return {
+        "head": {"sha": head_sha},
+        "base": {"ref": "main"},
+        "user": {"login": author},
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }
+
+
+def _review(login, state, submitted_at, commit_id="a" * 40):
+    return {
+        "user": {"login": login},
+        "state": state,
+        "submitted_at": submitted_at,
+        "commit_id": commit_id,
+    }
+
+
+def test_review_status_uses_latest_non_author_review_on_current_head():
     transport = FakeTransport([[
-        {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},
-        {"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-02T00:00:00Z"},
-        {"user": {"login": "second"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"},
-    ]])
+        _review("reviewer", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
+        _review("reviewer", "APPROVED", "2026-01-02T00:00:00Z"),
+        _review("second", "APPROVED", "2026-01-01T00:00:00Z"),
+    ], _review_pr_metadata()])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     result = provider.get_review_status("acme/widget", 12)
 
     assert result["status"] == "approved"
     assert result["review_count"] == 2
+    assert result["reviewed_head_sha"] == "a" * 40
+    assert transport.calls[-1][1].endswith("/pulls/12")
+
+
+def test_review_status_ignores_approval_from_pr_author():
+    transport = FakeTransport([[
+        _review("pr-author", "APPROVED", "2026-01-02T00:00:00Z"),
+    ], _review_pr_metadata(author="pr-author")])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "pending"
+    assert result["review_count"] == 0
+
+
+def test_review_status_ignores_stale_approval_from_previous_head():
+    transport = FakeTransport([[
+        _review("reviewer", "APPROVED", "2026-01-02T00:00:00Z", commit_id="b" * 40),
+    ], _review_pr_metadata(head_sha="a" * 40)])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "pending"
+    assert result["review_count"] == 0
+    assert result["reviewed_head_sha"] == "a" * 40
 
 
 def test_review_status_reads_later_pages_before_assessing_latest_review_per_user():
     first_page = [
-        {
-            "user": {"login": f"reviewer-{index}"},
-            "state": "COMMENTED",
-            "submitted_at": "2026-01-01T00:00:00Z",
-        }
+        _review(f"reviewer-{index}", "COMMENTED", "2026-01-01T00:00:00Z")
         for index in range(99)
     ]
-    first_page.append({
-        "user": {"login": "reviewer-latest"},
-        "state": "CHANGES_REQUESTED",
-        "submitted_at": "2026-01-01T00:00:00Z",
-    })
-    second_page = [{
-        "user": {"login": "reviewer-latest"},
-        "state": "APPROVED",
-        "submitted_at": "2026-01-02T00:00:00Z",
-    }]
-    transport = FakeTransport([first_page, second_page])
+    first_page.append(
+        _review("reviewer-latest", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z")
+    )
+    second_page = [
+        _review("reviewer-latest", "APPROVED", "2026-01-02T00:00:00Z")
+    ]
+    transport = FakeTransport([first_page, second_page, _review_pr_metadata()])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     result = provider.get_review_status("acme/widget", 12)
@@ -390,14 +442,17 @@ def test_review_status_reads_later_pages_before_assessing_latest_review_per_user
     assert result["reviews_complete"] is True
     assert transport.calls[0][1].endswith("?per_page=100&page=1")
     assert transport.calls[1][1].endswith("?per_page=100&page=2")
+    assert transport.calls[2][1].endswith("/pulls/12")
 
 
 @pytest.mark.parametrize(
     "reviews",
     [
-        [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}, "malformed"],
-        [{"user": None, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}],
-        [{"user": {"login": "reviewer"}, "submitted_at": "2026-01-01T00:00:00Z"}],
+        [_review("reviewer", "APPROVED", "2026-01-01T00:00:00Z"), "malformed"],
+        [{"user": None, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "a" * 40}],
+        [{"user": {"login": "reviewer"}, "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "a" * 40}],
+        [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}],
+        [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "not-a-sha"}],
     ],
 )
 def test_review_status_rejects_malformed_review_evidence(reviews):
@@ -408,19 +463,11 @@ def test_review_status_rejects_malformed_review_evidence(reviews):
         provider.get_review_status("acme/widget", 12)
 
 
-def test_review_status_fails_closed_on_unknown_review_state_even_with_approval():
+def test_review_status_fails_closed_on_unknown_review_state_even_with_current_head_approval():
     transport = FakeTransport([[
-        {
-            "user": {"login": "reviewer"},
-            "state": "APPROVED",
-            "submitted_at": "2026-01-01T00:00:00Z",
-        },
-        {
-            "user": {"login": "future-reviewer"},
-            "state": "FUTURE_STATE",
-            "submitted_at": "2026-01-02T00:00:00Z",
-        },
-    ]])
+        _review("reviewer", "APPROVED", "2026-01-01T00:00:00Z"),
+        _review("future-reviewer", "FUTURE_STATE", "2026-01-02T00:00:00Z"),
+    ], _review_pr_metadata()])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     result = provider.get_review_status("acme/widget", 12)
@@ -428,11 +475,11 @@ def test_review_status_fails_closed_on_unknown_review_state_even_with_approval()
     assert result["status"] == "pending"
 
 
-def test_review_status_keeps_changes_requested_as_blocker():
+def test_review_status_keeps_current_head_changes_requested_as_blocker():
     transport = FakeTransport([[
-        {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},
-        {"user": {"login": "second"}, "state": "APPROVED", "submitted_at": "2026-01-02T00:00:00Z"},
-    ]])
+        _review("reviewer", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
+        _review("second", "APPROVED", "2026-01-02T00:00:00Z"),
+    ], _review_pr_metadata()])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     assert provider.get_review_status("acme/widget", 12)["status"] == "changes_requested"

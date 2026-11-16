@@ -38,12 +38,13 @@ class FakeService:
             ],
         }
 
-    def get_review_status(self, repository, pull_request_number):
+    def get_review_status(self, repository, pull_request_number, *, expected_head_sha=None):
         self.calls.append(("reviews", repository, pull_request_number))
         return {
             "status": self.review_status,
             "review_count": 0,
             "states": [],
+            "reviewed_head_sha": expected_head_sha or "a" * 40,
         }
 
 

@@ -475,7 +475,7 @@ class ProjectOrchestrator:
             head_sha = pull_request["head_sha"]
             ci = self.scm_service.get_ci_status(repository, head_sha)
             review = self.scm_service.get_review_status(
-                repository, pull_request_number
+                repository, pull_request_number, expected_head_sha=head_sha
             )
             ready = (
                 pull_request.get("state") == "open"

@@ -115,7 +115,9 @@ class SCMLifecycleCoordinator:
                 self._config.repository, pr["head_sha"]
             )
             review = self._service.get_review_status(
-                self._config.repository, pull_request_number
+                self._config.repository,
+                pull_request_number,
+                expected_head_sha=pr["head_sha"],
             )
             pr_open = pr.get("state") == "open" and pr.get("merged") is False
             ci_status = ci.get("status", "unknown")
