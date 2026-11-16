@@ -31,3 +31,4 @@ def test_router_image_records_contract_and_base_identity_labels():
     assert 'LABEL com.ai-team.router.base-image="haproxytech/haproxy-alpine@sha256:' in content
     assert "test -x /usr/local/sbin/haproxy" in content
     assert "test -x /usr/bin/socat" in content
+    assert 'socat -V | grep -F "socat version 1.8.1.3"' in content

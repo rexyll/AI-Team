@@ -22,7 +22,7 @@ artifact identity by the Host provider.
 
     docker build --pull -f docker/router/Dockerfile -t ai-team-router:local .
     docker image inspect --format "{{.Id}}" ai-team-router:local
-    docker run --rm --entrypoint /bin/sh ai-team-router:local -ec 'command -v haproxy; command -v socat; haproxy -vv; socat -V; apk info -v socat'
+    docker run --rm --entrypoint /bin/sh ai-team-router:local -ec 'command -v haproxy; command -v socat; haproxy -vv; socat -V; apk info -v | grep -Fx 'socat-1.8.1.3-r0''
 
 The CI router-image-smoke job performs the same build and verifies the exact
 HAProxy/socat versions and image contract labels on linux/amd64. It does not

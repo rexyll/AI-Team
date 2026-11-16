@@ -11,7 +11,7 @@ RUN apk add --no-cache socat=1.8.1.3-r0 && \
     test -x /usr/local/sbin/haproxy && \
     test -x /usr/bin/socat && \
     haproxy -vv | grep -F "HAProxy version 3.4.7" && \
-    socat -V
+    socat -V | grep -F "socat version 1.8.1.3"
 
 # Keep the upstream HAProxy entrypoint and command. Host-owned configuration,
 # the persistent map directory, and the Unix admin socket are mounted later
