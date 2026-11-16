@@ -3,7 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import main
-from runtime.scm_provider import SCMApprovalAuthority, SCMService
+from runtime.scm_provider import (
+    SCMApprovalAuthority,
+    SCMService,
+    scm_pull_request_approval_target,
+)
 
 
 def test_parser_accepts_publish_options():
@@ -77,8 +81,16 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
         "push_branch", "create_or_update_pull_request"
     ]
     assert issued[0]["target"] == f"feature/widget:{head_sha}"
-    assert issued[1]["target"] == "feature/widget:main"
-    assert "PR #31" in capsys.readouterr().out
+    expected_pr_target = scm_pull_request_approval_target(
+        head="feature/widget",
+        base="main",
+        title="Add widget",
+        body="Implementation details",
+    )
+    assert issued[1]["target"] == expected_pr_target
+    output = capsys.readouterr().out
+    assert "PR #31" in output
+    assert "PR content SHA-256 (title + body):" in output
 
 
 def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_path, capsys):

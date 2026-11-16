@@ -15,6 +15,7 @@ from core.project_orchestrator import ProjectOrchestrator
 from runtime.agent_factory import create_agent_router
 from runtime.github_scm_config import create_github_scm_runtime
 from runtime.scm_lifecycle import SCMLifecycleConfig, SCMLifecycleCoordinator
+from runtime.scm_provider import scm_merge_approval_target, scm_pull_request_approval_target
 from runtime.dashboard_cli import write_dashboard
 from runtime.deployment_host import DeploymentHostRuntime
 from runtime.knowledge_base import (
@@ -900,7 +901,8 @@ def main() -> int:
             )
             print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
             confirmation = _read_host_confirmation(
-                "Type 'yes' to approve merging this exact PR head into the displayed base branch after fresh preflight: "
+                "Type 'yes' to approve merging this exact PR head into the displayed base branch "
+                f"using {args.scm_merge_method} after fresh preflight: "
             )
             if confirmation != "yes":
                 print(
@@ -911,7 +913,12 @@ def main() -> int:
             approval = scm_runtime.approval_authority.issue(
                 operation="merge_pull_request",
                 repository=scm_runtime.repository,
-                target=f"{args.scm_merge_pr}:{observation['head_sha']}:{observation['base_branch']}",
+                target=scm_merge_approval_target(
+                    args.scm_merge_pr,
+                    head_sha=observation["head_sha"],
+                    base_branch=observation["base_branch"],
+                    merge_method=args.scm_merge_method,
+                ),
                 approved_by="human:interactive-cli",
             )
             outcome = scm_runtime.service.merge_pull_request(
@@ -986,12 +993,20 @@ def main() -> int:
             head_sha = scm_runtime.service.get_local_head_sha(
                 args.scm_local_repository
             )
+            pr_approval_target = scm_pull_request_approval_target(
+                head=args.scm_head_branch,
+                base=args.scm_base_branch,
+                title=args.scm_pr_title,
+                body=body,
+            )
+            pr_payload_sha256 = pr_approval_target.rsplit("sha256=", 1)[1]
             preview = (
                 f"Repository: {scm_runtime.repository}\n"
                 f"Local repository: {args.scm_local_repository}\n"
                 f"Push: {args.scm_head_branch} @ {head_sha}\n"
                 f"PR: {args.scm_head_branch} -> {args.scm_base_branch}\n"
-                f"Title: {args.scm_pr_title}"
+                f"Title: {args.scm_pr_title}\n"
+                f"PR content SHA-256 (title + body): {pr_payload_sha256}"
             )
             print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
             push_confirmation = _read_host_confirmation(
@@ -1001,7 +1016,7 @@ def main() -> int:
                 print("[SCM] Push cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)
                 return 3
             pr_confirmation = _read_host_confirmation(
-                "Type 'yes' separately to approve creating/updating this pull request: "
+                "Type 'yes' separately to approve creating/updating the displayed pull request payload: "
             )
             if pr_confirmation != "yes":
                 print("[SCM] PR creation cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)
@@ -1016,7 +1031,7 @@ def main() -> int:
             pr_approval = authority.issue(
                 operation="create_or_update_pull_request",
                 repository=scm_runtime.repository,
-                target=f"{args.scm_head_branch}:{args.scm_base_branch}",
+                target=pr_approval_target,
                 approved_by="human:interactive-cli",
             )
             outcome = coordinator.publish_and_open_pull_request(

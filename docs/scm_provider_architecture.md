@@ -165,7 +165,7 @@ repository, branch, base and PR title. The operator must type `yes` at two
 separate prompts: first to approve pushing that exact SHA, then to approve
 creating/updating the PR. Any other response cancels before the corresponding
 write. The host issues two separate one-use approvals scoped to the push
-(branch + exact SHA) and PR head/base pair. The provider verifies that the
+(branch + exact SHA) and PR head/base/title/body digest. The provider verifies that the
 local HEAD has not changed and that `origin` points to the approved repository
 before pushing. The command is standalone and cannot be combined with a normal
 delivery invocation.
@@ -187,6 +187,12 @@ after green CI and approved review.
 
 PR create/update also fails closed on malformed or ambiguous lookup responses. The provider only creates a PR after an explicit empty array from the open-PR query; a non-array response, malformed entry, invalid number, or multiple matches produces an error and no POST/PATCH write.
 
+PR publication displays a SHA-256 digest over the exact head, base, title and body payload.
+The one-use PR approval is bound to that digest as well as head/base; changing
+the title or body after confirmation invalidates the approval. The body remains
+in the host process and is not copied into Agent context.
+
+
 ## Interactive merge approval
 
 A PR can be merged through the standalone host command:
@@ -197,9 +203,10 @@ python main.py --scm-merge-pr 123 --scm-merge-method squash
 
 The command first polls the PR and proceeds only when it is open, unmerged,
 non-draft, CI is green and the latest review is approved. It displays the exact
-head SHA and base branch and requires a real interactive TTY plus an explicit
-`yes`. The host then issues a one-use merge approval scoped to
-`PR-number:head-SHA:base-branch` and calls `SCMService.merge_pull_request`.
+head SHA, base branch and selected merge method, and requires a real interactive
+TTY plus an explicit `yes`. The host then issues a one-use merge approval scoped to
+`PR-number:head-SHA:base-branch:merge-method` and calls
+`SCMService.merge_pull_request`.
 That service independently re-reads PR metadata, verifies open/unmerged,
 non-draft state and the exact head/base approval scope, and rechecks CI and
 review. Immediately before the merge PUT, the GitHub adapter re-reads the PR

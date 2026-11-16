@@ -28,7 +28,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
             assert repository == "acme/widget"
             assert number == 18
             assert approval.operation == "merge_pull_request"
-            assert approval.target == f"18:{head}:main"
+            assert approval.target == f"18:{head}:main:squash"
             assert merge_method == "squash"
             return {"status": "merged", "sha": "b" * 40}
 
@@ -62,7 +62,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
     assert issued == [{
         "operation": "merge_pull_request",
         "repository": "acme/widget",
-        "target": f"18:{head}:main",
+        "target": f"18:{head}:main:squash",
         "approved_by": "human:interactive-cli",
     }]
     assert '"status": "merged"' in capsys.readouterr().out

@@ -6,6 +6,8 @@ passes it to SCMService for the exact repository/operation/target.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -20,6 +22,45 @@ _WRITE_OPERATIONS = frozenset({
 })
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+
+def scm_pull_request_approval_target(*, head: str, base: str, title: str, body: str) -> str:
+    """Bind a PR write approval to the exact head/base/title/body payload."""
+    head = _non_empty(head, "head")
+    base = _non_empty(base, "base")
+    title = _non_empty(title, "title")
+    if not isinstance(body, str):
+        raise TypeError("body must be a string")
+    payload = json.dumps(
+        {"head": head, "base": base, "title": title, "body": body},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()
+    return f"{head}:{base}:sha256={digest}"
+
+
+def scm_merge_approval_target(
+    pull_request_number: int,
+    *,
+    head_sha: str,
+    base_branch: str,
+    merge_method: str,
+) -> str:
+    """Bind a merge approval to PR identity, head, base and merge method."""
+    if (
+        not isinstance(pull_request_number, int)
+        or isinstance(pull_request_number, bool)
+        or pull_request_number < 1
+    ):
+        raise ValueError("pull_request_number must be a positive integer")
+    if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
+        raise ValueError("head_sha must be a hexadecimal SHA")
+    base_branch = _non_empty(base_branch, "base_branch")
+    if merge_method not in {"merge", "squash", "rebase"}:
+        raise ValueError("merge_method must be merge, squash, or rebase")
+    return f"{pull_request_number}:{head_sha}:{base_branch}:{merge_method}"
 
 
 class SCMApprovalError(PermissionError):
@@ -219,7 +260,12 @@ class SCMService:
         title = _non_empty(title, "title")
         if not isinstance(body, str):
             raise TypeError("body must be a string")
-        target = f"{head}:{base}"
+        target = scm_pull_request_approval_target(
+            head=head,
+            base=base,
+            title=title,
+            body=body,
+        )
         self._approvals.consume(
             approval,
             operation="create_or_update_pull_request",
@@ -311,7 +357,12 @@ class SCMService:
             approval,
             operation="merge_pull_request",
             repository=repository,
-            target=f"{pull_request_number}:{head_sha}:{base_branch}",
+            target=scm_merge_approval_target(
+                pull_request_number,
+                head_sha=head_sha,
+                base_branch=base_branch,
+                merge_method=merge_method,
+            ),
         )
         return self._provider.merge_pull_request(
             repository,

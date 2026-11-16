@@ -8,6 +8,8 @@ from runtime.scm_provider import (
     SCMApprovalError,
     SCMPreflightError,
     SCMService,
+    scm_merge_approval_target,
+    scm_pull_request_approval_target,
 )
 
 
@@ -113,7 +115,14 @@ def _publish(coordinator, authority, provider):
         authority, "push_branch", "feature/release:" + provider.local_head
     )
     pr = _approval(
-        authority, "create_or_update_pull_request", "feature/release:main"
+        authority,
+        "create_or_update_pull_request",
+        scm_pull_request_approval_target(
+            head="feature/release",
+            base="main",
+            title="Release feature",
+            body="Validated implementation",
+        ),
     )
     return coordinator.publish_and_open_pull_request(
         local_repository="/workspace/widget",
@@ -137,7 +146,12 @@ def test_full_publish_poll_and_merge_lifecycle_is_ordered_and_auditable():
     assert observation["head_sha"] == provider.pr_head
 
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
+        authority, "merge_pull_request", scm_merge_approval_target(
+            23,
+            head_sha=observation["head_sha"],
+            base_branch=observation["base_branch"],
+            merge_method="squash",
+        )
     )
     merged = service.merge_pull_request(
         "acme/widget", 23, approval=approval, merge_method="squash"
@@ -209,7 +223,12 @@ def test_head_sha_drift_after_poll_invalidates_merge_approval():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
+        authority, "merge_pull_request", scm_merge_approval_target(
+            23,
+            head_sha=observation["head_sha"],
+            base_branch=observation["base_branch"],
+            merge_method="squash",
+        )
     )
     provider.pr_head = "e" * 40
 
@@ -226,7 +245,12 @@ def test_base_branch_drift_after_poll_invalidates_merge_approval():
     approval = _approval(
         authority,
         "merge_pull_request",
-        "23:" + observation["head_sha"] + ":" + observation["base_branch"],
+        scm_merge_approval_target(
+            23,
+            head_sha=observation["head_sha"],
+            base_branch=observation["base_branch"],
+            merge_method="squash",
+        ),
     )
     provider.base_branch = "release"
 
@@ -241,7 +265,12 @@ def test_pr_closed_after_poll_is_rejected_by_fresh_merge_preflight():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
+        authority, "merge_pull_request", scm_merge_approval_target(
+            23,
+            head_sha=observation["head_sha"],
+            base_branch=observation["base_branch"],
+            merge_method="squash",
+        )
     )
     provider.pr_state = "closed"
 
@@ -289,7 +318,12 @@ def test_merge_api_failure_is_propagated_without_automatic_retry():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
+        authority, "merge_pull_request", scm_merge_approval_target(
+            23,
+            head_sha=observation["head_sha"],
+            base_branch=observation["base_branch"],
+            merge_method="squash",
+        )
     )
 
     def fail_merge(*args, **kwargs):
