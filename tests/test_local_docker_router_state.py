@@ -32,7 +32,8 @@ def test_scope_paths_are_deterministic_and_isolated(tmp_path):
     b = store.persist(scope(), bindings()).record
     c = store.persist(scope(project="beta"), bindings()).record
     assert a.directory == b.directory and a.directory != c.directory
-    assert "alpha" not in a.directory and "test" not in a.directory
+    assert a.network_name == b.network_name and a.network_name != c.network_name
+    assert "alpha" not in a.network_name and "test" not in a.network_name
 
 def test_only_allowlisted_active_slot_values_are_persisted(tmp_path):
     result = LocalDockerRouterStateStore(tmp_path / "router-state").persist(scope(), bindings(), active_slot="slot_b")
