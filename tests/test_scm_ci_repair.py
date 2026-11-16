@@ -10,10 +10,11 @@ from runtime.task_status import TaskStatus
 
 
 class FakeProvider:
-    def __init__(self, *, ci="failure", state="open", merged=False):
+    def __init__(self, *, ci="failure", state="open", merged=False, draft=False):
         self.ci = ci
         self.state = state
         self.merged = merged
+        self.draft = draft
         self.head = "a" * 40
         self.check_runs = [
             {
@@ -31,7 +32,12 @@ class FakeProvider:
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("pull_request", repository, pull_request_number))
-        return {"head_sha": self.head, "state": self.state, "merged": self.merged}
+        return {
+            "head_sha": self.head,
+            "state": self.state,
+            "merged": self.merged,
+            "draft": self.draft,
+        }
 
     def get_ci_status(self, repository, commit_sha):
         self.calls.append(("ci", repository, commit_sha))
@@ -57,6 +63,18 @@ def _setup(**kwargs):
         ]
     )
     return SCMCIRepairTaskFactory(max_repair_rounds=2), service, provider, manager
+
+
+def test_draft_pr_can_still_produce_a_ci_repair_proposal_without_becoming_merge_ready():
+    factory, service, provider, manager = _setup(draft=True)
+
+    proposal = factory.propose(
+        service, manager, repository="acme/widget", pull_request_number=17
+    )
+
+    assert proposal.status == "proposed"
+    assert proposal.task is not None
+    assert proposal.task.status == TaskStatus.BLOCKED.value
 
 
 def test_ci_failure_creates_blocked_host_approval_task_with_original_status_evidence():
