@@ -30,7 +30,7 @@ def _safe_check_runs(value: Any) -> list[dict[str, Any]]:
 
 
 def observe(service: Any, repository: str, pull_request_number: int) -> dict[str, Any]:
-    """Read PR, commit checks/status, and reviews exactly once."""
+    """Read PR, complete bounded CI/review evidence, and assess readiness."""
     pull_request = service.get_pull_request(repository, pull_request_number)
     head_sha = pull_request["head_sha"]
     ci = service.get_ci_status(repository, head_sha)
@@ -39,11 +39,14 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
     pull_request_open = (
         pull_request.get("state") == "open" and pull_request.get("merged") is False
     )
+    pull_request_draft = pull_request.get("draft") is not False
     ci_status = ci.get("status", "unknown")
     review_status = review.get("status", "unknown")
     blockers: list[str] = []
     if not pull_request_open:
         blockers.append("pull_request_not_open")
+    if pull_request_draft:
+        blockers.append("pull_request_draft")
     if ci_status != "success":
         blockers.append("ci_not_success")
     if review_status != "approved":
@@ -58,12 +61,14 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
         "pull_request": {
             "state": pull_request.get("state"),
             "merged": pull_request.get("merged"),
+            "draft": pull_request.get("draft"),
             "head_sha": head_sha,
         },
         "ci": {
             "status": ci_status,
             "commit_status": ci.get("commit_status"),
             "check_runs": _safe_check_runs(ci.get("check_runs")),
+            "checks_complete": ci.get("checks_complete", False),
         },
         "review": {
             "status": review_status,
@@ -72,6 +77,7 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
                 state[:40] for state in review.get("states", [])
                 if isinstance(state, str)
             ][:100],
+            "reviews_complete": review.get("reviews_complete", False),
         },
         "assessment": "ready" if not blockers else "blocked",
         "blockers": blockers,

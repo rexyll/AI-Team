@@ -242,10 +242,16 @@ class SCMService:
         head_sha = result.get("head_sha")
         if not isinstance(head_sha, str) or not _SHA.fullmatch(head_sha):
             raise SCMPreflightError("provider returned no valid pull request head SHA")
+        state = result.get("state")
+        merged = result.get("merged")
+        draft = result.get("draft")
+        if state not in {"open", "closed"} or not isinstance(merged, bool) or not isinstance(draft, bool):
+            raise SCMPreflightError("provider returned incomplete pull request state metadata")
         return {
             "head_sha": head_sha,
-            "state": result.get("state"),
-            "merged": result.get("merged"),
+            "state": state,
+            "merged": merged,
+            "draft": draft,
         }
 
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
@@ -306,6 +312,8 @@ class SCMService:
             raise SCMPreflightError("provider returned invalid pull request metadata")
         if pull_request.get("state") != "open" or pull_request.get("merged") is not False:
             raise SCMPreflightError("merge blocked: pull request is not open and unmerged")
+        if pull_request.get("draft") is not False:
+            raise SCMPreflightError("merge blocked: pull request is draft or draft state is unknown")
         head = pull_request.get("head_sha")
         if not isinstance(head, str) or not _SHA.fullmatch(head):
             raise SCMPreflightError("provider returned no valid pull request head SHA")

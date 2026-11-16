@@ -201,23 +201,45 @@ class GitHubSCMProvider:
         )
         head = result.get("head") if isinstance(result, dict) else None
         sha = head.get("sha") if isinstance(head, dict) else None
+        state = result.get("state") if isinstance(result, dict) else None
+        merged = result.get("merged") if isinstance(result, dict) else None
+        draft = result.get("draft") if isinstance(result, dict) else None
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
             raise GitHubAPIError("GitHub returned no valid pull request head SHA")
-        return {"head_sha": sha, "state": result.get("state"), "merged": result.get("merged")}
+        if state not in {"open", "closed"} or not isinstance(merged, bool) or not isinstance(draft, bool):
+            raise GitHubAPIError("GitHub returned incomplete pull request state metadata")
+        return {
+            "head_sha": sha,
+            "state": state,
+            "merged": merged,
+            "draft": draft,
+        }
 
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
         if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_sha):
             raise ValueError("commit_sha must be a hexadecimal SHA")
         root = self._repo_path(repository)
-        checks = self._transport.request(
-            "GET", f"{root}/commits/{commit_sha}/check-runs?per_page=100"
-        )
+        check_runs: list[dict[str, Any]] = []
+        checks_complete = False
+        # Check runs are paginated. A bounded read that cannot reach the end
+        # must never be interpreted as a successful CI result.
+        for page in range(1, 11):
+            checks = self._transport.request(
+                "GET",
+                f"{root}/commits/{commit_sha}/check-runs?per_page=100&page={page}",
+            )
+            page_runs = checks.get("check_runs") if isinstance(checks, dict) else None
+            if not isinstance(page_runs, list):
+                raise GitHubAPIError("GitHub returned an invalid check-run response")
+            check_runs.extend(item for item in page_runs if isinstance(item, dict))
+            if len(page_runs) < 100:
+                checks_complete = True
+                break
         combined = self._transport.request("GET", f"{root}/commits/{commit_sha}/status")
-        check_runs = checks.get("check_runs", []) if isinstance(checks, dict) else []
         statuses = combined.get("statuses", []) if isinstance(combined, dict) else []
         conclusions = [
             str(item.get("conclusion") or item.get("status") or "").lower()
-            for item in check_runs if isinstance(item, dict)
+            for item in check_runs
         ]
         state_values = [
             str(item.get("state") or "").lower()
@@ -228,6 +250,8 @@ class GitHubSCMProvider:
             state_values.append(combined_state.lower())
         if any(value in {"failure", "failed", "error"} for value in conclusions + state_values):
             status = "failure"
+        elif not checks_complete:
+            status = "unknown"
         elif any(value not in {"success", "neutral", "skipped"} for value in conclusions) or any(
             value == "pending" for value in state_values
         ):
@@ -242,18 +266,29 @@ class GitHubSCMProvider:
             "status": status,
             "check_runs": check_runs,
             "commit_status": combined.get("state") if isinstance(combined, dict) else None,
+            "checks_complete": checks_complete,
         }
 
     def get_review_status(self, repository: str, pull_request_number: int) -> dict[str, Any]:
         if not isinstance(pull_request_number, int) or isinstance(pull_request_number, bool) or pull_request_number < 1:
             raise ValueError("pull_request_number must be positive")
-        reviews = self._transport.request(
-            "GET", f"{self._repo_path(repository)}/pulls/{pull_request_number}/reviews?per_page=100"
-        )
+        reviews: list[dict[str, Any]] = []
+        reviews_complete = False
+        # GitHub returns reviews in chronological order (oldest first), with
+        # at most 100 entries per page. Read every page within a strict bound.
+        for page in range(1, 11):
+            page_reviews = self._transport.request(
+                "GET",
+                f"{self._repo_path(repository)}/pulls/{pull_request_number}/reviews?per_page=100&page={page}",
+            )
+            if not isinstance(page_reviews, list):
+                raise GitHubAPIError("GitHub returned an invalid pull request review response")
+            reviews.extend(item for item in page_reviews if isinstance(item, dict))
+            if len(page_reviews) < 100:
+                reviews_complete = True
+                break
         latest_by_user: dict[str, dict[str, Any]] = {}
-        for review in reviews if isinstance(reviews, list) else []:
-            if not isinstance(review, dict):
-                continue
+        for review in reviews:
             user = review.get("user")
             login = user.get("login") if isinstance(user, dict) else None
             if not isinstance(login, str):
@@ -262,12 +297,20 @@ class GitHubSCMProvider:
             if previous is None or str(review.get("submitted_at") or "") >= str(previous.get("submitted_at") or ""):
                 latest_by_user[login] = review
         states = [str(item.get("state") or "").upper() for item in latest_by_user.values()]
+        # If the page bound was reached, unseen later reviews may supersede
+        # the observed approvals. Keep the result blocked rather than guessing.
         status = (
-            "changes_requested" if "CHANGES_REQUESTED" in states
+            "pending" if not reviews_complete
+            else "changes_requested" if "CHANGES_REQUESTED" in states
             else "approved" if "APPROVED" in states
             else "pending"
         )
-        return {"status": status, "review_count": len(latest_by_user), "states": states}
+        return {
+            "status": status,
+            "review_count": len(latest_by_user),
+            "states": states,
+            "reviews_complete": reviews_complete,
+        }
 
     def merge_pull_request(
         self,

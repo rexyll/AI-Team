@@ -479,7 +479,8 @@ class ProjectOrchestrator:
             )
             ready = (
                 pull_request.get("state") == "open"
-                and pull_request.get("merged") is not True
+                and pull_request.get("merged") is False
+                and pull_request.get("draft") is False
                 and ci.get("status") == "success"
                 and review.get("status") == "approved"
             )
@@ -489,6 +490,7 @@ class ProjectOrchestrator:
                 "pull_request_number": pull_request_number,
                 "head_sha": head_sha,
                 "pull_request_state": pull_request.get("state"),
+                "draft": pull_request.get("draft"),
                 "ci_status": ci.get("status", "unknown"),
                 "review_status": review.get("status", "unknown"),
             }

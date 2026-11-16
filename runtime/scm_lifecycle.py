@@ -123,6 +123,8 @@ class SCMLifecycleCoordinator:
 
             if not pr_open:
                 state = "closed"
+            elif pr.get("draft") is not False:
+                state = "draft"
             elif ci_status == "failure":
                 state = "ci_failed"
             elif review_status == "changes_requested":
@@ -139,6 +141,7 @@ class SCMLifecycleCoordinator:
                 "head_sha": pr["head_sha"],
                 "pull_request_state": pr.get("state"),
                 "merged": pr.get("merged"),
+                "draft": pr.get("draft"),
                 "ci_status": ci_status,
                 "review_status": review_status,
                 "attempt": attempt,
