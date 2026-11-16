@@ -6,6 +6,8 @@ pushes, creates/updates pull requests, changes reviews, or merges.
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from typing import Any
 
@@ -29,8 +31,14 @@ def _safe_check_runs(value: Any) -> list[dict[str, Any]]:
     return safe
 
 
-def observe(service: Any, repository: str, pull_request_number: int) -> dict[str, Any]:
-    """Read PR, complete bounded CI/review evidence, and assess readiness."""
+def observe(
+    service: Any,
+    repository: str,
+    pull_request_number: int,
+    *,
+    ci_probe_sha: str | None = None,
+) -> dict[str, Any]:
+    """Read PR/CI/review evidence and optionally validate Check Run-only aggregation."""
     pull_request = service.get_pull_request(repository, pull_request_number)
     head_sha = pull_request["head_sha"]
     ci = service.get_ci_status(repository, head_sha)
@@ -51,6 +59,20 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
         blockers.append("ci_not_success")
     if review_status != "approved":
         blockers.append("review_not_approved")
+
+    ci_aggregation_probe = None
+    if ci_probe_sha is not None:
+        if not isinstance(ci_probe_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", ci_probe_sha):
+            raise ValueError("ci_probe_sha must be a hexadecimal SHA")
+        probe = service.get_ci_status(repository, ci_probe_sha)
+        ci_aggregation_probe = {
+            "sha": ci_probe_sha,
+            "status": probe.get("status", "unknown"),
+            "commit_status": probe.get("commit_status"),
+            "checks_complete": probe.get("checks_complete", False),
+            "check_run_count": len(probe.get("check_runs", []))
+            if isinstance(probe.get("check_runs"), list) else 0,
+        }
 
     return {
         "schema_version": 1,
@@ -82,6 +104,7 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
         },
         "assessment": "ready" if not blockers else "blocked",
         "blockers": blockers,
+        "ci_aggregation_probe": ci_aggregation_probe,
     }
 
 
@@ -94,6 +117,7 @@ def main() -> int:
             runtime.service,
             runtime.repository,
             runtime.pull_request_number,
+            ci_probe_sha=os.environ.get("AI_TEAM_GITHUB_CI_PROBE_SHA") or None,
         )
     except Exception as exc:  # Never print a remote message or credential.
         result = {
@@ -107,6 +131,11 @@ def main() -> int:
 
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     # A blocked PR is a successful observation, not a failed API integration.
+    # The optional pinned commit probe must independently aggregate Check Runs
+    # successfully; it catches an empty legacy-status collection masking green CI.
+    ci_probe = result.get("ci_aggregation_probe")
+    if isinstance(ci_probe, dict) and ci_probe.get("status") != "success":
+        return 1
     return 0
 
 

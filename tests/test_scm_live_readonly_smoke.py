@@ -90,6 +90,38 @@ def test_readonly_probe_reports_ready_only_for_open_green_approved_pr():
     assert result["pull_request"]["base_branch"] == "main"
 
 
+def test_readonly_probe_exposes_check_run_only_ci_aggregation_result():
+    class CheckRunOnlyService(FakeService):
+        def get_ci_status(self, repository, commit_sha):
+            self.calls.append(("ci_probe", repository, commit_sha))
+            return {
+                "status": "success",
+                "commit_status": "pending",
+                "checks_complete": True,
+                "check_runs": [
+                    {"name": "regression", "status": "completed", "conclusion": "success"},
+                    {"name": "security", "status": "completed", "conclusion": "success"},
+                ],
+            }
+
+    service = CheckRunOnlyService(ci_status="success", review_status="approved")
+    result = smoke.observe(
+        service,
+        "acme/widget",
+        42,
+        ci_probe_sha="4d5604a54d21c7389d0c5d93079b31aba958c698",
+    )
+
+    assert result["assessment"] == "ready"
+    assert result["ci_aggregation_probe"] == {
+        "sha": "4d5604a54d21c7389d0c5d93079b31aba958c698",
+        "status": "success",
+        "commit_status": "pending",
+        "checks_complete": True,
+        "check_run_count": 2,
+    }
+
+
 def test_readonly_probe_blocks_draft_pr_even_when_ci_and_review_are_green():
     service = FakeService(ci_status="success", review_status="approved", draft=True)
 
@@ -136,3 +168,4 @@ def test_live_smoke_workflow_uses_read_only_repository_permissions():
     assert "pull-requests: write" not in content
     assert "checks: write" not in content
     assert "statuses: write" not in content
+    assert "AI_TEAM_GITHUB_CI_PROBE_SHA" in content

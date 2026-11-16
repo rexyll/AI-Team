@@ -30,6 +30,7 @@ jobs:
       AI_TEAM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       AI_TEAM_GITHUB_REPOSITORY: ${{ github.repository }}
       AI_TEAM_GITHUB_PULL_REQUEST: ${{ inputs.pull_request_number || '2' }}
+      AI_TEAM_GITHUB_CI_PROBE_SHA: 4d5604a54d21c7389d0c5d93079b31aba958c698
     steps:
       - uses: actions/checkout@v4
 
@@ -38,5 +39,5 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Inspect live PR, CI and review evidence
+      - name: Inspect live PR, CI, review and Check Run-only aggregation
         run: python -m scripts.scm_live_readonly_smoke
