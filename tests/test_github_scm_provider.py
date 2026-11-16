@@ -256,7 +256,7 @@ def test_create_pull_request_rejects_write_response_for_different_head_sha():
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
-    with pytest.raises(GitHubAPIError, match="response head SHA"):
+    with pytest.raises(GitHubAPIError, match="response branch, base or head SHA"):
         provider.create_or_update_pull_request(
             "acme/widget", head="feature/a", base="main", title="Feature A",
             body="Body", expected_head_sha="d" * 40,
