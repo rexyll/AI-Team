@@ -206,6 +206,12 @@ class HostGitOperationService:
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
+        push_env = dict(env or {})
+        # A repository-local core.sshCommand can execute an arbitrary program.
+        # GIT_SSH_COMMAND has higher precedence, so pin the host-owned OpenSSH
+        # client and prevent interactive password/passphrase prompts.
+        push_env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        push_env["GIT_SSH_VARIANT"] = "ssh"
         return self._git_host(
             [
                 "-c", "remote.origin.mirror=false",
@@ -219,7 +225,7 @@ class HostGitOperationService:
                 f"{commit_sha}:refs/heads/{branch}",
             ],
             root,
-            env=env,
+            env=push_env,
         )
 
     def _git_host(

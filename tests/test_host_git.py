@@ -211,6 +211,8 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
         "origin",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2",
     ]]
+    assert calls[0][1]["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert calls[0][1]["env"]["GIT_SSH_VARIANT"] == "ssh"
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
             service.push(str(workspace), branch=branch, commit_sha="a" * 40)
