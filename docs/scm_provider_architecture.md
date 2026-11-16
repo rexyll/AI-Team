@@ -191,17 +191,20 @@ A PR can be merged through the standalone host command:
 python main.py --scm-merge-pr 123 --scm-merge-method squash
 ```
 
-The command first polls the PR and proceeds only when the PR is open and
-unmerged, CI is green and the latest review is approved. It displays the exact
-head SHA and requires a real interactive TTY plus an explicit `yes`. The host
-then issues a one-use merge approval scoped to `PR-number:head-SHA` and calls
-`SCMService.merge_pull_request`. That service independently re-reads the PR,
-checks that it remains open/unmerged, rechecks CI and review, consumes the
-approval only when all preflight checks pass, and sends the expected SHA to
-GitHub to protect against branch movement. A blocked PR never prompts for or
-receives a merge approval. Cancellation and non-TTY execution perform no merge
-write. JSON output remains machine-readable; human prompts and previews go to
-stderr.
+The command first polls the PR and proceeds only when it is open, unmerged,
+non-draft, CI is green and the latest review is approved. It displays the exact
+head SHA and base branch and requires a real interactive TTY plus an explicit
+`yes`. The host then issues a one-use merge approval scoped to
+`PR-number:head-SHA:base-branch` and calls `SCMService.merge_pull_request`.
+That service independently re-reads PR metadata, verifies open/unmerged,
+non-draft state and the exact head/base approval scope, and rechecks CI and
+review. Immediately before the merge PUT, the GitHub adapter re-reads the PR
+again and checks the head and base still match; the PUT sends the expected head
+SHA, which GitHub checks atomically. GitHub's merge API has no atomic expected
+base-ref parameter, so a narrow base-ref race remains between the final read
+and the PUT. A blocked PR never prompts for or receives a merge approval.
+Cancellation and non-TTY execution perform no merge write. JSON output remains
+machine-readable; human prompts and previews go to stderr.
 
 ## Lifecycle integration test contract
 
@@ -212,12 +215,15 @@ asserts the observable operation order:
 1. Read the local HEAD and push only that approved SHA.
 2. Create/update the PR only after the push succeeds.
 3. Poll PR metadata, CI and review without performing writes.
-4. Re-read PR metadata and CI/review immediately before merge.
-5. Send the exact observed head SHA as GitHub's conditional merge SHA.
+4. Re-read PR metadata and CI/review immediately before merge; verify exact
+   head SHA, base branch, open/unmerged and non-draft state.
+5. Send the exact observed head SHA as GitHub's conditional merge SHA; the
+   base branch is rechecked immediately before the request.
 
 Failure fixtures cover CI failure/pending timeout, changes requested, closed
-PRs, local HEAD drift before push, PR head drift after polling, PR closure
-after polling, PR creation API failure and merge API failure. These tests
+or draft PRs, local HEAD drift before push, PR head/base drift after polling,
+PR closure after polling, head/base/state drift immediately before the GitHub
+merge PUT, PR creation API failure and merge API failure. These tests
 assert that blocked paths do not issue later writes and that provider failures
 are propagated rather than silently retried.
 
