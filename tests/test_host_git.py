@@ -236,7 +236,12 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     assert call_kwargs[-1]["env"]["GIT_SSH_VARIANT"] == "ssh"
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
-            service.push(str(workspace), branch=branch, commit_sha="a" * 40)
+            service.push(
+                str(workspace),
+                branch=branch,
+                commit_sha="a" * 40,
+                expected_remote_url="https://github.com/acme/widget.git",
+            )
 
 
 def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypatch):
