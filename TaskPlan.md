@@ -441,14 +441,19 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - CI #607（run 43791685273，commit 4cb500d）全部通过：regression 2,686 passed / 14 skipped；security 252 passed / 9 skipped；Windows toolchain E2E 成功；Docker Engine 镜像构建/二进制/label 验证成功；Coverage runtime 88.39% line / 75.54% branch。
 - CI Docker smoke 仅在 linux/amd64 实际构建；基础镜像 index digest 是多架构，arm64 仍需 Host 实际构建验收。无 Router 容器启动、镜像发布或路由 E2E。
 
-### T21.6.3.5.2.6 Host image build-and-verify manager（2026-11-16，CI 待验收）
+### T21.6.3.5.2.6 Host image build-and-verify manager（2026-11-16，CI 验收通过）
 
 - 新增 runtime/local_docker_router_image.py：仅用固定 Dockerfile 和 docker/router 最小构建 context，固定 tag 仅用于 build/inspect；inspect 校验完整 SHA-256 image ID、linux/amd64|arm64、OCI labels、upstream Entrypoint/Cmd。
 - 仅当 image inspect 匹配后，才按 immutable image ID 启动临时验证容器；容器使用 --network none、--read-only、--cap-drop ALL、no-new-privileges，不挂载卷、不发布端口，检查 HAProxy/socat 运行时二进制和精确版本。
 - 任一步失败均不返回可信 image identity；验证通过仅返回完整 local image ID，不创建 persistent Router container，不发布 registry artifact。
-- 下一步将 router-image-smoke CI job 改为直接调用此 Host manager 对真实 Docker Engine 执行 build/inspect/immutable-ID temp-container verify，以免只对等价 shell 命令做验证。
+- CI #610（run 43792885529，commit 1c48e6b）全部通过：regression 2,701 passed / 14 skipped；security 252 passed / 9 skipped；Windows toolchain E2E 成功；Host manager 对真实 Docker Engine 完成 build/inspect/immutable-ID temp-container verify；Coverage 全模块阈值通过（runtime 88.37% line / 75.48% branch）。CI 实际构建 identity：linux/amd64，HAProxy 3.4.7，socat 1.8.1.3-r0，image ID sha256:c5d8550eeaa57d4636dd96394bac1731a0e6b1f7caf6ff05bb205d38ea98bcbe（仅该 CI runner 临时本地镜像身份，不是发布 artifact）。
 
 ### T21.6.3.5.2.6 CI 修复记录（2026-11-16）
 
 - CI #608（run 43792229445，commit 94ca74e）新增 Host image manager 的单元测试后，全量回归中唯一失败为既有 `test_event_persistence_throughput_does_not_collapse_with_scale` 单次 I/O 计时：32 条吞吐 1,421/s、128 条 387/s，略低于原 30% 下限；安全回归 252 passed / 9 skipped，Router image Docker smoke 通过，Coverage 被 regression 失败依赖跳过。
 - 修复方案不是降低门槛：持久化吞吐按 5 轮独立目录、交错规模采样，采用中位数；原 128/32 > 0.30 和 512/32 > 0.20 门槛保持不变。待新 CI 验证。
+
+### T21.6.3.5.2.7 Host-owned Router state store（2026-11-16，CI 待验收）
+
+- 新增 LocalDockerRouterStateStore：按 scope SHA-256 deterministic directory 写入 HAProxy config 与 active-slot map；目录权限 0700、文件 0600；原子 temp-file + fsync + rename + directory fsync；完成写后 read-back/hash 以及 symlink/hardlink/owner 检查。
+- 初始 selector 固定 active none；仅允许 none/slot_a/slot_b；不调用 Docker，不创建 Router，不执行 Runtime API、不切流。Router 后续通过只读 bind mount 消费 Host state。
