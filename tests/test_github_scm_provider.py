@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.request
 from unittest.mock import patch
 
@@ -946,8 +947,10 @@ def test_rest_transport_injects_host_token_without_returning_it():
             return Response()
 
     def fake_build_opener(*handlers):
-        assert len(handlers) == 1
+        assert len(handlers) == 2
         assert isinstance(handlers[0], urllib.request.HTTPRedirectHandler)
+        assert isinstance(handlers[1], urllib.request.HTTPSHandler)
+        assert handlers[1]._context.keylog_filename is None
         return Opener()
 
     transport = GitHubRESTTransport("host-secret-token")
@@ -961,6 +964,47 @@ def test_rest_transport_injects_host_token_without_returning_it():
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
 @pytest.mark.parametrize("redirect_code", [301, 302, 303, 307, 308])
+def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monkeypatch):
+    keylog_path = tmp_path / "tls-session-keys.log"
+    monkeypatch.setenv("SSLKEYLOGFILE", str(keylog_path))
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    class Opener:
+        def open(self, request, timeout):
+            return Response()
+
+    def fake_build_opener(*handlers):
+        https_handlers = [
+            handler
+            for handler in handlers
+            if isinstance(handler, urllib.request.HTTPSHandler)
+        ]
+        assert len(https_handlers) == 1
+        captured["keylog_filename"] = https_handlers[0]._context.keylog_filename
+        captured["verify_mode"] = https_handlers[0]._context.verify_mode
+        captured["check_hostname"] = https_handlers[0]._context.check_hostname
+        return Opener()
+
+    transport = GitHubRESTTransport("host-secret-token")
+    with patch("urllib.request.build_opener", side_effect=fake_build_opener):
+        assert transport.request("GET", "/repos/acme/widget") == {"ok": True}
+
+    assert captured["keylog_filename"] is None
+    assert captured["verify_mode"] == ssl.CERT_REQUIRED
+    assert captured["check_hostname"] is True
+    assert not keylog_path.exists()
+
+
 def test_rest_transport_does_not_follow_redirect_or_forward_token(
     monkeypatch, method, redirect_code
 ):

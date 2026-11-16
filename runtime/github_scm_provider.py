@@ -7,6 +7,7 @@ from datetime import datetime
 import urllib.error
 import urllib.parse
 import urllib.request
+import ssl
 from typing import Any, Protocol
 
 from runtime.host_git import HostGitOperationService
@@ -75,7 +76,16 @@ class GitHubRESTTransport:
             # The default urllib redirect handler may copy Authorization
             # into the redirected request. Never forward host credentials to
             # a redirect target, even when the Location appears same-origin.
-            opener = urllib.request.build_opener(_NoRedirectHandler())
+            # Python's create_default_context honors SSLKEYLOGFILE. TLS
+            # key logs can decrypt Authorization-bearing API traffic, so
+            # explicitly clear key logging while retaining verified TLS.
+            tls_context = ssl.create_default_context()
+            if hasattr(tls_context, "keylog_filename"):
+                tls_context.keylog_filename = None
+            opener = urllib.request.build_opener(
+                _NoRedirectHandler(),
+                urllib.request.HTTPSHandler(context=tls_context),
+            )
             with opener.open(request, timeout=self._timeout) as response:
                 content = response.read()
         except urllib.error.HTTPError as exc:
