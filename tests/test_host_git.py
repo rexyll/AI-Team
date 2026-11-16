@@ -518,6 +518,14 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
         "GIT_TRACE2_CONFIG_PARAMS",
         "git_dir",
         "git_trace_curl",
+        "GIT_SSL_NO_VERIFY",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_CERT",
+        "GIT_SSL_KEY",
+        "GIT_SSL_VERSION",
+        "GIT_SSL_CIPHER_LIST",
+        "git_ssl_no_verify",
     ],
 )
 def test_host_push_rejects_git_process_environment_overrides(

@@ -217,7 +217,7 @@ class HostGitOperationService:
             key
             for key in effective_env
             if key.upper() in protected
-            or key.upper().startswith(("GIT_TRACE_", "GIT_TRACE2_"))
+            or key.upper().startswith(("GIT_TRACE_", "GIT_TRACE2_", "GIT_SSL_"))
             or key.upper() == "GIT_TRACE"
         ]
         if injected:
