@@ -479,12 +479,18 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - CI #614（run 43795054234，commit 6a6e50f）Host image manager Docker Engine job 通过；全量 regression 2,714 passed / 14 skipped，安全回归 252 passed / 9 skipped。15 个容器契约测试在 path containment 校验处因 runtime 模块漏导入 pathlib.Path 而触发 NameError；现已补充显式导入后复验。该错误发生于测试调用期，不涉及 Docker daemon 或容器创建。
 
-### T21.6.3.5.2.9 Host Router container ensure manager（2026-11-16，CI 待验收）
+### T21.6.3.5.2.9 Host Router container ensure manager（2026-11-16，CI 验收通过）
 
 - 新增 LocalDockerRouterContainerManager：先按 deterministic container name inspect；只有明确 No such object/container 才尝试创建；创建后无论 exit code 成败均 inspect 回读完整 Docker 容器配置与 immutable ID。
 - 已存在但身份/网络/端口/挂载/安全配置错配时 fail closed，不执行 stop/rm/recreate；创建竞争或 Docker 返回模糊结果时，只有 post-create exact inspect verified 才返回 existing；创建成功却无法 inspect 则不报告成功。
 - daemon unavailable / timeout / port collision / malformed inspect 均返回明确状态；不启动 app，不切换 active-slot，不删除容器、不清理 host ports。
+- CI #617（run 43796339420，commit 9c9f51f）全部通过：regression 2,741 passed / 14 skipped；security 252 passed / 9 skipped；Windows toolchain E2E 成功；Host image manager Docker Engine 成功；Coverage runtime 88.34% line / 75.33% branch。#616 唯一失败为测试 argv 前缀断言误写，已修正为严格的 inspect → `run --detach` → inspect 三步序列。
 
 ### T21.6.3.5.2.9 CI 修复记录（2026-11-16）
 
 - CI #616（run 43796074649，commit 02c88b9）全量 regression 2,740 passed / 14 skipped，security 252 passed / 9 skipped；唯一失败为新测试对固定 run argv 前缀写成 `['run']`，而实际契约正确为 `['run', '--detach']`。修复测试精确检查 inspect/run/inspect 三步顺序；Host image manager Docker Engine job 已通过。该失败不是生产 manager 行为错误。
+
+### T21.6.3.5.2.10 HAProxy generated-config syntax validation（2026-11-16，CI 待验收）
+
+- 新增 LocalDockerRouterConfigValidator：先校验 Host state 目录/文件 owner、mode、link count、symlink、路径分隔字符、SHA-256 与初始 active none；再以 verified image immutable ID 启动 network=none、read-only、cap-drop ALL 的临时容器，将 config/map 只读 bind mount 后执行 `haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg`。
+- 将验证步骤加入 Host Router image Docker Engine CI job，在真实 Docker Engine 上验证生成的 HAProxy config 和 active map 可由 pin 的 HAProxy 3.4.7 加载；不创建持久 Router、不绑定 host port、不修改路由。

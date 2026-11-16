@@ -174,4 +174,23 @@ jobs:
           print(f"Platform: {result.identity.operating_system}/{result.identity.architecture}")
           print(f"HAProxy: {result.identity.haproxy_version}")
           print(f"socat: {result.identity.socat_package_version}")
+
+          from tempfile import TemporaryDirectory
+          from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
+          from runtime.local_docker_router_state import LocalDockerRouterStateStore
+          from runtime.local_docker_router_config_validator import LocalDockerRouterConfigValidator
+
+          with TemporaryDirectory(prefix="ai-team-router-config-check-") as temp_dir:
+              state_result = LocalDockerRouterStateStore(Path(temp_dir) / "state").persist(
+                  TrafficRouterScope("docker-local", "ci-router-config", "syntax-check"),
+                  (TrafficPortBinding(18080, 80), TrafficPortBinding(18443, 443)),
+              )
+              if state_result.status != "persisted" or state_result.record is None:
+                  raise SystemExit(f"Router config state preparation failed: {state_result.status}: {state_result.detail}")
+              config_result = LocalDockerRouterConfigValidator(LocalDockerProvider()).validate(
+                  result.identity, state_result.record,
+              )
+              if config_result.status != "valid":
+                  raise SystemExit(f"HAProxy generated-config syntax validation failed: {config_result.status}: {config_result.detail}")
+              print("PASS: generated HAProxy config and active map accepted by pinned HAProxy -c")
           PY
