@@ -290,7 +290,20 @@ class GitHubSCMProvider:
             status_values.append(value.lower())
         combined_state = combined.get("state")
         if isinstance(combined_state, str):
-            status_values.append(combined_state.lower())
+            normalized_combined_state = combined_state.lower()
+            if normalized_combined_state in failed_statuses:
+                status_values.append(normalized_combined_state)
+            elif normalized_combined_state == "success":
+                status_values.append(normalized_combined_state)
+            elif normalized_combined_state in pending_states:
+                # GitHub reports a synthetic "pending" combined state when
+                # there are no legacy commit-status contexts. Do not let that
+                # empty status collection override completed successful
+                # Check Runs; when neither source has evidence, remain pending.
+                if statuses or not check_runs:
+                    status_values.append(normalized_combined_state)
+            else:
+                check_unknown = True
         else:
             check_unknown = True
 
@@ -301,7 +314,12 @@ class GitHubSCMProvider:
         elif check_pending or any(value in pending_states for value in status_values):
             status = "pending"
         elif (
-            combined_state == "success"
+            (check_runs or statuses or normalized_combined_state == "success")
+            and all(
+                str(item.get("conclusion") or item.get("status") or "").lower()
+                in accepted_conclusions
+                for item in check_runs
+            )
             and all(value == "success" for value in status_values)
         ):
             status = "success"

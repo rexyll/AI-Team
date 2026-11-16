@@ -239,6 +239,49 @@ def test_ci_status_rejects_malformed_check_or_status_entries(bad_response):
         provider.get_ci_status("acme/widget", "f" * 40)
 
 
+def test_ci_status_uses_successful_check_runs_when_no_legacy_statuses_exist():
+    transport = FakeTransport([
+        {"check_runs": [
+            {"name": "unit", "status": "completed", "conclusion": "success"},
+            {"name": "security", "status": "completed", "conclusion": "success"},
+        ]},
+        {"state": "pending", "statuses": []},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_ci_status("acme/widget", "1" * 40)
+
+    assert result["status"] == "success"
+    assert result["commit_status"] == "pending"
+    assert result["check_runs"] and result["checks_complete"] is True
+
+
+def test_ci_status_stays_pending_when_neither_check_runs_nor_statuses_exist():
+    transport = FakeTransport([
+        {"check_runs": []},
+        {"state": "pending", "statuses": []},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_ci_status("acme/widget", "2" * 40)
+
+    assert result["status"] == "pending"
+
+
+def test_ci_status_does_not_ignore_pending_legacy_contexts_when_checks_pass():
+    transport = FakeTransport([
+        {"check_runs": [{
+            "name": "unit",
+            "status": "completed",
+            "conclusion": "success",
+        }]},
+        {"state": "pending", "statuses": [{"state": "pending"}]},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    assert provider.get_ci_status("acme/widget", "3" * 40)["status"] == "pending"
+
+
 def test_ci_status_is_pending_if_any_check_is_in_progress():
     transport = FakeTransport([
         {"check_runs": [{"name": "unit", "status": "in_progress", "conclusion": None}]},
