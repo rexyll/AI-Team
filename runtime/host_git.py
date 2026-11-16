@@ -214,6 +214,7 @@ class HostGitOperationService:
                 ["config", scope, "--get-regexp", helper_pattern],
                 workspace,
                 env=env,
+                clean_git_config_environment=True,
             )
             if helper_config.startswith("exit_code=0\n"):
                 raise PermissionError(
@@ -226,6 +227,7 @@ class HostGitOperationService:
                 ["config", scope, "--get-regexp", include_pattern],
                 workspace,
                 env=env,
+                clean_git_config_environment=True,
             )
             if include_config.startswith("exit_code=0\n"):
                 raise PermissionError(
@@ -318,9 +320,23 @@ class HostGitOperationService:
         )
 
     def _git_host(
-        self, arguments: list[str], workspace: Path, *, env: Mapping[str, str] | None = None
+        self,
+        arguments: list[str],
+        workspace: Path,
+        *,
+        env: Mapping[str, str] | None = None,
+        clean_git_config_environment: bool = False,
     ) -> str:
         """Execute a fixed host-owned Git argument vector outside the Agent parser."""
+        process_env = {**os.environ, **dict(env or {})}
+        if clean_git_config_environment:
+            for key in tuple(process_env):
+                if (
+                    key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+                    or re.fullmatch(r"GIT_CONFIG_(?:KEY|VALUE)_\d+", key)
+                ):
+                    process_env.pop(key, None)
+        process_env["GIT_TERMINAL_PROMPT"] = "0"
         completed = subprocess.run(
             ["git", *arguments],
             cwd=str(workspace),
@@ -329,7 +345,7 @@ class HostGitOperationService:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env={**os.environ, **dict(env or {}), "GIT_TERMINAL_PROMPT": "0"},
+            env=process_env,
             timeout=60,
         )
         output = completed.stdout or ""
