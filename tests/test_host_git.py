@@ -501,6 +501,55 @@ def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, mon
     ]
 
 
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "GIT_CONFIG",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+    ],
+)
+def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkeypatch, variable):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+    env = {variable: "untrusted-config-override"}
+
+    with pytest.raises(PermissionError, match="Git command/environment config overrides"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+            env=env,
+        )
+
+    assert len(calls) == 5
+    assert all(
+        not any(key == "GIT_CONFIG" or key.startswith("GIT_CONFIG_") for key in call_env["env"])
+        for _, call_env in calls[:4]
+    )
+    assert [arguments for arguments, _ in calls] == [
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
+    ]
+
+
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():
     from tools.git import _parse_git_command
 

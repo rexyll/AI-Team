@@ -189,8 +189,7 @@ class HostGitOperationService:
         injected = [
             key
             for key in effective_env
-            if key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
-            or re.fullmatch(r"GIT_CONFIG_(?:KEY|VALUE)_\d+", key)
+            if key == "GIT_CONFIG" or key.startswith("GIT_CONFIG_")
         ]
         if injected:
             raise PermissionError(
@@ -331,10 +330,7 @@ class HostGitOperationService:
         process_env = {**os.environ, **dict(env or {})}
         if clean_git_config_environment:
             for key in tuple(process_env):
-                if (
-                    key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
-                    or re.fullmatch(r"GIT_CONFIG_(?:KEY|VALUE)_\d+", key)
-                ):
+                if key == "GIT_CONFIG" or key.startswith("GIT_CONFIG_"):
                     process_env.pop(key, None)
         process_env["GIT_TERMINAL_PROMPT"] = "0"
         completed = subprocess.run(
