@@ -991,6 +991,7 @@ def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monk
         captured["keylog_filename"] = https_handlers[0]._context.keylog_filename
         captured["verify_mode"] = https_handlers[0]._context.verify_mode
         captured["check_hostname"] = https_handlers[0]._context.check_hostname
+        captured["verify_flags"] = https_handlers[0]._context.verify_flags
         return Opener()
 
     transport = GitHubRESTTransport("host-secret-token")
@@ -1000,6 +1001,8 @@ def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monk
     assert captured["keylog_filename"] is None
     assert captured["verify_mode"] == ssl.CERT_REQUIRED
     assert captured["check_hostname"] is True
+    assert captured["verify_flags"] & ssl.VERIFY_X509_PARTIAL_CHAIN
+    assert captured["verify_flags"] & ssl.VERIFY_X509_STRICT
     assert not keylog_path.exists()
 
 

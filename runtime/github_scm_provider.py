@@ -76,10 +76,14 @@ class GitHubRESTTransport:
             # The default urllib redirect handler may copy Authorization
             # into the redirected request. Never forward host credentials to
             # a redirect target, even when the Location appears same-origin.
-            # Python's create_default_context honors SSLKEYLOGFILE. TLS
-            # key logs can decrypt Authorization-bearing API traffic, so
-            # explicitly clear key logging while retaining verified TLS.
-            tls_context = ssl.create_default_context()
+            # create_default_context honors SSLKEYLOGFILE and may create the
+            # target file before key logging is disabled. Construct a client
+            # context directly, load system roots, and retain strict validation.
+            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            tls_context.load_default_certs()
+            tls_context.verify_flags |= (
+                ssl.VERIFY_X509_PARTIAL_CHAIN | ssl.VERIFY_X509_STRICT
+            )
             if hasattr(tls_context, "keylog_filename"):
                 tls_context.keylog_filename = None
             opener = urllib.request.build_opener(
