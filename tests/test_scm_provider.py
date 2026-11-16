@@ -525,7 +525,6 @@ def test_expired_approval_is_rejected():
         )
 
 
-@pytest.mark.parametrize("sha", ["", "not-a-sha", "g" * 40])
 def test_approval_expires_at_an_exclusive_boundary():
     authority = SCMApprovalAuthority()
     now = datetime(2026, 11, 16, 12, 0, 0, tzinfo=timezone.utc)
@@ -564,6 +563,7 @@ def test_approval_expires_at_an_exclusive_boundary():
         )
 
 
+@pytest.mark.parametrize("sha", ["", "not-a-sha", "g" * 40])
 def test_ci_status_rejects_invalid_commit_sha(sha):
     service, _, _ = _service()
     with pytest.raises(ValueError, match="commit_sha"):
