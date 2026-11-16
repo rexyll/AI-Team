@@ -221,51 +221,87 @@ class GitHubSCMProvider:
         root = self._repo_path(repository)
         check_runs: list[dict[str, Any]] = []
         checks_complete = False
-        # Check runs are paginated. A bounded read that cannot reach the end
-        # must never be interpreted as a successful CI result.
         for page in range(1, 11):
             checks = self._transport.request(
                 "GET",
                 f"{root}/commits/{commit_sha}/check-runs?per_page=100&page={page}",
             )
             page_runs = checks.get("check_runs") if isinstance(checks, dict) else None
-            if not isinstance(page_runs, list):
+            if not isinstance(page_runs, list) or any(
+                not isinstance(item, dict) for item in page_runs
+            ):
                 raise GitHubAPIError("GitHub returned an invalid check-run response")
-            check_runs.extend(item for item in page_runs if isinstance(item, dict))
+            check_runs.extend(page_runs)
             if len(page_runs) < 100:
                 checks_complete = True
                 break
+
         combined = self._transport.request("GET", f"{root}/commits/{commit_sha}/status")
-        statuses = combined.get("statuses", []) if isinstance(combined, dict) else []
-        conclusions = [
-            str(item.get("conclusion") or item.get("status") or "").lower()
-            for item in check_runs
-        ]
-        state_values = [
-            str(item.get("state") or "").lower()
-            for item in statuses if isinstance(item, dict)
-        ]
-        combined_state = combined.get("state") if isinstance(combined, dict) else None
-        if isinstance(combined_state, str) and combined_state:
-            state_values.append(combined_state.lower())
-        if any(value in {"failure", "failed", "error"} for value in conclusions + state_values):
+        if not isinstance(combined, dict):
+            raise GitHubAPIError("GitHub returned an invalid combined status response")
+        statuses = combined.get("statuses")
+        if not isinstance(statuses, list) or any(not isinstance(item, dict) for item in statuses):
+            raise GitHubAPIError("GitHub returned an invalid commit status list")
+
+        accepted_conclusions = {"success", "neutral", "skipped"}
+        failed_conclusions = {
+            "action_required",
+            "cancelled",
+            "failure",
+            "stale",
+            "startup_failure",
+            "timed_out",
+        }
+        pending_states = {"queued", "in_progress", "requested", "waiting", "pending"}
+        failed_statuses = {"failure", "error"}
+        check_failed = False
+        check_pending = False
+        check_unknown = False
+        for check in check_runs:
+            run_status = check.get("status")
+            conclusion = check.get("conclusion")
+            if run_status == "completed":
+                if not isinstance(conclusion, str):
+                    check_unknown = True
+                elif conclusion.lower() in failed_conclusions:
+                    check_failed = True
+                elif conclusion.lower() not in accepted_conclusions:
+                    check_unknown = True
+            elif isinstance(run_status, str) and run_status.lower() in pending_states:
+                check_pending = True
+            else:
+                check_unknown = True
+
+        status_values: list[str] = []
+        for item in statuses:
+            value = item.get("state")
+            if not isinstance(value, str):
+                check_unknown = True
+                continue
+            status_values.append(value.lower())
+        combined_state = combined.get("state")
+        if isinstance(combined_state, str):
+            status_values.append(combined_state.lower())
+        else:
+            check_unknown = True
+
+        if check_failed or any(value in failed_statuses for value in status_values):
             status = "failure"
-        elif not checks_complete:
+        elif not checks_complete or check_unknown:
             status = "unknown"
-        elif any(value not in {"success", "neutral", "skipped"} for value in conclusions) or any(
-            value == "pending" for value in state_values
-        ):
+        elif check_pending or any(value in pending_states for value in status_values):
             status = "pending"
-        elif conclusions or state_values:
-            status = "success" if all(
-                value in {"success", "neutral", "skipped"} for value in conclusions
-            ) and all(value == "success" for value in state_values) else "unknown"
+        elif (
+            combined_state == "success"
+            and all(value == "success" for value in status_values)
+        ):
+            status = "success"
         else:
             status = "unknown"
         return {
             "status": status,
             "check_runs": check_runs,
-            "commit_status": combined.get("state") if isinstance(combined, dict) else None,
+            "commit_status": combined.get("state"),
             "checks_complete": checks_complete,
         }
 

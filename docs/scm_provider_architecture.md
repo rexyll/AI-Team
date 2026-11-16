@@ -50,7 +50,7 @@ The merge path performs deterministic preflight before consuming the merge appro
 - all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, and an incomplete bounded read remains pending;
 - only then may the host call the GitHub merge endpoint using `merge`, `squash` or `rebase`.
 
-CI/review reads do not require write approval. Missing, pending or unknown CI evidence is not treated as success. Check runs and reviews are paginated with a bounded page limit; reaching the limit without a final page fails closed rather than reporting readiness.
+CI/review reads do not require write approval. Missing, pending or unknown CI evidence is not treated as success. Check runs and reviews are paginated with a bounded page limit; reaching the limit without a final page fails closed rather than reporting readiness. Completed Check Run conclusions `action_required`, `cancelled`, `failure`, `stale`, `startup_failure` and `timed_out` map to CI failure; unrecognized conclusions or malformed entries map to unknown/pending.
 
 ## Git push boundary
 

@@ -182,6 +182,60 @@ def test_ci_status_paginates_check_runs_before_reporting_failure_or_success():
     assert transport.calls[1][1].endswith("?per_page=100&page=2")
 
 
+@pytest.mark.parametrize(
+    "conclusion",
+    ["action_required", "cancelled", "failure", "stale", "startup_failure", "timed_out"],
+)
+def test_ci_status_treats_terminal_non_success_conclusions_as_failure(conclusion):
+    transport = FakeTransport([
+        {"check_runs": [{
+            "name": "terminal-check",
+            "status": "completed",
+            "conclusion": conclusion,
+        }]},
+        {"state": "success", "statuses": [{"state": "success"}]},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    assert provider.get_ci_status("acme/widget", "d" * 40)["status"] == "failure"
+
+
+def test_ci_status_returns_unknown_for_an_unrecognized_completed_conclusion():
+    transport = FakeTransport([
+        {"check_runs": [{
+            "name": "future-check",
+            "status": "completed",
+            "conclusion": "future_conclusion",
+        }]},
+        {"state": "success", "statuses": [{"state": "success"}]},
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    assert provider.get_ci_status("acme/widget", "e" * 40)["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "bad_response",
+    [
+        {"check_runs": [{"name": "unit", "status": "completed", "conclusion": "success"}, "malformed"]},
+        {"check_runs": [{"name": "unit", "status": "completed", "conclusion": "success"}]},
+    ],
+)
+def test_ci_status_rejects_malformed_check_or_status_entries(bad_response):
+    if "statuses" not in bad_response:
+        responses = [
+            bad_response,
+            {"state": "success", "statuses": [{"state": "success"}, "malformed"]},
+        ]
+    else:
+        responses = [bad_response, {"state": "success", "statuses": [{"state": "success"}]}]
+    transport = FakeTransport(responses)
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="invalid"):
+        provider.get_ci_status("acme/widget", "f" * 40)
+
+
 def test_ci_status_is_pending_if_any_check_is_in_progress():
     transport = FakeTransport([
         {"check_runs": [{"name": "unit", "status": "in_progress", "conclusion": None}]},
