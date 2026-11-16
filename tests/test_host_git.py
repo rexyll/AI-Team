@@ -551,6 +551,93 @@ def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkey
     ]
 
 
+@pytest.mark.parametrize(
+    ("config_kind", "expected_error"),
+    [
+        ("local-helper", "credential helpers"),
+        ("url-helper", "credential helpers"),
+        ("local-include-if", "config includes"),
+        ("worktree-helper", "credential helpers"),
+    ],
+)
+def test_host_push_rejects_real_repository_scoped_git_config(
+    tmp_path, config_kind, expected_error
+):
+    if shutil.which("git") is None:
+        pytest.skip("Git executable is unavailable")
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet", str(workspace)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    marker = tmp_path / "credential-helper-executed"
+    helper = f"!touch {marker}"
+
+    if config_kind == "local-helper":
+        subprocess.run(
+            ["git", "config", "--local", "--add", "credential.helper", helper],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "url-helper":
+        subprocess.run(
+            [
+                "git", "config", "--local", "--add",
+                "credential.https://github.com.helper", helper,
+            ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "local-include-if":
+        included = tmp_path / "untrusted.inc"
+        included.write_text(f"[credential]\n\thelper = {helper}\n", encoding="utf-8")
+        subprocess.run(
+            [
+                "git", "config", "--local", "--add",
+                f"includeIf.gitdir:{workspace / '.git'}.path", str(included),
+            ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "worktree-helper":
+        subprocess.run(
+            ["git", "config", "extensions.worktreeConfig", "true"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "--worktree", "--add", "credential.helper", helper],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        raise AssertionError(f"unknown fixture: {config_kind}")
+
+    service = HostGitOperationService(WorkspaceSandbox(tmp_path))
+    with pytest.raises(PermissionError, match=expected_error):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+    assert not marker.exists()
+
+
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():
     from tools.git import _parse_git_command
 
