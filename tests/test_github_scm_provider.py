@@ -38,8 +38,8 @@ class FakeGitService:
         self.calls.append(("head_commit", local_repository))
         return "e" * 40
 
-    def push(self, local_repository, *, branch, commit_sha):
-        self.calls.append(("push", local_repository, branch, commit_sha))
+    def push(self, local_repository, *, branch, commit_sha, expected_remote_url):
+        self.calls.append(("push", local_repository, branch, commit_sha, expected_remote_url))
         return self.output
 
 
@@ -59,7 +59,7 @@ def test_push_branch_requires_matching_origin_and_uses_non_force_host_git():
     assert git.calls == [
         ("remote_url", "/workspace/widget"),
         ("head_commit", "/workspace/widget"),
-        ("push", "/workspace/widget", "feature/scm", "e" * 40),
+        ("push", "/workspace/widget", "feature/scm", "e" * 40, "https://github.com/acme/widget.git"),
     ]
 
 

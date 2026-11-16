@@ -166,7 +166,12 @@ class GitHubSCMProvider:
             raise PermissionError("origin remote does not match the approved GitHub repository")
         if self._git.head_commit(local_repository) != expected_head_sha:
             raise PermissionError("local HEAD changed after the push approval")
-        output = self._git.push(local_repository, branch=branch, commit_sha=expected_head_sha)
+        output = self._git.push(
+            local_repository,
+            branch=branch,
+            commit_sha=expected_head_sha,
+            expected_remote_url=remote_url,
+        )
         first_line = output.splitlines()[0] if output else ""
         if first_line != "exit_code=0":
             raise GitHubAPIError("git push failed; host output is intentionally redacted")

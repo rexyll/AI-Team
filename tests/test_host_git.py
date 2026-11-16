@@ -194,30 +194,117 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
         call_kwargs.append(kwargs)
+        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if arguments[1:5] == ["remote", "get-url", "--push", "--all"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="https://github.com/acme/widget.git\n",
+                stderr="",
+            )
         return SimpleNamespace(returncode=0, stdout="pushed\n", stderr="")
 
     monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
 
-    result = service.push(str(workspace), branch="release/1.2", commit_sha="a" * 40)
+    result = service.push(
+        str(workspace),
+        branch="release/1.2",
+        commit_sha="a" * 40,
+        expected_remote_url="https://github.com/acme/widget.git",
+    )
 
     assert result == "exit_code=0\npushed\n"
-    assert calls == [[
-        "git",
-        "-c", "remote.origin.mirror=false",
-        "push",
-        "--porcelain",
-        "--no-verify",
-        "--no-follow-tags",
-        "--no-recurse-submodules",
-        "--receive-pack=git-receive-pack",
-        "origin",
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2",
-    ]]
-    assert call_kwargs[0]["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
-    assert call_kwargs[0]["env"]["GIT_SSH_VARIANT"] == "ssh"
+    assert calls == [
+        [
+            "git", "config", "--local", "--get-regexp",
+            r"^url\..*\.(insteadOf|pushInsteadOf)$",
+        ],
+        ["git", "remote", "get-url", "--push", "--all", "origin"],
+        [
+            "git",
+            "push",
+            "--porcelain",
+            "--no-verify",
+            "--no-follow-tags",
+            "--no-recurse-submodules",
+            "--receive-pack=git-receive-pack",
+            "https://github.com/acme/widget.git",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2",
+        ],
+    ]
+    assert call_kwargs[-1]["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert call_kwargs[-1]["env"]["GIT_SSH_VARIANT"] == "ssh"
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
             service.push(str(workspace), branch=branch, commit_sha="a" * 40)
+
+
+def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="https://github.com/acme/attacker.git\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="destination changed after approval"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+
+    assert calls == [
+        [
+            "git", "config", "--local", "--get-regexp",
+            r"^url\..*\.(insteadOf|pushInsteadOf)$",
+        ],
+        ["git", "remote", "get-url", "--push", "--all", "origin"],
+    ]
+
+
+def test_host_push_rejects_repository_local_url_rewrites(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="url.ssh://attacker.example/.insteadof https://github.com/\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="URL rewrite rules"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+
+    assert calls == [[
+        "git",
+        "config",
+        "--local",
+        "--get-regexp",
+        r"^url\..*\.(insteadOf|pushInsteadOf)$",
+    ]]
 
 
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():

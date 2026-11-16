@@ -186,12 +186,19 @@ class HostGitOperationService:
         *,
         branch: str,
         commit_sha: str,
+        expected_remote_url: str,
         remote: str = "origin",
         env: Mapping[str, str] | None = None,
     ) -> str:
-        """Push HEAD to a named origin branch; force-push is never supported."""
+        """Push an approved SHA to the exact, revalidated origin destination."""
         if remote != "origin":
             raise ValueError("only the origin remote is supported")
+        if (
+            not isinstance(expected_remote_url, str)
+            or not expected_remote_url
+            or expected_remote_url != expected_remote_url.strip()
+        ):
+            raise ValueError("expected_remote_url must be a non-empty canonical URL")
         if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_sha):
             raise ValueError("commit_sha must be a hexadecimal SHA")
         if (
@@ -206,6 +213,27 @@ class HostGitOperationService:
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
+        # Repository-local URL rewrite rules can transform even a literal
+        # destination supplied on the command line. Reject them rather than
+        # allowing mutable .git/config data to redirect a host-authorized push.
+        rewrite_config = self._git_host(
+            [
+                "config", "--local", "--get-regexp",
+                r"^url\..*\.(insteadOf|pushInsteadOf)$",
+            ],
+            root,
+            env=env,
+        )
+        if rewrite_config.startswith("exit_code=0\n"):
+            raise PermissionError("repository-local Git URL rewrite rules are not allowed for host push")
+        if rewrite_config != "exit_code=1\n":
+            raise RuntimeError("unable to verify repository-local Git URL rewrite configuration")
+        # Re-resolve the effective push URL immediately before transport. The
+        # provider's earlier repository check must not authorize a destination
+        # that changed while HEAD was being inspected.
+        current_remote_url = self.remote_url(str(root), env=env)
+        if current_remote_url != expected_remote_url:
+            raise PermissionError("origin push destination changed after approval")
         push_env = dict(env or {})
         # A repository-local core.sshCommand can execute an arbitrary program.
         # GIT_SSH_COMMAND has higher precedence, so pin the host-owned OpenSSH
@@ -214,14 +242,13 @@ class HostGitOperationService:
         push_env["GIT_SSH_VARIANT"] = "ssh"
         return self._git_host(
             [
-                "-c", "remote.origin.mirror=false",
                 "push",
                 "--porcelain",
                 "--no-verify",
                 "--no-follow-tags",
                 "--no-recurse-submodules",
                 "--receive-pack=git-receive-pack",
-                "origin",
+                expected_remote_url,
                 f"{commit_sha}:refs/heads/{branch}",
             ],
             root,
