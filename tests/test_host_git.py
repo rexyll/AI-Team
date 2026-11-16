@@ -232,8 +232,10 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     assert calls == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         [
             "git", "config", "--get-regexp",
             r"^url\..*\.(insteadOf|pushInsteadOf)$",
@@ -292,8 +294,10 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
     assert calls == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
         ["git", "remote", "get-url", "--push", "--all", "origin"],
     ]
@@ -352,7 +356,7 @@ def test_host_push_rejects_worktree_credential_helpers(tmp_path, monkeypatch):
             expected_remote_url="https://github.com/acme/widget.git",
         )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert calls[-1] == [
         "git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"
     ]
@@ -423,8 +427,10 @@ def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path
     assert calls == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -460,8 +466,10 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
     assert calls == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -551,8 +559,10 @@ def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, mon
     assert calls == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -593,16 +603,18 @@ def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkey
             env=env,
         )
 
-    assert len(calls) == 5
+    assert len(calls) == 7
     assert all(
-        not any(key == "GIT_CONFIG" or key.startswith("GIT_CONFIG_") for key in call_env["env"])
-        for _, call_env in calls[:4]
+        not any(key.upper() == "GIT_CONFIG" or key.upper().startswith("GIT_CONFIG_") for key in call_env["env"])
+        for _, call_env in calls[:6]
     )
     assert [arguments for arguments, _ in calls] == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^http\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -614,6 +626,9 @@ def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkey
         ("url-helper", "credential helpers"),
         ("local-include-if", "config includes"),
         ("worktree-helper", "credential helpers"),
+        ("local-http-ssl-verify", "HTTP transport overrides"),
+        ("local-http-extra-header", "HTTP transport overrides"),
+        ("worktree-http-ssl-verify", "HTTP transport overrides"),
     ],
 )
 def test_host_push_rejects_real_repository_scoped_git_config(
@@ -660,6 +675,40 @@ def test_host_push_rejects_real_repository_scoped_git_config(
                 "git", "config", "--local", "--add",
                 f"includeIf.gitdir:{workspace / '.git'}.path", str(included),
             ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "local-http-ssl-verify":
+        subprocess.run(
+            ["git", "config", "--local", "http.sslVerify", "false"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "local-http-extra-header":
+        subprocess.run(
+            [
+                "git", "config", "--local", "--add",
+                "http.extraHeader", "Authorization: Bearer repo-controlled",
+            ],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "worktree-http-ssl-verify":
+        subprocess.run(
+            ["git", "config", "extensions.worktreeConfig", "true"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "--worktree", "http.sslVerify", "false"],
             cwd=workspace,
             check=True,
             capture_output=True,

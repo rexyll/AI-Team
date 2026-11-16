@@ -241,18 +241,18 @@ class HostGitOperationService:
                 "Git command/environment config overrides are not allowed for host push"
             )
 
-    def _reject_repository_scoped_credential_helpers(
+    def _reject_repository_scoped_git_transport_overrides(
         self, workspace: Path, *, env: Mapping[str, str] | None = None
     ) -> None:
-        """Reject credential helpers and config includes owned by the repository.
+        """Reject repository-owned credential helpers, includes and HTTP transport policy.
 
-        Git credential helpers can execute arbitrary programs (including shell
-        snippets). Repository-local and worktree config is untrusted input; a
-        repository-local include can inject the same setting indirectly. Host-
-        level credential helpers remain available for normal authentication.
+        Credential helpers can execute arbitrary programs. HTTP transport settings
+        can disable TLS verification, add Authorization headers, or select a proxy.
+        Host-level policy remains available; repositories cannot override it.
         """
         helper_pattern = r"^credential(\..*)?\.helper$"
         include_pattern = r"^include(if)?\..*"
+        http_pattern = r"^http\..*"
         for scope in ("--local", "--worktree"):
             helper_config = self._git_host(
                 ["config", scope, "--get-regexp", helper_pattern],
@@ -279,6 +279,18 @@ class HostGitOperationService:
                 )
             if include_config != "exit_code=1\n":
                 raise RuntimeError("unable to verify repository-scoped Git config includes")
+            http_config = self._git_host(
+                ["config", scope, "--get-regexp", http_pattern],
+                workspace,
+                env=env,
+                clean_git_config_environment=True,
+            )
+            if http_config.startswith("exit_code=0\n"):
+                raise PermissionError(
+                    "repository-scoped Git HTTP transport overrides are not allowed for host push"
+                )
+            if http_config != "exit_code=1\n":
+                raise RuntimeError("unable to verify repository-scoped Git HTTP transport config")
 
     def push(
         self,
@@ -317,7 +329,7 @@ class HostGitOperationService:
         # Repository/worktree credential helpers can execute arbitrary code;
         # local includes can inject them indirectly. Keep credential helpers
         # under host-level configuration only.
-        self._reject_repository_scoped_credential_helpers(root, env=None)
+        self._reject_repository_scoped_git_transport_overrides(root, env=None)
         # URL rewrite rules from system, global, local, included and
         # GIT_CONFIG_COUNT scopes can transform even a literal destination.
         # Inspect every effective Git config scope and fail closed on any rule.
