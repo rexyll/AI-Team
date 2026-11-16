@@ -43,10 +43,18 @@ CLI_OUTPUT_MODES = ("text", "json")
 DEFAULT_KNOWLEDGE_BASE = "knowledge"
 
 
-def _read_host_confirmation(prompt: str) -> str:
-    """Require a real terminal operator and keep JSON stdout machine-readable."""
-    if not callable(getattr(sys.stdin, "isatty", None)) or not sys.stdin.isatty():
-        raise RuntimeError("SCM publication requires an interactive terminal; no remote write was performed")
+def _read_host_confirmation(prompt: str, *, display_stream: Any) -> str:
+    """Require terminal input and a visible preview/confirmation destination."""
+    input_is_tty = callable(getattr(sys.stdin, "isatty", None)) and sys.stdin.isatty()
+    preview_is_tty = (
+        callable(getattr(display_stream, "isatty", None)) and display_stream.isatty()
+    )
+    prompt_is_tty = callable(getattr(sys.stderr, "isatty", None)) and sys.stderr.isatty()
+    if not (input_is_tty and preview_is_tty and prompt_is_tty):
+        raise RuntimeError(
+            "SCM write requires interactive input and a visible terminal preview; "
+            "no remote write was performed"
+        )
     print(prompt, file=sys.stderr, flush=True)
     return input().strip()
 
@@ -899,10 +907,12 @@ def main() -> int:
                 f"CI: {observation['ci_status']} | Review: {observation['review_status']}\n"
                 f"Merge method: {args.scm_merge_method}"
             )
-            print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
+            confirmation_stream = sys.stderr if args.output == "json" else sys.stdout
+            print(preview, file=confirmation_stream)
             confirmation = _read_host_confirmation(
                 "Type 'yes' to approve merging this exact PR head into the displayed base branch "
-                f"using {args.scm_merge_method} after fresh preflight: "
+                f"using {args.scm_merge_method} after fresh preflight: ",
+                display_stream=confirmation_stream,
             )
             if confirmation != "yes":
                 print(
@@ -1008,17 +1018,21 @@ def main() -> int:
                 f"PR: {args.scm_head_branch} -> {args.scm_base_branch}\n"
                 f"PR source SHA: {head_sha}\n"
                 f"Title: {args.scm_pr_title}\n"
+                f"PR body (JSON-escaped): {json.dumps(body, ensure_ascii=True)}\n"
                 f"PR approval SHA-256 (source SHA + title + body): {pr_payload_sha256}"
             )
-            print(preview, file=sys.stderr if args.output == "json" else sys.stdout)
+            confirmation_stream = sys.stderr if args.output == "json" else sys.stdout
+            print(preview, file=confirmation_stream)
             push_confirmation = _read_host_confirmation(
-                "Type 'yes' to approve pushing this exact HEAD to the target branch: "
+                "Type 'yes' to approve pushing this exact HEAD to the target branch: ",
+                display_stream=confirmation_stream,
             )
             if push_confirmation != "yes":
                 print("[SCM] Push cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)
                 return 3
             pr_confirmation = _read_host_confirmation(
-                "Type 'yes' separately to approve creating/updating the displayed pull request payload: "
+                "Type 'yes' separately to approve creating/updating the displayed pull request payload: ",
+                display_stream=confirmation_stream,
             )
             if pr_confirmation != "yes":
                 print("[SCM] PR creation cancelled; no remote write was performed.", file=sys.stderr if args.output == "json" else sys.stdout)

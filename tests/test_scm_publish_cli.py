@@ -10,6 +10,26 @@ from runtime.scm_provider import (
 )
 
 
+class _TTYOutput:
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, value):
+        return self._stream.write(value)
+
+    def flush(self):
+        return self._stream.flush()
+
+    def isatty(self):
+        return True
+
+
+def _patch_tty_output(monkeypatch, *names):
+    for name in names:
+        stream = getattr(main.sys, name)
+        monkeypatch.setattr(main.sys, name, _TTYOutput(stream))
+
+
 def test_parser_accepts_publish_options():
     args = main.build_parser().parse_args([
         "--scm-publish-pr",
@@ -64,6 +84,7 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
     )
     monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
     monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stdout", "stderr")
     monkeypatch.setattr("builtins.input", lambda: "yes")
     monkeypatch.setattr(
         "sys.argv",
@@ -93,6 +114,7 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
     assert "PR #31" in output
     assert "PR source SHA:" in output
     assert "PR approval SHA-256 (source SHA + title + body):" in output
+    assert 'PR body (JSON-escaped): "Implementation details"' in output
 
 
 def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_path, capsys):
@@ -112,6 +134,7 @@ def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_pat
     monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
     monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
     monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stdout", "stderr")
     monkeypatch.setattr("builtins.input", lambda: "no")
     monkeypatch.setattr(
         "sys.argv",
@@ -141,6 +164,38 @@ def test_publish_cli_rejects_combination_with_delivery(monkeypatch):
         assert exc.code == 2
     else:
         raise AssertionError("publish command must be standalone")
+
+
+def test_publish_cli_refuses_when_preview_is_not_visible(monkeypatch, tmp_path, capsys):
+    body_file = tmp_path / "body.md"
+    body_file.write_text("Implementation details", encoding="utf-8")
+    runtime = SimpleNamespace(
+        service=SCMService(
+            SimpleNamespace(get_local_head_sha=lambda path: "a" * 40),
+            SCMApprovalAuthority(),
+        ),
+        repository="acme/widget",
+        approval_authority=SimpleNamespace(issue=lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("approval must not be issued when preview is hidden")
+        )),
+    )
+    monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
+    monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stderr")
+    monkeypatch.setattr("builtins.input", lambda: "yes")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "ai-team", "--scm-publish-pr",
+            "--scm-local-repository", "/workspace/widget",
+            "--scm-head-branch", "feature/widget",
+            "--scm-pr-title", "Add widget",
+            "--scm-pr-body-file", str(body_file),
+        ],
+    )
+    assert main.main() == 1
+    assert "visible terminal preview" in capsys.readouterr().err
 
 
 def test_publish_cli_refuses_non_interactive_stdin(monkeypatch, tmp_path, capsys):

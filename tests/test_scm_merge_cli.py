@@ -5,6 +5,26 @@ from types import SimpleNamespace
 import main
 
 
+class _TTYOutput:
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, value):
+        return self._stream.write(value)
+
+    def flush(self):
+        return self._stream.flush()
+
+    def isatty(self):
+        return True
+
+
+def _patch_tty_output(monkeypatch, *names):
+    for name in names:
+        stream = getattr(main.sys, name)
+        monkeypatch.setattr(main.sys, name, _TTYOutput(stream))
+
+
 def test_parser_accepts_merge_method_and_pr_number():
     args = main.build_parser().parse_args([
         "--scm-merge-pr", "18", "--scm-merge-method", "rebase"
@@ -55,6 +75,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
     monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
     monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
     monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stderr")
     monkeypatch.setattr("builtins.input", lambda: "yes")
     monkeypatch.setattr("sys.argv", ["ai-team", "--scm-merge-pr", "18", "--output", "json"])
 
@@ -129,11 +150,49 @@ def test_merge_cli_cancellation_does_not_issue_approval(monkeypatch, capsys):
     monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
     monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
     monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stdout", "stderr")
     monkeypatch.setattr("builtins.input", lambda: "no")
     monkeypatch.setattr("sys.argv", ["ai-team", "--scm-merge-pr", "18"])
 
     assert main.main() == 3
     assert "cancelled" in capsys.readouterr().out.lower()
+
+
+def test_merge_cli_refuses_when_preview_is_not_visible(monkeypatch, capsys):
+    head = "a" * 40
+
+    class FakeAuthority:
+        def issue(self, **kwargs):
+            raise AssertionError("merge approval must not be issued when preview is hidden")
+
+    runtime = SimpleNamespace(
+        service=SimpleNamespace(),
+        repository="acme/widget",
+        approval_authority=FakeAuthority(),
+    )
+
+    class FakeCoordinator:
+        def __init__(self, service, config):
+            pass
+
+        def poll_pull_request(self, number):
+            return {
+                "status": "ready",
+                "head_sha": head,
+                "base_branch": "main",
+                "ci_status": "success",
+                "review_status": "approved",
+            }
+
+    monkeypatch.setattr(main, "_ensure_log_safe_streams", lambda: None)
+    monkeypatch.setattr(main, "create_github_scm_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(main, "SCMLifecycleCoordinator", FakeCoordinator)
+    monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    _patch_tty_output(monkeypatch, "stderr")
+    monkeypatch.setattr("builtins.input", lambda: "yes")
+    monkeypatch.setattr("sys.argv", ["ai-team", "--scm-merge-pr", "18"])
+    assert main.main() == 1
+    assert "visible terminal preview" in capsys.readouterr().err
 
 
 def test_merge_cli_refuses_non_interactive_stdin(monkeypatch, capsys):
