@@ -350,9 +350,9 @@ def test_host_push_publishes_only_the_approved_sha_to_a_real_bare_repository(tmp
 
     git("init", "--bare", "--quiet", str(remote))
     git("init", "--quiet", str(workspace))
-    git("config", "user.name", "Host Git Integration")
-    git("config", "user.email", "host-git@example.invalid")
-    (workspace / "payload.txt").write_text("approved host push\\n", encoding="utf-8")
+    git("config", "user.name", "Host Git Integration", cwd=workspace)
+    git("config", "user.email", "host-git@example.invalid", cwd=workspace)
+    (workspace / "payload.txt").write_text("approved host push\n", encoding="utf-8")
     git("add", "payload.txt", cwd=workspace)
     git("commit", "--quiet", "-m", "approved fixture", cwd=workspace)
 
@@ -365,7 +365,7 @@ def test_host_push_publishes_only_the_approved_sha_to_a_real_bare_repository(tmp
 
     hook_marker = tmp_path / "pre-push-hook-ran"
     hook = workspace / ".git" / "hooks" / "pre-push"
-    hook.write_text(f"#!/bin/sh\\nprintf 'called' > '{hook_marker}'\\n", encoding="utf-8")
+    hook.write_text(f"#!/bin/sh\nprintf 'called' > '{hook_marker}'\n", encoding="utf-8")
     os.chmod(hook, 0o700)
 
     service = HostGitOperationService(WorkspaceSandbox(tmp_path))
@@ -379,7 +379,7 @@ def test_host_push_publishes_only_the_approved_sha_to_a_real_bare_repository(tmp
         expected_remote_url=approved_remote_url,
     )
 
-    assert result.startswith("exit_code=0\\n")
+    assert result.startswith("exit_code=0\n")
     assert git(
         "--git-dir", str(remote), "rev-parse", f"refs/heads/{target_branch}"
     ) == approved_sha
