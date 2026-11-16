@@ -373,6 +373,22 @@ class GitHubSCMProvider:
                 reviews_complete = True
                 break
 
+        # Validate the complete review response before making any dependent
+        # request. Malformed evidence must fail closed without being masked by a
+        # later transport error while fetching PR metadata.
+        for review in reviews:
+            user = review.get("user")
+            login = user.get("login") if isinstance(user, dict) else None
+            state = review.get("state")
+            submitted_at = review.get("submitted_at")
+            commit_id = review.get("commit_id")
+            if not isinstance(login, str) or not login or not isinstance(state, str):
+                raise GitHubAPIError("GitHub returned incomplete pull request review metadata")
+            if submitted_at is not None and not isinstance(submitted_at, str):
+                raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+            if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_id):
+                raise GitHubAPIError("GitHub returned an invalid review commit SHA")
+
         # Anchor the complete review set to the current PR head after pagination.
         # GitHub may retain an APPROVED review on an older commit when stale-review
         # dismissal is not enabled for the repository.
@@ -390,17 +406,11 @@ class GitHubSCMProvider:
         latest_by_user: dict[str, dict[str, Any]] = {}
         has_unknown_review_state = False
         for review in reviews:
-            user = review.get("user")
-            login = user.get("login") if isinstance(user, dict) else None
-            state = review.get("state")
+            user = review["user"]
+            login = user["login"]
+            state = review["state"]
             submitted_at = review.get("submitted_at")
-            commit_id = review.get("commit_id")
-            if not isinstance(login, str) or not login or not isinstance(state, str):
-                raise GitHubAPIError("GitHub returned incomplete pull request review metadata")
-            if submitted_at is not None and not isinstance(submitted_at, str):
-                raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
-            if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_id):
-                raise GitHubAPIError("GitHub returned an invalid review commit SHA")
+            commit_id = review["commit_id"]
             if commit_id.lower() != current_head_sha.lower():
                 continue
             if login.casefold() == pull_request_author.casefold():
