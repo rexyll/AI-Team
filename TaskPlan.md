@@ -464,11 +464,12 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - CI #611（run 43794180870，commit 113716d）Host Router image manager Docker Engine job 通过；全量 regression 2,710 passed / 14 skipped，仅 `test_scope_paths_are_deterministic_and_isolated` 的断言误把 pytest 临时目录中的 `test` 子串当作 scope 名泄漏；安全回归 252 passed / 9 skipped。失败与 state store 输出隔离无关，需仅断言生成的 `network_name` 不含 scope 字段，而非断言整个 pytest tmp_path 不含 `test`。
 
-### T21.6.3.5.2.8 Router container argv 和 inspect identity contract（2026-11-16，CI 待验收）
+### T21.6.3.5.2.8 Router container argv 和 inspect identity contract（2026-11-16，CI 验收通过）
 
 - 新增纯函数 build_router_container_spec：输入仅接受已核验的 image identity、network identity、scope 和 Host state record；校验 config/map 内容哈希与初始 active none，生成固定 `docker run` argv。
 - 容器仅使用 immutable image ID；加入已核验 scope bridge；config/map 通过只读 bind mount；rootfs read-only；cap-drop ALL；仅存在低于 1024 host port 时增加 NET_BIND_SERVICE；tmpfs 仅用于 HAProxy Unix socket；固定 no-new-privileges 和 restart policy。
 - 新增 verify_router_container_inspection：核验容器 full ID、image ID、labels、运行态、mounts、scope network ID、HostConfig 安全项和每个 TCP published port 的双向读回。该切片只生成 argv/检查字典，不调用 Docker，不创建容器或占用 host ports。
+- CI #615（run 43795305138，commit e713e3a）全部通过：regression 2,729 passed / 14 skipped；security 252 passed / 9 skipped；Windows toolchain E2E 成功；Host image manager Docker Engine 验证成功；Coverage runtime 88.31% line / 75.28% branch。#613/#614 两轮失败均已修复（detail 关键字与 pathlib.Path import），没有降低安全校验门槛。
 
 ### T21.6.3.5.2.8 CI 修复记录（2026-11-16）
 
@@ -477,3 +478,9 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 ### T21.6.3.5.2.8 CI 修复记录（2026-11-16）
 
 - CI #614（run 43795054234，commit 6a6e50f）Host image manager Docker Engine job 通过；全量 regression 2,714 passed / 14 skipped，安全回归 252 passed / 9 skipped。15 个容器契约测试在 path containment 校验处因 runtime 模块漏导入 pathlib.Path 而触发 NameError；现已补充显式导入后复验。该错误发生于测试调用期，不涉及 Docker daemon 或容器创建。
+
+### T21.6.3.5.2.9 Host Router container ensure manager（2026-11-16，CI 待验收）
+
+- 新增 LocalDockerRouterContainerManager：先按 deterministic container name inspect；只有明确 No such object/container 才尝试创建；创建后无论 exit code 成败均 inspect 回读完整 Docker 容器配置与 immutable ID。
+- 已存在但身份/网络/端口/挂载/安全配置错配时 fail closed，不执行 stop/rm/recreate；创建竞争或 Docker 返回模糊结果时，只有 post-create exact inspect verified 才返回 existing；创建成功却无法 inspect 则不报告成功。
+- daemon unavailable / timeout / port collision / malformed inspect 均返回明确状态；不启动 app，不切换 active-slot，不删除容器、不清理 host ports。
