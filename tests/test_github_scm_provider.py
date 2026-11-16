@@ -959,18 +959,33 @@ def test_rest_transport_injects_host_token_without_returning_it():
     assert captured["url"] == "https://api.github.com/repos/acme/widget"
 
 
-def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
+@pytest.mark.parametrize("redirect_code", [301, 302, 303, 307, 308])
+def test_rest_transport_does_not_follow_redirect_or_forward_token(
+    monkeypatch, method, redirect_code
+):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
 
-    received_authorization = []
+    received = []
 
     class SinkHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            received_authorization.append(self.headers.get("Authorization"))
+        def _capture(self):
+            received.append(
+                {
+                    "method": self.command,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": self.rfile.read(int(self.headers.get("Content-Length", "0"))),
+                }
+            )
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b'{"received":true}')
+
+        do_GET = _capture
+        do_POST = _capture
+        do_PATCH = _capture
+        do_PUT = _capture
 
         def log_message(self, *args):
             return None
@@ -978,13 +993,18 @@ def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
     sink = ThreadingHTTPServer(("127.0.0.1", 0), SinkHandler)
 
     class RedirectHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(302)
+        def _redirect(self):
+            self.send_response(redirect_code)
             self.send_header(
                 "Location",
                 f"http://127.0.0.1:{sink.server_port}/capture",
             )
             self.end_headers()
+
+        do_GET = _redirect
+        do_POST = _redirect
+        do_PATCH = _redirect
+        do_PUT = _redirect
 
         def log_message(self, *args):
             return None
@@ -998,8 +1018,8 @@ def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
     real_build_opener = urllib.request.build_opener
 
     def build_local_opener(*handlers):
-        # Use the real urllib opener and redirect processing, but bypass
-        # ambient proxy variables so the test stays strictly loopback-only.
+        # Use real urllib redirect processing, but bypass ambient proxy settings
+        # so the test remains strictly loopback-only on developer machines/CI.
         return real_build_opener(urllib.request.ProxyHandler({}), *handlers)
 
     monkeypatch.setattr(
@@ -1012,8 +1032,9 @@ def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
         # base at loopback only for this isolated transport integration test.
         transport._api_base = f"http://127.0.0.1:{redirect.server_port}"
 
-        with pytest.raises(GitHubAPIError, match="HTTP 302"):
-            transport.request("GET", "/repos/acme/widget")
+        payload = {"write_probe": "must-not-be-redirected"} if method != "GET" else None
+        with pytest.raises(GitHubAPIError, match=f"HTTP {redirect_code}"):
+            transport.request(method, "/repos/acme/widget", payload)
     finally:
         redirect.shutdown()
         sink.shutdown()
@@ -1022,7 +1043,8 @@ def test_rest_transport_does_not_follow_redirect_or_forward_token(monkeypatch):
         redirect_thread.join(timeout=2)
         sink_thread.join(timeout=2)
 
-    assert received_authorization == []
+    # Not even a single redirected request may reach the second endpoint.
+    assert received == []
 
 
 def test_rest_transport_sanitizes_http_error_without_echoing_token():
