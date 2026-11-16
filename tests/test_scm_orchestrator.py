@@ -14,7 +14,13 @@ class FakeProvider:
     def get_pull_request(self, repository, pull_request_number):
         if self.error:
             raise RuntimeError("remote unavailable")
-        return {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": self.draft}
+        return {
+            "head_sha": "a" * 40,
+            "state": "open",
+            "merged": False,
+            "draft": self.draft,
+            "base_branch": "main",
+        }
 
     def get_ci_status(self, repository, commit_sha):
         return {"status": self.ci}

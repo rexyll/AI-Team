@@ -28,7 +28,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
             assert repository == "acme/widget"
             assert number == 18
             assert approval.operation == "merge_pull_request"
-            assert approval.target == f"18:{head}"
+            assert approval.target == f"18:{head}:main"
             assert merge_method == "squash"
             return {"status": "merged", "sha": "b" * 40}
 
@@ -46,6 +46,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
             return {
                 "status": "ready",
                 "head_sha": head,
+                "base_branch": "main",
                 "ci_status": "success",
                 "review_status": "approved",
             }
@@ -61,7 +62,7 @@ def test_merge_cli_requires_ready_evidence_and_explicit_confirmation(monkeypatch
     assert issued == [{
         "operation": "merge_pull_request",
         "repository": "acme/widget",
-        "target": f"18:{head}",
+        "target": f"18:{head}:main",
         "approved_by": "human:interactive-cli",
     }]
     assert '"status": "merged"' in capsys.readouterr().out
@@ -86,6 +87,7 @@ def test_merge_cli_does_not_prompt_or_issue_approval_when_ci_is_not_green(monkey
             return {
                 "status": "ci_failed",
                 "head_sha": "a" * 40,
+                "base_branch": "main",
                 "ci_status": "failure",
                 "review_status": "approved",
             }
@@ -118,6 +120,7 @@ def test_merge_cli_cancellation_does_not_issue_approval(monkeypatch, capsys):
             return {
                 "status": "ready",
                 "head_sha": "a" * 40,
+                "base_branch": "main",
                 "ci_status": "success",
                 "review_status": "approved",
             }
@@ -152,6 +155,7 @@ def test_merge_cli_refuses_non_interactive_stdin(monkeypatch, capsys):
             return {
                 "status": "ready",
                 "head_sha": "a" * 40,
+                "base_branch": "main",
                 "ci_status": "success",
                 "review_status": "approved",
             }

@@ -20,6 +20,7 @@ class FakeService:
             "merged": False,
             "draft": self.draft,
             "head_sha": "a" * 40,
+            "base_branch": "main",
         }
 
     def get_ci_status(self, repository, commit_sha):
@@ -86,6 +87,7 @@ def test_readonly_probe_reports_ready_only_for_open_green_approved_pr():
     assert result["assessment"] == "ready"
     assert result["blockers"] == []
     assert result["pull_request"]["head_sha"] == "a" * 40
+    assert result["pull_request"]["base_branch"] == "main"
 
 
 def test_readonly_probe_blocks_draft_pr_even_when_ci_and_review_are_green():

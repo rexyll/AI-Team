@@ -40,12 +40,12 @@ details are sanitized to prevent an echoed credential from appearing in errors.
 
 ## Write approval
 
-Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A merge approval is additionally bound to the exact PR head SHA observed during preflight, so branch movement after approval invalidates the approval. The GitHub merge request also sends that expected SHA in the API body, letting GitHub reject a head change between preflight and merge (TOCTOU protection). A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
+Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A merge approval is additionally bound to the exact PR head SHA and base branch observed during preflight, so a head or target-branch change after approval invalidates it. The interactive confirmation displays both the head SHA and base branch. Immediately before the GitHub merge request, the adapter re-reads the PR and checks head, base, open/unmerged and non-draft state; the merge request also sends the expected head SHA, which GitHub checks atomically. GitHub's merge API does not expose an atomic expected-base-ref parameter, so the base-ref recheck narrows (but cannot eliminate) the remaining race between that read and the merge request. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
 
 The merge path performs deterministic preflight before consuming the merge approval:
 
 - the PR must be open, unmerged, and explicitly non-draft;
-- the PR head SHA must be available;
+- the PR head SHA and base branch must be available and included in the one-use approval scope;
 - all check-run pages and combined commit statuses must resolve to `success` (incomplete pagination is not success);
 - all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, incomplete bounded reads and unknown review states remain pending, and malformed review entries reject the evidence rather than being silently discarded;
 - only then may the host call the GitHub merge endpoint using `merge`, `squash` or `rebase`.

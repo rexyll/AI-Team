@@ -37,6 +37,7 @@ class FakeProvider:
             "state": self.state,
             "merged": self.merged,
             "draft": self.draft,
+            "base_branch": "main",
         }
 
     def get_ci_status(self, repository, commit_sha):
