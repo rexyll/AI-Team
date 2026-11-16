@@ -120,10 +120,16 @@ rerun CI, push commits, write PR metadata, alter reviews, or merge.
 
 ## Live read-only GitHub integration smoke
 
-Use Actions → **SCM live read-only smoke** → Run workflow, and enter an existing
-pull-request number. The manually dispatched workflow uses the repository-scoped
-`GITHUB_TOKEN` issued for that run, with only `contents: read`,
-`pull-requests: read`, `checks: read`, and `statuses: read` permissions.
+The workflow uses the repository-scoped `GITHUB_TOKEN` issued for that run,
+with only `contents: read`, `pull-requests: read`, `checks: read`, and
+`statuses: read` permissions. A narrow push trigger runs the probe when the
+workflow definition itself changes on `main`; its path filter prevents ordinary
+application pushes from repeatedly probing a historical PR. That one-shot
+workflow-change run defaults to PR #2 (the repository's existing stale draft),
+which is intentionally a negative/blocked sample for validating the live read
+path. Operators can also use Actions → **SCM live read-only smoke** → Run
+workflow and enter another existing pull-request number; the manual input
+defaults to `2`. No schedule is configured.
 It invokes `scripts.scm_live_readonly_smoke` through the same host configuration
 factory and GitHub REST provider used by the CLI.
 
