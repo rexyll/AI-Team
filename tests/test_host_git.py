@@ -512,6 +512,7 @@ def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, mon
         "GIT_CONFIG_COUNT",
         "GIT_CONFIG_KEY_0",
         "GIT_CONFIG_VALUE_0",
+        "git_config_global",
     ],
 )
 def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkeypatch, variable):
