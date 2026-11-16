@@ -29,7 +29,12 @@ class FakeSCMProvider:
 
     def push_branch(self, repository, local_repository, branch, *, expected_head_sha):
         self.calls.append(("push_branch", repository, local_repository, branch, expected_head_sha))
-        return {"status": "pushed", "branch": branch}
+        return {
+            "status": "pushed",
+            "repository": repository,
+            "branch": branch,
+            "head_sha": expected_head_sha,
+        }
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
         self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
@@ -59,7 +64,12 @@ class FakeSCMProvider:
         self, repository, pull_request_number, *, merge_method, expected_head_sha, expected_base_branch
     ):
         self.calls.append(("merge", repository, pull_request_number, merge_method, expected_head_sha, expected_base_branch))
-        return {"status": "merged", "number": pull_request_number}
+        return {
+            "status": "merged",
+            "number": pull_request_number,
+            "head_sha": expected_head_sha,
+            "merge_sha": "d" * 40,
+        }
 
 
 def _service():
@@ -91,6 +101,28 @@ def test_push_requires_exact_one_use_host_approval():
     assert provider.calls == [("local_head", "/workspace/widget"), ("push_branch", "acme/widget", "/workspace/widget", "release/1.2", "c" * 40)]
     with pytest.raises(SCMApprovalError):
         service.push_branch("acme/widget", "/workspace/widget", "release/1.2", approval=approval)
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {"status": "pushed", "repository": "acme/other", "branch": "release/1.2", "head_sha": "c" * 40},
+        {"status": "pushed", "repository": "acme/widget", "branch": "release/other", "head_sha": "c" * 40},
+        {"status": "pushed", "repository": "acme/widget", "branch": "release/1.2", "head_sha": "b" * 40},
+        {"status": "pushed", "repository": "acme/widget", "branch": "release/1.2"},
+        {"status": "failed", "repository": "acme/widget", "branch": "release/1.2", "head_sha": "c" * 40},
+        None,
+    ],
+)
+def test_push_fails_closed_on_malformed_provider_result(malformed_result):
+    service, provider, authority = _service()
+    provider.push_branch = lambda *args, **kwargs: malformed_result
+    approval = _approval(authority, "push_branch", "release/1.2:" + "c" * 40)
+
+    with pytest.raises(SCMPreflightError, match="exact approved repository/branch/HEAD push"):
+        service.push_branch(
+            "acme/widget", "/workspace/widget", "release/1.2", approval=approval
+        )
 
 
 def test_approval_is_bound_to_repository_operation_and_target():
@@ -418,6 +450,32 @@ def test_merge_preflight_requires_explicit_complete_ci_and_review_evidence():
 
     provider.review = {"status": "approved", "reviews_complete": True}
     assert service.merge_pull_request("acme/widget", 7, approval=approval)["status"] == "merged"
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {"status": "merged", "number": 8, "head_sha": "a" * 40, "merge_sha": "d" * 40},
+        {"status": "merged", "number": 7, "head_sha": "b" * 40, "merge_sha": "d" * 40},
+        {"status": "merged", "number": 7, "head_sha": "a" * 40, "merge_sha": "not-a-sha"},
+        {"status": "pending", "number": 7, "head_sha": "a" * 40, "merge_sha": "d" * 40},
+        {"status": "merged", "number": 7, "head_sha": "a" * 40},
+        None,
+    ],
+)
+def test_merge_fails_closed_on_malformed_provider_result(malformed_result):
+    service, provider, authority = _service()
+    provider.merge_pull_request = lambda *args, **kwargs: malformed_result
+    approval = _approval(
+        authority,
+        "merge_pull_request",
+        scm_merge_approval_target(
+            7, head_sha="a" * 40, base_branch="main", merge_method="squash"
+        ),
+    )
+
+    with pytest.raises(SCMPreflightError, match="approved PR merge and resulting merge SHA"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
 
 
 def test_merge_requires_pull_request_head_metadata_and_approval():

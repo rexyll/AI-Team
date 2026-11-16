@@ -711,7 +711,12 @@ def test_merge_pull_request_revalidates_ci_review_and_pr_before_github_merge_end
         expected_base_branch="main",
     )
 
-    assert result == {"status": "merged", "sha": "e" * 40, "message": "merged"}
+    assert result == {
+        "status": "merged",
+        "number": 12,
+        "head_sha": "d" * 40,
+        "merge_sha": "e" * 40,
+    }
     assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "GET", "GET", "PUT"]
     assert "/check-runs?" in transport.calls[0][1]
     assert transport.calls[1][1].endswith("/status")
@@ -719,6 +724,35 @@ def test_merge_pull_request_revalidates_ci_review_and_pr_before_github_merge_end
     assert transport.calls[3][1].endswith("/pulls/12")
     assert transport.calls[4][1].endswith("/pulls/12")
     assert transport.calls[5][2] == {"merge_method": "squash", "sha": "d" * 40}
+
+
+@pytest.mark.parametrize(
+    "merge_response",
+    [
+        {"merged": True},
+        {"merged": True, "sha": "not-a-sha"},
+        {"merged": False, "sha": "e" * 40},
+    ],
+)
+def test_merge_pull_request_requires_valid_merge_sha_response(merge_response):
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        *_merge_review_success_responses(),
+        _merge_pr_metadata(),
+        merge_response,
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="valid merge SHA"):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert transport.calls[-1][0] == "PUT"
 
 
 def test_merge_pull_request_does_not_put_when_ci_evidence_is_not_success():

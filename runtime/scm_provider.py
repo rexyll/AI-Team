@@ -177,7 +177,15 @@ class SCMApprovalAuthority:
 
 
 class SCMProvider(Protocol):
-    """Provider-neutral SCM operations. Implementations own credentials."""
+    """Provider-neutral SCM operations. Implementations own credentials.
+
+    Write methods must return target-bound evidence:
+    - push_branch: status=pushed, exact repository, branch and head_sha;
+    - create_or_update_pull_request: status, number, head/base and head_sha;
+    - merge_pull_request: status=merged, exact PR number/head_sha and merge_sha.
+    SCMService independently validates these result contracts before exposing
+    a successful host-side operation result.
+    """
 
     def get_local_head_sha(self, local_repository: str) -> str: ...
 
@@ -260,11 +268,24 @@ class SCMService:
         result = self._provider.push_branch(
             repository, local_repository, branch, expected_head_sha=head_sha
         )
-        if not isinstance(result, dict) or result.get("status") != "pushed":
-            raise SCMPreflightError("provider did not confirm the approved branch push")
-        # The service, not provider-supplied metadata, anchors the published
-        # branch to the exact SHA observed and approved immediately above.
-        return {**result, "head_sha": head_sha}
+        result_repository = result.get("repository") if isinstance(result, dict) else None
+        result_branch = result.get("branch") if isinstance(result, dict) else None
+        result_head_sha = result.get("head_sha") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("status") != "pushed"
+            or result_repository != repository
+            or result_branch != branch
+            or not isinstance(result_head_sha, str)
+            or not _SHA.fullmatch(result_head_sha)
+            or result_head_sha.lower() != head_sha.lower()
+        ):
+            raise SCMPreflightError(
+                "provider did not confirm the exact approved repository/branch/HEAD push"
+            )
+        # Return only the validated, host-approved target; provider-supplied
+        # extra fields are not part of the service result contract.
+        return {"status": "pushed", "branch": branch, "head_sha": head_sha}
 
     def create_or_update_pull_request(
         self,
@@ -465,13 +486,37 @@ class SCMService:
                 merge_method=merge_method,
             ),
         )
-        return self._provider.merge_pull_request(
+        result = self._provider.merge_pull_request(
             repository,
             pull_request_number,
             merge_method=merge_method,
             expected_head_sha=head_sha,
             expected_base_branch=base_branch,
         )
+        result_number = result.get("number") if isinstance(result, dict) else None
+        result_head_sha = result.get("head_sha") if isinstance(result, dict) else None
+        merge_sha = result.get("merge_sha") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("status") != "merged"
+            or result_number != pull_request_number
+            or not isinstance(result_number, int)
+            or isinstance(result_number, bool)
+            or not isinstance(result_head_sha, str)
+            or not _SHA.fullmatch(result_head_sha)
+            or result_head_sha.lower() != head_sha.lower()
+            or not isinstance(merge_sha, str)
+            or not _SHA.fullmatch(merge_sha)
+        ):
+            raise SCMPreflightError(
+                "provider did not confirm the approved PR merge and resulting merge SHA"
+            )
+        return {
+            "status": "merged",
+            "number": pull_request_number,
+            "head_sha": head_sha,
+            "merge_sha": merge_sha,
+        }
 
     def _provider_pr_target(self, repository: str, pull_request_number: int) -> tuple[str, str]:
         pull_request = self.get_pull_request(repository, pull_request_number)

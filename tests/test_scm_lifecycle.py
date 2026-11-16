@@ -28,7 +28,12 @@ class FakeProvider:
 
     def push_branch(self, repository, local_repository, branch, *, expected_head_sha):
         self.calls.append(("push", repository, branch, expected_head_sha))
-        return {"status": "pushed", "branch": branch}
+        return {
+            "status": "pushed",
+            "repository": repository,
+            "branch": branch,
+            "head_sha": expected_head_sha,
+        }
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
         self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
@@ -72,7 +77,12 @@ class FakeProvider:
         expected_base_branch,
     ):
         self.calls.append(("merge", repository, pull_request_number, expected_base_branch))
-        return {"status": "merged"}
+        return {
+            "status": "merged",
+            "number": pull_request_number,
+            "head_sha": expected_head_sha,
+            "merge_sha": "d" * 40,
+        }
 
 
 def _setup(

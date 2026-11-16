@@ -38,7 +38,12 @@ class LifecycleProvider:
         self.events.append(("push", repository, branch, expected_head_sha))
         if self.local_head != expected_head_sha:
             raise RuntimeError("local HEAD changed before push")
-        return {"status": "pushed", "branch": branch, "sha": expected_head_sha}
+        return {
+            "status": "pushed",
+            "repository": repository,
+            "branch": branch,
+            "head_sha": expected_head_sha,
+        }
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
         self.events.append(("create_pr", repository, head, base, expected_head_sha))
@@ -95,7 +100,12 @@ class LifecycleProvider:
         if self.pr_state != "open" or self.merged:
             raise RuntimeError("PR is no longer mergeable")
         self.merged = True
-        return {"status": "merged", "sha": "d" * 40}
+        return {
+            "status": "merged",
+            "number": pull_request_number,
+            "head_sha": expected_head_sha,
+            "merge_sha": "d" * 40,
+        }
 
 
 def _system():

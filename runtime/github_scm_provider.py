@@ -604,7 +604,18 @@ class GitHubSCMProvider:
             f"{self._repo_path(repository)}/pulls/{pull_request_number}/merge",
             {"merge_method": merge_method, "sha": expected_head_sha},
         )
-        if not isinstance(result, dict) or result.get("merged") is not True:
+        merge_sha = result.get("sha") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("merged") is not True
+            or not isinstance(merge_sha, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{7,64}", merge_sha)
+        ):
             message = result.get("message") if isinstance(result, dict) else ""
-            raise GitHubAPIError("GitHub did not merge the pull request" + (f": {message}" if message else ""))
-        return {"status": "merged", "sha": result.get("sha"), "message": result.get("message")}
+            raise GitHubAPIError("GitHub did not confirm the PR merge with a valid merge SHA" + (f": {message}" if message else ""))
+        return {
+            "status": "merged",
+            "number": pull_request_number,
+            "head_sha": expected_head_sha,
+            "merge_sha": merge_sha,
+        }
