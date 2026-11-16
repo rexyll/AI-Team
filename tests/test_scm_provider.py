@@ -21,6 +21,7 @@ class FakeSCMProvider:
         self.review = {"status": "approved"}
         self.pr = {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": False, "base_branch": "main"}
         self.local_head = "c" * 40
+        self.pr_write_head_sha = None
 
     def get_local_head_sha(self, local_repository):
         self.calls.append(("local_head", local_repository))
@@ -32,7 +33,11 @@ class FakeSCMProvider:
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
         self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
-        return {"status": "created", "number": 7, "head_sha": expected_head_sha}
+        return {
+            "status": "created",
+            "number": 7,
+            "head_sha": self.pr_write_head_sha or expected_head_sha,
+        }
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))
@@ -158,6 +163,35 @@ def test_pr_write_approval_is_bound_to_exact_title_and_body(title, body):
         )
 
     assert not any(call[0] == "create_pr" for call in provider.calls)
+
+
+def test_pr_write_fails_closed_when_provider_does_not_confirm_expected_sha():
+    service, provider, authority = _service()
+    provider.pr_write_head_sha = "b" * 40
+    approval = _approval(
+        authority,
+        "create_or_update_pull_request",
+        scm_pull_request_approval_target(
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="a" * 40,
+        ),
+    )
+
+    with pytest.raises(SCMPreflightError, match="approved HEAD SHA"):
+        service.create_or_update_pull_request(
+            "acme/widget",
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="a" * 40,
+            approval=approval,
+        )
+
+    assert provider.calls[-1][0] == "create_pr"
 
 
 def test_pr_write_approval_is_bound_to_exact_expected_head_sha():

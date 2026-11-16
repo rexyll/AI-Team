@@ -298,7 +298,7 @@ class SCMService:
             repository=repository,
             target=target,
         )
-        return self._provider.create_or_update_pull_request(
+        result = self._provider.create_or_update_pull_request(
             repository,
             head=head,
             base=base,
@@ -306,6 +306,16 @@ class SCMService:
             body=body,
             expected_head_sha=expected_head_sha,
         )
+        result_head_sha = result.get("head_sha") if isinstance(result, dict) else None
+        if (
+            not isinstance(result_head_sha, str)
+            or not _SHA.fullmatch(result_head_sha)
+            or result_head_sha.lower() != expected_head_sha.lower()
+        ):
+            raise SCMPreflightError(
+                "provider did not confirm the PR write against the approved HEAD SHA"
+            )
+        return result
 
     def get_pull_request(self, repository: str, pull_request_number: int) -> dict[str, Any]:
         """Read the current PR head and state without granting a write capability."""
