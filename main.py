@@ -894,6 +894,7 @@ def main() -> int:
                 f"Repository: {scm_runtime.repository}\n"
                 f"PR: #{args.scm_merge_pr}\n"
                 f"Head SHA: {observation['head_sha']}\n"
+                f"Base branch: {observation['base_branch']}\n"
                 f"CI: {observation['ci_status']} | Review: {observation['review_status']}\n"
                 f"Merge method: {args.scm_merge_method}"
             )
@@ -910,7 +911,7 @@ def main() -> int:
             approval = scm_runtime.approval_authority.issue(
                 operation="merge_pull_request",
                 repository=scm_runtime.repository,
-                target=f"{args.scm_merge_pr}:{observation['head_sha']}",
+                target=f"{args.scm_merge_pr}:{observation['head_sha']}:{observation['base_branch']}",
                 approved_by="human:interactive-cli",
             )
             outcome = scm_runtime.service.merge_pull_request(
@@ -924,6 +925,7 @@ def main() -> int:
                 "repository": scm_runtime.repository,
                 "pull_request_number": args.scm_merge_pr,
                 "head_sha": observation["head_sha"],
+                "base_branch": observation["base_branch"],
                 "merge_method": args.scm_merge_method,
                 "result": outcome,
             }

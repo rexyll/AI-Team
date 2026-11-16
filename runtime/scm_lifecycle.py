@@ -139,6 +139,7 @@ class SCMLifecycleCoordinator:
                 "repository": self._config.repository,
                 "pull_request_number": pull_request_number,
                 "head_sha": pr["head_sha"],
+                "base_branch": pr["base_branch"],
                 "pull_request_state": pr.get("state"),
                 "merged": pr.get("merged"),
                 "draft": pr.get("draft"),

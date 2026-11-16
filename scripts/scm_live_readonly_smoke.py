@@ -63,6 +63,7 @@ def observe(service: Any, repository: str, pull_request_number: int) -> dict[str
             "merged": pull_request.get("merged"),
             "draft": pull_request.get("draft"),
             "head_sha": head_sha,
+            "base_branch": pull_request.get("base_branch"),
         },
         "ci": {
             "status": ci_status,

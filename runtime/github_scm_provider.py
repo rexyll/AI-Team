@@ -204,15 +204,24 @@ class GitHubSCMProvider:
         state = result.get("state") if isinstance(result, dict) else None
         merged = result.get("merged") if isinstance(result, dict) else None
         draft = result.get("draft") if isinstance(result, dict) else None
+        base = result.get("base") if isinstance(result, dict) else None
+        base_branch = base.get("ref") if isinstance(base, dict) else None
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
             raise GitHubAPIError("GitHub returned no valid pull request head SHA")
-        if state not in {"open", "closed"} or not isinstance(merged, bool) or not isinstance(draft, bool):
+        if (
+            state not in {"open", "closed"}
+            or not isinstance(merged, bool)
+            or not isinstance(draft, bool)
+            or not isinstance(base_branch, str)
+            or not base_branch.strip()
+        ):
             raise GitHubAPIError("GitHub returned incomplete pull request state metadata")
         return {
             "head_sha": sha,
             "state": state,
             "merged": merged,
             "draft": draft,
+            "base_branch": base_branch,
         }
 
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
@@ -376,11 +385,32 @@ class GitHubSCMProvider:
         *,
         merge_method: str,
         expected_head_sha: str,
+        expected_base_branch: str,
     ) -> dict[str, Any]:
         if merge_method not in {"merge", "squash", "rebase"}:
             raise ValueError("unsupported merge method")
         if not isinstance(expected_head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", expected_head_sha):
             raise ValueError("expected_head_sha must be a hexadecimal SHA")
+        if not isinstance(expected_base_branch, str) or not expected_base_branch.strip():
+            raise ValueError("expected_base_branch must be non-empty")
+        # GitHub's merge endpoint supports an expected head SHA but no expected
+        # base-ref precondition. Re-read the PR immediately before the write to
+        # detect base/head changes after the host approval.
+        current = self._transport.request(
+            "GET", f"{self._repo_path(repository)}/pulls/{pull_request_number}"
+        )
+        current_head = current.get("head") if isinstance(current, dict) else None
+        current_base = current.get("base") if isinstance(current, dict) else None
+        current_head_sha = current_head.get("sha") if isinstance(current_head, dict) else None
+        current_base_branch = current_base.get("ref") if isinstance(current_base, dict) else None
+        if (
+            current.get("state") != "open"
+            or current.get("merged") is not False
+            or current.get("draft") is not False
+            or current_head_sha != expected_head_sha
+            or current_base_branch != expected_base_branch
+        ):
+            raise GitHubAPIError("GitHub pull request head or base changed after merge approval")
         result = self._transport.request(
             "PUT",
             f"{self._repo_path(repository)}/pulls/{pull_request_number}/merge",

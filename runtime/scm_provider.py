@@ -145,7 +145,13 @@ class SCMProvider(Protocol):
     def get_review_status(self, repository: str, pull_request_number: int) -> dict[str, Any]: ...
 
     def merge_pull_request(
-        self, repository: str, pull_request_number: int, *, merge_method: str, expected_head_sha: str
+        self,
+        repository: str,
+        pull_request_number: int,
+        *,
+        merge_method: str,
+        expected_head_sha: str,
+        expected_base_branch: str,
     ) -> dict[str, Any]: ...
 
 
@@ -245,13 +251,21 @@ class SCMService:
         state = result.get("state")
         merged = result.get("merged")
         draft = result.get("draft")
-        if state not in {"open", "closed"} or not isinstance(merged, bool) or not isinstance(draft, bool):
+        base_branch = result.get("base_branch")
+        if (
+            state not in {"open", "closed"}
+            or not isinstance(merged, bool)
+            or not isinstance(draft, bool)
+            or not isinstance(base_branch, str)
+            or not base_branch.strip()
+        ):
             raise SCMPreflightError("provider returned incomplete pull request state metadata")
         return {
             "head_sha": head_sha,
             "state": state,
             "merged": merged,
             "draft": draft,
+            "base_branch": base_branch,
         }
 
     def get_ci_status(self, repository: str, commit_sha: str) -> dict[str, Any]:
@@ -286,7 +300,7 @@ class SCMService:
             or not approval.target.startswith(f"{pull_request_number}:")
         ):
             raise SCMApprovalError("explicit host approval is required for this repository and pull request")
-        head_sha = self._provider_pr_head(repository, pull_request_number)
+        head_sha, base_branch = self._provider_pr_target(repository, pull_request_number)
         ci = self.get_ci_status(repository, head_sha)
         review = self.get_review_status(repository, pull_request_number)
         if ci.get("status") != "success":
@@ -297,24 +311,20 @@ class SCMService:
             approval,
             operation="merge_pull_request",
             repository=repository,
-            target=f"{pull_request_number}:{head_sha}",
+            target=f"{pull_request_number}:{head_sha}:{base_branch}",
         )
         return self._provider.merge_pull_request(
-            repository, pull_request_number, merge_method=merge_method, expected_head_sha=head_sha
+            repository,
+            pull_request_number,
+            merge_method=merge_method,
+            expected_head_sha=head_sha,
+            expected_base_branch=base_branch,
         )
 
-    def _provider_pr_head(self, repository: str, pull_request_number: int) -> str:
-        getter = getattr(self._provider, "get_pull_request", None)
-        if not callable(getter):
-            raise SCMPreflightError("provider does not expose pull request head metadata")
-        pull_request = getter(repository, pull_request_number)
-        if not isinstance(pull_request, dict):
-            raise SCMPreflightError("provider returned invalid pull request metadata")
+    def _provider_pr_target(self, repository: str, pull_request_number: int) -> tuple[str, str]:
+        pull_request = self.get_pull_request(repository, pull_request_number)
         if pull_request.get("state") != "open" or pull_request.get("merged") is not False:
             raise SCMPreflightError("merge blocked: pull request is not open and unmerged")
         if pull_request.get("draft") is not False:
             raise SCMPreflightError("merge blocked: pull request is draft or draft state is unknown")
-        head = pull_request.get("head_sha")
-        if not isinstance(head, str) or not _SHA.fullmatch(head):
-            raise SCMPreflightError("provider returned no valid pull request head SHA")
-        return head
+        return pull_request["head_sha"], pull_request["base_branch"]
