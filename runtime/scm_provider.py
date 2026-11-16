@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -49,7 +49,7 @@ def _non_empty(value: str, name: str) -> str:
 class SCMApproval:
     """Opaque one-use host approval scoped to one SCM write."""
 
-    token: str
+    token: str = field(repr=False)
     operation: str
     repository: str
     target: str
