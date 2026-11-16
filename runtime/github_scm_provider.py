@@ -405,7 +405,7 @@ class GitHubSCMProvider:
                     ) from None
                 if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
                     raise GitHubAPIError(
-                        "GitHub returned a review submission timestamp without a timezone"
+                        "GitHub returned an invalid review submission timestamp: timezone is required"
                     )
             if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_id):
                 raise GitHubAPIError("GitHub returned an invalid review commit SHA")
