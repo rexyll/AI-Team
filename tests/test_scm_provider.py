@@ -383,7 +383,7 @@ def test_service_downgrades_incomplete_ci_success_to_unknown(incomplete_ci):
     [
         {"status": "approved"},
         {"status": "approved", "reviews_complete": False},
-        {"status": "approved", "reviews_complete": True},
+        {"status": "approved", "reviews_complete": True, "reviewed_head_sha": "not-a-sha"},
     ],
 )
 def test_service_downgrades_unanchored_or_incomplete_review_approval(incomplete_review):
