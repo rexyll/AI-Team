@@ -216,7 +216,7 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     assert result == "exit_code=0\npushed\n"
     assert calls == [
         [
-            "git", "config", "--local", "--get-regexp",
+            "git", "config", "--get-regexp",
             r"^url\..*\.(insteadOf|pushInsteadOf)$",
         ],
         ["git", "remote", "get-url", "--push", "--all", "origin"],
@@ -272,7 +272,7 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
 
     assert calls == [
         [
-            "git", "config", "--local", "--get-regexp",
+            "git", "config", "--get-regexp",
             r"^url\..*\.(insteadOf|pushInsteadOf)$",
         ],
         ["git", "remote", "get-url", "--push", "--all", "origin"],
@@ -306,7 +306,6 @@ def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path
     assert calls == [[
         "git",
         "config",
-        "--local",
         "--get-regexp",
         r"^url\..*\.(insteadOf|pushInsteadOf)$",
     ]]
