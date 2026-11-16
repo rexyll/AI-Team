@@ -180,6 +180,43 @@ class HostGitOperationService:
             raise RuntimeError("origin must resolve to exactly one push destination")
         return urls[0]
 
+    def _reject_repository_scoped_credential_helpers(
+        self, workspace: Path, *, env: Mapping[str, str] | None = None
+    ) -> None:
+        """Reject credential helpers and config includes owned by the repository.
+
+        Git credential helpers can execute arbitrary programs (including shell
+        snippets). Repository-local and worktree config is untrusted input; a
+        repository-local include can inject the same setting indirectly. Host-
+        level credential helpers remain available for normal authentication.
+        """
+        helper_pattern = r"^credential(\..*)?\.helper$"
+        include_pattern = r"^include(if)?\..*"
+        for scope in ("--local", "--worktree"):
+            helper_config = self._git_host(
+                ["config", scope, "--get-regexp", helper_pattern],
+                workspace,
+                env=env,
+            )
+            if helper_config.startswith("exit_code=0\n"):
+                raise PermissionError(
+                    "repository-scoped Git credential helpers are not allowed for host push"
+                )
+            if helper_config != "exit_code=1\n":
+                raise RuntimeError("unable to verify repository-scoped Git credential helpers")
+
+            include_config = self._git_host(
+                ["config", scope, "--get-regexp", include_pattern],
+                workspace,
+                env=env,
+            )
+            if include_config.startswith("exit_code=0\n"):
+                raise PermissionError(
+                    "repository-scoped Git config includes are not allowed for host push"
+                )
+            if include_config != "exit_code=1\n":
+                raise RuntimeError("unable to verify repository-scoped Git config includes")
+
     def push(
         self,
         workspace: str,
@@ -213,6 +250,10 @@ class HostGitOperationService:
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
+        # Repository/worktree credential helpers can execute arbitrary code;
+        # local includes can inject them indirectly. Keep credential helpers
+        # under host-level configuration only.
+        self._reject_repository_scoped_credential_helpers(root, env=env)
         # URL rewrite rules from system, global, local, included and
         # GIT_CONFIG_COUNT scopes can transform even a literal destination.
         # Inspect every effective Git config scope and fail closed on any rule.

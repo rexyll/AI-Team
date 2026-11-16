@@ -200,7 +200,7 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
         call_kwargs.append(kwargs)
-        if arguments[1:3] == ["config", "--get-regexp"]:
+        if arguments[1] == "config":
             return SimpleNamespace(returncode=1, stdout="", stderr="")
         if arguments[1:5] == ["remote", "get-url", "--push", "--all"]:
             return SimpleNamespace(
@@ -221,6 +221,10 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
 
     assert result == "exit_code=0\npushed\n"
     assert calls == [
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         [
             "git", "config", "--get-regexp",
             r"^url\..*\.(insteadOf|pushInsteadOf)$",
@@ -258,7 +262,7 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
 
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
-        if arguments[1:3] == ["config", "--get-regexp"]:
+        if arguments[1] == "config":
             return SimpleNamespace(returncode=1, stdout="", stderr="")
         return SimpleNamespace(
             returncode=0,
@@ -277,11 +281,105 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
         )
 
     assert calls == [
-        [
-            "git", "config", "--get-regexp",
-            r"^url\..*\.(insteadOf|pushInsteadOf)$",
-        ],
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
         ["git", "remote", "get-url", "--push", "--all", "origin"],
+    ]
+
+
+def test_host_push_rejects_repository_scoped_credential_helpers(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="credential.https://github.com.helper !sh -c 'touch /tmp/owned'\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="credential helpers"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+
+    assert calls == [[
+        "git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"
+    ]]
+
+
+def test_host_push_rejects_worktree_credential_helpers(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if arguments[1:4] == ["config", "--worktree", "--get-regexp"] and "credential" in arguments[-1]:
+            return SimpleNamespace(returncode=0, stdout="credential.helper manager\n", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="credential helpers"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+
+    assert len(calls) == 3
+    assert calls[-1] == [
+        "git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"
+    ]
+
+
+def test_host_push_rejects_repository_local_config_includes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        if arguments[1:4] == ["config", "--local", "--get-regexp"] and "credential" in arguments[-1]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="includeif.gitdir:/tmp/workspace.path /tmp/untrusted.inc\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(PermissionError, match="config includes"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+        )
+
+    assert len(calls) == 2
+    assert calls[-1] == [
+        "git", "config", "--local", "--get-regexp", r"^include(if)?\..*"
     ]
 
 
@@ -293,11 +391,15 @@ def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path
 
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
-        return SimpleNamespace(
-            returncode=0,
-            stdout="url.ssh://attacker.example/.insteadof https://github.com/\n",
-            stderr="",
-        )
+        if arguments[1:] == [
+            "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"
+        ]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="url.ssh://attacker.example/.insteadof https://github.com/\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
 
     monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
 
@@ -309,12 +411,13 @@ def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path
             expected_remote_url="https://github.com/acme/widget.git",
         )
 
-    assert calls == [[
-        "git",
-        "config",
-        "--get-regexp",
-        r"^url\..*\.(insteadOf|pushInsteadOf)$",
-    ]]
+    assert calls == [
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
+    ]
 
 
 def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monkeypatch):
@@ -345,12 +448,13 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
             env=env,
         )
 
-    assert calls == [[
-        "git",
-        "config",
-        "--get-regexp",
-        r"^url\..*\.(insteadOf|pushInsteadOf)$",
-    ]]
+    assert calls == [
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
+    ]
 
 
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():
