@@ -170,12 +170,23 @@ class GitHubSCMProvider:
             "base": base,
         })
         existing = self._transport.request("GET", f"{root}/pulls?{query}")
-        if isinstance(existing, list) and existing:
-            number = existing[0].get("number")
-            if not isinstance(number, int):
+        if not isinstance(existing, list) or any(not isinstance(item, dict) for item in existing):
+            raise GitHubAPIError("GitHub returned an invalid open pull request lookup response")
+        if len(existing) > 1:
+            raise GitHubAPIError("GitHub returned multiple open pull requests for the requested head/base")
+        existing_number: int | None = None
+        if existing:
+            existing_number = existing[0].get("number")
+            if (
+                not isinstance(existing_number, int)
+                or isinstance(existing_number, bool)
+                or existing_number < 1
+            ):
                 raise GitHubAPIError("GitHub returned an invalid pull request number")
             result = self._transport.request(
-                "PATCH", f"{root}/pulls/{number}", {"title": title, "body": body, "base": base}
+                "PATCH",
+                f"{root}/pulls/{existing_number}",
+                {"title": title, "body": body, "base": base},
             )
             action = "updated"
         else:
@@ -183,7 +194,13 @@ class GitHubSCMProvider:
                 "POST", f"{root}/pulls", {"head": head, "base": base, "title": title, "body": body}
             )
             action = "created"
-        if not isinstance(result, dict) or not isinstance(result.get("number"), int):
+        result_number = result.get("number") if isinstance(result, dict) else None
+        if (
+            not isinstance(result_number, int)
+            or isinstance(result_number, bool)
+            or result_number < 1
+            or (existing_number is not None and result_number != existing_number)
+        ):
             raise GitHubAPIError("GitHub returned an invalid pull request response")
         return {
             "status": action,

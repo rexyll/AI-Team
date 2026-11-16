@@ -183,6 +183,10 @@ credential or expose its value to the interactive prompt, Agent, task context
 or logs. Merge remains a separate operation requiring a distinct approval
 after green CI and approved review.
 
+
+
+PR create/update also fails closed on malformed or ambiguous lookup responses. The provider only creates a PR after an explicit empty array from the open-PR query; a non-array response, malformed entry, invalid number, or multiple matches produces an error and no POST/PATCH write.
+
 ## Interactive merge approval
 
 A PR can be merged through the standalone host command:

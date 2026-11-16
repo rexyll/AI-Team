@@ -102,6 +102,52 @@ def test_create_pull_request_creates_when_no_open_match():
     assert transport.calls[1][2]["head"] == "feature/a"
 
 
+@pytest.mark.parametrize(
+    "lookup_response",
+    [
+        None,
+        {},
+        "unexpected response",
+        [None],
+        [{"number": True}],
+        [{"number": 0}],
+        [{"number": 12}, {"number": 13}],
+    ],
+)
+def test_create_pull_request_fails_closed_on_invalid_or_ambiguous_lookup(
+    lookup_response,
+):
+    transport = FakeTransport([lookup_response])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="invalid|multiple"):
+        provider.create_or_update_pull_request(
+            "acme/widget",
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Body",
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET"]
+
+
+def test_create_pull_request_rejects_invalid_write_response_number():
+    transport = FakeTransport([[], {"number": True}])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="invalid pull request response"):
+        provider.create_or_update_pull_request(
+            "acme/widget",
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Body",
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "POST"]
+
+
 def test_create_pull_request_updates_existing_open_match():
     transport = FakeTransport([
         [{"number": 12}],
