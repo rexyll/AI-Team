@@ -38,10 +38,12 @@ class LifecycleProvider:
             raise RuntimeError("local HEAD changed before push")
         return {"status": "pushed", "branch": branch, "sha": expected_head_sha}
 
-    def create_or_update_pull_request(self, repository, *, head, base, title, body):
-        self.events.append(("create_pr", repository, head, base))
+    def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
+        self.events.append(("create_pr", repository, head, base, expected_head_sha))
         if self.fail_pr_create:
             raise RuntimeError("simulated PR API outage")
+        if self.pr_head != expected_head_sha:
+            raise RuntimeError("remote PR branch SHA mismatch")
         return {"status": "created", "number": 23, "head_sha": self.pr_head}
 
     def get_pull_request(self, repository, pull_request_number):
@@ -122,6 +124,7 @@ def _publish(coordinator, authority, provider):
             base="main",
             title="Release feature",
             body="Validated implementation",
+            expected_head_sha=provider.local_head,
         ),
     )
     return coordinator.publish_and_open_pull_request(

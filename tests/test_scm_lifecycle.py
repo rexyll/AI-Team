@@ -25,9 +25,9 @@ class FakeProvider:
         self.calls.append(("push", repository, branch, expected_head_sha))
         return {"status": "pushed", "branch": branch}
 
-    def create_or_update_pull_request(self, repository, *, head, base, title, body):
-        self.calls.append(("create_pr", repository, head, base, title, body))
-        return {"status": "created", "number": 19}
+    def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
+        self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
+        return {"status": "created", "number": 19, "head_sha": expected_head_sha}
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))
@@ -93,6 +93,7 @@ def test_publish_requires_separate_explicit_push_and_pr_approvals():
             base="main",
             title="Feature A",
             body="Implementation",
+            expected_head_sha=provider.local_head,
         ),
         approved_by="human:operator",
     )

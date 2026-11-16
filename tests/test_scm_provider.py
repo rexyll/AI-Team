@@ -30,9 +30,9 @@ class FakeSCMProvider:
         self.calls.append(("push_branch", repository, local_repository, branch, expected_head_sha))
         return {"status": "pushed", "branch": branch}
 
-    def create_or_update_pull_request(self, repository, *, head, base, title, body):
-        self.calls.append(("create_pr", repository, head, base, title, body))
-        return {"status": "created", "number": 7}
+    def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
+        self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
+        return {"status": "created", "number": 7, "head_sha": expected_head_sha}
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))
@@ -80,7 +80,7 @@ def test_push_requires_exact_one_use_host_approval():
     result = service.push_branch(
         "acme/widget", "/workspace/widget", "release/1.2", approval=approval
     )
-    assert result == {"status": "pushed", "branch": "release/1.2"}
+    assert result == {"status": "pushed", "branch": "release/1.2", "head_sha": "c" * 40}
     assert provider.calls == [("local_head", "/workspace/widget"), ("push_branch", "acme/widget", "/workspace/widget", "release/1.2", "c" * 40)]
     with pytest.raises(SCMApprovalError):
         service.push_branch("acme/widget", "/workspace/widget", "release/1.2", approval=approval)
@@ -106,6 +106,7 @@ def test_pull_request_creation_requires_explicit_approval():
             base="main",
             title="Feature A",
             body="Implementation summary",
+            expected_head_sha="a" * 40,
         ),
     )
 
@@ -115,12 +116,13 @@ def test_pull_request_creation_requires_explicit_approval():
         base="main",
         title="Feature A",
         body="Implementation summary",
+        expected_head_sha="a" * 40,
         approval=approval,
     )
 
     assert result == {"status": "created", "number": 7}
     assert provider.calls == [
-        ("create_pr", "acme/widget", "feature/a", "main", "Feature A", "Implementation summary")
+        ("create_pr", "acme/widget", "feature/a", "main", "Feature A", "Implementation summary", "a" * 40)
     ]
 
 
@@ -151,6 +153,35 @@ def test_pr_write_approval_is_bound_to_exact_title_and_body(title, body):
             base="main",
             title=title,
             body=body,
+            expected_head_sha="a" * 40,
+            approval=approval,
+        )
+
+    assert not any(call[0] == "create_pr" for call in provider.calls)
+
+
+def test_pr_write_approval_is_bound_to_exact_expected_head_sha():
+    service, provider, authority = _service()
+    approval = _approval(
+        authority,
+        "create_or_update_pull_request",
+        scm_pull_request_approval_target(
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="a" * 40,
+        ),
+    )
+
+    with pytest.raises(SCMApprovalError, match="scope"):
+        service.create_or_update_pull_request(
+            "acme/widget",
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation summary",
+            expected_head_sha="b" * 40,
             approval=approval,
         )
 

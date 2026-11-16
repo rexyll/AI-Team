@@ -86,11 +86,13 @@ def test_publish_cli_requires_two_distinct_confirmations(monkeypatch, tmp_path, 
         base="main",
         title="Add widget",
         body="Implementation details",
+        expected_head_sha=head_sha,
     )
     assert issued[1]["target"] == expected_pr_target
     output = capsys.readouterr().out
     assert "PR #31" in output
-    assert "PR content SHA-256 (title + body):" in output
+    assert "PR source SHA:" in output
+    assert "PR approval SHA-256 (source SHA + title + body):" in output
 
 
 def test_publish_cli_stops_if_first_confirmation_is_not_yes(monkeypatch, tmp_path, capsys):

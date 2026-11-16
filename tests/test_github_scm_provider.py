@@ -80,15 +80,34 @@ def test_push_branch_reports_nonzero_git_exit_code():
         provider.push_branch("acme/widget", "/workspace/widget", "main", expected_head_sha="e" * 40)
 
 
-def test_create_pull_request_creates_when_no_open_match():
+def _branch_ref(sha="d" * 40):
+    return {"object": {"sha": sha}}
+
+
+def _created_or_updated_pr(number=12, sha="d" * 40):
+    return {
+        "number": number,
+        "html_url": f"https://github.com/acme/widget/pull/{number}",
+        "head": {"sha": sha},
+    }
+
+
+def test_create_pull_request_creates_only_for_exact_pushed_remote_sha():
     transport = FakeTransport([
+        _branch_ref(),
         [],
-        {"number": 12, "html_url": "https://github.com/acme/widget/pull/12"},
+        _branch_ref(),
+        _created_or_updated_pr(),
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     result = provider.create_or_update_pull_request(
-        "acme/widget", head="feature/a", base="main", title="Feature A", body="Body"
+        "acme/widget",
+        head="feature/a",
+        base="main",
+        title="Feature A",
+        body="Body",
+        expected_head_sha="d" * 40,
     )
 
     assert result == {
@@ -97,9 +116,12 @@ def test_create_pull_request_creates_when_no_open_match():
         "url": "https://github.com/acme/widget/pull/12",
         "head": "feature/a",
         "base": "main",
+        "head_sha": "d" * 40,
     }
-    assert transport.calls[1][0] == "POST"
-    assert transport.calls[1][2]["head"] == "feature/a"
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "POST"]
+    assert transport.calls[0][1].endswith("/git/ref/heads/feature/a")
+    assert transport.calls[2][1].endswith("/git/ref/heads/feature/a")
+    assert transport.calls[3][2]["head"] == "feature/a"
 
 
 @pytest.mark.parametrize(
@@ -114,10 +136,8 @@ def test_create_pull_request_creates_when_no_open_match():
         [{"number": 12}, {"number": 13}],
     ],
 )
-def test_create_pull_request_fails_closed_on_invalid_or_ambiguous_lookup(
-    lookup_response,
-):
-    transport = FakeTransport([lookup_response])
+def test_create_pull_request_fails_closed_on_invalid_or_ambiguous_lookup(lookup_response):
+    transport = FakeTransport([_branch_ref(), lookup_response])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     with pytest.raises(GitHubAPIError, match="invalid|multiple"):
@@ -127,13 +147,19 @@ def test_create_pull_request_fails_closed_on_invalid_or_ambiguous_lookup(
             base="main",
             title="Feature A",
             body="Body",
+            expected_head_sha="d" * 40,
         )
 
-    assert [call[0] for call in transport.calls] == ["GET"]
+    assert [call[0] for call in transport.calls] == ["GET", "GET"]
 
 
 def test_create_pull_request_rejects_invalid_write_response_number():
-    transport = FakeTransport([[], {"number": True}])
+    transport = FakeTransport([
+        _branch_ref(),
+        [],
+        _branch_ref(),
+        {"number": True},
+    ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     with pytest.raises(GitHubAPIError, match="invalid pull request response"):
@@ -143,25 +169,111 @@ def test_create_pull_request_rejects_invalid_write_response_number():
             base="main",
             title="Feature A",
             body="Body",
+            expected_head_sha="d" * 40,
         )
 
-    assert [call[0] for call in transport.calls] == ["GET", "POST"]
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "POST"]
 
 
-def test_create_pull_request_updates_existing_open_match():
+def test_create_pull_request_updates_existing_open_match_for_exact_sha():
     transport = FakeTransport([
-        [{"number": 12}],
-        {"number": 12, "html_url": "https://github.com/acme/widget/pull/12"},
+        _branch_ref(),
+        [{"number": 12, "head": {"sha": "d" * 40}}],
+        _branch_ref(),
+        _created_or_updated_pr(),
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     result = provider.create_or_update_pull_request(
-        "acme/widget", head="feature/a", base="main", title="Updated", body="New body"
+        "acme/widget",
+        head="feature/a",
+        base="main",
+        title="Updated",
+        body="New body",
+        expected_head_sha="d" * 40,
     )
 
     assert result["status"] == "updated"
-    assert transport.calls[1][0] == "PATCH"
-    assert transport.calls[1][2]["title"] == "Updated"
+    assert result["head_sha"] == "d" * 40
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "PATCH"]
+    assert transport.calls[3][2]["title"] == "Updated"
+
+
+def test_create_pull_request_rejects_remote_sha_drift_before_lookup():
+    transport = FakeTransport([_branch_ref("e" * 40)])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="changed after PR approval"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="feature/a", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET"]
+
+
+def test_create_pull_request_rechecks_remote_sha_after_open_pr_lookup():
+    transport = FakeTransport([
+        _branch_ref(),
+        [],
+        _branch_ref("e" * 40),
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="changed before PR write"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="feature/a", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET"]
+
+
+def test_create_pull_request_rejects_existing_pr_for_different_head_sha():
+    transport = FakeTransport([
+        _branch_ref(),
+        [{"number": 12, "head": {"sha": "e" * 40}}],
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="existing pull request head SHA"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="feature/a", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "GET"]
+
+
+def test_create_pull_request_rejects_write_response_for_different_head_sha():
+    transport = FakeTransport([
+        _branch_ref(),
+        [],
+        _branch_ref(),
+        _created_or_updated_pr(sha="e" * 40),
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="response head SHA"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="feature/a", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "POST"]
+
+
+def test_create_pull_request_rejects_unsafe_branch_name_before_any_api_call():
+    transport = FakeTransport([])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(ValueError, match="safe local branch"):
+        provider.create_or_update_pull_request(
+            "acme/widget", head="../main", base="main", title="Feature A",
+            body="Body", expected_head_sha="d" * 40,
+        )
+
+    assert transport.calls == []
 
 
 def test_get_pull_request_includes_draft_state_and_requires_complete_metadata():
