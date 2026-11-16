@@ -494,3 +494,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 - 新增 LocalDockerRouterConfigValidator：先校验 Host state 目录/文件 owner、mode、link count、symlink、路径分隔字符、SHA-256 与初始 active none；再以 verified image immutable ID 启动 network=none、read-only、cap-drop ALL 的临时容器，将 config/map 只读 bind mount 后执行 `haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg`。
 - 将验证步骤加入 Host Router image Docker Engine CI job，在真实 Docker Engine 上验证生成的 HAProxy config 和 active map 可由 pin 的 HAProxy 3.4.7 加载；不创建持久 Router、不绑定 host port、不修改路由。
+
+### T21.6.3.5.2.10 CI 修复记录（2026-11-16）
+
+- CI #618（run 43797135686，commit 1951256）Docker Engine image/config validation 首次失败为 HAProxy 默认用户无法读取 Host state 的 0600 文件（Permission denied）；这证明必须使用 Host state owner UID/GID 运行语法检查器和 Router 进程，未放宽 state 文件权限。
+- 已为 config validator 增加 owner UID/GID 运行方式和同用户 tmpfs；CI #619（run 43797402029，commit f6a1acf）尚未执行到 HAProxy，因 YAML 内嵌 Python 中 config_result 行少缩进触发 IndentationError；现修复缩进后重跑。
