@@ -391,6 +391,39 @@ def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
     assert [call[0] for call in transport.calls] == ["GET"]
 
 
+@pytest.mark.parametrize(
+    ("field_updates", "reason"),
+    [
+        ({"head": {"sha": "f" * 40}}, "head or base changed"),
+        ({"state": "closed"}, "head or base changed"),
+        ({"merged": True}, "head or base changed"),
+        ({"draft": True}, "head or base changed"),
+    ],
+)
+def test_merge_pull_request_rejects_state_or_head_drift_before_put(field_updates, reason):
+    current = {
+        "head": {"sha": "d" * 40},
+        "base": {"ref": "main"},
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }
+    current.update(field_updates)
+    transport = FakeTransport([current])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match=reason):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET"]
+
+
 def test_merge_pull_request_blocks_base_drift_before_put():
     transport = FakeTransport([{
         "head": {"sha": "d" * 40},
