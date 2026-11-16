@@ -14,7 +14,13 @@ def _service(tmp_path: Path, monkeypatch):
     workspace.mkdir()
     calls = []
 
-    def fake_git(command: str, cwd: str, *, sandbox=None) -> str:
+    def fake_git(
+        command: str,
+        cwd: str,
+        *,
+        sandbox=None,
+        env=None,
+    ) -> str:
         calls.append((command, cwd, sandbox))
         if command == "rev-parse --show-toplevel":
             return f"exit_code=0\n{workspace}\n"
