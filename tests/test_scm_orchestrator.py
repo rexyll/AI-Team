@@ -8,12 +8,16 @@ class FakeProvider:
     def __init__(
         self, *, ci="success", review="approved", draft=False, error=False,
         reviewed_head_sha="a" * 40,
+        checks_complete=True,
+        reviews_complete=True,
     ):
         self.ci = ci
         self.review = review
         self.draft = draft
         self.error = error
         self.reviewed_head_sha = reviewed_head_sha
+        self.checks_complete = checks_complete
+        self.reviews_complete = reviews_complete
 
     def get_pull_request(self, repository, pull_request_number):
         if self.error:
@@ -27,11 +31,12 @@ class FakeProvider:
         }
 
     def get_ci_status(self, repository, commit_sha):
-        return {"status": self.ci}
+        return {"status": self.ci, "checks_complete": self.checks_complete}
 
     def get_review_status(self, repository, pull_request_number):
         return {
             "status": self.review,
+            "reviews_complete": self.reviews_complete,
             "reviewed_head_sha": self.reviewed_head_sha,
         }
 
@@ -68,6 +73,16 @@ def test_project_orchestrator_blocks_review_approved_for_a_different_head():
 
     assert result["status"] == "blocked"
     assert result["review_status"] == "pending"
+
+
+def test_project_orchestrator_blocks_incomplete_green_ci_or_review_evidence():
+    ci_incomplete = _orchestrator(FakeProvider(checks_complete=False))
+    review_incomplete = _orchestrator(FakeProvider(reviews_complete=False))
+
+    assert ci_incomplete._observe_scm_pull_request()["status"] == "blocked"
+    assert review_incomplete._observe_scm_pull_request()["status"] == "blocked"
+    assert ci_incomplete._observe_scm_pull_request()["ci_status"] == "unknown"
+    assert review_incomplete._observe_scm_pull_request()["review_status"] == "pending"
 
 
 def test_project_orchestrator_never_marks_non_green_scm_observation_ready():

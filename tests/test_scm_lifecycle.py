@@ -9,11 +9,16 @@ from runtime.scm_provider import (
 
 
 class FakeProvider:
-    def __init__(self, *, ci="pending", review="pending", draft=False):
+    def __init__(
+        self, *, ci="pending", review="pending", draft=False,
+        checks_complete=True, reviews_complete=True,
+    ):
         self.calls = []
         self.ci = ci
         self.review = review
         self.draft = draft
+        self.checks_complete = checks_complete
+        self.reviews_complete = reviews_complete
         self.head = "a" * 40
         self.local_head = "c" * 40
 
@@ -47,11 +52,15 @@ class FakeProvider:
 
     def get_ci_status(self, repository, commit_sha):
         self.calls.append(("ci", repository, commit_sha))
-        return {"status": self.ci}
+        return {"status": self.ci, "checks_complete": self.checks_complete}
 
     def get_review_status(self, repository, pull_request_number):
         self.calls.append(("review", repository, pull_request_number))
-        return {"status": self.review, "reviewed_head_sha": self.head}
+        return {
+            "status": self.review,
+            "reviews_complete": self.reviews_complete,
+            "reviewed_head_sha": self.head,
+        }
 
     def merge_pull_request(
         self,
@@ -66,8 +75,14 @@ class FakeProvider:
         return {"status": "merged"}
 
 
-def _setup(*, ci="pending", review="pending", draft=False, attempts=3):
-    provider = FakeProvider(ci=ci, review=review, draft=draft)
+def _setup(
+    *, ci="pending", review="pending", draft=False, attempts=3,
+    checks_complete=True, reviews_complete=True,
+):
+    provider = FakeProvider(
+        ci=ci, review=review, draft=draft,
+        checks_complete=checks_complete, reviews_complete=reviews_complete,
+    )
     authority = SCMApprovalAuthority()
     service = SCMService(provider, authority)
     config = SCMLifecycleConfig(
@@ -139,6 +154,18 @@ def test_poll_blocks_draft_pr_even_when_ci_and_review_are_green():
     assert result["status"] == "draft"
     assert result["draft"] is True
     assert not any(call[0] in {"push", "create_pr", "merge"} for call in provider.calls)
+
+
+def test_poll_does_not_mark_incomplete_green_evidence_ready():
+    ci_coordinator, _, _, _ = _setup(
+        ci="success", review="approved", checks_complete=False, attempts=1
+    )
+    review_coordinator, _, _, _ = _setup(
+        ci="success", review="approved", reviews_complete=False, attempts=1
+    )
+
+    assert ci_coordinator.poll_pull_request(19)["status"] == "timeout"
+    assert review_coordinator.poll_pull_request(19)["status"] == "timeout"
 
 
 def test_poll_stops_on_ci_failure_without_automatic_retry_or_write():

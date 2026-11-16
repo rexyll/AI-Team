@@ -17,8 +17,8 @@ from runtime.scm_provider import (
 class FakeSCMProvider:
     def __init__(self):
         self.calls = []
-        self.ci = {"status": "success"}
-        self.review = {"status": "approved"}
+        self.ci = {"status": "success", "checks_complete": True}
+        self.review = {"status": "approved", "reviews_complete": True}
         self.pr = {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": False, "base_branch": "main"}
         self.local_head = "c" * 40
         self.pr_write_head_sha = None
@@ -317,9 +317,13 @@ def test_review_status_is_pending_when_review_anchor_does_not_match_expected_ci_
 def test_ci_and_review_reads_do_not_require_approval():
     service, provider, _ = _service()
 
-    assert service.get_ci_status("acme/widget", "a" * 40) == {"status": "success"}
+    assert service.get_ci_status("acme/widget", "a" * 40) == {
+        "status": "success",
+        "checks_complete": True,
+    }
     assert service.get_review_status("acme/widget", 7) == {
         "status": "approved",
+        "reviews_complete": True,
         "reviewed_head_sha": "a" * 40,
     }
     assert [call[0] for call in provider.calls] == ["ci", "review"]
@@ -328,9 +332,9 @@ def test_ci_and_review_reads_do_not_require_approval():
 @pytest.mark.parametrize(
     ("ci", "review", "expected"),
     [
-        ({"status": "pending"}, {"status": "approved"}, "CI"),
-        ({"status": "success"}, {"status": "changes_requested"}, "review"),
-        ({"status": "unknown"}, {"status": "approved"}, "CI"),
+        ({"status": "pending", "checks_complete": True}, {"status": "approved", "reviews_complete": True}, "CI"),
+        ({"status": "success", "checks_complete": True}, {"status": "changes_requested", "reviews_complete": True}, "review"),
+        ({"status": "unknown", "checks_complete": True}, {"status": "approved", "reviews_complete": True}, "CI"),
     ],
 )
 def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
@@ -351,10 +355,69 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
     assert not any(call[0] == "merge" for call in provider.calls)
     # The preflight does not consume the human approval. Once evidence is green,
     # the same approval can still authorize the exact merge target.
-    provider.ci = {"status": "success"}
-    provider.review = {"status": "approved"}
+    provider.ci = {"status": "success", "checks_complete": True}
+    provider.review = {"status": "approved", "reviews_complete": True}
     result = service.merge_pull_request("acme/widget", 7, approval=approval)
     assert result["status"] == "merged"
+
+
+@pytest.mark.parametrize(
+    "incomplete_ci",
+    [
+        {"status": "success"},
+        {"status": "success", "checks_complete": False},
+        {"status": "success", "checks_complete": "true"},
+    ],
+)
+def test_service_downgrades_incomplete_ci_success_to_unknown(incomplete_ci):
+    service, provider, _ = _service()
+    provider.ci = incomplete_ci
+
+    result = service.get_ci_status("acme/widget", "a" * 40)
+
+    assert result["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "incomplete_review",
+    [
+        {"status": "approved"},
+        {"status": "approved", "reviews_complete": False},
+        {"status": "approved", "reviews_complete": True},
+    ],
+)
+def test_service_downgrades_unanchored_or_incomplete_review_approval(incomplete_review):
+    service, provider, _ = _service()
+    provider.review = incomplete_review
+
+    result = service.get_review_status(
+        "acme/widget", 7, expected_head_sha="a" * 40
+    )
+
+    assert result["status"] == "pending"
+
+
+def test_merge_preflight_requires_explicit_complete_ci_and_review_evidence():
+    service, provider, authority = _service()
+    approval = _approval(
+        authority,
+        "merge_pull_request",
+        scm_merge_approval_target(
+            7, head_sha="a" * 40, base_branch="main", merge_method="squash"
+        ),
+    )
+    provider.ci = {"status": "success", "checks_complete": False}
+    provider.review = {"status": "approved", "reviews_complete": False}
+
+    with pytest.raises(SCMPreflightError, match="CI status is not success"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
+
+    provider.ci = {"status": "success", "checks_complete": True}
+    with pytest.raises(SCMPreflightError, match="review status is not approved"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
+
+    provider.review = {"status": "approved", "reviews_complete": True}
+    assert service.merge_pull_request("acme/widget", 7, approval=approval)["status"] == "merged"
 
 
 def test_merge_requires_pull_request_head_metadata_and_approval():

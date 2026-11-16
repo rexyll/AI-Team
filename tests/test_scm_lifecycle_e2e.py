@@ -26,6 +26,8 @@ class LifecycleProvider:
         self.base_branch = "main"
         self.ci = "success"
         self.review = "approved"
+        self.checks_complete = True
+        self.reviews_complete = True
         self.fail_pr_create = False
 
     def get_local_head_sha(self, local_repository):
@@ -64,11 +66,15 @@ class LifecycleProvider:
 
     def get_ci_status(self, repository, commit_sha):
         self.events.append(("ci", repository, commit_sha))
-        return {"status": self.ci}
+        return {"status": self.ci, "checks_complete": self.checks_complete}
 
     def get_review_status(self, repository, pull_request_number):
         self.events.append(("review", repository, pull_request_number))
-        return {"status": self.review, "reviewed_head_sha": self.pr_head}
+        return {
+            "status": self.review,
+            "reviews_complete": self.reviews_complete,
+            "reviewed_head_sha": self.pr_head,
+        }
 
     def merge_pull_request(
         self,

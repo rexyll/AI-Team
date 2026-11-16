@@ -369,7 +369,16 @@ class SCMService:
         repository = _repository(repository)
         if not isinstance(commit_sha, str) or not _SHA.fullmatch(commit_sha):
             raise ValueError("commit_sha must be a 7-64 character hexadecimal SHA")
-        return self._provider.get_ci_status(repository, commit_sha)
+        result = self._provider.get_ci_status(repository, commit_sha)
+        if not isinstance(result, dict):
+            raise SCMPreflightError("provider returned invalid CI status metadata")
+        normalized = dict(result)
+        # A provider's positive CI result is not authoritative unless it
+        # explicitly confirms that every bounded page was read. Keep concrete
+        # failures/pending states, but never promote incomplete evidence.
+        if normalized.get("status") == "success" and normalized.get("checks_complete") is not True:
+            normalized["status"] = "unknown"
+        return normalized
 
     def get_review_status(
         self,
@@ -389,6 +398,15 @@ class SCMService:
         if not isinstance(result, dict):
             raise SCMPreflightError("provider returned invalid pull request review metadata")
         normalized = dict(result)
+        # An approval is meaningful only when the provider confirms a complete
+        # review read and supplies the head SHA to which those reviews apply.
+        reviewed_head_sha = normalized.get("reviewed_head_sha")
+        if normalized.get("status") == "approved" and (
+            normalized.get("reviews_complete") is not True
+            or not isinstance(reviewed_head_sha, str)
+            or not _SHA.fullmatch(reviewed_head_sha)
+        ):
+            normalized["status"] = "pending"
         if expected_head_sha is not None:
             reviewed_head_sha = normalized.get("reviewed_head_sha")
             if (
@@ -428,10 +446,14 @@ class SCMService:
         review = self.get_review_status(
             repository, pull_request_number, expected_head_sha=head_sha
         )
-        if ci.get("status") != "success":
-            raise SCMPreflightError("merge blocked: CI status is not success")
-        if review.get("status") != "approved":
-            raise SCMPreflightError("merge blocked: review status is not approved")
+        if ci.get("status") != "success" or ci.get("checks_complete") is not True:
+            raise SCMPreflightError("merge blocked: CI status is not success with complete evidence")
+        if (
+            review.get("status") != "approved"
+            or review.get("reviews_complete") is not True
+            or review.get("head_sha_match") is not True
+        ):
+            raise SCMPreflightError("merge blocked: review status is not approved with complete current-head evidence")
         self._approvals.consume(
             approval,
             operation="merge_pull_request",
