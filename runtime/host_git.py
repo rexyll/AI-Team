@@ -253,6 +253,7 @@ class HostGitOperationService:
         helper_pattern = r"^credential(\..*)?\.helper$"
         include_pattern = r"^include(if)?\..*"
         http_pattern = r"^http\..*"
+        process_helper_pattern = r"^core\.(askpass|sshcommand)$"
         for scope in ("--local", "--worktree"):
             helper_config = self._git_host(
                 ["config", scope, "--get-regexp", helper_pattern],
@@ -291,6 +292,18 @@ class HostGitOperationService:
                 )
             if http_config != "exit_code=1\n":
                 raise RuntimeError("unable to verify repository-scoped Git HTTP transport config")
+            process_helper_config = self._git_host(
+                ["config", scope, "--get-regexp", process_helper_pattern],
+                workspace,
+                env=env,
+                clean_git_config_environment=True,
+            )
+            if process_helper_config.startswith("exit_code=0\n"):
+                raise PermissionError(
+                    "repository-scoped Git process helpers are not allowed for host push"
+                )
+            if process_helper_config != "exit_code=1\n":
+                raise RuntimeError("unable to verify repository-scoped Git process helper config")
 
     def push(
         self,

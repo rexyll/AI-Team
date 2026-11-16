@@ -233,9 +233,11 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         [
             "git", "config", "--get-regexp",
             r"^url\..*\.(insteadOf|pushInsteadOf)$",
@@ -295,9 +297,11 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
         ["git", "remote", "get-url", "--push", "--all", "origin"],
     ]
@@ -356,7 +360,7 @@ def test_host_push_rejects_worktree_credential_helpers(tmp_path, monkeypatch):
             expected_remote_url="https://github.com/acme/widget.git",
         )
 
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert calls[-1] == [
         "git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"
     ]
@@ -428,9 +432,11 @@ def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -467,9 +473,11 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -560,9 +568,11 @@ def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, mon
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -603,18 +613,20 @@ def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkey
             env=env,
         )
 
-    assert len(calls) == 7
+    assert len(calls) == 9
     assert all(
         not any(key.upper() == "GIT_CONFIG" or key.upper().startswith("GIT_CONFIG_") for key in call_env["env"])
-        for _, call_env in calls[:6]
+        for _, call_env in calls[:8]
     )
     assert [arguments for arguments, _ in calls] == [
         ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--local", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--local", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
         ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
         ["git", "config", "--worktree", "--get-regexp", r"^http\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^core\.(askpass|sshcommand)$"],
         ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
     ]
 
@@ -629,6 +641,9 @@ def test_host_push_rejects_all_git_config_environment_overrides(tmp_path, monkey
         ("local-http-ssl-verify", "HTTP transport overrides"),
         ("local-http-extra-header", "HTTP transport overrides"),
         ("worktree-http-ssl-verify", "HTTP transport overrides"),
+        ("local-core-askpass", "Git process helpers"),
+        ("local-core-ssh-command", "Git process helpers"),
+        ("worktree-core-askpass", "Git process helpers"),
     ],
 )
 def test_host_push_rejects_real_repository_scoped_git_config(
@@ -709,6 +724,46 @@ def test_host_push_rejects_real_repository_scoped_git_config(
         )
         subprocess.run(
             ["git", "config", "--worktree", "http.sslVerify", "false"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "local-core-askpass":
+        helper_program = tmp_path / "untrusted-askpass.sh"
+        helper_program.write_text("#!/bin/sh\nprintf 'called' > '" + str(marker) + "'\n", encoding="utf-8")
+        helper_program.chmod(0o700)
+        subprocess.run(
+            ["git", "config", "--local", "core.askPass", str(helper_program)],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "local-core-ssh-command":
+        helper_program = tmp_path / "untrusted-ssh.sh"
+        helper_program.write_text("#!/bin/sh\nprintf 'called' > '" + str(marker) + "'\n", encoding="utf-8")
+        helper_program.chmod(0o700)
+        subprocess.run(
+            ["git", "config", "--local", "core.sshCommand", str(helper_program)],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif config_kind == "worktree-core-askpass":
+        helper_program = tmp_path / "untrusted-worktree-askpass.sh"
+        helper_program.write_text("#!/bin/sh\nprintf 'called' > '" + str(marker) + "'\n", encoding="utf-8")
+        helper_program.chmod(0o700)
+        subprocess.run(
+            ["git", "config", "extensions.worktreeConfig", "true"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "--worktree", "core.askPass", str(helper_program)],
             cwd=workspace,
             check=True,
             capture_output=True,
