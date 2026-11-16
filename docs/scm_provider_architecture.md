@@ -170,13 +170,18 @@ local HEAD has not changed and that `origin` points to the approved repository
 before pushing. The command is standalone and cannot be combined with a normal
 delivery invocation.
 
-Read-only PR polling needs only the minimum read permissions for pull requests,
-checks and commit statuses. Publication additionally requires GitHub repository
-write permission for contents (git push) and pull requests (create/update).
-Use a fine-grained token restricted to the target repository. Never broaden the
-token or expose its value to the interactive prompt, Agent, task context or
-logs. Merge remains a separate operation requiring a distinct approval after
-green CI and approved review.
+Read-only PR polling needs read access to pull requests, checks and commit
+statuses. Publication additionally requires write access to contents (git push)
+and pull requests (create/update); merge uses pull-request write access. Restrict
+credentials to the disposable target repository. A fine-grained PAT can cover
+contents, pull requests and commit statuses but does not currently support the
+Checks API, so it cannot provide the complete CI evidence required by this
+adapter. For full lifecycle acceptance, prefer a GitHub App installation token
+with only Contents read/write, Pull requests read/write, Checks read and Commit
+statuses read, installed only on the test repository. Never broaden the
+credential or expose its value to the interactive prompt, Agent, task context
+or logs. Merge remains a separate operation requiring a distinct approval
+after green CI and approved review.
 
 ## Interactive merge approval
 
