@@ -52,7 +52,7 @@ def _read_host_confirmation(prompt: str, *, display_stream: Any) -> str:
     prompt_is_tty = callable(getattr(sys.stderr, "isatty", None)) and sys.stderr.isatty()
     if not (input_is_tty and preview_is_tty and prompt_is_tty):
         raise RuntimeError(
-            "SCM write requires interactive input and a visible terminal preview; "
+            "SCM write requires an interactive terminal and a visible terminal preview; "
             "no remote write was performed"
         )
     print(prompt, file=sys.stderr, flush=True)
