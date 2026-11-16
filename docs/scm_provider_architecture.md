@@ -225,4 +225,75 @@ remote outcome; callers must re-read PR state before attempting another merge.
 
 ## Current validation boundary
 
-The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. The live read-only path was also exercised on 2026-11-16 by push-triggered workflow run #2 against PR #2. Using the run-scoped repository `GITHUB_TOKEN` with only contents/pull-requests/checks/statuses read permission, the adapter returned `ok=true` and `assessment=blocked`; the PR was open/unmerged at head `85abdaf906607a2240ebc6bb69b61d0d5b735455`, commit status was pending with no check runs, and review status was pending with zero reviews. This is the expected negative sample and proves the live read-only adapter path; it does not prove a green/approved ready path. No push, PR write, review mutation or merge was performed. Live write-path validation still requires an isolated test repository and explicit one-use host approvals.
+The provider protocol, one-use approval lifecycle, preflight and GitHub REST request/response behavior have mock contract tests. The live read-only path was exercised against PR #2 on 2026-11-16 by workflow runs #2, #3 and #4. The run-scoped repository `GITHUB_TOKEN` had only contents/pull-requests/checks/statuses read permission. Run #4 returned `ok=true`, `assessment=blocked`, `draft=true`, base branch `refactor/runtime-architecture`, pending commit status, zero check runs, pending review and zero reviews; `checks_complete=true` and `reviews_complete=true`. This is the expected negative sample and verifies live PR head/state/base, CI and review reads; it does not prove a green/approved ready path. No push, PR write, review mutation or merge was performed. Live write-path validation still requires an isolated test repository and explicit one-use host approvals.
+
+
+
+## Isolated live write-path runbook
+
+Use a disposable private repository dedicated to SCM adapter acceptance; do not use
+`rexyll/AI-Team` or another project repository as the write target. The test
+repository should have a default base branch (for example `main`) and no valuable
+content. Keep the clone, branch, remote, token and PR entirely scoped to that
+repository.
+
+For a complete read/write test, use a GitHub App installation access token
+installed only on the disposable repository. The adapter calls the Checks API,
+which fine-grained personal access tokens do not currently support; an App
+installation token can grant the narrower per-repository permissions needed:
+`Contents: read/write` (Git push), `Pull requests: read/write` (PR
+create/update/merge and reviews), `Checks: read` (Check Runs), and
+`Commit statuses: read` (combined status). `Metadata: read` is implicit.
+Keep the installation token short-lived. The host's Git credential helper must
+also be configured to authenticate the sandbox clone's HTTPS push using that
+installation token; `AI_TEAM_GITHUB_TOKEN` is used by the REST adapter and is
+not automatically copied into Git's credential store. Never place a token in
+the remote URL, a command-line argument, a PR body or chat. GitHub documents
+the permissions and the Checks API fine-grained-token limitation here:
+[GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app),
+[GitHub App endpoint permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps),
+[Fine-grained PAT limitations](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
+Configure the host environment without echoing the secret:
+
+```bash
+export AI_TEAM_GITHUB_REPOSITORY="OWNER/ai-team-scm-sandbox"
+export AI_TEAM_GITHUB_TOKEN="$(cat /secure/path/to/short-lived-installation-token)"
+unset AI_TEAM_GITHUB_PULL_REQUEST
+```
+
+Clone the sandbox, configure the host Git credential helper for the same
+repository-scoped installation token, then create and commit a harmless test
+file on a dedicated test branch. Verify `git remote get-url origin` names only
+the sandbox repository before invoking the CLI. The publish command itself
+rechecks that origin and the exact local HEAD SHA:
+
+```bash
+python main.py --scm-publish-pr \
+  --scm-local-repository /path/to/ai-team-scm-sandbox \
+  --scm-head-branch ai-team/scm-live-test \
+  --scm-base-branch main \
+  --scm-pr-title "AI-Team SCM live acceptance" \
+  --scm-pr-body-file /path/to/scm-live-test-pr-body.md
+```
+
+Review both displayed confirmations carefully: the first authorizes pushing the
+displayed exact HEAD SHA; the second independently authorizes creating/updating
+the PR. Record the returned PR number. Wait for the sandbox's CI checks to
+finish, then obtain an approval from a separate authorized reviewer account.
+Only after the following read-only command returns `ready` should the merge
+command be considered:
+
+```bash
+python main.py --scm-poll-pr PR_NUMBER
+python main.py --scm-merge-pr PR_NUMBER --scm-merge-method squash
+```
+
+The merge command displays the PR head SHA and base branch and requires a
+separate interactive `yes`. The adapter re-reads the PR immediately before
+merge; GitHub atomically checks the expected head SHA, while the base-ref check
+is a pre-write recheck because the merge API has no atomic expected-base-ref
+parameter. Capture the CLI output and resulting PR state as acceptance evidence.
+After the test, revoke/remove the installation access as appropriate and
+delete the disposable repository only after preserving the evidence. Never
+paste the installation token into this repository's issues, PRs, logs or chat.
