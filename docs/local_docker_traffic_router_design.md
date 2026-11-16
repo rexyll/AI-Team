@@ -1,6 +1,6 @@
 # Local Docker 蓝绿流量路由设计（T21.6.3.5）
 
-> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现、CI 验收中；Router image/container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
+> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现并通过 CI #604；Router image/container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
 > 日期：2026-11-15；范围：单机 Docker Engine、单个 project/environment scope。
 
 ## 1. 问题与目标
@@ -140,7 +140,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 ## 9. 未实现边界
 
-仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client；scope network manager 已写入 main，其 CI 尚待完成。仍无经过 digest pin 和验证的 HAProxy+socat Router image、Router container bootstrap、routed app deployment、Runtime API route read-back、traffic_switch_pending phase 或 daemon-backed E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
+仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client；scope network manager 已通过 CI #604（2,683 regression passed / 14 skipped；252 security passed / 9 skipped；Windows smoke 成功；runtime coverage 88.39% line / 75.55% branch）。仍无经过 digest pin 和验证的 HAProxy+socat Router image、Router container bootstrap、routed app deployment、Runtime API route read-back、traffic_switch_pending phase 或 daemon-backed E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
 ## 10. 参考资料
 
 - Docker user-defined bridge: https://docs.docker.com/engine/network/ and https://docs.docker.com/engine/network/drivers/bridge/
