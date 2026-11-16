@@ -164,10 +164,21 @@ class HostGitOperationService:
             raise ValueError("only the origin remote is supported")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
-        output = self._git_host(["remote", "get-url", "origin"], root, env=env)
+        # Resolve the effective push URL(s), not just the fetch URL: Git
+        # permits remote.<name>.pushurl and pushInsteadOf to redirect writes.
+        output = self._git_host(
+            ["remote", "get-url", "--push", "--all", "origin"], root, env=env
+        )
         if not output.startswith("exit_code=0\n"):
-            raise RuntimeError("unable to resolve origin remote")
-        return output.split("\n", 1)[1].strip()
+            raise RuntimeError("unable to resolve origin push URL")
+        urls = [
+            line.strip()
+            for line in output.split("\n", 1)[1].splitlines()
+            if line.strip()
+        ]
+        if len(urls) != 1:
+            raise RuntimeError("origin must resolve to exactly one push destination")
+        return urls[0]
 
     def push(
         self,
@@ -196,7 +207,17 @@ class HostGitOperationService:
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
         return self._git_host(
-            ["push", "--porcelain", "origin", f"{commit_sha}:refs/heads/{branch}"],
+            [
+                "-c", "remote.origin.mirror=false",
+                "push",
+                "--porcelain",
+                "--no-verify",
+                "--no-follow-tags",
+                "--no-recurse-submodules",
+                "--receive-pack=git-receive-pack",
+                "origin",
+                f"{commit_sha}:refs/heads/{branch}",
+            ],
             root,
             env=env,
         )

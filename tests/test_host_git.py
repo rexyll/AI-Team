@@ -158,8 +158,30 @@ def test_host_remote_url_uses_fixed_host_owned_git_argument_vector(tmp_path, mon
     monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
 
     assert service.remote_url(str(workspace)) == "https://github.com/acme/widget.git"
-    assert calls[0][0] == ["git", "remote", "get-url", "origin"]
+    assert calls[0][0] == ["git", "remote", "get-url", "--push", "--all", "origin"]
     assert calls[0][1]["shell"] is False
+
+
+def test_host_remote_url_rejects_multiple_effective_push_destinations(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+
+    def fake_run(arguments, **kwargs):
+        assert arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "https://github.com/acme/widget.git\n"
+                "https://github.com/attacker/widget.git\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="exactly one push destination"):
+        service.remote_url(str(workspace))
 
 
 def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, monkeypatch):
@@ -177,7 +199,18 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     result = service.push(str(workspace), branch="release/1.2", commit_sha="a" * 40)
 
     assert result == "exit_code=0\npushed\n"
-    assert calls == [["git", "push", "--porcelain", "origin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2"]]
+    assert calls == [[
+        "git",
+        "-c", "remote.origin.mirror=false",
+        "push",
+        "--porcelain",
+        "--no-verify",
+        "--no-follow-tags",
+        "--no-recurse-submodules",
+        "--receive-pack=git-receive-pack",
+        "origin",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/release/1.2",
+    ]]
     for branch in ("--force", "release/../main", "bad branch", "release//main", "release/"):
         with pytest.raises(ValueError, match="branch name"):
             service.push(str(workspace), branch=branch, commit_sha="a" * 40)
