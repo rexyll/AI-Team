@@ -468,6 +468,13 @@ def test_review_status_reads_later_pages_before_assessing_latest_review_per_user
         [{"user": {"login": "reviewer"}, "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "a" * 40}],
         [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}],
         [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "not-a-sha"}],
+        [_review("reviewer", "APPROVED", None)],
+        [_review("reviewer", "APPROVED", "not-a-timestamp")],
+        [_review("reviewer", "APPROVED", "2026-01-01T00:00:00")],
+        [
+            _review("reviewer", "APPROVED", "2026-01-01T00:00:00Z"),
+            _review("reviewer", "DISMISSED", None),
+        ],
     ],
 )
 def test_review_status_rejects_malformed_review_evidence(reviews):
@@ -476,6 +483,32 @@ def test_review_status_rejects_malformed_review_evidence(reviews):
 
     with pytest.raises(GitHubAPIError, match="invalid|incomplete"):
         provider.get_review_status("acme/widget", 12)
+
+
+def test_review_status_ignores_unsubmitted_pending_review_after_approval():
+    transport = FakeTransport([[
+        _review("reviewer", "APPROVED", "2026-01-02T00:00:00Z"),
+        _review("reviewer", "PENDING", None),
+    ], _review_pr_metadata()])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "approved"
+    assert result["states"] == ["APPROVED"]
+
+
+def test_review_status_compares_submission_instants_across_timezone_offsets():
+    transport = FakeTransport([[
+        _review("reviewer", "CHANGES_REQUESTED", "2026-01-01T01:00:00+01:00"),
+        _review("reviewer", "APPROVED", "2026-01-01T00:30:00Z"),
+    ], _review_pr_metadata()])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "approved"
+    assert result["states"] == ["APPROVED"]
 
 
 def test_review_status_fails_closed_on_unknown_review_state_even_with_current_head_approval():

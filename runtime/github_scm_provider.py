@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -376,6 +377,7 @@ class GitHubSCMProvider:
         # Validate the complete review response before making any dependent
         # request. Malformed evidence must fail closed without being masked by a
         # later transport error while fetching PR metadata.
+        review_timestamps: dict[int, datetime | None] = {}
         for review in reviews:
             user = review.get("user")
             login = user.get("login") if isinstance(user, dict) else None
@@ -384,10 +386,30 @@ class GitHubSCMProvider:
             commit_id = review.get("commit_id")
             if not isinstance(login, str) or not login or not isinstance(state, str):
                 raise GitHubAPIError("GitHub returned incomplete pull request review metadata")
-            if submitted_at is not None and not isinstance(submitted_at, str):
-                raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+            normalized_state = state.upper()
+            parsed_timestamp: datetime | None = None
+            if normalized_state == "PENDING" and submitted_at is None:
+                # A pending review has not been submitted and GitHub omits
+                # submitted_at. It must never supersede a submitted review.
+                parsed_timestamp = None
+            else:
+                if not isinstance(submitted_at, str) or not submitted_at.strip():
+                    raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+                try:
+                    parsed_timestamp = datetime.fromisoformat(
+                        submitted_at.strip().replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    raise GitHubAPIError(
+                        "GitHub returned an invalid review submission timestamp"
+                    ) from None
+                if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
+                    raise GitHubAPIError(
+                        "GitHub returned a review submission timestamp without a timezone"
+                    )
             if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit_id):
                 raise GitHubAPIError("GitHub returned an invalid review commit SHA")
+            review_timestamps[id(review)] = parsed_timestamp
 
         # Anchor the complete review set to the current PR head after pagination.
         # GitHub may retain an APPROVED review on an older commit when stale-review
@@ -403,13 +425,12 @@ class GitHubSCMProvider:
             "DISMISSED",
             "PENDING",
         }
-        latest_by_user: dict[str, dict[str, Any]] = {}
+        latest_by_user: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
         has_unknown_review_state = False
         for review in reviews:
             user = review["user"]
             login = user["login"]
             state = review["state"]
-            submitted_at = review.get("submitted_at")
             commit_id = review["commit_id"]
             if commit_id.lower() != current_head_sha.lower():
                 continue
@@ -419,13 +440,20 @@ class GitHubSCMProvider:
             if normalized_state not in known_review_states:
                 has_unknown_review_state = True
             previous = latest_by_user.get(login)
-            previous_submitted_at = (
-                str(previous.get("submitted_at") or "") if previous is not None else ""
-            )
-            if previous is None or str(submitted_at or "") >= previous_submitted_at:
-                latest_by_user[login] = review
+            submitted_at = review_timestamps[id(review)]
+            if normalized_state == "PENDING":
+                if previous is None:
+                    latest_by_user[login] = (None, review)
+                # Unsubmitted pending reviews have no timestamp and cannot
+                # replace the reviewer's latest submitted decision.
+                continue
+            if submitted_at is None:
+                # Non-PENDING states were validated before any metadata refresh.
+                raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+            if previous is None or previous[0] is None or submitted_at >= previous[0]:
+                latest_by_user[login] = (submitted_at, review)
 
-        states = [str(item.get("state") or "").upper() for item in latest_by_user.values()]
+        states = [str(item[1].get("state") or "").upper() for item in latest_by_user.values()]
         status = (
             "pending"
             if not reviews_complete or has_unknown_review_state
