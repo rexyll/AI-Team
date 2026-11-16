@@ -446,3 +446,8 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 新增 runtime/local_docker_router_image.py：仅用固定 Dockerfile 和 docker/router 最小构建 context，固定 tag 仅用于 build/inspect；inspect 校验完整 SHA-256 image ID、linux/amd64|arm64、OCI labels、upstream Entrypoint/Cmd。
 - 仅当 image inspect 匹配后，才按 immutable image ID 启动临时验证容器；容器使用 --network none、--read-only、--cap-drop ALL、no-new-privileges，不挂载卷、不发布端口，检查 HAProxy/socat 运行时二进制和精确版本。
 - 任一步失败均不返回可信 image identity；验证通过仅返回完整 local image ID，不创建 persistent Router container，不发布 registry artifact。
+
+### T21.6.3.5.2.6 CI 修复记录（2026-11-16）
+
+- CI #608（run 43792229445，commit 94ca74e）新增 Host image manager 的单元测试后，全量回归中唯一失败为既有 `test_event_persistence_throughput_does_not_collapse_with_scale` 单次 I/O 计时：32 条吞吐 1,421/s、128 条 387/s，略低于原 30% 下限；安全回归 252 passed / 9 skipped，Router image Docker smoke 通过，Coverage 被 regression 失败依赖跳过。
+- 修复方案不是降低门槛：持久化吞吐按 5 轮独立目录、交错规模采样，采用中位数；原 128/32 > 0.30 和 512/32 > 0.20 门槛保持不变。待新 CI 验证。

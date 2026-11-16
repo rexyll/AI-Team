@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from statistics import median
 from time import perf_counter
 
 from core.orchestrator import Orchestrator
@@ -42,10 +43,25 @@ def _persistence_throughput(tmp_path, size: int) -> float:
 
 
 def test_event_persistence_throughput_does_not_collapse_with_scale(tmp_path) -> None:
-    throughputs = {
-        size: _persistence_throughput(tmp_path, size)
-        for size in SIZES
-    }
+    # Persistence performs one fsync per event. A single timing sample is
+    # unusually sensitive to runner disk scheduling and unrelated I/O. Collect
+    # independent directories over interleaved rounds and compare medians; keep
+    # the original broad regression floors unchanged.
+    trials = 5
+    samples: dict[int, list[float]] = {size: [] for size in SIZES}
+    round_orders = (
+        SIZES,
+        (128, 512, 32),
+        (512, 32, 128),
+        (32, 512, 128),
+        (128, 32, 512),
+    )
+    for trial, order in enumerate(round_orders[:trials]):
+        for size in order:
+            samples[size].append(
+                _persistence_throughput(tmp_path / f"{size}-{trial}", size)
+            )
+    throughputs = {size: median(values) for size, values in samples.items()}
 
     # This is deliberately a broad regression guard rather than a machine-
     # specific SLA. A larger batch may be slower per event because each event
