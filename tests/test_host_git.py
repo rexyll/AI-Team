@@ -483,15 +483,33 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
         "GIT_NO_REPLACE_OBJECTS",
         "GIT_EXEC_PATH",
         "GIT_PREFIX",
+        "GIT_ASKPASS",
+        "GIT_ASKPASS_REQUIRE",
+        "SSH_ASKPASS",
+        "SSH_ASKPASS_REQUIRE",
+        "GIT_PROXY_COMMAND",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_SSH_VARIANT",
+        "GIT_CURL_VERBOSE",
+        "GIT_TRACE",
+        "GIT_TRACE_CURL",
+        "GIT_TRACE_CURL_NO_DATA",
+        "GIT_TRACE_PACKET",
+        "GIT_TRACE2",
+        "GIT_TRACE2_EVENT",
+        "GIT_TRACE2_PERF",
+        "GIT_TRACE2_CONFIG_PARAMS",
         "git_dir",
+        "git_trace_curl",
     ],
 )
-def test_host_push_rejects_git_repository_context_environment_overrides(
+def test_host_push_rejects_git_process_environment_overrides(
     tmp_path, monkeypatch, variable
 ):
     service, workspace, git_calls = _service(tmp_path, monkeypatch)
 
-    with pytest.raises(PermissionError, match="Git repository context environment overrides"):
+    with pytest.raises(PermissionError, match="Git process environment overrides"):
         service.push(
             str(workspace),
             branch="release/1.2",

@@ -163,7 +163,7 @@ class HostGitOperationService:
         if remote != "origin":
             raise ValueError("only the origin remote is supported")
         root = self._sandbox.require_directory(workspace)
-        self._reject_git_repository_context_environment_overrides(env)
+        self._reject_git_process_environment_overrides(env)
         self._require_repository(root, env=env)
         # Resolve the effective push URL(s), not just the fetch URL: Git
         # permits remote.<name>.pushurl and pushInsteadOf to redirect writes.
@@ -182,10 +182,10 @@ class HostGitOperationService:
         return urls[0]
 
     @staticmethod
-    def _reject_git_repository_context_environment_overrides(
+    def _reject_git_process_environment_overrides(
         env: Mapping[str, str] | None = None,
     ) -> None:
-        """Reject environment values that can redirect Git's repository/object context."""
+        """Reject environment overrides that redirect Git state or execute/log helpers."""
         protected = {
             "GIT_DIR",
             "GIT_WORK_TREE",
@@ -201,12 +201,27 @@ class HostGitOperationService:
             "GIT_NO_REPLACE_OBJECTS",
             "GIT_EXEC_PATH",
             "GIT_PREFIX",
+            "GIT_ASKPASS",
+            "GIT_ASKPASS_REQUIRE",
+            "SSH_ASKPASS",
+            "SSH_ASKPASS_REQUIRE",
+            "GIT_PROXY_COMMAND",
+            "GIT_SSH",
+            "GIT_SSH_COMMAND",
+            "GIT_SSH_VARIANT",
+            "GIT_CURL_VERBOSE",
         }
         effective_env = {**os.environ, **dict(env or {})}
-        injected = [key for key in effective_env if key.upper() in protected]
+        injected = [
+            key
+            for key in effective_env
+            if key.upper() in protected
+            or key.upper().startswith(("GIT_TRACE_", "GIT_TRACE2_"))
+            or key.upper() == "GIT_TRACE"
+        ]
         if injected:
             raise PermissionError(
-                "Git repository context environment overrides are not allowed for host push"
+                "Git process environment overrides are not allowed for host push"
             )
 
     @staticmethod
@@ -296,7 +311,7 @@ class HostGitOperationService:
         ):
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
-        self._reject_git_repository_context_environment_overrides(env)
+        self._reject_git_process_environment_overrides(env)
         self._require_repository(root, env=env)
         # Repository/worktree credential helpers can execute arbitrary code;
         # local includes can inject them indirectly. Keep credential helpers
