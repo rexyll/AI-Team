@@ -90,6 +90,17 @@ def test_command_dataclass_cannot_bypass_the_allowlist():
         HAProxyRuntimeCommand("set map /tmp/map active slot_a", "set_map", False)
 
 
+@pytest.mark.parametrize("line,operation", [
+    ("get map /tmp/../admin.map active", "get_map"),
+    ("set map /tmp/../admin.map active slot_a", "set_map"),
+    ("set server be_p8080/slot_a addr 999.1.1.1 port 80", "set_server_address"),
+    ("set server be_p8080/slot_a addr 172.20.0.4 port 99999", "set_server_address"),
+])
+def test_direct_command_construction_cannot_bypass_factory_validation(line, operation):
+    with pytest.raises(ValueError):
+        HAProxyRuntimeCommand(line, operation, operation != "get_map")
+
+
 def test_client_targets_full_immutable_router_id_and_uses_stdin():
     runner = InputRunner(DockerCommandResult(0, "Name: HAProxy\n", ""))
     client = HAProxyRuntimeAPIClient(_provider(runner), "a" * 64)

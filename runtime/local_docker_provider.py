@@ -5,7 +5,9 @@ module is not exposed as an Agent command and never uses a shell or sudo.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import re
 import subprocess
 import uuid
@@ -28,6 +30,45 @@ _OUTPUT_LIMIT = 4000
 _PORT_MAPPING = re.compile(r"^(\d{1,5}):(\d{1,5})(?:/(tcp|udp))?$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _is_allowlisted_haproxy_runtime_input(input_text: str) -> bool:
+    """Defensive second-layer allowlist for the Router's privileged admin socket."""
+    if not isinstance(input_text, str) or not input_text.endswith("\n"):
+        return False
+    if input_text.count("\n") != 1 or "\r" in input_text or "\x00" in input_text:
+        return False
+    line = input_text[:-1]
+    identifier = r"[a-z][a-z0-9_-]{0,47}"
+    map_path = r"/[a-zA-Z0-9_./-]{1,180}"
+    patterns = (
+        r"show info",
+        r"show stat",
+        r"show servers state",
+        rf"show servers conn(?: {identifier})?",
+        rf"get map ({map_path}) ({identifier})",
+        rf"set map ({map_path}) ({identifier}) (?:none|slot_a|slot_b)",
+        rf"set server ({identifier})/({identifier}) addr ([0-9a-fA-F:.]+) port ([0-9]{{1,5}})",
+        rf"set server ({identifier})/({identifier}) state (?:ready|drain|maint)",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, line)
+        if match is None:
+            continue
+        if line.startswith(("get map ", "set map ")):
+            path = match.group(1)
+            if any(part in {"", ".", ".."} for part in path.split("/")[1:]):
+                return False
+        if line.startswith("set server ") and " addr " in line:
+            try:
+                ipaddress.ip_address(match.group(3))
+                port = int(match.group(4))
+            except (ValueError, TypeError):
+                return False
+            if not 1 <= port <= 65535:
+                return False
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -184,13 +225,16 @@ class LocalDockerProvider:
             raise ValueError("input_text must not contain carriage returns")
         if len(input_text.encode("utf-8")) > 1024:
             raise ValueError("HAProxy Runtime API input exceeds 1024 UTF-8 bytes")
-        if not re.fullmatch(r"[a-zA-Z0-9_./:= -]+\n", input_text):
-            raise ValueError("input_text must be one allowlisted Runtime API command line")
+        if not _is_allowlisted_haproxy_runtime_input(input_text):
+            raise ValueError("input_text must be one allowlisted HAProxy Runtime API command line")
         effective_timeout = self.timeout if timeout is None else timeout
-        if not isinstance(effective_timeout, (int, float)) or effective_timeout <= 0:
-            raise ValueError("timeout must be positive")
-        if effective_timeout > 17:
-            raise ValueError("HAProxy Runtime API timeout must not exceed 17 seconds")
+        if (
+            not isinstance(effective_timeout, (int, float))
+            or isinstance(effective_timeout, bool)
+            or not math.isfinite(effective_timeout)
+            or effective_timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite positive number")
         executor = getattr(self.runner, "execute_input", None)
         if not callable(executor):
             return None, "configured Docker runner does not support stdin execution"

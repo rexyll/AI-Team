@@ -44,6 +44,13 @@ def ok(stdout="", stderr=""):
     return DockerCommandResult(0, stdout, stderr)
 
 
+def router_exec_args(timeout="1"):
+    return [
+        "exec", "-i", "a" * 64, "socat", "-T", timeout,
+        "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock",
+    ]
+
+
 def failed(stderr="build failed"):
     return DockerCommandResult(1, "", stderr)
 
@@ -108,7 +115,7 @@ def test_host_input_execution_requires_runner_stdin_capability():
     runner = FakeRunner()
     provider = LocalDockerProvider(runner)
     result, error = provider.execute_host_input(
-        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
+        router_exec_args(),
         input_text="show info\n",
     )
     assert result is None
@@ -127,16 +134,13 @@ def test_host_input_execution_uses_input_runner_without_shell():
             return ok("router response")
     runner = InputRunner()
     provider = LocalDockerProvider(runner)
+    argv = router_exec_args()
     result, error = provider.execute_host_input(
-        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
-        input_text="show info\n", timeout=3,
+        argv, input_text="show info\n", timeout=3,
     )
     assert error is None
     assert result.stdout == "router response"
-    assert runner.calls == [(
-        ["exec", "-i", "router", "socat", "STDIO", "UNIX-CONNECT:/run/haproxy/admin.sock"],
-        "show info\n", None, 3.0,
-    )]
+    assert runner.calls == [(argv, "show info\n", None, 3.0)]
 
 
 def test_host_input_execution_rejects_unsafe_argv_and_payload():
@@ -144,9 +148,17 @@ def test_host_input_execution_rejects_unsafe_argv_and_payload():
     with pytest.raises(ValueError, match="non-empty strings"):
         provider.execute_host_input(["exec", "", "router"], input_text="show info\n")
     with pytest.raises(ValueError, match="without NUL"):
-        provider.execute_host_input(["exec", "-i", "router"], input_text="show info\x00")
-    with pytest.raises(ValueError, match="65536"):
-        provider.execute_host_input(["exec", "-i", "router"], input_text="x" * 65537)
+        provider.execute_host_input(router_exec_args(), input_text="show info\x00")
+    with pytest.raises(ValueError, match="1024"):
+        provider.execute_host_input(router_exec_args(), input_text="x" * 1025)
+    with pytest.raises(ValueError, match="allowlisted HAProxy"):
+        provider.execute_host_input(router_exec_args(), input_text="shutdown sessions\n")
+    with pytest.raises(ValueError, match="restricted"):
+        provider.execute_host_input(
+            ["exec", "-i", "router", "socat", "-T", "1", "STDIO",
+             "UNIX-CONNECT:/run/haproxy/admin.sock"],
+            input_text="show info\n",
+        )
 
 
 def test_missing_docker_executable_is_unavailable(tmp_path):

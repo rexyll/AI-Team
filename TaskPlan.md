@@ -413,3 +413,10 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 
 
 **T21.7.5 许可实现与最终验收（2026-11-15）**：最终采用两份原版官方 PolyForm 许可证：非商业用途选择 PolyForm Noncommercial 1.0.0；符合条件的小企业商业用途选择 PolyForm Small Business 1.0.0；未被这两份许可证授权的商业用途须另行取得书面授权。根目录 `LICENSE` 同时附两份官方文本，README 与设计文档同步说明授权边界；第三方依赖继续受其自身许可约束。验收提交：LICENSE `47e2de8`、契约测试 `f9d60ec`，测试空白规范化修复 `548c94b`。最终 main CI #478（run `43709746003`，commit `548c94ba5d8378f02255d4553406aba4d6ad5844`）全部成功：全量回归 2,532 passed / 10 skipped；安全回归 237 passed / 9 skipped；Coverage baseline 2,512 passed / 10 skipped，所有模块行/分支覆盖率底线通过；Windows toolchain smoke 1 passed。T21.7.5 验收完成。T21.7.3 固定硬件绝对性能预算仍因缺少受控 runner 而未完成，因此 T21.7 整体保持未完成。官方文本：https://polyformproject.org/licenses/noncommercial/1.0.0 与 https://polyformproject.org/licenses/small-business/1.0.0 。
+
+### T21.6.3.5.2.3 CI 修复与命令边界加固（2026-11-16）
+
+- 已核实 #600（配置生成器修复）通过；#601 失败于 3 个旧 Provider 测试仍使用已废弃的 6 段 Docker argv，而实现已收紧为不可变 Router ID + `socat -T` + 固定 Unix admin socket 的 8 段 argv。
+- 修复测试以验证当前安全契约，不回退 argv 限制；增加 Provider 层独立 HAProxy Runtime API 命令白名单，防止绕过命令工厂直接传入 `shutdown sessions` 等未授权命令。
+- 加强 `HAProxyRuntimeCommand` 直接构造验证：map 路径遍历、非字面 IP、越界端口和标识符均不能绕过工厂函数。
+- 当前任务验收：更新后的 regression、安全回归、Windows smoke 和 coverage 必须全部完成；在 CI 通过前不得推进 Router 容器启动或流量切换。

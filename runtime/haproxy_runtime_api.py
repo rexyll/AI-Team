@@ -77,8 +77,37 @@ class HAProxyRuntimeCommand:
                 r"state (?:ready|drain|maint)"
             ),
         }
-        if self.operation not in patterns or not re.fullmatch(patterns[self.operation], self.line):
+        if (
+            not isinstance(self.operation, str)
+            or self.operation not in patterns
+            or not re.fullmatch(patterns[self.operation], self.line)
+        ):
             raise ValueError("Runtime API command text does not match its allowlisted operation")
+        parts = self.line.split(" ")
+        if self.operation in {"get_map", "set_map"}:
+            _map_path(parts[2])
+            _identifier(parts[3], "map key")
+        elif self.operation == "show_servers_conn" and len(parts) == 4:
+            _identifier(parts[3], "backend")
+        elif self.operation == "set_server_address":
+            backend, separator, server = parts[2].partition("/")
+            if not separator:
+                raise ValueError("server target must identify a backend and server")
+            _identifier(backend, "backend")
+            _identifier(server, "server")
+            try:
+                ipaddress.ip_address(parts[4])
+                port = int(parts[6])
+            except (ValueError, TypeError) as exc:
+                raise ValueError("server address and port must be valid literals") from exc
+            if not 1 <= port <= 65535:
+                raise ValueError("server port must be an integer in the range 1..65535")
+        elif self.operation == "set_server_state":
+            backend, separator, server = parts[2].partition("/")
+            if not separator:
+                raise ValueError("server target must identify a backend and server")
+            _identifier(backend, "backend")
+            _identifier(server, "server")
         expected_mutating = self.operation in {
             "set_map", "set_server_address", "set_server_state",
         }
