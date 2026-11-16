@@ -469,3 +469,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 新增纯函数 build_router_container_spec：输入仅接受已核验的 image identity、network identity、scope 和 Host state record；校验 config/map 内容哈希与初始 active none，生成固定 `docker run` argv。
 - 容器仅使用 immutable image ID；加入已核验 scope bridge；config/map 通过只读 bind mount；rootfs read-only；cap-drop ALL；仅存在低于 1024 host port 时增加 NET_BIND_SERVICE；tmpfs 仅用于 HAProxy Unix socket；固定 no-new-privileges 和 restart policy。
 - 新增 verify_router_container_inspection：核验容器 full ID、image ID、labels、运行态、mounts、scope network ID、HostConfig 安全项和每个 TCP published port 的双向读回。该切片只生成 argv/检查字典，不调用 Docker，不创建容器或占用 host ports。
+
+### T21.6.3.5.2.8 CI 修复记录（2026-11-16）
+
+- CI #613（run 43794782927，commit 635e6f4）全量回归 2,725 passed / 14 skipped，安全回归 252 passed / 9 skipped；3 个失败是 identity mismatch 详情文案未包含 `identity` 关键字，底层校验均正确拒绝。修复文案并加强 spec 直接构造的 argv/label/capability 校验，防止跳过 builder 绕过 allowlist。

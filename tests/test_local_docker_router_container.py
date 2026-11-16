@@ -103,6 +103,16 @@ def test_router_container_spec_rejects_map_not_initially_closed(tmp_path):
     with pytest.raises(ValueError, match="active none"):
         build_router_container_spec(scope_value, ports, network, image, wrong_state)
 
+def test_direct_container_spec_construction_cannot_bypass_fixed_argv(tmp_path):
+    from dataclasses import replace
+    spec = build_router_container_spec(*verified_inputs(tmp_path))
+    with pytest.raises(ValueError, match="fixed allowlisted contract"):
+        replace(spec, run_argv=spec.run_argv + ("--privileged",))
+    with pytest.raises(ValueError, match="minimal host-port requirement"):
+        replace(spec, capabilities=("SYS_ADMIN",))
+    with pytest.raises(ValueError, match="labels"):
+        replace(spec, labels=(( "com.ai-team.router.managed", "false"),))
+
 def test_valid_docker_inspect_readback_verifies_container_identity_and_ports(tmp_path):
     spec = build_router_container_spec(*verified_inputs(tmp_path))
     result = verify_router_container_inspection(make_inspect(spec), spec)

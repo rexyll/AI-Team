@@ -5,7 +5,6 @@ read-back data. It does not invoke Docker or create a persistent container.
 """
 from __future__ import annotations
 import hashlib
-import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -32,6 +31,45 @@ _EXPECTED_COMMAND = ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
 ContainerVerificationStatus = Literal["verified", "mismatch", "invalid_response"]
 
 
+def _safe_mount_path(value: str, name: str) -> str:
+    if not isinstance(value, str) or not value.startswith("/") or any(ch in value for ch in (",", "\\x00", "\\r", "\\n")):
+        raise ValueError(f"{name} must be an absolute path safe for Docker --mount syntax")
+    return value
+
+
+def _expected_container_labels(scope_fingerprint: str, network_id: str, image_id: str) -> tuple[tuple[str, str], ...]:
+    return (
+        (_MANAGED_LABEL, "true"),
+        (_CONTRACT_LABEL, "1"),
+        (_SCOPE_LABEL, scope_fingerprint),
+        (_NETWORK_LABEL, network_id),
+        (_IMAGE_LABEL, image_id),
+    )
+
+
+def _expected_container_capabilities(port_bindings: tuple[TrafficPortBinding, ...]) -> tuple[str, ...]:
+    return ("NET_BIND_SERVICE",) if any(item.host_port < 1024 for item in port_bindings) else ()
+
+
+def _build_run_argv(
+    container_name: str, network_name: str, image_id: str,
+    labels: tuple[tuple[str, str], ...], capabilities: tuple[str, ...],
+    port_bindings: tuple[TrafficPortBinding, ...], config_path: str, map_path: str,
+) -> tuple[str, ...]:
+    argv: list[str] = ["run", "--detach", "--name", container_name]
+    for key, value in labels:
+        argv.extend(["--label", f"{key}={value}"])
+    argv.extend(["--network", network_name, "--restart", "unless-stopped"])
+    argv.extend(["--read-only", "--cap-drop", "ALL"])
+    if capabilities:
+        argv.extend(["--cap-add", "NET_BIND_SERVICE"])
+    argv.extend(["--security-opt", "no-new-privileges:true", "--tmpfs", _TMPFS_SPEC])
+    argv.extend(["--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly"])
+    argv.extend(["--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly"])
+    for item in port_bindings:
+        argv.extend(["--publish", f"0.0.0.0:{item.host_port}:{item.host_port}/tcp"])
+    argv.append(image_id)
+    return tuple(argv)
 @dataclass(frozen=True)
 class DockerRouterContainerSpec:
     container_name: str
@@ -47,18 +85,40 @@ class DockerRouterContainerSpec:
     run_argv: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not self.container_name.startswith("ai-team-router-c-"):
-            raise ValueError("Router container name is not deterministic")
         if not re.fullmatch(r"[0-9a-f]{64}", self.scope_fingerprint):
             raise ValueError("scope_fingerprint must be a full SHA-256 digest")
+        if self.container_name != f"ai-team-router-c-{self.scope_fingerprint[:20]}":
+            raise ValueError("Router container identity name is not deterministic for the scope")
+        if self.network_name != f"ai-team-router-{self.scope_fingerprint[:20]}":
+            raise ValueError("Router network name is not deterministic for the scope")
         if not _IMAGE_ID.fullmatch(self.image_id):
             raise ValueError("image_id must be a full immutable image ID")
         if not _CONTAINER_ID.fullmatch(self.network_id):
             raise ValueError("network_id must be a full immutable Docker network ID")
-        if not self.port_bindings or any(not isinstance(x, TrafficPortBinding) for x in self.port_bindings):
+        if not isinstance(self.port_bindings, tuple) or not self.port_bindings or any(not isinstance(x, TrafficPortBinding) for x in self.port_bindings):
             raise ValueError("port_bindings must be a non-empty tuple of TCP bindings")
-        if not isinstance(self.run_argv, tuple) or not self.run_argv:
-            raise ValueError("run_argv must be a non-empty immutable argv tuple")
+        if tuple(sorted(self.port_bindings, key=lambda item: item.host_port)) != self.port_bindings:
+            raise ValueError("port_bindings must be sorted by host port")
+        if len({item.host_port for item in self.port_bindings}) != len(self.port_bindings):
+            raise ValueError("port_bindings must have unique host ports")
+        config_path = _safe_mount_path(self.config_path, "config_path")
+        map_path = _safe_mount_path(self.active_slot_map_path, "active_slot_map_path")
+        if Path(config_path).name != "haproxy.cfg" or Path(map_path).name != "active-slot.map" or Path(config_path).parent != Path(map_path).parent:
+            raise ValueError("Router config and map files must be sibling files with fixed names")
+        expected_labels = _expected_container_labels(self.scope_fingerprint, self.network_id, self.image_id)
+        if self.labels != expected_labels:
+            raise ValueError("Router container labels do not match the verified scope/network/image identity")
+        expected_caps = _expected_container_capabilities(self.port_bindings)
+        if self.capabilities != expected_caps:
+            raise ValueError("Router container capabilities exceed the minimal host-port requirement")
+        if not isinstance(self.run_argv, tuple) or any(not isinstance(x, str) or not x or "\\x00" in x for x in self.run_argv):
+            raise ValueError("Router container argv must be an immutable sequence of safe strings")
+        expected_argv = _build_run_argv(
+            self.container_name, self.network_name, self.image_id, self.labels,
+            self.capabilities, self.port_bindings, self.config_path, self.active_slot_map_path,
+        )
+        if self.run_argv != expected_argv:
+            raise ValueError("Router container argv does not match the fixed allowlisted contract")
 
 
 @dataclass(frozen=True)
@@ -77,12 +137,6 @@ class RouterContainerVerification:
             raise ValueError("unverified Router container must not expose a trusted ID")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
-
-
-def _safe_mount_path(value: str, name: str) -> str:
-    if not isinstance(value, str) or not value.startswith("/") or any(ch in value for ch in (",", "\\x00", "\\r", "\\n")):
-        raise ValueError(f"{name} must be an absolute path safe for Docker --mount syntax")
-    return value
 
 
 def build_router_container_spec(
@@ -125,38 +179,24 @@ def build_router_container_spec(
     if not config_path.startswith(expected_dir) or not map_path.startswith(expected_dir):
         raise ValueError("Router state mount files must be contained in their scope directory")
     container_name = f"ai-team-router-c-{expected_scope.scope_fingerprint[:20]}"
-    labels = (
-        (_MANAGED_LABEL, "true"),
-        (_CONTRACT_LABEL, "1"),
-        (_SCOPE_LABEL, expected_scope.scope_fingerprint),
-        (_NETWORK_LABEL, network.network_id),
-        (_IMAGE_LABEL, image.image_id),
+    labels = _expected_container_labels(expected_scope.scope_fingerprint, network.network_id, image.image_id)
+    capabilities = _expected_container_capabilities(ordered)
+    argv = _build_run_argv(
+        container_name, network.network_name, image.image_id, labels, capabilities,
+        ordered, config_path, map_path,
     )
-    low_port_capability = any(item.host_port < 1024 for item in ordered)
-    capabilities = ("NET_BIND_SERVICE",) if low_port_capability else ()
-    argv: list[str] = ["run", "--detach", "--name", container_name]
-    for key, value in labels:
-        argv.extend(["--label", f"{key}={value}"])
-    argv.extend(["--network", network.network_name, "--restart", "unless-stopped"])
-    argv.extend(["--read-only", "--cap-drop", "ALL"])
-    if capabilities:
-        argv.extend(["--cap-add", "NET_BIND_SERVICE"])
-    argv.extend(["--security-opt", "no-new-privileges:true", "--tmpfs", _TMPFS_SPEC])
-    argv.extend(["--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly"])
-    argv.extend(["--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly"])
-    for item in ordered:
-        argv.extend(["--publish", f"0.0.0.0:{item.host_port}:{item.host_port}/tcp"])
-    argv.append(image.image_id)
     return DockerRouterContainerSpec(
         container_name=container_name, scope_fingerprint=expected_scope.scope_fingerprint,
         image_id=image.image_id, network_name=network.network_name, network_id=network.network_id,
         port_bindings=ordered, config_path=config_path, active_slot_map_path=map_path,
-        labels=labels, capabilities=capabilities, run_argv=tuple(argv),
+        labels=labels, capabilities=capabilities, run_argv=argv,
     )
 
 
 def verify_router_container_inspection(payload: object, spec: DockerRouterContainerSpec) -> RouterContainerVerification:
     """Verify exact identity, mounts, security controls, network and published ports."""
+    if not isinstance(spec, DockerRouterContainerSpec):
+        raise TypeError("spec must be a DockerRouterContainerSpec")
     if not isinstance(payload, dict):
         return RouterContainerVerification("invalid_response", detail="Docker inspect must return one JSON object")
     container_id = payload.get("Id")
@@ -180,7 +220,7 @@ def verify_router_container_inspection(payload: object, spec: DockerRouterContai
         or any(labels.get(key) != value for key, value in expected_labels.items())
         or state.get("Running") is not True
     ):
-        return RouterContainerVerification("mismatch", detail="Router container name, immutable image, labels, command or running state mismatch")
+        return RouterContainerVerification("mismatch", detail="Router container identity (name/image/labels/command/running state) mismatch")
     if (
         host.get("ReadonlyRootfs") is not True
         or host.get("Privileged") is not False
