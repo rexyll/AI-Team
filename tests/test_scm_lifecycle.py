@@ -27,7 +27,13 @@ class FakeProvider:
 
     def create_or_update_pull_request(self, repository, *, head, base, title, body, expected_head_sha):
         self.calls.append(("create_pr", repository, head, base, title, body, expected_head_sha))
-        return {"status": "created", "number": 19, "head_sha": expected_head_sha}
+        return {
+            "status": "created",
+            "number": 19,
+            "head": head,
+            "base": base,
+            "head_sha": expected_head_sha,
+        }
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))

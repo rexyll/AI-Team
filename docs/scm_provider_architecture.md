@@ -70,7 +70,8 @@ provider reads the remote branch ref before the open-PR lookup and again
 immediately before POST/PATCH; an existing open PR must match head ref, head
 SHA and base ref. The write response must confirm the same PR head ref/SHA and
 base ref, and SCMService independently validates the provider's created/updated
-status, PR number and head SHA before reporting success. A PR write failure
+status, positive PR number, exact head branch, exact base branch and head SHA
+before reporting success. A PR write failure
 does not trigger a hidden retry; the pushed branch remains available for a
 fresh read and a new PR approval.
 

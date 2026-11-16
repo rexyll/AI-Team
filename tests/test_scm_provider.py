@@ -36,6 +36,8 @@ class FakeSCMProvider:
         return {
             "status": "created",
             "number": 7,
+            "head": head,
+            "base": base,
             "head_sha": self.pr_write_head_sha or expected_head_sha,
         }
 
@@ -125,7 +127,13 @@ def test_pull_request_creation_requires_explicit_approval():
         approval=approval,
     )
 
-    assert result == {"status": "created", "number": 7, "head_sha": "a" * 40}
+    assert result == {
+        "status": "created",
+        "number": 7,
+        "head": "feature/a",
+        "base": "main",
+        "head_sha": "a" * 40,
+    }
     assert provider.calls == [
         ("create_pr", "acme/widget", "feature/a", "main", "Feature A", "Implementation summary", "a" * 40)
     ]
@@ -169,9 +177,27 @@ def test_pr_write_approval_is_bound_to_exact_title_and_body(title, body):
 @pytest.mark.parametrize(
     "malformed_result",
     [
-        {"status": "pending", "number": 7, "head_sha": "a" * 40},
-        {"status": "created", "number": True, "head_sha": "a" * 40},
-        {"status": "created", "number": 7, "head_sha": "b" * 40},
+        {
+            "status": "pending", "number": 7, "head": "feature/a",
+            "base": "main", "head_sha": "a" * 40,
+        },
+        {
+            "status": "created", "number": True, "head": "feature/a",
+            "base": "main", "head_sha": "a" * 40,
+        },
+        {
+            "status": "created", "number": 7, "head": "feature/a",
+            "base": "main", "head_sha": "b" * 40,
+        },
+        {
+            "status": "created", "number": 7, "head": "feature/other",
+            "base": "main", "head_sha": "a" * 40,
+        },
+        {
+            "status": "created", "number": 7, "head": "feature/a",
+            "base": "release", "head_sha": "a" * 40,
+        },
+        {"status": "created", "number": 7, "head_sha": "a" * 40},
     ],
 )
 def test_pr_write_fails_closed_on_malformed_provider_result(malformed_result):
@@ -189,7 +215,7 @@ def test_pr_write_fails_closed_on_malformed_provider_result(malformed_result):
         ),
     )
 
-    with pytest.raises(SCMPreflightError, match="provider did not confirm"):
+    with pytest.raises(SCMPreflightError, match="provider did not confirm a created/updated PR"):
         service.create_or_update_pull_request(
             "acme/widget",
             head="feature/a",
@@ -216,7 +242,7 @@ def test_pr_write_fails_closed_when_provider_does_not_confirm_expected_sha():
         ),
     )
 
-    with pytest.raises(SCMPreflightError, match="approved HEAD SHA"):
+    with pytest.raises(SCMPreflightError, match="approved head/base/HEAD SHA"):
         service.create_or_update_pull_request(
             "acme/widget",
             head="feature/a",

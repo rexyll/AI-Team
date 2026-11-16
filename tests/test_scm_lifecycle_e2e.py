@@ -44,7 +44,13 @@ class LifecycleProvider:
             raise RuntimeError("simulated PR API outage")
         if self.pr_head != expected_head_sha:
             raise RuntimeError("remote PR branch SHA mismatch")
-        return {"status": "created", "number": 23, "head_sha": self.pr_head}
+        return {
+            "status": "created",
+            "number": 23,
+            "head": head,
+            "base": base,
+            "head_sha": self.pr_head,
+        }
 
     def get_pull_request(self, repository, pull_request_number):
         self.events.append(("get_pr", repository, pull_request_number))
