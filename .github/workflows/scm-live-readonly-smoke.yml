@@ -1,7 +1,8 @@
 name: SCM live read-only smoke
 
 on:
-  # A one-shot live read-only probe also runs when this workflow definition
+  # Revalidate live draft metadata and bounded CI/review pagination after the 2026-11-16 SCM hardening.
+# A one-shot live read-only probe also runs when this workflow definition
   # changes on main. The path filter prevents routine application pushes from
   # repeatedly probing the same historical PR.
   push:
