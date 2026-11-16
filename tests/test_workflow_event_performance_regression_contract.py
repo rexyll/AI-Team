@@ -61,13 +61,33 @@ def test_event_persistence_throughput_does_not_collapse_with_scale(tmp_path) -> 
             samples[size].append(
                 _persistence_throughput(tmp_path / f"{size}-{trial}", size)
             )
-    throughputs = {size: median(values) for size, values in samples.items()}
+    # Compare throughput ratios within the same trial before taking the
+    # median. Taking independent medians first can pair the fastest 32-event
+    # round with the slowest 128/512-event round, amplifying unrelated runner
+    # load into a false regression. Paired ratios retain the same broad floors
+    # while controlling for round-to-round disk scheduling variance.
+    throughput_ratios = {
+        size: [
+            samples[size][trial] / samples[32][trial]
+            for trial in range(trials)
+        ]
+        for size in (128, 512)
+    }
+    stable_ratios = {
+        size: median(ratios) for size, ratios in throughput_ratios.items()
+    }
 
     # This is deliberately a broad regression guard rather than a machine-
     # specific SLA. A larger batch may be slower per event because each event
     # is durably published, but scaling must not collapse catastrophically.
-    assert throughputs[128] > throughputs[32] * 0.30
-    assert throughputs[512] > throughputs[32] * 0.20
+    assert stable_ratios[128] > 0.30, (
+        f"128-event paired throughput ratio collapsed: "
+        f"median={stable_ratios[128]:.3f}, samples={throughput_ratios[128]}"
+    )
+    assert stable_ratios[512] > 0.20, (
+        f"512-event paired throughput ratio collapsed: "
+        f"median={stable_ratios[512]:.3f}, samples={throughput_ratios[512]}"
+    )
 
 
 def _query_throughput(size: int) -> float:
