@@ -63,6 +63,42 @@ def test_push_branch_requires_matching_origin_and_uses_non_force_host_git():
     ]
 
 
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "https://operator:secret@github.com/acme/widget.git",
+        "https://github.com:8443/acme/widget.git",
+        "https://github.com/acme/widget.git?token=secret",
+        "https://github.com/acme/widget.git#fragment",
+        "https://github.com///acme/widget.git",
+        "https://github.com/acme/widget.git/extra",
+        "https://github.com:invalid/acme/widget.git",
+    ],
+)
+def test_push_branch_rejects_noncanonical_or_credential_bearing_https_origin(remote):
+    git = FakeGitService(remote=remote)
+    provider = GitHubSCMProvider(FakeTransport([]), git_service=git)
+
+    with pytest.raises(PermissionError, match="does not match"):
+        provider.push_branch(
+            "acme/widget", "/workspace/widget", "main", expected_head_sha="e" * 40
+        )
+
+    assert [call[0] for call in git.calls] == ["remote_url"]
+
+
+def test_push_branch_accepts_standard_github_ssh_remote():
+    git = FakeGitService(remote="git@github.com:acme/widget.git")
+    provider = GitHubSCMProvider(FakeTransport([]), git_service=git)
+
+    result = provider.push_branch(
+        "acme/widget", "/workspace/widget", "main", expected_head_sha="e" * 40
+    )
+
+    assert result["status"] == "pushed"
+    assert [call[0] for call in git.calls] == ["remote_url", "head_commit", "push"]
+
+
 def test_push_branch_rejects_origin_for_another_repository():
     git = FakeGitService(remote="https://github.com/acme/other.git")
     provider = GitHubSCMProvider(FakeTransport([]), git_service=git)

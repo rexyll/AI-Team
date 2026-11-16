@@ -117,14 +117,34 @@ class GitHubSCMProvider:
     @staticmethod
     def _remote_matches(remote_url: str, repository: str) -> bool:
         value = remote_url.strip()
-        if value.startswith("git@github.com:"):
-            slug = value.split(":", 1)[1]
-        else:
-            parsed = urllib.parse.urlsplit(value)
-            if parsed.scheme != "https" or (parsed.hostname or "").lower() != "github.com":
+        ssh_prefix = "git@github.com:"
+        if value.startswith(ssh_prefix):
+            slug = value[len(ssh_prefix):]
+            if "?" in slug or "#" in slug:
                 return False
-            slug = parsed.path.lstrip("/")
-        slug = slug.removesuffix(".git").strip("/")
+        else:
+            try:
+                parsed = urllib.parse.urlsplit(value)
+                port = parsed.port
+            except ValueError:
+                return False
+            if (
+                parsed.scheme != "https"
+                or (parsed.hostname or "").lower() != "github.com"
+                or parsed.username is not None
+                or parsed.password is not None
+                or port not in {None, 443}
+                or parsed.query
+                or parsed.fragment
+                or not parsed.path.startswith("/")
+                or parsed.path.startswith("//")
+            ):
+                return False
+            # Accept only the canonical /owner/repository[.git] path. Do not
+            # normalize repeated separators or trailing path components into
+            # an apparently matching repository.
+            slug = parsed.path[1:]
+        slug = slug.removesuffix(".git")
         return slug.lower() == repository.lower()
 
     def get_local_head_sha(self, local_repository: str) -> str:
