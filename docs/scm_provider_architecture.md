@@ -124,9 +124,10 @@ rerun CI, push commits, write PR metadata, alter reviews, or merge.
 The workflow uses the repository-scoped `GITHUB_TOKEN` issued for that run,
 with only `contents: read`, `pull-requests: read`, `checks: read`, and
 `statuses: read` permissions. A narrow push trigger runs the probe when the
-workflow definition itself changes on `main`; its path filter prevents ordinary
-application pushes from repeatedly probing a historical PR. That one-shot
-workflow-change run defaults to PR #2 (the repository's existing stale draft),
+workflow definition, GitHub SCM adapter, host SCM service, or read-only probe
+script changes on `main`; its path filter prevents unrelated application
+pushes from repeatedly probing a historical PR. It defaults to PR #2
+(the repository's existing stale draft),
 which is intentionally a negative/blocked sample for validating the live read
 path. Operators can also use Actions → **SCM live read-only smoke** → Run
 workflow and enter another existing pull-request number; the manual input

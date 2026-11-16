@@ -1,12 +1,15 @@
 name: SCM live read-only smoke
 
 on:
-  # Revalidate live PR metadata, CI/review pagination and the merge target ref
-  # whenever this narrowly-scoped read-only probe definition changes on main.
+  # Revalidate live PR metadata and CI/review evidence whenever the read-only
+  # probe definition or its SCM adapter implementation changes on main.
   push:
     branches: [main]
     paths:
       - .github/workflows/scm-live-readonly-smoke.yml
+      - runtime/github_scm_provider.py
+      - runtime/scm_provider.py
+      - scripts/scm_live_readonly_smoke.py
   workflow_dispatch:
     inputs:
       pull_request_number:
