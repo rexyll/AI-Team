@@ -21,7 +21,9 @@ class FakeRunner:
         if isinstance(self.error, BaseException):
             raise self.error
         if self.error:
-            return None
+            # A reachable Docker CLI reports daemon connection failures as a
+            # normal non-zero command result; only executable/OS failures raise.
+            return DockerCommandResult(1, "", str(self.error))
         return self.result
 
 def image():
