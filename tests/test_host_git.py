@@ -457,6 +457,41 @@ def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monk
     ]
 
 
+def test_host_push_rejects_environment_injected_credential_helpers(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(arguments, **kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", fake_run)
+    env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "!sh -c 'touch /tmp/owned'",
+    }
+
+    with pytest.raises(PermissionError, match="Git command/environment config overrides"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+            env=env,
+        )
+
+    assert calls == [
+        ["git", "config", "--local", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--local", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--worktree", "--get-regexp", r"^credential(\..*)?\.helper$"],
+        ["git", "config", "--worktree", "--get-regexp", r"^include(if)?\..*"],
+        ["git", "config", "--get-regexp", r"^url\..*\.(insteadOf|pushInsteadOf)$"],
+    ]
+
+
 def test_agent_git_parser_still_rejects_host_only_remote_and_push():
     from tools.git import _parse_git_command
 

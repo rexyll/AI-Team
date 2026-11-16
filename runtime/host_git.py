@@ -180,6 +180,23 @@ class HostGitOperationService:
             raise RuntimeError("origin must resolve to exactly one push destination")
         return urls[0]
 
+    @staticmethod
+    def _reject_git_config_environment_overrides(
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        """Reject command-scope Git config injected through the process environment."""
+        effective_env = {**os.environ, **dict(env or {})}
+        injected = [
+            key
+            for key in effective_env
+            if key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+            or re.fullmatch(r"GIT_CONFIG_(?:KEY|VALUE)_\d+", key)
+        ]
+        if injected:
+            raise PermissionError(
+                "Git command/environment config overrides are not allowed for host push"
+            )
+
     def _reject_repository_scoped_credential_helpers(
         self, workspace: Path, *, env: Mapping[str, str] | None = None
     ) -> None:
@@ -253,7 +270,7 @@ class HostGitOperationService:
         # Repository/worktree credential helpers can execute arbitrary code;
         # local includes can inject them indirectly. Keep credential helpers
         # under host-level configuration only.
-        self._reject_repository_scoped_credential_helpers(root, env=env)
+        self._reject_repository_scoped_credential_helpers(root, env=None)
         # URL rewrite rules from system, global, local, included and
         # GIT_CONFIG_COUNT scopes can transform even a literal destination.
         # Inspect every effective Git config scope and fail closed on any rule.
@@ -269,6 +286,10 @@ class HostGitOperationService:
             raise PermissionError("Git URL rewrite rules are not allowed for host push")
         if rewrite_config != "exit_code=1\n":
             raise RuntimeError("unable to verify Git URL rewrite configuration")
+        # The caller environment can inject credential helpers using Git's
+        # command-scope config variables; reject all such overrides after the
+        # URL rewrite check has had a chance to report a more specific denial.
+        self._reject_git_config_environment_overrides(env)
         # Re-resolve the effective push URL immediately before transport. The
         # provider's earlier repository check must not authorize a destination
         # that changed while HEAD was being inspected.
