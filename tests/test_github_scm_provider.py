@@ -300,6 +300,42 @@ def test_review_status_reads_later_pages_before_assessing_latest_review_per_user
     assert transport.calls[1][1].endswith("?per_page=100&page=2")
 
 
+@pytest.mark.parametrize(
+    "reviews",
+    [
+        [{"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}, "malformed"],
+        [{"user": None, "state": "APPROVED", "submitted_at": "2026-01-01T00:00:00Z"}],
+        [{"user": {"login": "reviewer"}, "submitted_at": "2026-01-01T00:00:00Z"}],
+    ],
+)
+def test_review_status_rejects_malformed_review_evidence(reviews):
+    transport = FakeTransport([reviews])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="invalid|incomplete"):
+        provider.get_review_status("acme/widget", 12)
+
+
+def test_review_status_fails_closed_on_unknown_review_state_even_with_approval():
+    transport = FakeTransport([[
+        {
+            "user": {"login": "reviewer"},
+            "state": "APPROVED",
+            "submitted_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "user": {"login": "future-reviewer"},
+            "state": "FUTURE_STATE",
+            "submitted_at": "2026-01-02T00:00:00Z",
+        },
+    ]])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "pending"
+
+
 def test_review_status_keeps_changes_requested_as_blocker():
     transport = FakeTransport([[
         {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-01-01T00:00:00Z"},

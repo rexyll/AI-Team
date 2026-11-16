@@ -47,7 +47,7 @@ The merge path performs deterministic preflight before consuming the merge appro
 - the PR must be open, unmerged, and explicitly non-draft;
 - the PR head SHA must be available;
 - all check-run pages and combined commit statuses must resolve to `success` (incomplete pagination is not success);
-- all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, and an incomplete bounded read remains pending;
+- all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, incomplete bounded reads and unknown review states remain pending, and malformed review entries reject the evidence rather than being silently discarded;
 - only then may the host call the GitHub merge endpoint using `merge`, `squash` or `rebase`.
 
 CI/review reads do not require write approval. Missing, pending or unknown CI evidence is not treated as success. Check runs and reviews are paginated with a bounded page limit; reaching the limit without a final page fails closed rather than reporting readiness. Completed Check Run conclusions `action_required`, `cancelled`, `failure`, `stale`, `startup_failure` and `timed_out` map to CI failure; unrecognized conclusions or malformed entries map to unknown/pending.

@@ -310,35 +310,56 @@ class GitHubSCMProvider:
             raise ValueError("pull_request_number must be positive")
         reviews: list[dict[str, Any]] = []
         reviews_complete = False
-        # GitHub returns reviews in chronological order (oldest first), with
-        # at most 100 entries per page. Read every page within a strict bound.
         for page in range(1, 11):
             page_reviews = self._transport.request(
                 "GET",
                 f"{self._repo_path(repository)}/pulls/{pull_request_number}/reviews?per_page=100&page={page}",
             )
-            if not isinstance(page_reviews, list):
+            if not isinstance(page_reviews, list) or any(
+                not isinstance(item, dict) for item in page_reviews
+            ):
                 raise GitHubAPIError("GitHub returned an invalid pull request review response")
-            reviews.extend(item for item in page_reviews if isinstance(item, dict))
+            reviews.extend(page_reviews)
             if len(page_reviews) < 100:
                 reviews_complete = True
                 break
+
+        known_review_states = {
+            "APPROVED",
+            "CHANGES_REQUESTED",
+            "COMMENTED",
+            "DISMISSED",
+            "PENDING",
+        }
         latest_by_user: dict[str, dict[str, Any]] = {}
+        has_unknown_review_state = False
         for review in reviews:
             user = review.get("user")
             login = user.get("login") if isinstance(user, dict) else None
-            if not isinstance(login, str):
-                continue
+            state = review.get("state")
+            submitted_at = review.get("submitted_at")
+            if not isinstance(login, str) or not login or not isinstance(state, str):
+                raise GitHubAPIError("GitHub returned incomplete pull request review metadata")
+            if submitted_at is not None and not isinstance(submitted_at, str):
+                raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
+            normalized_state = state.upper()
+            if normalized_state not in known_review_states:
+                has_unknown_review_state = True
             previous = latest_by_user.get(login)
-            if previous is None or str(review.get("submitted_at") or "") >= str(previous.get("submitted_at") or ""):
+            previous_submitted_at = (
+                str(previous.get("submitted_at") or "") if previous is not None else ""
+            )
+            if previous is None or str(submitted_at or "") >= previous_submitted_at:
                 latest_by_user[login] = review
+
         states = [str(item.get("state") or "").upper() for item in latest_by_user.values()]
-        # If the page bound was reached, unseen later reviews may supersede
-        # the observed approvals. Keep the result blocked rather than guessing.
         status = (
-            "pending" if not reviews_complete
-            else "changes_requested" if "CHANGES_REQUESTED" in states
-            else "approved" if "APPROVED" in states
+            "pending"
+            if not reviews_complete or has_unknown_review_state
+            else "changes_requested"
+            if "CHANGES_REQUESTED" in states
+            else "approved"
+            if "APPROVED" in states
             else "pending"
         )
         return {
