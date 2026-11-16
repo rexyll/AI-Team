@@ -296,6 +296,7 @@ class HostGitOperationService:
         ):
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
+        self._reject_git_repository_context_environment_overrides(env)
         self._require_repository(root, env=env)
         # Repository/worktree credential helpers can execute arbitrary code;
         # local includes can inject them indirectly. Keep credential helpers
