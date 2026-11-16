@@ -473,3 +473,7 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 ### T21.6.3.5.2.8 CI 修复记录（2026-11-16）
 
 - CI #613（run 43794782927，commit 635e6f4）全量回归 2,725 passed / 14 skipped，安全回归 252 passed / 9 skipped；3 个失败是 identity mismatch 详情文案未包含 `identity` 关键字，底层校验均正确拒绝。修复文案并加强 spec 直接构造的 argv/label/capability 校验，防止跳过 builder 绕过 allowlist。
+
+### T21.6.3.5.2.8 CI 修复记录（2026-11-16）
+
+- CI #614（run 43795054234，commit 6a6e50f）Host image manager Docker Engine job 通过；全量 regression 2,714 passed / 14 skipped，安全回归 252 passed / 9 skipped。15 个容器契约测试在 path containment 校验处因 runtime 模块漏导入 pathlib.Path 而触发 NameError；现已补充显式导入后复验。该错误发生于测试调用期，不涉及 Docker daemon 或容器创建。
