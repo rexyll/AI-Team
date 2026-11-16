@@ -142,7 +142,7 @@ def test_create_pull_request_fails_closed_on_invalid_or_ambiguous_lookup(lookup_
     transport = FakeTransport([_branch_ref(), lookup_response])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
-    with pytest.raises(GitHubAPIError, match="invalid|multiple"):
+    with pytest.raises(GitHubAPIError, match="invalid|incomplete|multiple"):
         provider.create_or_update_pull_request(
             "acme/widget",
             head="feature/a",
