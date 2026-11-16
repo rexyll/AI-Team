@@ -453,12 +453,19 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - CI #608（run 43792229445，commit 94ca74e）新增 Host image manager 的单元测试后，全量回归中唯一失败为既有 `test_event_persistence_throughput_does_not_collapse_with_scale` 单次 I/O 计时：32 条吞吐 1,421/s、128 条 387/s，略低于原 30% 下限；安全回归 252 passed / 9 skipped，Router image Docker smoke 通过，Coverage 被 regression 失败依赖跳过。
 - 修复方案不是降低门槛：持久化吞吐按 5 轮独立目录、交错规模采样，采用中位数；原 128/32 > 0.30 和 512/32 > 0.20 门槛保持不变。待新 CI 验证。
 
-### T21.6.3.5.2.7 Host-owned Router state store（2026-11-16，CI 修复中）
+### T21.6.3.5.2.7 Host-owned Router state store（2026-11-16，CI 验收通过）
 
 - 新增 LocalDockerRouterStateStore：按 scope SHA-256 deterministic directory 写入 HAProxy config 与 active-slot map；目录权限 0700、文件 0600；原子 temp-file + fsync + rename + directory fsync；完成写后 read-back/hash 以及 symlink/hardlink/owner 检查。
 - 初始 selector 固定 active none；仅允许 none/slot_a/slot_b；不调用 Docker，不创建 Router，不执行 Runtime API、不切流。Router 后续通过只读 bind mount 消费 Host state。
+- CI #612（run 43794403881，commit abf6a9a）全部通过：regression 2,711 passed / 14 skipped；security 252 passed / 9 skipped；Windows toolchain E2E 成功；Host image manager Docker Engine 成功；Coverage 全模块阈值通过（runtime 88.38% line / 75.40% branch）。#611 失败仅为测试误查 pytest tmp_path，已改为只检查派生的 network_name，未放宽隔离契约。
 
 
 ### T21.6.3.5.2.7 CI 修复记录（2026-11-16）
 
 - CI #611（run 43794180870，commit 113716d）Host Router image manager Docker Engine job 通过；全量 regression 2,710 passed / 14 skipped，仅 `test_scope_paths_are_deterministic_and_isolated` 的断言误把 pytest 临时目录中的 `test` 子串当作 scope 名泄漏；安全回归 252 passed / 9 skipped。失败与 state store 输出隔离无关，需仅断言生成的 `network_name` 不含 scope 字段，而非断言整个 pytest tmp_path 不含 `test`。
+
+### T21.6.3.5.2.8 Router container argv 和 inspect identity contract（2026-11-16，CI 待验收）
+
+- 新增纯函数 build_router_container_spec：输入仅接受已核验的 image identity、network identity、scope 和 Host state record；校验 config/map 内容哈希与初始 active none，生成固定 `docker run` argv。
+- 容器仅使用 immutable image ID；加入已核验 scope bridge；config/map 通过只读 bind mount；rootfs read-only；cap-drop ALL；仅存在低于 1024 host port 时增加 NET_BIND_SERVICE；tmpfs 仅用于 HAProxy Unix socket；固定 no-new-privileges 和 restart policy。
+- 新增 verify_router_container_inspection：核验容器 full ID、image ID、labels、运行态、mounts、scope network ID、HostConfig 安全项和每个 TCP published port 的双向读回。该切片只生成 argv/检查字典，不调用 Docker，不创建容器或占用 host ports。

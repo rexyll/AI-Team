@@ -134,7 +134,8 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
    - T21.6.3.5.2.4 scope bridge network manager：确定性 scope 网络名与 SHA-256 标签；只创建/验证 user-defined local bridge，inspect-create-inspect 后校验 immutable network ID、driver、scope、labels、Internal=false、Attachable=false；不连接 app、不发布 host port、不创建 Router（CI 待验收）。
    - [x] T21.6.3.5.2.5 pinned Router image recipe：新增 docker/router/Dockerfile，基于 HAProxy Technologies 3.4.7 多架构 digest pin 镜像，并固定 Alpine socat package 1.8.1.3-r0；CI #607 在 Linux Docker Engine runner 实际构建镜像并验证 HAProxy/socat 版本和 OCI labels。该切片不发布镜像、不启动 Router。
    - [x] T21.6.3.5.2.6 Host image build-and-verify manager：新增 LocalDockerRouterImageManager 固定构建 context/argv，inspect 校验 image ID、平台、OCI labels、Entrypoint/Cmd；随后用 immutable image ID 执行 network=none/read-only/cap-drop-all 的临时容器，检查 HAProxy 与 socat 二进制。CI #610（run 43792885529）通过真实 Docker Engine，实际 CI 临时 image ID 为 sha256:c5d8550eeaa57d4636dd96394bac1731a0e6b1f7caf6ff05bb205d38ea98bcbe（linux/amd64）；不作为发布 artifact。仅返回 immutable image ID，不创建持久 Router container。
-   - T21.6.3.5.2.7 Host-owned Router state store（当前）：按 scope 建立 0700 state directory，原子写入 0600 HAProxy config 与 active-slot map，初始 active none，fsync + read-back + symlink/hardlink guard；只做 Host 文件持久化，不连接 Docker/Router。
+   - [x] T21.6.3.5.2.7 Host-owned Router state store：按 scope 建立 0700 state directory，原子写入 0600 HAProxy config 与 active-slot map，初始 active none，fsync + read-back + symlink/hardlink/owner guard；仅做 Host 文件持久化。CI #612 全部通过（2,711 regression passed / 14 skipped；252 security passed / 9 skipped；Windows E2E 和 Host Docker image manager 成功；runtime coverage 88.38% line / 75.40% branch）。
+   - T21.6.3.5.2.8 Router container argv + inspect contract（当前）：从 immutable image/network/state inputs 构建固定 Docker argv；只读 config/map bind mounts、read-only rootfs、cap-drop ALL、按低端口精确增加 NET_BIND_SERVICE；inspect read-back 验证容器 immutable ID、image/network IDs、labels、mounts、安全配置和逐端口 TCP bindings。当前不执行 Docker create/run。
 3. T21.6.3.5.3 routed deployment：应用容器不 publish，Router 唯一 publish；TCP-only validation；Router identity 与 host ports 持久化。
 4. T21.6.3.5.4 candidate + route map：双 slot、单 active-slot map、map 文件原子持久化、Runtime API command builder、read-back。
 5. T21.6.3.5.5 coordinator integration：traffic_switch_pending、持久化 intent、atomic map switch、old drain/连接排空/inspect-confirmed retire。
@@ -143,7 +144,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 ## 9. 未实现边界
 
-仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client、通过 CI #604 的 scope network manager，以及通过 CI #610 的 Host image build-and-verify manager。CI #610 在 linux/amd64 Docker Engine 上验证过 immutable image ID 和隔离临时容器；该 ID 属于 CI runner 临时 artifact，不是发布身份。Host-owned config/map state store 正在实现/CI 验收中。仍无 persistent Router container、实际 host-port bind、route read-back、traffic_switch_pending phase、routed app deployment 或 daemon-backed routing E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
+仓库已具备 Router contracts、HAProxy config renderer、allowlisted Runtime API client、scope network manager、pinned Router image recipe、Host image build-and-verify manager（CI #610）和 Host-owned state store（CI #612）。Router container argv/inspect identity contract 正在实现/CI 验收中。仍无 persistent Router container、实际 host-port bind、Runtime API route read-back、traffic_switch_pending、routed app deployment 或 daemon-backed routing E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
 ## 10. 参考资料
 
 - HAProxy Technologies verified publisher image, version 3.4.7: https://hub.docker.com/r/haproxytech/haproxy-alpine
