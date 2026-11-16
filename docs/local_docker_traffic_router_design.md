@@ -1,6 +1,6 @@
 # Local Docker 蓝绿流量路由设计（T21.6.3.5）
 
-> **状态：设计决策已形成，实现尚未开始；不能据此声称 Local Docker 支持安全替换或零停机回滚。**  
+> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现、CI 验收中；Router image/container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
 > 日期：2026-11-15；范围：单机 Docker Engine、单个 project/environment scope。
 
 ## 1. 问题与目标
@@ -127,8 +127,11 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 ## 8. 实施切片与验收
 
 1. [x] T21.6.3.5.1 contracts（2026-11-15）：新增 runtime/deployment_traffic_router.py，定义 router scope、TCP port binding、双槽位 target、Router immutable identity、route read-back、connection drain snapshot 与 Host-only DeploymentTrafficRouter protocol；纯契约无 I/O，由 tests/test_deployment_traffic_router.py 锁定端口、IP、immutable ID、active-slot/target、generation、逐端口健康和 drain 约束。
-2. T21.6.3.5.2 router bootstrap：固定 HAProxy config、user-defined network、Router image pin、Unix admin socket、固定 argv + stdin helper；fake runner 覆盖 daemon/网络/端口冲突。首个子片 T21.6.3.5.2.1 已新增 SubprocessDockerRunner.execute_input() 与 Host-only LocalDockerProvider.execute_host_input()，通过 subprocess.run(input=..., shell=False) 传入有界 stdin（64 KiB，拒绝 NUL/超限）；完整 Router bootstrap 尚未实现。
-   - T21.6.3.5.2.2 pure HAProxy config builder：新增 runtime/local_docker_router_config.py 与 7 个聚焦测试，生成每端口 frontend/backend、统一 active-slot map selector、两个 weight 0 slot server、Unix admin socket；初始 map 为 active none，不允许默认负载均衡回退。纯函数，不创建文件或调用 HAProxy。
+2. T21.6.3.5.2 router bootstrap：固定 HAProxy config、user-defined network、Router image pin、Unix admin socket、固定 argv + stdin helper；fake runner 覆盖 daemon/网络/端口冲突。
+   - [x] T21.6.3.5.2.1 Docker stdin boundary：Host-only SubprocessDockerRunner.execute_input() / LocalDockerProvider.execute_host_input()，subprocess.run(input=..., shell=False)，固定不可变 Router ID argv 与单条 <=1 KiB Runtime API 命令白名单。
+   - [x] T21.6.3.5.2.2 pure HAProxy config builder：runtime/local_docker_router_config.py 纯函数生成 TCP frontend/backend、共享 active-slot map selector、双 weight-0 server 和 Unix admin socket；初始 map active none，不含 fallback / persistence。
+   - [x] T21.6.3.5.2.3 Runtime API command builder/client：runtime/haproxy_runtime_api.py 提供 allowlisted show/get/set 命令，校验 map path、identifier、IP/port、slot/state；Host client 仅对 Router immutable ID 通过固定 socat Unix socket argv 传输。CI #602 全部通过（2,666 regression passed / 14 skipped；252 security passed / 9 skipped；Windows smoke 通过；Coverage runtime 88.40% line / 75.57% branch）。
+   - T21.6.3.5.2.4 scope bridge network manager：确定性 scope 网络名与 SHA-256 标签；只创建/验证 user-defined local bridge，inspect-create-inspect 后校验 immutable network ID、driver、scope、labels、Internal=false、Attachable=false；不连接 app、不发布 host port、不创建 Router（CI 待验收）。
 3. T21.6.3.5.3 routed deployment：应用容器不 publish，Router 唯一 publish；TCP-only validation；Router identity 与 host ports 持久化。
 4. T21.6.3.5.4 candidate + route map：双 slot、单 active-slot map、map 文件原子持久化、Runtime API command builder、read-back。
 5. T21.6.3.5.5 coordinator integration：traffic_switch_pending、持久化 intent、atomic map switch、old drain/连接排空/inspect-confirmed retire。
@@ -137,8 +140,7 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 
 ## 9. 未实现边界
 
-本文件只是设计决策。仓库尚无 HAProxy router image、scope network manager、routed deployment path、Runtime API client、route read-back、traffic_switch_pending phase 或 daemon-backed E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
-
+仓库已具备纯 Router contracts、HAProxy TCP config renderer、Host-only allowlisted Runtime API command builder/client；scope network manager 已写入 main，其 CI 尚待完成。仍无经过 digest pin 和验证的 HAProxy+socat Router image、Router container bootstrap、routed app deployment、Runtime API route read-back、traffic_switch_pending phase 或 daemon-backed E2E。Local Docker rollback/zero-downtime 仍 unsupported；needs_reconciliation 继续锁定。
 ## 10. 参考资料
 
 - Docker user-defined bridge: https://docs.docker.com/engine/network/ and https://docs.docker.com/engine/network/drivers/bridge/

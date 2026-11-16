@@ -4,9 +4,8 @@ import json
 
 import pytest
 
-from runtime.deployment_provider import DockerCommandResult
 from runtime.deployment_traffic_router import TrafficRouterScope
-from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 from runtime.local_docker_router_network import (
     LocalDockerRouterNetworkManager,
     build_router_network_spec,

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from runtime.deployment_traffic_router import TrafficRouterScope
-from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
+from runtime.local_docker_provider import LocalDockerProvider
 
 _ROUTER_MANAGED_LABEL = "com.ai-team.router.managed"
 _SCOPE_FINGERPRINT_LABEL = "com.ai-team.router.scope-sha256"
@@ -223,10 +223,15 @@ class LocalDockerRouterNetworkManager:
                 "" if create_succeeded else "verified concurrently after a non-successful create response",
             )
         if after_status == "missing":
-            create_message = create_error or (
-                (create_result.stderr or create_result.stdout).strip()
-                if create_result is not None else "Docker network create did not return a result"
-            )
+            if create_succeeded:
+                create_message = (
+                    "Docker network create returned success but re-inspection reports the network absent"
+                )
+            else:
+                create_message = create_error or (
+                    (create_result.stderr or create_result.stdout).strip()
+                    if create_result is not None else "Docker network create did not return a result"
+                )
             status = "unavailable" if _is_unavailable(self.provider, create_message) else "failed"
             return DockerRouterNetworkResult(
                 status, spec, detail=create_message or "Router network remains absent"

@@ -419,4 +419,11 @@ OpenClaw 官方 issue 也佐证了审批门的三个坑（子进程需显式继�
 - 已核实 #600（配置生成器修复）通过；#601 失败于 3 个旧 Provider 测试仍使用已废弃的 6 段 Docker argv，而实现已收紧为不可变 Router ID + `socat -T` + 固定 Unix admin socket 的 8 段 argv。
 - 修复测试以验证当前安全契约，不回退 argv 限制；增加 Provider 层独立 HAProxy Runtime API 命令白名单，防止绕过命令工厂直接传入 `shutdown sessions` 等未授权命令。
 - 加强 `HAProxyRuntimeCommand` 直接构造验证：map 路径遍历、非字面 IP、越界端口和标识符均不能绕过工厂函数。
-- 当前任务验收：更新后的 regression、安全回归、Windows smoke 和 coverage 必须全部完成；在 CI 通过前不得推进 Router 容器启动或流量切换。
+- CI #602（run 43789716539，commit 9493ac4）全部通过：全量 regression 2,666 passed / 14 skipped；安全回归 252 passed / 9 skipped；Windows toolchain E2E 成功；Coverage 全模块门槛通过（runtime 88.40% line / 75.57% branch）。T21.6.3.5.2.3 命令边界与 client 切片验收完成。
+
+### T21.6.3.5.2.4 scope bridge network manager（2026-11-16，CI 待复验）
+
+- 新增 runtime/local_docker_router_network.py：使用规范化 JSON scope 的 SHA-256 指纹，生成不泄露项目/环境名称的确定性网络名；只接受 Docker local scope、bridge driver、managed/scope 标签、Internal=false 与 Attachable=false 的 user-defined bridge。
+- 通过 inspect -> create only when absent -> inspect 完成幂等校验；create race 和结果不明时重新 inspect，只有完整 network identity 匹配才报告成功；daemon unavailable、malformed response、scope/driver/label mismatch 均 fail closed。
+- CI #603 首次回归失败原因为新测试导入路径写错（DockerCommandResult 实际定义于 runtime.local_docker_provider）；已修正导入并清理生产模块未使用导入，等待新 CI 复验。
+- 本切片不 connect app、不 publish host port、不启动 Router、不改变 route map；无真实 Docker daemon 结果时不得声称 daemon-backed 验收。
