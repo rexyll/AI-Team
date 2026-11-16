@@ -40,12 +40,12 @@ details are sanitized to prevent an echoed credential from appearing in errors.
 
 ## Write approval
 
-Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A merge approval is additionally bound to the exact PR head SHA and base branch observed during preflight, so a head or target-branch change after approval invalidates it. The interactive confirmation displays both the head SHA and base branch. Immediately before the GitHub merge request, the adapter re-reads the PR and checks head, base, open/unmerged and non-draft state; the merge request also sends the expected head SHA, which GitHub checks atomically. GitHub's merge API does not expose an atomic expected-base-ref parameter, so the base-ref recheck narrows (but cannot eliminate) the remaining race between that read and the merge request. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
+Push, PR create/update and merge each require an `SCMApproval` issued by the host-owned `SCMApprovalAuthority`. An approval is scoped to one repository, operation and exact write target, expires within at most one hour, and is consumed once. A push target includes both the branch and exact local HEAD SHA; the provider rechecks HEAD and pushes that immutable SHA rather than mutable `HEAD`. A PR create/update target binds head and base plus a SHA-256 digest of the canonical title/body payload, so changing either PR text field after confirmation invalidates the approval. A merge target binds PR number, exact head SHA, base branch and selected merge method. The interactive merge preview displays head, base and method; the publication preview displays the PR payload digest. Immediately before the GitHub merge request, the adapter re-reads the PR and checks head, base, open/unmerged and non-draft state; the merge request also sends the expected head SHA, which GitHub checks atomically. GitHub's merge API does not expose an atomic expected-base-ref parameter, so the base-ref recheck narrows (but cannot eliminate) the remaining race between that read and the merge request. A scope mismatch or replay is rejected. The authority is not exposed through Agent tools; application code must issue an approval only after explicit human authorization.
 
 The merge path performs deterministic preflight before consuming the merge approval:
 
 - the PR must be open, unmerged, and explicitly non-draft;
-- the PR head SHA and base branch must be available and included in the one-use approval scope;
+- the PR head SHA, base branch and selected merge method must match the one-use approval scope;
 - all check-run pages and combined commit statuses must resolve to `success` (incomplete pagination is not success);
 - all review pages are read in chronological order before computing each reviewer's latest submitted state; a latest `changes_requested` state blocks, incomplete bounded reads and unknown review states remain pending, and malformed review entries reject the evidence rather than being silently discarded;
 - only then may the host call the GitHub merge endpoint using `merge`, `squash` or `rebase`.
@@ -60,8 +60,8 @@ Git push is implemented by `HostGitOperationService`, not the Agent-visible `git
 
 `runtime/scm_lifecycle.py` adds a host-callable lifecycle coordinator. It
 requires two distinct, one-use approvals: one scoped to the exact local HEAD
-and target branch for push, and another scoped to the head/base pair for PR
-creation or update. The coordinator does not issue approvals and must only be
+and target branch for push, and another scoped to the PR head/base plus the
+SHA-256 digest of its exact title/body payload for PR creation or update. The coordinator does not issue approvals and must only be
 called after an explicit operator authorization flow. Push completes before
 the PR write is attempted; if the PR write fails, the pushed branch remains
 available for a safe retry after a new PR approval.
@@ -74,8 +74,8 @@ failed CI job, edits a review, pushes additional commits, or merges. A caller
 may use the structured failure evidence to prepare a proposed repair task, but
 any repair, push, PR update, or merge remains a separate approved action.
 Merge continues to use `SCMService.merge_pull_request`, which re-reads the
-head, requires green CI and approved review, and consumes an approval scoped
-to that exact head SHA.
+head/base, requires green CI and approved review, and consumes an approval
+scoped to the PR number, exact head SHA, base branch and merge method.
 
 ## Read-only CLI polling
 
@@ -193,6 +193,11 @@ the title or body after confirmation invalidates the approval. The body remains
 in the host process and is not copied into Agent context.
 
 
+PR create/update fails closed on malformed or ambiguous open-PR
+lookup responses: only an explicit empty array permits a new PR POST. A
+non-array response, malformed entry, multiple matching PRs, invalid number or
+mismatched update response aborts without falling through to create a new PR.
+
 ## Interactive merge approval
 
 A PR can be merged through the standalone host command:
@@ -208,8 +213,8 @@ TTY plus an explicit `yes`. The host then issues a one-use merge approval scoped
 `PR-number:head-SHA:base-branch:merge-method` and calls
 `SCMService.merge_pull_request`.
 That service independently re-reads PR metadata, verifies open/unmerged,
-non-draft state and the exact head/base approval scope, and rechecks CI and
-review. Immediately before the merge PUT, the GitHub adapter re-reads the PR
+non-draft state and the exact head/base/method approval scope, and rechecks
+CI and review. Immediately before the merge PUT, the GitHub adapter re-reads the PR
 again and checks the head and base still match; the PUT sends the expected head
 SHA, which GitHub checks atomically. GitHub's merge API has no atomic expected
 base-ref parameter, so a narrow base-ref race remains between the final read
