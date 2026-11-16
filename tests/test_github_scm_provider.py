@@ -533,15 +533,38 @@ def test_review_status_keeps_current_head_changes_requested_as_blocker():
     assert provider.get_review_status("acme/widget", 12)["status"] == "changes_requested"
 
 
-def test_merge_pull_request_rechecks_head_and_base_before_github_merge_endpoint():
+def _merge_ci_success_responses():
+    return [
+        {"check_runs": [{"name": "unit", "status": "completed", "conclusion": "success"}]},
+        {"state": "pending", "statuses": []},
+    ]
+
+
+def _merge_review_success_responses(head_sha="d" * 40):
+    return [
+        [_review("reviewer", "APPROVED", "2026-01-02T00:00:00Z", commit_id=head_sha)],
+        _review_pr_metadata(head_sha=head_sha),
+    ]
+
+
+def _merge_pr_metadata(head_sha="d" * 40, base_branch="main", **updates):
+    result = {
+        "head": {"sha": head_sha},
+        "base": {"ref": base_branch},
+        "user": {"login": "pr-author"},
+        "state": "open",
+        "merged": False,
+        "draft": False,
+    }
+    result.update(updates)
+    return result
+
+
+def test_merge_pull_request_revalidates_ci_review_and_pr_before_github_merge_endpoint():
     transport = FakeTransport([
-        {
-            "head": {"sha": "d" * 40},
-            "base": {"ref": "main"},
-            "state": "open",
-            "merged": False,
-            "draft": False,
-        },
+        *_merge_ci_success_responses(),
+        *_merge_review_success_responses(),
+        _merge_pr_metadata(),
         {"merged": True, "sha": "e" * 40, "message": "merged"},
     ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
@@ -555,15 +578,23 @@ def test_merge_pull_request_rechecks_head_and_base_before_github_merge_endpoint(
     )
 
     assert result == {"status": "merged", "sha": "e" * 40, "message": "merged"}
-    assert [call[0] for call in transport.calls] == ["GET", "PUT"]
-    assert transport.calls[1][2]["sha"] == "d" * 40
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "GET", "GET", "PUT"]
+    assert "/check-runs?" in transport.calls[0][1]
+    assert transport.calls[1][1].endswith("/status")
+    assert transport.calls[2][1].endswith("/pulls/12/reviews?per_page=100&page=1")
+    assert transport.calls[3][1].endswith("/pulls/12")
+    assert transport.calls[4][1].endswith("/pulls/12")
+    assert transport.calls[5][2] == {"merge_method": "squash", "sha": "d" * 40}
 
 
-def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
-    transport = FakeTransport([None])
+def test_merge_pull_request_does_not_put_when_ci_evidence_is_not_success():
+    transport = FakeTransport([
+        {"check_runs": [{"name": "unit", "status": "completed", "conclusion": "failure"}]},
+        {"state": "failure", "statuses": [{"state": "failure"}]},
+    ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
-    with pytest.raises(GitHubAPIError, match="invalid pull request metadata"):
+    with pytest.raises(GitHubAPIError, match="successful, complete CI"):
         provider.merge_pull_request(
             "acme/widget",
             12,
@@ -572,7 +603,70 @@ def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
             expected_base_branch="main",
         )
 
-    assert [call[0] for call in transport.calls] == ["GET"]
+    assert len(transport.calls) == 2
+    assert all(call[0] == "GET" for call in transport.calls)
+
+
+def test_merge_pull_request_does_not_put_without_current_head_approved_review():
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        [],
+        _review_pr_metadata(head_sha="d" * 40),
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="approved review on the expected head"):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert len(transport.calls) == 4
+    assert all(call[0] == "GET" for call in transport.calls)
+
+
+def test_merge_pull_request_does_not_put_when_review_snapshot_head_drifts():
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        [_review("reviewer", "APPROVED", "2026-01-02T00:00:00Z", commit_id="d" * 40)],
+        _review_pr_metadata(head_sha="f" * 40),
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="approved review on the expected head"):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert len(transport.calls) == 4
+    assert all(call[0] == "GET" for call in transport.calls)
+
+
+def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        *_merge_review_success_responses(),
+        None,
+    ])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    with pytest.raises(GitHubAPIError, match="no valid pull request head SHA"):
+        provider.merge_pull_request(
+            "acme/widget",
+            12,
+            merge_method="squash",
+            expected_head_sha="d" * 40,
+            expected_base_branch="main",
+        )
+
+    assert [call[0] for call in transport.calls] == ["GET", "GET", "GET", "GET", "GET"]
 
 
 @pytest.mark.parametrize(
@@ -585,15 +679,13 @@ def test_merge_pull_request_rejects_malformed_fresh_pr_metadata():
     ],
 )
 def test_merge_pull_request_rejects_state_or_head_drift_before_put(field_updates, reason):
-    current = {
-        "head": {"sha": "d" * 40},
-        "base": {"ref": "main"},
-        "state": "open",
-        "merged": False,
-        "draft": False,
-    }
+    current = _merge_pr_metadata()
     current.update(field_updates)
-    transport = FakeTransport([current])
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        *_merge_review_success_responses(),
+        current,
+    ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     with pytest.raises(GitHubAPIError, match=reason):
@@ -605,17 +697,15 @@ def test_merge_pull_request_rejects_state_or_head_drift_before_put(field_updates
             expected_base_branch="main",
         )
 
-    assert [call[0] for call in transport.calls] == ["GET"]
+    assert [call[0] for call in transport.calls] == ["GET"] * 5
 
 
 def test_merge_pull_request_blocks_base_drift_before_put():
-    transport = FakeTransport([{
-        "head": {"sha": "d" * 40},
-        "base": {"ref": "release"},
-        "state": "open",
-        "merged": False,
-        "draft": False,
-    }])
+    transport = FakeTransport([
+        *_merge_ci_success_responses(),
+        *_merge_review_success_responses(),
+        _merge_pr_metadata(base_branch="release"),
+    ])
     provider = GitHubSCMProvider(transport, git_service=FakeGitService())
 
     with pytest.raises(GitHubAPIError, match="head or base changed"):
@@ -627,7 +717,7 @@ def test_merge_pull_request_blocks_base_drift_before_put():
             expected_base_branch="main",
         )
 
-    assert [call[0] for call in transport.calls] == ["GET"]
+    assert [call[0] for call in transport.calls] == ["GET"] * 5
 
 
 def test_rest_transport_injects_host_token_without_returning_it():

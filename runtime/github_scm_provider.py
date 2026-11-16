@@ -488,24 +488,34 @@ class GitHubSCMProvider:
             raise ValueError("expected_head_sha must be a hexadecimal SHA")
         if not isinstance(expected_base_branch, str) or not expected_base_branch.strip():
             raise ValueError("expected_base_branch must be non-empty")
+        # Revalidate CI and current-head review evidence inside the adapter,
+        # after the host approval preflight and immediately before the final PR
+        # metadata read / merge write. GitHub has no atomic condition covering
+        # these evidence sources together with the merge endpoint.
+        ci = self.get_ci_status(repository, expected_head_sha)
+        if not isinstance(ci, dict) or ci.get("status") != "success" or ci.get("checks_complete") is not True:
+            raise GitHubAPIError("GitHub merge preflight requires successful, complete CI evidence")
+
+        review = self.get_review_status(repository, pull_request_number)
+        if (
+            not isinstance(review, dict)
+            or review.get("status") != "approved"
+            or review.get("reviews_complete") is not True
+            or not isinstance(review.get("reviewed_head_sha"), str)
+            or review["reviewed_head_sha"].lower() != expected_head_sha.lower()
+        ):
+            raise GitHubAPIError("GitHub merge preflight requires an approved review on the expected head")
+
         # GitHub's merge endpoint supports an expected head SHA but no expected
-        # base-ref precondition. Re-read the PR immediately before the write to
-        # detect base/head changes after the host approval.
-        current = self._transport.request(
-            "GET", f"{self._repo_path(repository)}/pulls/{pull_request_number}"
-        )
-        if not isinstance(current, dict):
-            raise GitHubAPIError("GitHub returned invalid pull request metadata before merge")
-        current_head = current.get("head")
-        current_base = current.get("base")
-        current_head_sha = current_head.get("sha") if isinstance(current_head, dict) else None
-        current_base_branch = current_base.get("ref") if isinstance(current_base, dict) else None
+        # base-ref precondition. Re-read the PR after the evidence refresh to
+        # detect head/base/state changes immediately before the write.
+        current = self.get_pull_request(repository, pull_request_number)
         if (
             current.get("state") != "open"
             or current.get("merged") is not False
             or current.get("draft") is not False
-            or current_head_sha != expected_head_sha
-            or current_base_branch != expected_base_branch
+            or current.get("head_sha", "").lower() != expected_head_sha.lower()
+            or current.get("base_branch") != expected_base_branch
         ):
             raise GitHubAPIError("GitHub pull request head or base changed after merge approval")
         result = self._transport.request(
