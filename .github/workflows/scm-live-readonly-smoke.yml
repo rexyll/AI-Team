@@ -1,11 +1,19 @@
 name: SCM live read-only smoke
 
 on:
+  # A one-shot live read-only probe also runs when this workflow definition
+  # changes on main. The path filter prevents routine application pushes from
+  # repeatedly probing the same historical PR.
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/scm-live-readonly-smoke.yml
   workflow_dispatch:
     inputs:
       pull_request_number:
         description: Existing pull request number to inspect
-        required: true
+        required: false
+        default: "2"
         type: string
 
 # The automatically-issued token is limited to read-only repository evidence.
@@ -22,7 +30,7 @@ jobs:
     env:
       AI_TEAM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       AI_TEAM_GITHUB_REPOSITORY: ${{ github.repository }}
-      AI_TEAM_GITHUB_PULL_REQUEST: ${{ inputs.pull_request_number }}
+      AI_TEAM_GITHUB_PULL_REQUEST: ${{ inputs.pull_request_number || '2' }}
     steps:
       - uses: actions/checkout@v4
 
