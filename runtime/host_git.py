@@ -210,6 +210,7 @@ class HostGitOperationService:
             "GIT_SSH_COMMAND",
             "GIT_SSH_VARIANT",
             "GIT_CURL_VERBOSE",
+            "GIT_TRACE2",
         }
         effective_env = {**os.environ, **dict(env or {})}
         injected = [
