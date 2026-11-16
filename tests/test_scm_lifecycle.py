@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from runtime.scm_lifecycle import SCMLifecycleConfig, SCMLifecycleCoordinator
-from runtime.scm_provider import SCMApprovalAuthority, SCMService
+from runtime.scm_provider import (
+    SCMApprovalAuthority,
+    SCMService,
+    scm_pull_request_approval_target,
+)
 
 
 class FakeProvider:
@@ -84,7 +88,12 @@ def test_publish_requires_separate_explicit_push_and_pr_approvals():
     pr = authority.issue(
         operation="create_or_update_pull_request",
         repository="acme/widget",
-        target="feature/a:main",
+        target=scm_pull_request_approval_target(
+            head="feature/a",
+            base="main",
+            title="Feature A",
+            body="Implementation",
+        ),
         approved_by="human:operator",
     )
 
