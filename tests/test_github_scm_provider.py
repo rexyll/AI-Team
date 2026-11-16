@@ -397,6 +397,21 @@ def test_review_status_uses_latest_non_author_review_on_current_head():
     assert transport.calls[-1][1].endswith("/pulls/12")
 
 
+@pytest.mark.parametrize("later_state", ["DISMISSED", "COMMENTED"])
+def test_review_status_does_not_keep_approval_after_later_non_approval_review(later_state):
+    transport = FakeTransport([[
+        _review("reviewer", "APPROVED", "2026-01-01T00:00:00Z"),
+        _review("reviewer", later_state, "2026-01-02T00:00:00Z"),
+    ], _review_pr_metadata()])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "pending"
+    assert result["states"] == [later_state]
+    assert result["review_count"] == 1
+
+
 def test_review_status_ignores_approval_from_pr_author():
     transport = FakeTransport([[
         _review("pr-author", "APPROVED", "2026-01-02T00:00:00Z"),
