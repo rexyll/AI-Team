@@ -194,7 +194,7 @@ def test_host_push_uses_non_force_refspec_and_rejects_unsafe_branch(tmp_path, mo
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
         call_kwargs.append(kwargs)
-        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+        if arguments[1:3] == ["config", "--get-regexp"]:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
         if arguments[1:5] == ["remote", "get-url", "--push", "--all"]:
             return SimpleNamespace(
@@ -252,7 +252,7 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
 
     def fake_run(arguments, **kwargs):
         calls.append(arguments)
-        if arguments[1:4] == ["config", "--local", "--get-regexp"]:
+        if arguments[1:3] == ["config", "--get-regexp"]:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
         return SimpleNamespace(
             returncode=0,
@@ -279,7 +279,7 @@ def test_host_push_rejects_destination_drift_before_transport(tmp_path, monkeypa
     ]
 
 
-def test_host_push_rejects_repository_local_url_rewrites(tmp_path, monkeypatch):
+def test_host_push_rejects_git_url_rewrite_rules_from_all_config_scopes(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     service, workspace, _ = _service(tmp_path, monkeypatch)
@@ -307,6 +307,42 @@ def test_host_push_rejects_repository_local_url_rewrites(tmp_path, monkeypatch):
         "git",
         "config",
         "--local",
+        "--get-regexp",
+        r"^url\..*\.(insteadOf|pushInsteadOf)$",
+    ]]
+
+
+def test_host_push_rejects_environment_injected_url_rewrite_rules(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    service, workspace, _ = _service(tmp_path, monkeypatch)
+    calls = []
+    real_run = subprocess.run
+
+    def recording_run(arguments, **kwargs):
+        calls.append(arguments)
+        return real_run(arguments, **kwargs)
+
+    monkeypatch.setattr("runtime.host_git.subprocess.run", recording_run)
+    env = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "url.https://attacker.example/.insteadOf",
+        "GIT_CONFIG_VALUE_0": "https://github.com/",
+    }
+
+    with pytest.raises(PermissionError, match="Git URL rewrite rules"):
+        service.push(
+            str(workspace),
+            branch="release/1.2",
+            commit_sha="a" * 40,
+            expected_remote_url="https://github.com/acme/widget.git",
+            env=env,
+        )
+
+    assert calls == [[
+        "git",
+        "config",
         "--get-regexp",
         r"^url\..*\.(insteadOf|pushInsteadOf)$",
     ]]

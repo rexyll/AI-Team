@@ -213,21 +213,21 @@ class HostGitOperationService:
             raise ValueError("branch name is invalid")
         root = self._sandbox.require_directory(workspace)
         self._require_repository(root, env=env)
-        # Repository-local URL rewrite rules can transform even a literal
-        # destination supplied on the command line. Reject them rather than
-        # allowing mutable .git/config data to redirect a host-authorized push.
+        # URL rewrite rules from system, global, local, included and
+        # GIT_CONFIG_COUNT scopes can transform even a literal destination.
+        # Inspect every effective Git config scope and fail closed on any rule.
         rewrite_config = self._git_host(
             [
-                "config", "--local", "--get-regexp",
+                "config", "--get-regexp",
                 r"^url\..*\.(insteadOf|pushInsteadOf)$",
             ],
             root,
             env=env,
         )
         if rewrite_config.startswith("exit_code=0\n"):
-            raise PermissionError("repository-local Git URL rewrite rules are not allowed for host push")
+            raise PermissionError("Git URL rewrite rules are not allowed for host push")
         if rewrite_config != "exit_code=1\n":
-            raise RuntimeError("unable to verify repository-local Git URL rewrite configuration")
+            raise RuntimeError("unable to verify Git URL rewrite configuration")
         # Re-resolve the effective push URL immediately before transport. The
         # provider's earlier repository check must not authorize a destination
         # that changed while HEAD was being inspected.
