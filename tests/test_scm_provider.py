@@ -167,6 +167,14 @@ def test_merge_requires_pull_request_head_metadata_and_approval():
     assert not any(call[0] == "merge" for call in provider.calls)
 
 
+def test_approval_repr_does_not_expose_capability_token():
+    authority = SCMApprovalAuthority()
+    approval = _approval(authority, "push_branch", "release/1.2:" + "c" * 40)
+
+    assert approval.token not in repr(approval)
+    assert "push_branch" in repr(approval)
+
+
 def test_expired_approval_is_rejected():
     service, provider, authority = _service()
     now = datetime.now(timezone.utc)
