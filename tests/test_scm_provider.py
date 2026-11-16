@@ -125,7 +125,7 @@ def test_pull_request_creation_requires_explicit_approval():
         approval=approval,
     )
 
-    assert result == {"status": "created", "number": 7}
+    assert result == {"status": "created", "number": 7, "head_sha": "a" * 40}
     assert provider.calls == [
         ("create_pr", "acme/widget", "feature/a", "main", "Feature A", "Implementation summary", "a" * 40)
     ]
@@ -148,6 +148,7 @@ def test_pr_write_approval_is_bound_to_exact_title_and_body(title, body):
             base="main",
             title="Feature A",
             body="Implementation summary",
+            expected_head_sha="a" * 40,
         ),
     )
 
