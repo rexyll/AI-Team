@@ -962,8 +962,6 @@ def test_rest_transport_injects_host_token_without_returning_it():
     assert captured["url"] == "https://api.github.com/repos/acme/widget"
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
-@pytest.mark.parametrize("redirect_code", [301, 302, 303, 307, 308])
 def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monkeypatch):
     keylog_path = tmp_path / "tls-session-keys.log"
     monkeypatch.setenv("SSLKEYLOGFILE", str(keylog_path))
@@ -1005,6 +1003,8 @@ def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monk
     assert not keylog_path.exists()
 
 
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
+@pytest.mark.parametrize("redirect_code", [301, 302, 303, 307, 308])
 def test_rest_transport_does_not_follow_redirect_or_forward_token(
     monkeypatch, method, redirect_code
 ):
