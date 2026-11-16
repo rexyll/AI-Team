@@ -21,6 +21,7 @@ class LifecycleProvider:
         self.pr_state = "open"
         self.merged = False
         self.draft = False
+        self.base_branch = "main"
         self.ci = "success"
         self.review = "approved"
         self.fail_pr_create = False
@@ -48,6 +49,7 @@ class LifecycleProvider:
             "state": self.pr_state,
             "merged": self.merged,
             "draft": self.draft,
+            "base_branch": self.base_branch,
         }
 
     def get_ci_status(self, repository, commit_sha):
@@ -59,13 +61,21 @@ class LifecycleProvider:
         return {"status": self.review}
 
     def merge_pull_request(
-        self, repository, pull_request_number, *, merge_method, expected_head_sha
+        self,
+        repository,
+        pull_request_number,
+        *,
+        merge_method,
+        expected_head_sha,
+        expected_base_branch,
     ):
         self.events.append(
-            ("merge", repository, pull_request_number, merge_method, expected_head_sha)
+            ("merge", repository, pull_request_number, merge_method, expected_head_sha, expected_base_branch)
         )
         if self.pr_head != expected_head_sha:
             raise RuntimeError("GitHub head SHA mismatch")
+        if self.base_branch != expected_base_branch:
+            raise RuntimeError("GitHub base branch mismatch")
         if self.pr_state != "open" or self.merged:
             raise RuntimeError("PR is no longer mergeable")
         self.merged = True
@@ -127,7 +137,7 @@ def test_full_publish_poll_and_merge_lifecycle_is_ordered_and_auditable():
     assert observation["head_sha"] == provider.pr_head
 
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"]
+        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
     )
     merged = service.merge_pull_request(
         "acme/widget", 23, approval=approval, merge_method="squash"
@@ -148,7 +158,7 @@ def test_full_publish_poll_and_merge_lifecycle_is_ordered_and_auditable():
         "merge",
     ]
     assert provider.events[-1] == (
-        "merge", "acme/widget", 23, "squash", provider.pr_head
+        "merge", "acme/widget", 23, "squash", provider.pr_head, "main"
     )
 
 
@@ -199,9 +209,26 @@ def test_head_sha_drift_after_poll_invalidates_merge_approval():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"]
+        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
     )
     provider.pr_head = "e" * 40
+
+    with pytest.raises(SCMApprovalError, match="scope"):
+        service.merge_pull_request("acme/widget", 23, approval=approval)
+
+    assert not any(event[0] == "merge" for event in provider.events)
+
+
+def test_base_branch_drift_after_poll_invalidates_merge_approval():
+    provider, authority, service, coordinator = _system()
+    _publish(coordinator, authority, provider)
+    observation = coordinator.poll_pull_request(23)
+    approval = _approval(
+        authority,
+        "merge_pull_request",
+        "23:" + observation["head_sha"] + ":" + observation["base_branch"],
+    )
+    provider.base_branch = "release"
 
     with pytest.raises(SCMApprovalError, match="scope"):
         service.merge_pull_request("acme/widget", 23, approval=approval)
@@ -214,7 +241,7 @@ def test_pr_closed_after_poll_is_rejected_by_fresh_merge_preflight():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"]
+        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
     )
     provider.pr_state = "closed"
 
@@ -262,7 +289,7 @@ def test_merge_api_failure_is_propagated_without_automatic_retry():
     _publish(coordinator, authority, provider)
     observation = coordinator.poll_pull_request(23)
     approval = _approval(
-        authority, "merge_pull_request", "23:" + observation["head_sha"]
+        authority, "merge_pull_request", "23:" + observation["head_sha"] + ":" + observation["base_branch"]
     )
 
     def fail_merge(*args, **kwargs):

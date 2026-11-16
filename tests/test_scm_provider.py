@@ -17,7 +17,7 @@ class FakeSCMProvider:
         self.calls = []
         self.ci = {"status": "success"}
         self.review = {"status": "approved"}
-        self.pr = {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": False}
+        self.pr = {"head_sha": "a" * 40, "state": "open", "merged": False, "draft": False, "base_branch": "main"}
         self.local_head = "c" * 40
 
     def get_local_head_sha(self, local_repository):
@@ -44,8 +44,10 @@ class FakeSCMProvider:
         self.calls.append(("review", repository, pull_request_number))
         return self.review
 
-    def merge_pull_request(self, repository, pull_request_number, *, merge_method, expected_head_sha):
-        self.calls.append(("merge", repository, pull_request_number, merge_method, expected_head_sha))
+    def merge_pull_request(
+        self, repository, pull_request_number, *, merge_method, expected_head_sha, expected_base_branch
+    ):
+        self.calls.append(("merge", repository, pull_request_number, merge_method, expected_head_sha, expected_base_branch))
         return {"status": "merged", "number": pull_request_number}
 
 
@@ -119,6 +121,7 @@ def test_pull_request_metadata_is_available_through_read_only_service():
         "state": "open",
         "merged": False,
         "draft": False,
+        "base_branch": "main",
     }
     assert provider.calls == [("get_pr", "acme/widget", 7)]
 
@@ -143,7 +146,7 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
     service, provider, authority = _service()
     provider.ci = ci
     provider.review = review
-    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
 
     with pytest.raises(SCMPreflightError, match=expected):
         service.merge_pull_request("acme/widget", 7, approval=approval)
@@ -159,8 +162,8 @@ def test_merge_preflight_blocks_before_consuming_approval(ci, review, expected):
 
 def test_merge_requires_pull_request_head_metadata_and_approval():
     service, provider, authority = _service()
-    provider.pr = {"state": "open", "merged": False, "draft": False}
-    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+    provider.pr = {"state": "open", "merged": False, "draft": False, "base_branch": "main"}
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
 
     with pytest.raises(SCMPreflightError, match="head SHA"):
         service.merge_pull_request("acme/widget", 7, approval=approval)
@@ -213,8 +216,25 @@ def test_merge_rejects_invalid_method():
 
 def test_merge_approval_is_bound_to_the_exact_head_sha():
     service, provider, authority = _service()
-    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
-    provider.pr = {"head_sha": "b" * 40, "state": "open", "merged": False, "draft": False}
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
+    provider.pr = {"head_sha": "b" * 40, "state": "open", "merged": False, "draft": False, "base_branch": "main"}
+
+    with pytest.raises(SCMApprovalError, match="scope"):
+        service.merge_pull_request("acme/widget", 7, approval=approval)
+
+    assert not any(call[0] == "merge" for call in provider.calls)
+
+
+def test_merge_approval_is_bound_to_the_exact_base_branch():
+    service, provider, authority = _service()
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
+    provider.pr = {
+        "head_sha": "a" * 40,
+        "state": "open",
+        "merged": False,
+        "draft": False,
+        "base_branch": "release",
+    }
 
     with pytest.raises(SCMApprovalError, match="scope"):
         service.merge_pull_request("acme/widget", 7, approval=approval)
@@ -229,8 +249,9 @@ def test_merge_preflight_rejects_draft_pull_request():
         "state": "open",
         "merged": False,
         "draft": True,
+        "base_branch": "main",
     }
-    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
 
     with pytest.raises(SCMPreflightError, match="draft"):
         service.merge_pull_request("acme/widget", 7, approval=approval)
@@ -256,14 +277,14 @@ def test_local_head_sha_rejects_invalid_provider_result():
 @pytest.mark.parametrize(
     "pr",
     [
-        {"head_sha": "a" * 40, "state": "closed", "merged": False, "draft": False},
-        {"head_sha": "a" * 40, "state": "open", "merged": True, "draft": False},
+        {"head_sha": "a" * 40, "state": "closed", "merged": False, "draft": False, "base_branch": "main"},
+        {"head_sha": "a" * 40, "state": "open", "merged": True, "draft": False, "base_branch": "main"},
     ],
 )
 def test_merge_preflight_rejects_closed_or_already_merged_pr(pr):
     service, provider, authority = _service()
     provider.pr = pr
-    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40)
+    approval = _approval(authority, "merge_pull_request", "7:" + "a" * 40 + ":main")
 
     with pytest.raises(SCMPreflightError, match="not open and unmerged"):
         service.merge_pull_request("acme/widget", 7, approval=approval)

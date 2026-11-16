@@ -27,7 +27,13 @@ class FakeProvider:
 
     def get_pull_request(self, repository, pull_request_number):
         self.calls.append(("get_pr", repository, pull_request_number))
-        return {"head_sha": self.head, "state": "open", "merged": False, "draft": self.draft}
+        return {
+            "head_sha": self.head,
+            "state": "open",
+            "merged": False,
+            "draft": self.draft,
+            "base_branch": "main",
+        }
 
     def get_ci_status(self, repository, commit_sha):
         self.calls.append(("ci", repository, commit_sha))
