@@ -8,6 +8,7 @@ inspect-confirmed container retirement. No automatic reconciliation is exposed.
 from __future__ import annotations
 
 from dataclasses import replace
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -221,6 +222,34 @@ class LocalDockerRouterReplacementProvider:
         }
         return DeploymentOperationResult("prepare_candidate", "succeeded", self.name, "Router scope and inactive slot reserved")
 
+    def _ensure_candidate_route_eligible(self, app_spec, artifact):
+        """Wait for a freshly started app's Docker HEALTHCHECK to become healthy.
+
+        Each retry is inspect-before-create and must resolve to the same immutable
+        container ID. This never starts a second candidate or changes the route.
+        """
+        result = self.app_manager.ensure_app(app_spec, artifact)
+        if (
+            result.status not in {"created", "existing"}
+            or result.target is None
+        ):
+            return result
+        expected_runtime_id = result.target.runtime_id
+        for attempt in range(40):
+            if result.route_eligible:
+                return result
+            if attempt == 39:
+                return result
+            time.sleep(0.25)
+            result = self.app_manager.ensure_app(app_spec, artifact)
+            if (
+                result.status not in {"created", "existing"}
+                or result.target is None
+                or result.target.runtime_id != expected_runtime_id
+            ):
+                return result
+        return result
+
     def start_candidate(
         self,
         request: DeploymentRequest,
@@ -238,7 +267,7 @@ class LocalDockerRouterReplacementProvider:
         app_spec = build_routed_app_container_spec(
             network, target.artifact, target.deployment_id, self.port_bindings
         )
-        ensured = self.app_manager.ensure_app(app_spec, target.artifact)
+        ensured = self._ensure_candidate_route_eligible(app_spec, target.artifact)
         if not ensured.route_eligible or ensured.target is None:
             status = "unavailable" if ensured.status == "unavailable" or ensured.health_status == "unavailable" else "failed"
             return DeploymentOperationResult(
