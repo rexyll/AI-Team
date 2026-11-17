@@ -120,7 +120,11 @@ class GitHubRESTTransport:
             # target file before key logging is disabled. Construct a client
             # context directly, load system roots, and retain strict validation.
             tls_context = self._create_tls_context()
+            # Do not inherit HTTP(S)_PROXY / ALL_PROXY from the ambient
+            # process environment. A proxy must be an explicit host policy,
+            # not an implicit route for requests carrying the host token.
             opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
                 _NoRedirectHandler(),
                 urllib.request.HTTPSHandler(context=tls_context),
             )
