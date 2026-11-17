@@ -749,12 +749,28 @@ def run_live_smoke() -> dict[str, Any]:
             or router_record.active_target is None
             or restart_new_state is None
             or restart_new_state.address != router_record.active_target.address
-            or restart_new_state.port != router_record.active_target.port
+            or restart_new_state.port != router_record.active_target.port_bindings[0].container_port
         ):
+            log_result, log_error = restart_inspector._execute(
+                ["logs", "--tail", "80", router_id]
+            )
+            log_text = ""
+            if log_result is not None:
+                log_text = log_result.stdout + "\\n" + log_result.stderr
+            relevant_logs = [
+                line for line in log_text.splitlines()
+                if any(
+                    token in line.lower()
+                    for token in ("error", "warn", "fatal", "failed", "state", "socket", "server")
+                )
+            ]
+            log_detail = "\\n".join(relevant_logs[-20:])[-2400:]
             raise RuntimeError(
                 "Router active route/backend did not recover after restart: "
                 f"selector={restart_selector}, marker_status={last_marker_status}, "
-                f"backend={last_backend_state}, last_error={restart_readback_error}"
+                f"backend={last_backend_state}, last_error={restart_readback_error}, "
+                f"docker_logs_error={type(log_error).__name__ if log_error else ''}, "
+                f"router_logs={log_detail!r}"
             )
         evidence["checks"]["router_restart_recovery"] = {
             "status": "verified",
