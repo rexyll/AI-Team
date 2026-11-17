@@ -473,13 +473,19 @@ def test_recovery_inventory_requires_candidate_pointer_after_traffic_switched(tm
     history.update_replacement(started, expected_phase="prepared")
     healthy = replace(started, phase="candidate_healthy", updated_at="2026-11-15T12:05:00Z")
     history.update_replacement(healthy, expected_phase="candidate_started")
-    switched = replace(
+    pending = replace(
         healthy,
+        phase="traffic_switch_pending",
+        updated_at="2026-11-15T12:05:30Z",
+    )
+    history.update_replacement(pending, expected_phase="candidate_healthy")
+    switched = replace(
+        pending,
         phase="traffic_switched",
         effective_traffic_target="runtime:candidate",
         updated_at="2026-11-15T12:06:00Z",
     )
-    history.update_replacement(switched, expected_phase="candidate_healthy")
+    history.update_replacement(switched, expected_phase="traffic_switch_pending")
     history.set_active_deployment(
         provider=previous.provider,
         environment=previous.environment,
@@ -534,13 +540,19 @@ def test_recovery_inventory_recognizes_retired_previous_before_terminal_journal_
     history.update_replacement(started, expected_phase="prepared")
     healthy = replace(started, phase="candidate_healthy", updated_at="2026-11-15T12:05:00Z")
     history.update_replacement(healthy, expected_phase="candidate_started")
-    switched = replace(
+    pending = replace(
         healthy,
+        phase="traffic_switch_pending",
+        updated_at="2026-11-15T12:05:30Z",
+    )
+    history.update_replacement(pending, expected_phase="candidate_healthy")
+    switched = replace(
+        pending,
         phase="traffic_switched",
         effective_traffic_target="runtime:candidate",
         updated_at="2026-11-15T12:06:00Z",
     )
-    history.update_replacement(switched, expected_phase="candidate_healthy")
+    history.update_replacement(switched, expected_phase="traffic_switch_pending")
     history.set_active_deployment(
         provider=previous.provider,
         environment=previous.environment,
