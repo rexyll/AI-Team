@@ -778,7 +778,7 @@ def run_live_smoke() -> dict[str, Any]:
             "docker_state": router_after_restart.runtime_state,
             "active_selector": restart_selector,
             "effective_runtime_id": router_record.active_target.runtime_id,
-            "backend_address": restart_new_stat.address,
+            "backend_address": restart_new_state.address,
             "tcp_marker": restart_marker,
             "old_backend_status": restart_old_stat.status,
             "old_backend_sessions": restart_old_stat.current_sessions,
