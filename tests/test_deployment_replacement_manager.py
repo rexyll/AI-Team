@@ -184,6 +184,31 @@ def test_switch_intent_is_durably_committed_before_provider_route_mutation(tmp_p
     assert journal.phase == "previous_retired"
 
 
+def test_crash_after_switch_intent_is_visible_as_manual_reconciliation(tmp_path):
+    history, provider, manager, previous, target = _setup(tmp_path)
+
+    def crash_at_switch_boundary(candidate, old, operation_id):
+        journal = history.get_replacement(operation_id)
+        assert journal.phase == "traffic_switch_pending"
+        raise KeyboardInterrupt("simulated host crash before route mutation")
+
+    provider.switch_traffic = crash_at_switch_boundary
+    with pytest.raises(KeyboardInterrupt, match="simulated host crash"):
+        manager.replace(_request(), target)
+
+    journal = history.get_replacement("operation-001")
+    assert journal.phase == "traffic_switch_pending"
+    inventory = manager.recovery_inventory()
+    assert len(inventory) == 1
+    assert inventory[0].phase == "traffic_switch_pending"
+    assert inventory[0].classification == "switch_intent_requires_inspection"
+    assert inventory[0].recovery_assessment.disposition == "manual_reconciliation_required"
+    assert inventory[0].recovery_assessment.automatic_action == "none"
+    assert provider.route == "runtime:previous"
+    assert history.get("candidate").status == "running"
+    assert _active(history).deployment_id == "previous"
+
+
 def test_successful_replacement_requires_inspected_stopped_records(tmp_path):
     history, provider, manager, previous, target = _setup(tmp_path)
 
