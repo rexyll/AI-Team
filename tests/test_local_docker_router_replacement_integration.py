@@ -194,9 +194,9 @@ class FakeRouterHost:
 
 
 class FakeRuntimeAPI:
-    def __init__(self, provider, router_id):
-        self.provider = provider
-        self.router_id = router_id
+    def __init__(self, history, scope):
+        self.history = history
+        self.scope = scope
 
     def execute(self, command):
         if command.operation == "show_maps":
@@ -206,7 +206,7 @@ class FakeRuntimeAPI:
                 detail="",
             )
         if command.operation == "get_map":
-            record = self.provider.history.get_traffic_router(self.provider.scope)
+            record = self.history.get_traffic_router(self.scope)
             return SimpleNamespace(
                 status="succeeded",
                 response=f"type=ip,type=string,found=yes,key=active,value={record.active_slot}\n",
@@ -283,12 +283,12 @@ def _setup(tmp_path, monkeypatch):
     host = FakeRouterHost(
         docker, history, network, image, initial_spec, tmp_path / "router-state"
     )
-    monkeypatch.setattr(
-        adapter_module, "HAProxyRuntimeAPIClient",
-        lambda provider, router_id: FakeRuntimeAPI(provider, router_id),
-    )
     adapter = LocalDockerRouterReplacementProvider(
         docker, history, host, app_manager, slot_manager, SCOPE, BINDINGS
+    )
+    monkeypatch.setattr(
+        adapter_module, "HAProxyRuntimeAPIClient",
+        lambda provider, router_id: FakeRuntimeAPI(history, SCOPE),
     )
     previous = _deployment("previous", "1.0", "1" * 64, PREVIOUS_ID, "running")
     candidate = _deployment("candidate", "2.0", "2" * 64, None, "prepared")
