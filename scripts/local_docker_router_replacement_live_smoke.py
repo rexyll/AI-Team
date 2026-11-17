@@ -627,52 +627,71 @@ def run_live_smoke() -> dict[str, Any]:
         restart_marker = None
         restart_readback_error = ""
         last_marker_status = "not_attempted"
+        last_backend_state = "not_read"
+        restart_old_stat = None
+        restart_new_stat = None
+        restart_client = HAProxyRuntimeAPIClient(provider, router_id, timeout=1.0)
         for attempt in range(20):
             try:
                 restart_selector = _runtime_selector(
                     provider, router_id, timeout=1.0
                 )
                 if restart_selector == "slot_b":
-                    restart_marker = _probe_router_tcp_route(
-                        host_port,
-                        expected_marker=_MARKER_B,
-                        attempts=1,
-                        interval_seconds=0,
+                    restart_stat_result = restart_client.execute(
+                        show_stat_servers_command(f"be_p{host_port}")
                     )
-                    last_marker_status = str(restart_marker.get("status", "unknown"))
-                    if restart_marker.get("status") == "passed":
-                        break
+                    if restart_stat_result.status != "succeeded":
+                        last_backend_state = (
+                            f"stat_{restart_stat_result.status}:"
+                            f"{restart_stat_result.detail[:180]}"
+                        )
+                    else:
+                        restart_stats = parse_show_stat_servers(
+                            restart_stat_result.response
+                        )
+                        restart_old_stat = next(
+                            (item for item in restart_stats if item.server == "slot_a"),
+                            None,
+                        )
+                        restart_new_stat = next(
+                            (item for item in restart_stats if item.server == "slot_b"),
+                            None,
+                        )
+                        last_backend_state = (
+                            f"old={restart_old_stat.status if restart_old_stat else 'missing'}:"
+                            f"{restart_old_stat.current_sessions if restart_old_stat else 'n/a'},"
+                            f"new={restart_new_stat.status if restart_new_stat else 'missing'}:"
+                            f"{restart_new_stat.address if restart_new_stat else 'n/a'}"
+                        )
+                        if (
+                            restart_old_stat is not None
+                            and restart_old_stat.status == "MAINT"
+                            and restart_old_stat.current_sessions == 0
+                            and restart_new_stat is not None
+                            and restart_new_stat.status == "UP"
+                            and router_record.active_target is not None
+                            and restart_new_stat.address == router_record.active_target.address
+                        ):
+                            restart_marker = _probe_router_tcp_route(
+                                host_port,
+                                expected_marker=_MARKER_B,
+                                attempts=1,
+                                interval_seconds=0,
+                            )
+                            last_marker_status = str(
+                                restart_marker.get("status", "unknown")
+                            )
+                            if restart_marker.get("status") == "passed":
+                                break
             except Exception as exc:
-                restart_readback_error = type(exc).__name__
+                restart_readback_error = f"{type(exc).__name__}: {str(exc)[:240]}"
             if attempt < 19:
                 time.sleep(0.5)
         if (
             restart_selector != "slot_b"
             or restart_marker is None
             or restart_marker.get("status") != "passed"
-        ):
-            raise RuntimeError(
-                "Router active route did not recover after restart: "
-                f"selector={restart_selector}, marker_status={last_marker_status}, "
-                f"last_error={restart_readback_error}"
-            )
-
-        restart_stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
-            show_stat_servers_command(f"be_p{host_port}")
-        )
-        if restart_stat_result.status != "succeeded":
-            raise RuntimeError(
-                f"HAProxy post-restart show stat failed: {restart_stat_result.detail}"
-            )
-        restart_stats = parse_show_stat_servers(restart_stat_result.response)
-        restart_old_stat = next(
-            (item for item in restart_stats if item.server == "slot_a"), None
-        )
-        restart_new_stat = next(
-            (item for item in restart_stats if item.server == "slot_b"), None
-        )
-        if (
-            restart_old_stat is None
+            or restart_old_stat is None
             or restart_old_stat.status != "MAINT"
             or restart_old_stat.current_sessions != 0
             or restart_new_stat is None
@@ -681,8 +700,9 @@ def run_live_smoke() -> dict[str, Any]:
             or restart_new_stat.address != router_record.active_target.address
         ):
             raise RuntimeError(
-                "HAProxy backend state did not survive Router restart "
-                "(old slot MAINT/zero sessions, candidate slot UP required)"
+                "Router active route/backend did not recover after restart: "
+                f"selector={restart_selector}, marker_status={last_marker_status}, "
+                f"backend={last_backend_state}, last_error={restart_readback_error}"
             )
         evidence["checks"]["router_restart_recovery"] = {
             "status": "verified",
