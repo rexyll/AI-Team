@@ -163,6 +163,25 @@ class FakeRuntimeAPIClient:
                 response=_map_value(value),
                 detail="",
             )
+        if command.operation == "set_map":
+            self.writes.append(line)
+            selected = line.split()[-1]
+            if getattr(self, "fail_map_write", False):
+                if getattr(self, "apply_map_before_failure", False):
+                    self.active_selector = selected
+                return SimpleNamespace(
+                    status="failed",
+                    operation=command.operation,
+                    response="",
+                    detail="injected ambiguous map write result",
+                )
+            self.active_selector = selected
+            return SimpleNamespace(
+                status="succeeded",
+                operation=command.operation,
+                response="",
+                detail="",
+            )
         if command.operation in {"set_server_address", "set_server_state"}:
             self.writes.append(line)
             if self.fail_first_write and not self._write_failed:
@@ -478,6 +497,213 @@ def test_prepare_rejects_cross_scope_app_or_router_before_docker_io(tmp_path, mo
         app_spec=other_app,
         target=other_target,
         slot="slot_b",
+        state_record=state,
+    )
+    assert result.status == "mismatch"
+    assert runner.calls == []
+    assert client_type.instances == []
+
+
+def test_switch_active_slot_persists_host_map_then_writes_once_and_reads_back(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+    manager, client_type = _manager(monkeypatch)
+
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+
+    assert result.status == "verified"
+    assert result.active_selector_before == "none"
+    assert result.active_selector_after == "slot_b"
+    assert result.host_map_state == "target"
+    assert result.state_record is not None
+    assert Path(result.state_record.active_slot_map_path).read_text(encoding="utf-8") == "active slot_b\n"
+    assert result.state_record.active_slot_map_sha256 == __import__("hashlib").sha256(
+        Path(result.state_record.active_slot_map_path).read_bytes()
+    ).hexdigest()
+    client = client_type.instances[-1]
+    assert sum(line.startswith("set map ") for line in client.writes) == 1
+    assert client.writes == ["set map #0 active slot_b"]
+    assert sum(line == "get map #0 active" for line in client.commands) == 3
+    assert len(result.observations) == 2
+
+
+def test_switch_reads_back_target_even_when_set_map_returns_failure(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+
+    class AppliedButAmbiguousClient(FakeRuntimeAPIClient):
+        def __init__(self, provider, router_runtime_id):
+            super().__init__(provider, router_runtime_id)
+            self.fail_map_write = True
+            self.apply_map_before_failure = True
+
+    manager, client_type = _manager(monkeypatch, runtime_client=AppliedButAmbiguousClient)
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+    assert result.status == "verified"
+    assert "ambiguous" in result.detail
+    assert len(client_type.instances[-1].writes) == 1
+
+
+def test_switch_does_not_retry_failed_map_write_and_restores_host_file_if_route_stays_old(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+
+    class RejectedMapClient(FakeRuntimeAPIClient):
+        def __init__(self, provider, router_runtime_id):
+            super().__init__(provider, router_runtime_id)
+            self.fail_map_write = True
+            self.apply_map_before_failure = False
+
+    manager, client_type = _manager(monkeypatch, runtime_client=RejectedMapClient)
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+    assert result.status == "mismatch"
+    assert result.active_selector_after == "none"
+    assert result.host_map_state == "restored"
+    assert Path(state.active_slot_map_path).read_text(encoding="utf-8") == "active none\n"
+    assert len(client_type.instances[-1].writes) == 1
+    assert client_type.instances[-1].writes[0] == "set map #0 active slot_b"
+
+
+def test_switch_keeps_target_host_map_and_reports_indeterminate_when_readback_unavailable(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+
+    class UnavailableReadbackClient(FakeRuntimeAPIClient):
+        def execute(self, command):
+            if command.operation == "get_map" and self._get_count >= 1:
+                self.commands.append(command.line)
+                return SimpleNamespace(
+                    status="unavailable",
+                    operation=command.operation,
+                    response="",
+                    detail="injected post-write read-back timeout",
+                )
+            return super().execute(command)
+
+    manager, client_type = _manager(monkeypatch, runtime_client=UnavailableReadbackClient)
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+    assert result.status == "indeterminate"
+    assert result.host_map_state == "target"
+    assert result.state_record is not None
+    assert Path(result.state_record.active_slot_map_path).read_text(encoding="utf-8") == "active slot_b\n"
+    assert len(client_type.instances[-1].writes) == 1
+
+
+def test_switch_refuses_unexpected_prior_selector_without_mutating_either_state(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+
+    class WrongPriorSelectorClient(FakeRuntimeAPIClient):
+        def __init__(self, provider, router_runtime_id):
+            super().__init__(provider, router_runtime_id)
+            self.active_selector = "slot_a"
+
+    manager, client_type = _manager(monkeypatch, runtime_client=WrongPriorSelectorClient)
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+    assert result.status == "mismatch"
+    assert result.active_selector_before == "slot_a"
+    assert client_type.instances[-1].writes == []
+    assert Path(state.active_slot_map_path).read_text(encoding="utf-8") == "active none\n"
+
+
+def test_switch_refuses_backend_not_up_before_map_or_host_state_mutation(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    _patched_verifiers(monkeypatch, target)
+
+    class DownBackendClient(FakeRuntimeAPIClient):
+        def __init__(self, provider, router_runtime_id):
+            super().__init__(provider, router_runtime_id)
+            self.stat_status = "DOWN"
+
+    manager, client_type = _manager(monkeypatch, runtime_client=DownBackendClient, attempts=1)
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=app_spec,
+        target=target,
+        slot="slot_b",
+        expected_active_slot=None,
+        state_record=state,
+    )
+    assert result.status == "mismatch"
+    assert result.host_map_state == "unchanged"
+    assert client_type.instances[-1].writes == []
+    assert Path(state.active_slot_map_path).read_text(encoding="utf-8") == "active none\n"
+
+
+def test_switch_rejects_cross_scope_app_before_docker_or_runtime_api_io(tmp_path, monkeypatch):
+    _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
+    runner = FakeDockerRunner()
+    manager, client_type = _manager(monkeypatch, runner=runner)
+    other_network = DockerRouterNetworkRecord(
+        network.network_name,
+        "e" * 64,
+        network.scope_fingerprint,
+        "bridge",
+        False,
+        False,
+    )
+    other_artifact = DeploymentArtifact("docker-local", "app:other", "d" * 64, "v1")
+    other_app = build_routed_app_container_spec(
+        other_network, other_artifact, "deploy-other-scope", BINDINGS
+    )
+    other_target = TrafficRouteTarget(
+        "deploy-other-scope", APP_ID, TARGET_ADDRESS, BINDINGS
+    )
+    result = manager.switch_active_slot(
+        router_runtime_id=ROUTER_ID,
+        router_spec=router_spec,
+        network=network,
+        app_spec=other_app,
+        target=other_target,
+        slot="slot_b",
+        expected_active_slot=None,
         state_record=state,
     )
     assert result.status == "mismatch"

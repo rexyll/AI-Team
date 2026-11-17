@@ -28,6 +28,7 @@ from runtime.deployment_traffic_router import RouterSlot, TrafficRouteTarget
 from runtime.haproxy_runtime_api import (
     HAProxyRuntimeAPIClient,
     get_map_command,
+    set_map_command,
     set_server_address_command,
     set_server_state_command,
     show_maps_command,
@@ -113,6 +114,69 @@ class RouterSlotPrepareResult:
                 raise ValueError("verified slot preparation requires durable read-back and an unchanged different active selector")
         elif self.state_record is not None:
             raise ValueError("unverified slot preparation must not expose a trusted updated state record")
+        if not isinstance(self.detail, str):
+            raise TypeError("detail must be a string")
+
+
+SwitchStatus = Literal[
+    "verified", "busy", "unsupported", "unavailable",
+    "failed", "mismatch", "invalid_response", "indeterminate",
+]
+
+
+@dataclass(frozen=True)
+class RouterSlotSwitchResult:
+    """Evidence for one active-selector mutation and its read-back."""
+
+    status: SwitchStatus
+    router_runtime_id: str
+    app_runtime_id: str
+    slot: RouterSlot
+    active_selector_before: str | None = None
+    active_selector_after: str | None = None
+    host_map_state: Literal["unchanged", "target", "restored", "unknown"] = "unchanged"
+    target: TrafficRouteTarget | None = None
+    observations: tuple[HAProxySlotServerObservation, ...] = ()
+    state_record: RouterStateRecord | None = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "verified", "busy", "unsupported", "unavailable",
+            "failed", "mismatch", "invalid_response", "indeterminate",
+        }:
+            raise ValueError("invalid Router slot switch status")
+        for name in ("router_runtime_id", "app_runtime_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _RUNTIME_ID.fullmatch(value):
+                raise ValueError(f"{name} must be a full immutable Docker ID")
+        if self.slot not in {"slot_a", "slot_b"}:
+            raise ValueError("invalid target slot")
+        for value in (self.active_selector_before, self.active_selector_after):
+            if value is not None and value not in _SELECTOR_VALUES:
+                raise ValueError("invalid active selector observation")
+        if self.host_map_state not in {"unchanged", "target", "restored", "unknown"}:
+            raise ValueError("invalid Host map state")
+        if not isinstance(self.observations, tuple) or any(
+            not isinstance(item, HAProxySlotServerObservation)
+            for item in self.observations
+        ):
+            raise TypeError("observations must contain HAProxySlotServerObservation values")
+        if self.status == "verified":
+            if (
+                self.active_selector_after != self.slot
+                or self.active_selector_before == self.slot
+                or self.host_map_state != "target"
+                or not isinstance(self.target, TrafficRouteTarget)
+                or not isinstance(self.state_record, RouterStateRecord)
+                or not self.observations
+            ):
+                raise ValueError(
+                    "verified switch requires target selector, durable Host map, "
+                    "fresh backend read-back, and immutable target identity"
+                )
+        if self.host_map_state == "target" and not isinstance(self.state_record, RouterStateRecord):
+            raise ValueError("target Host map state requires its updated digest-bound record")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
 
@@ -320,6 +384,429 @@ class LocalDockerRouterSlotManager:
             return self._invalid("unavailable", router_id, app_id, slot, str(exc))
         except (OSError, ValueError) as exc:
             return self._invalid("failed", router_id, app_id, slot, f"{type(exc).__name__}: {exc}")
+
+    def switch_active_slot(
+        self,
+        *,
+        router_runtime_id: str,
+        router_spec: DockerRouterContainerSpec,
+        network: DockerRouterNetworkRecord,
+        app_spec: DockerRoutedAppContainerSpec,
+        target: TrafficRouteTarget,
+        slot: RouterSlot,
+        expected_active_slot: RouterSlot | None,
+        state_record: RouterStateRecord,
+    ) -> RouterSlotSwitchResult:
+        """Atomically switch the shared scope selector to a freshly verified slot.
+
+        Host restart state is atomically advanced first. Exactly one Runtime API
+        set-map write is then attempted; its return code is never retried or
+        trusted without get-map read-back. Ambiguous outcomes remain explicit
+        and are never automatically reversed.
+        """
+        if not isinstance(router_runtime_id, str) or not _RUNTIME_ID.fullmatch(router_runtime_id):
+            raise ValueError("router_runtime_id must be a full immutable Docker ID")
+        if not isinstance(router_spec, DockerRouterContainerSpec):
+            raise TypeError("router_spec must be a DockerRouterContainerSpec")
+        if not isinstance(network, DockerRouterNetworkRecord):
+            raise TypeError("network must be a verified DockerRouterNetworkRecord")
+        if not isinstance(app_spec, DockerRoutedAppContainerSpec):
+            raise TypeError("app_spec must be a DockerRoutedAppContainerSpec")
+        if not isinstance(target, TrafficRouteTarget):
+            raise TypeError("target must be a TrafficRouteTarget")
+        if not isinstance(state_record, RouterStateRecord):
+            raise TypeError("state_record must be a RouterStateRecord")
+        if slot not in {"slot_a", "slot_b"}:
+            raise ValueError("slot must be slot_a or slot_b")
+        if expected_active_slot not in {None, "slot_a", "slot_b"}:
+            raise ValueError("expected_active_slot must be slot_a, slot_b, or None")
+        if slot == expected_active_slot:
+            raise ValueError("target slot must differ from the expected active selector")
+
+        router_id = router_runtime_id
+        app_id = target.runtime_id
+        if (
+            router_spec.network_id != network.network_id
+            or router_spec.network_name != network.network_name
+            or router_spec.scope_fingerprint != network.scope_fingerprint
+            or app_spec.network_id != network.network_id
+            or app_spec.network_name != network.network_name
+            or app_spec.scope_fingerprint != network.scope_fingerprint
+            or app_spec.port_bindings != router_spec.port_bindings
+            or target.port_bindings != router_spec.port_bindings
+            or target.deployment_id != app_spec.deployment_id
+            or state_record.network_name != network.network_name
+            or state_record.scope_fingerprint != network.scope_fingerprint
+            or Path(state_record.directory) != Path(router_spec.state_directory)
+            or state_record.active_slot_map_path != router_spec.active_slot_map_path
+        ):
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot,
+                detail="Router, app, network, port bindings, or Host state scope identities do not match",
+            )
+
+        if fcntl is None or os.name != "posix":
+            return RouterSlotSwitchResult(
+                "unsupported", router_id, app_id, slot,
+                detail="Host Router active-slot switching requires POSIX scope locking",
+            )
+
+        try:
+            with _scope_operation_lock(state_record):
+                return self._switch_locked(
+                    router_id, router_spec, network, app_spec, target,
+                    slot, expected_active_slot, state_record,
+                )
+        except _ScopeLockBusy as exc:
+            return RouterSlotSwitchResult("busy", router_id, app_id, slot, detail=str(exc))
+        except NotImplementedError as exc:
+            return RouterSlotSwitchResult("unavailable", router_id, app_id, slot, detail=str(exc))
+        except (OSError, ValueError) as exc:
+            return RouterSlotSwitchResult(
+                "failed", router_id, app_id, slot,
+                detail=f"{type(exc).__name__}: {str(exc)[:700]}",
+            )
+
+    def _observe_slot(
+        self,
+        client: HAProxyRuntimeAPIClient,
+        bindings: tuple,
+        target: TrafficRouteTarget,
+        slot: RouterSlot,
+    ) -> tuple[str, tuple[HAProxySlotServerObservation, ...], str]:
+        observations: list[HAProxySlotServerObservation] = []
+        for binding in bindings:
+            backend = f"be_p{binding.host_port}"
+            state_result = client.execute(show_servers_state_command(backend))
+            stat_result = client.execute(show_stat_servers_command(backend))
+            if state_result.status != "succeeded" or stat_result.status != "succeeded":
+                status = (
+                    "unavailable"
+                    if "unavailable" in {state_result.status, stat_result.status}
+                    else "failed"
+                )
+                detail = (
+                    state_result.detail
+                    if state_result.status != "succeeded"
+                    else stat_result.detail
+                )
+                return status, tuple(observations), detail or f"Backend read-back failed for {backend}"
+            expected = (
+                ExpectedHAProxyServer(
+                    backend, slot, target.address, binding.container_port
+                ),
+            )
+            result = verify_inactive_slot_readback(
+                expected,
+                servers_state_response=state_result.response,
+                stat_response=stat_result.response,
+            )
+            if result.status != "verified":
+                return result.status, tuple(observations) + result.observations, result.detail
+            observations.extend(result.observations)
+        return "verified", tuple(observations), ""
+
+    def _switch_locked(
+        self,
+        router_id: str,
+        router_spec: DockerRouterContainerSpec,
+        network: DockerRouterNetworkRecord,
+        app_spec: DockerRoutedAppContainerSpec,
+        target: TrafficRouteTarget,
+        slot: RouterSlot,
+        expected_active_slot: RouterSlot | None,
+        state_record: RouterStateRecord,
+    ) -> RouterSlotSwitchResult:
+        app_id = target.runtime_id
+        state_error = self._verify_host_state(state_record)
+        if state_error:
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot, detail=state_error
+            )
+
+        router_status, router_payload, router_detail = self._inspect_payload([
+            "container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, router_id,
+        ])
+        if router_status != "verified" or router_payload is None:
+            return RouterSlotSwitchResult(
+                router_status, router_id, app_id, slot, detail=router_detail
+            )
+        router_verification = verify_router_container_inspection(router_payload, router_spec)
+        if router_verification.status != "verified" or router_verification.container_id != router_id:
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot,
+                detail=router_verification.detail or "Router immutable runtime ID mismatch",
+            )
+
+        app_status, app_payload, app_detail = self._inspect_payload([
+            "container", "inspect", "--format", ROUTED_APP_CONTAINER_INSPECT_FORMAT, app_id,
+        ])
+        if app_status != "verified" or app_payload is None:
+            return RouterSlotSwitchResult(
+                app_status, router_id, app_id, slot, detail=app_detail
+            )
+        app_verification = verify_routed_app_inspection(app_payload, app_spec)
+        if (
+            app_verification.status != "verified"
+            or app_verification.target != target
+            or not app_verification.route_eligible
+        ):
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot,
+                detail=app_verification.health_detail or "Target app is not freshly healthy and route eligible",
+            )
+
+        client = HAProxyRuntimeAPIClient(self.provider, router_id)
+        registry = client.execute(show_maps_command())
+        if registry.status != "succeeded":
+            return RouterSlotSwitchResult(
+                registry.status, router_id, app_id, slot, detail=registry.detail
+            )
+        try:
+            map_id = parse_show_map_registry(
+                registry.response, expected_path=HAPROXY_ACTIVE_SLOT_MAP
+            )
+        except ValueError as exc:
+            return RouterSlotSwitchResult(
+                "invalid_response", router_id, app_id, slot, detail=str(exc)
+            )
+
+        active_result = client.execute(get_map_command(map_id, "active"))
+        if active_result.status != "succeeded":
+            return RouterSlotSwitchResult(
+                active_result.status, router_id, app_id, slot, detail=active_result.detail
+            )
+        try:
+            active_before = parse_get_map_value(
+                active_result.response, expected_key="active"
+            )
+        except ValueError as exc:
+            return RouterSlotSwitchResult(
+                "invalid_response", router_id, app_id, slot, detail=str(exc)
+            )
+        expected_value = expected_active_slot if expected_active_slot is not None else "none"
+        if active_before != expected_value:
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot,
+                active_selector_before=active_before,
+                detail="Runtime API active selector differs from the expected prior slot",
+            )
+
+        readback_status = "mismatch"
+        observations: tuple[HAProxySlotServerObservation, ...] = ()
+        readback_detail = ""
+        for attempt in range(self.readback_attempts):
+            readback_status, observations, readback_detail = self._observe_slot(
+                client, router_spec.port_bindings, target, slot
+            )
+            if readback_status == "verified" or readback_status in {
+                "unavailable", "failed", "invalid_response",
+            }:
+                break
+            if attempt + 1 < self.readback_attempts:
+                time.sleep(self.readback_interval_seconds)
+        if readback_status != "verified":
+            return RouterSlotSwitchResult(
+                readback_status, router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_before,
+                observations=observations,
+                detail=readback_detail or "Target slot is not fully healthy and enabled",
+            )
+
+        state_store = LocalDockerRouterStateStore(str(Path(state_record.directory).parent))
+        persisted = state_store.persist_active_slot_map(
+            state_record,
+            expected_active_slot=expected_active_slot,
+            active_slot=slot,
+        )
+        if persisted.status != "persisted" or persisted.record is None:
+            return RouterSlotSwitchResult(
+                "failed", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_before,
+                observations=observations,
+                detail=persisted.detail or "Host desired active-slot map could not be committed",
+            )
+        target_state_record = persisted.record
+
+        # One mutating command only. Even a failed/timeout response is followed
+        # by a read-only map query; this write is never blindly retried.
+        mutation = client.execute(set_map_command(map_id, "active", slot))
+        selector_result = client.execute(get_map_command(map_id, "active"))
+        if selector_result.status != "succeeded":
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                host_map_state="target",
+                target=target,
+                observations=observations,
+                state_record=target_state_record,
+                detail=(
+                    "Active-slot set-map was attempted once but its outcome could not be read back: "
+                    + (selector_result.detail or selector_result.status)
+                ),
+            )
+        try:
+            active_after = parse_get_map_value(
+                selector_result.response, expected_key="active"
+            )
+        except ValueError as exc:
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                host_map_state="target",
+                target=target,
+                observations=observations,
+                state_record=target_state_record,
+                detail=f"Active-slot set-map was attempted once but read-back is invalid: {exc}",
+            )
+
+        if active_after == expected_value:
+            restored = state_store.persist_active_slot_map(
+                target_state_record,
+                expected_active_slot=slot,
+                active_slot=expected_active_slot,
+            )
+            if restored.status != "persisted" or restored.record is None:
+                return RouterSlotSwitchResult(
+                    "indeterminate", router_id, app_id, slot,
+                    active_selector_before=active_before,
+                    active_selector_after=active_after,
+                    host_map_state="unknown",
+                    target=target,
+                    observations=observations,
+                    detail=(
+                        "Runtime API still reads the prior selector, but Host restart-state "
+                        "restoration could not be verified: " + restored.detail
+                    ),
+                )
+            return RouterSlotSwitchResult(
+                "mismatch", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_after,
+                host_map_state="restored",
+                target=target,
+                observations=observations,
+                detail=(
+                    "Runtime API read-back confirms the prior selector remains active; "
+                    "Host restart state was restored. "
+                    + (mutation.detail or mutation.status)
+                ),
+            )
+        if active_after != slot:
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_after,
+                host_map_state="target",
+                target=target,
+                observations=observations,
+                state_record=target_state_record,
+                detail="Runtime API returned a selector outside the expected prior/target pair",
+            )
+
+        post_status, post_observations, post_detail = self._observe_slot(
+            client, router_spec.port_bindings, target, slot
+        )
+        if post_status != "verified":
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_after,
+                host_map_state="target",
+                target=target,
+                observations=post_observations or observations,
+                state_record=target_state_record,
+                detail="Active selector changed but target backend read-back is not healthy: " + post_detail,
+            )
+
+        final_selector = client.execute(get_map_command(map_id, "active"))
+        if final_selector.status != "succeeded":
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_after,
+                host_map_state="target",
+                target=target,
+                observations=post_observations,
+                state_record=target_state_record,
+                detail="Final active selector read-back is unavailable after backend verification",
+            )
+        try:
+            parse_get_map_value(
+                final_selector.response,
+                expected_key="active",
+                expected_value=slot,
+            )
+        except ValueError as exc:
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=active_after,
+                host_map_state="target",
+                target=target,
+                observations=post_observations,
+                state_record=target_state_record,
+                detail=f"Final active selector changed or mismatched: {exc}",
+            )
+
+        router_after_status, router_after_payload, router_after_detail = self._inspect_payload([
+            "container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, router_id,
+        ])
+        app_after_status, app_after_payload, app_after_detail = self._inspect_payload([
+            "container", "inspect", "--format", ROUTED_APP_CONTAINER_INSPECT_FORMAT, app_id,
+        ])
+        if router_after_status != "verified" or router_after_payload is None:
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=slot,
+                host_map_state="target",
+                target=target,
+                observations=post_observations,
+                state_record=target_state_record,
+                detail="Router post-switch identity read-back failed: " + router_after_detail,
+            )
+        if app_after_status != "verified" or app_after_payload is None:
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=slot,
+                host_map_state="target",
+                target=target,
+                observations=post_observations,
+                state_record=target_state_record,
+                detail="App post-switch identity read-back failed: " + app_after_detail,
+            )
+        router_after = verify_router_container_inspection(router_after_payload, router_spec)
+        app_after = verify_routed_app_inspection(app_after_payload, app_spec)
+        if (
+            router_after.status != "verified"
+            or router_after.container_id != router_id
+            or app_after.status != "verified"
+            or app_after.target != target
+            or not app_after.route_eligible
+        ):
+            return RouterSlotSwitchResult(
+                "indeterminate", router_id, app_id, slot,
+                active_selector_before=active_before,
+                active_selector_after=slot,
+                host_map_state="target",
+                target=target,
+                observations=post_observations,
+                state_record=target_state_record,
+                detail="Router or target app identity/health changed during active-slot switch",
+            )
+
+        detail = "Active selector and every target backend were verified by read-back"
+        if mutation.status != "succeeded":
+            detail += "; set-map response was ambiguous but read-back confirms the target"
+        return RouterSlotSwitchResult(
+            "verified", router_id, app_id, slot,
+            active_before, slot, "target", target, post_observations,
+            target_state_record, detail,
+        )
 
     def _prepare_locked(
         self,

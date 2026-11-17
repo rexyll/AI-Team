@@ -138,3 +138,48 @@ def test_persist_servers_state_rejects_incomplete_or_duplicate_slot_snapshots(tm
     first = store.persist(scope(), bindings())
     result = store.persist_servers_state(first.record, bindings(), content)
     assert result.status == "failed" and result.record is None
+
+
+def test_persist_active_slot_map_uses_expected_prior_value_and_returns_new_digest(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    assert initial.status == "persisted"
+    updated = store.persist_active_slot_map(
+        initial.record, expected_active_slot=None, active_slot="slot_b"
+    )
+    assert updated.status == "persisted"
+    assert Path(updated.record.active_slot_map_path).read_text(encoding="utf-8") == "active slot_b\n"
+    assert updated.record.active_slot_map_sha256 == __import__("hashlib").sha256(
+        Path(updated.record.active_slot_map_path).read_bytes()
+    ).hexdigest()
+    assert updated.record.config_sha256 == initial.record.config_sha256
+    assert updated.record.server_state_sha256 == initial.record.server_state_sha256
+
+
+def test_persist_active_slot_map_rejects_stale_record_or_prior_selector(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    changed = store.persist_active_slot_map(
+        initial.record, expected_active_slot=None, active_slot="slot_a"
+    )
+    assert changed.status == "persisted"
+    stale = store.persist_active_slot_map(
+        initial.record, expected_active_slot=None, active_slot="slot_b"
+    )
+    assert stale.status == "failed"
+    assert Path(initial.record.active_slot_map_path).read_text(encoding="utf-8") == "active slot_a\n"
+
+
+def test_persist_active_slot_map_refuses_symlinked_map_without_touching_target(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    outside = tmp_path / "outside-map"
+    outside.write_text("outside\n", encoding="utf-8")
+    os.chmod(outside, 0o600)
+    Path(initial.record.active_slot_map_path).unlink()
+    Path(initial.record.active_slot_map_path).symlink_to(outside)
+    result = store.persist_active_slot_map(
+        initial.record, expected_active_slot=None, active_slot="slot_b"
+    )
+    assert result.status == "failed"
+    assert outside.read_text(encoding="utf-8") == "outside\n"

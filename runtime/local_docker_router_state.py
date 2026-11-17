@@ -226,6 +226,116 @@ class LocalDockerRouterStateStore:
         except (OSError, TypeError, ValueError) as exc:
             return RouterStateResult("failed", detail=f"{type(exc).__name__}: {exc}"[:1000])
 
+    def persist_active_slot_map(
+        self,
+        record: RouterStateRecord,
+        *,
+        expected_active_slot: RouterSlotValue | None,
+        active_slot: RouterSlotValue | None,
+    ) -> RouterStateResult:
+        """Atomically update the restart selector after checking its prior value.
+
+        Runtime API memory remains authoritative for live traffic. This method
+        changes only the Host-owned restart file and returns a new digest-bound
+        record after secure read-back.
+        """
+        if os.name != "posix" or not hasattr(os, "geteuid") or not hasattr(os, "fchmod"):
+            return RouterStateResult(
+                "unsupported",
+                detail="Private Router state storage requires POSIX filesystem semantics",
+            )
+        try:
+            if not isinstance(record, RouterStateRecord):
+                raise TypeError("record must be a RouterStateRecord")
+            if expected_active_slot not in {None, "slot_a", "slot_b"}:
+                raise ValueError("expected_active_slot must be slot_a, slot_b, or None")
+            if active_slot not in {None, "slot_a", "slot_b"}:
+                raise ValueError("active_slot must be slot_a, slot_b, or None")
+            if active_slot == expected_active_slot:
+                raise ValueError("active-slot persistence must change the selector")
+            directory = Path(record.directory)
+            self._check_no_symlink_components(directory)
+            directory_info = directory.lstat()
+            if (
+                not stat.S_ISDIR(directory_info.st_mode)
+                or stat.S_ISLNK(directory_info.st_mode)
+                or directory_info.st_uid != os.geteuid()
+                or stat.S_IMODE(directory_info.st_mode) != _DIRECTORY_MODE
+                or directory.name != record.network_name
+            ):
+                raise OSError("Router state directory identity, ownership, or mode is unsafe")
+            map_path = Path(record.active_slot_map_path)
+            if map_path != directory / "active-slot.map":
+                raise ValueError("active-slot map path does not match the recorded scope directory")
+
+            def read_private_file(path: Path, expected_digest: str | None) -> bytes:
+                info = path.lstat()
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or stat.S_ISLNK(info.st_mode)
+                    or info.st_uid != directory_info.st_uid
+                    or info.st_gid != directory_info.st_gid
+                    or info.st_nlink != 1
+                    or stat.S_IMODE(info.st_mode) != _FILE_MODE
+                ):
+                    raise OSError("Router state file ownership, type, link count, or mode is unsafe")
+                descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    opened = os.fstat(descriptor)
+                    if (
+                        opened.st_dev != info.st_dev
+                        or opened.st_ino != info.st_ino
+                        or not stat.S_ISREG(opened.st_mode)
+                        or opened.st_uid != directory_info.st_uid
+                        or opened.st_gid != directory_info.st_gid
+                        or opened.st_nlink != 1
+                        or stat.S_IMODE(opened.st_mode) != _FILE_MODE
+                    ):
+                        raise OSError("Router state file changed during secure open")
+                    chunks: list[bytes] = []
+                    while True:
+                        chunk = os.read(descriptor, 65536)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                finally:
+                    os.close(descriptor)
+                payload = b"".join(chunks)
+                if expected_digest is None or hashlib.sha256(payload).hexdigest() != expected_digest:
+                    raise OSError(f"Router state file digest mismatch: {path.name}")
+                return payload
+
+            read_private_file(Path(record.config_path), record.config_sha256)
+            current_map = read_private_file(map_path, record.active_slot_map_sha256)
+            read_private_file(Path(record.server_state_path), record.server_state_sha256)
+            expected_content = render_active_slot_map(expected_active_slot).encode("utf-8")
+            if current_map != expected_content:
+                raise OSError("Host active-slot map does not match the expected prior selector")
+            next_content = render_active_slot_map(active_slot)
+            self._atomic_write(map_path, next_content)
+            updated_digest = hashlib.sha256(next_content.encode("utf-8")).hexdigest()
+            written = read_private_file(map_path, updated_digest)
+            if written != next_content.encode("utf-8"):
+                raise OSError("Host active-slot map read-back differs from the requested selector")
+            updated = RouterStateRecord(
+                network_name=record.network_name,
+                scope_fingerprint=record.scope_fingerprint,
+                directory=record.directory,
+                config_path=record.config_path,
+                active_slot_map_path=record.active_slot_map_path,
+                config_sha256=record.config_sha256,
+                active_slot_map_sha256=updated_digest,
+                directory_mode=record.directory_mode,
+                file_mode=record.file_mode,
+                server_state_sha256=record.server_state_sha256,
+            )
+            return RouterStateResult("persisted", updated)
+        except (OSError, TypeError, ValueError) as exc:
+            return RouterStateResult(
+                "failed",
+                detail=f"{type(exc).__name__}: {exc}"[:1000],
+            )
+
     def persist(self, scope: TrafficRouterScope, port_bindings: tuple[TrafficPortBinding, ...], *, active_slot: RouterSlotValue | None = None) -> RouterStateResult:
         """Persist bootstrap files; call before creating Router, not during live routing.
 
