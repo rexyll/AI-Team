@@ -6,7 +6,6 @@ module is not exposed as an Agent command and never uses a shell or sudo.
 from __future__ import annotations
 
 import ipaddress
-import json
 import math
 import re
 import subprocess
