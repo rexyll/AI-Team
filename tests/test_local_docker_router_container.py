@@ -30,6 +30,8 @@ def verified_inputs(tmp_path, port_bindings=None):
     map_path = directory / "active-slot.map"
     config_path.write_text(config, encoding="utf-8")
     map_path.write_text(active_map, encoding="utf-8")
+    config_path.chmod(0o600)
+    map_path.chmod(0o600)
     state = RouterStateRecord(network_spec.network_name, network_spec.scope_fingerprint, str(directory), str(config_path), str(map_path), hashlib.sha256(config.encode()).hexdigest(), hashlib.sha256(active_map.encode()).hexdigest(), 0o700, 0o600)
     return scope_value, port_bindings or bindings(), network, image, state
 
