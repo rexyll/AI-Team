@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -130,13 +131,29 @@ def _register_existing(tmp_path, history, scope, bindings, *, active_slot=None):
         network_name=network.network_name,
         network_id=network.network_id,
         port_bindings=bindings,
-        active_slot=active_slot,
-        active_target=target,
+        active_slot=None,
+        active_target=None,
         route_generation="generation-0",
         created_at="2026-11-17T12:00:00Z",
-        slot_targets=slots,
+        slot_targets=(),
     )
     history.create_traffic_router(record, state)
+    if active_slot is not None:
+        assert target is not None
+        updated_record = replace(
+            record,
+            active_slot=active_slot,
+            active_target=target,
+            slot_targets=slots,
+            route_generation="generation-1",
+        )
+        history.update_traffic_router(
+            updated_record,
+            state,
+            expected_generation="generation-0",
+            expected_state_map_sha256=initial.record.active_slot_map_sha256,
+        )
+        record = updated_record
     return record, state, network
 
 
