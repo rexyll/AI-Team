@@ -580,11 +580,24 @@ class LocalDockerProvider:
                 detail=output or "Docker inspect failed",
             )
 
+        parse_detail = ""
         try:
             inspected = json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError) as exc:
             inspected = None
+            parse_detail = f"JSON decode {type(exc).__name__}"
+            if isinstance(exc, json.JSONDecodeError):
+                parse_detail += f" at character {exc.pos}: {exc.msg}"
         if not isinstance(inspected, dict):
+            shape = type(inspected).__name__ if inspected is not None else "invalid JSON"
+            detail = (
+                "Docker returned malformed container inspection data "
+                f"(exit={result.returncode}, shape={shape}, "
+                f"stdout_chars={len(result.stdout)}, stderr_chars={len(result.stderr)}"
+            )
+            if parse_detail:
+                detail += f", {parse_detail}"
+            detail += ")"
             return DeploymentRuntimeInspection(
                 provider=self.name,
                 deployment_id=deployment_id,
@@ -596,7 +609,7 @@ class LocalDockerProvider:
                 health_status="unknown",
                 checked_at=checked_at,
                 probe=probe,
-                detail="Docker returned malformed container inspection data",
+                detail=detail,
             )
 
         observed_id = inspected.get("Id")
