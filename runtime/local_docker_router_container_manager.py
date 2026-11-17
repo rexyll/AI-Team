@@ -20,6 +20,11 @@ RouterEnsureStatus = Literal[
     "created", "existing", "unavailable", "failed", "mismatch", "invalid_response"
 ]
 _MISSING_MARKERS = ("no such object", "no such container")
+# Keep the inspect payload below LocalDockerProvider's bounded 4 KiB output
+# ceiling. The full Docker object can be much larger and would be truncated,
+# making a valid identity appear malformed. Every field consumed by
+# verify_router_container_inspection is retained in this compact JSON view.
+ROUTER_CONTAINER_INSPECT_FORMAT = r'{{printf "{\"Id\":%q,\"Name\":%q,\"Config\":{\"Image\":%q,\"Entrypoint\":%s,\"Cmd\":%s,\"Labels\":%s},\"State\":{\"Running\":%t},\"HostConfig\":{\"ReadonlyRootfs\":%t,\"Privileged\":%t,\"CapDrop\":%s,\"CapAdd\":%s,\"SecurityOpt\":%s,\"NetworkMode\":%q,\"RestartPolicy\":{\"Name\":%q},\"Tmpfs\":%s,\"PortBindings\":%s},\"Mounts\":%s,\"NetworkSettings\":{\"Networks\":%s,\"Ports\":%s}}" .Id .Name .Config.Image (json .Config.Entrypoint) (json .Config.Cmd) (json .Config.Labels) .State.Running .HostConfig.ReadonlyRootfs .HostConfig.Privileged (json .HostConfig.CapDrop) (json .HostConfig.CapAdd) (json .HostConfig.SecurityOpt) .HostConfig.NetworkMode .HostConfig.RestartPolicy.Name (json .HostConfig.Tmpfs) (json .HostConfig.PortBindings) (json .Mounts) (json .NetworkSettings.Networks) (json .NetworkSettings.Ports)}}'
 
 
 @dataclass(frozen=True)
@@ -72,7 +77,7 @@ class LocalDockerRouterContainerManager:
     ) -> tuple[RouterEnsureStatus | Literal["missing", "verified"], str | None, str]:
         """Inspect only by deterministic name, then verify full immutable identity."""
         result, error = self.provider._execute(
-            ["container", "inspect", "--format", "{{json .}}", spec.container_name]
+            ["container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, spec.container_name]
         )
         if error:
             return self._classify_error(error), None, error

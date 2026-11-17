@@ -14,7 +14,7 @@ from runtime.local_docker_router_image import (
 )
 from runtime.local_docker_router_network import DockerRouterNetworkRecord, build_router_network_spec
 from runtime.local_docker_router_state import RouterStateRecord
-from runtime.local_docker_router_container_manager import LocalDockerRouterContainerManager
+from runtime.local_docker_router_container_manager import LocalDockerRouterContainerManager, ROUTER_CONTAINER_INSPECT_FORMAT
 
 
 class FakeRunner:
@@ -109,7 +109,7 @@ def test_existing_verified_router_is_reused_without_create(tmp_path):
     result = manager.ensure_router(spec)
     assert result.status == "existing" and result.container_id == "c" * 64
     assert len(runner.calls) == 1
-    assert runner.calls[0][0] == ["container", "inspect", "--format", "{{json .}}", spec.container_name]
+    assert runner.calls[0][0] == ["container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, spec.container_name]
 
 
 def test_absent_router_is_created_and_reinspected_by_exact_name(tmp_path):
@@ -123,7 +123,7 @@ def test_absent_router_is_created_and_reinspected_by_exact_name(tmp_path):
     result = manager.ensure_router(spec)
     assert result.status == "created" and result.container_id == "c" * 64
     assert runner.calls[1][0] == list(spec.run_argv)
-    assert runner.calls[2][0] == ["container", "inspect", "--format", "{{json .}}", spec.container_name]
+    assert runner.calls[2][0] == ["container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, spec.container_name]
     assert runner.calls[0][0][0:2] == ["container", "inspect"]
     assert runner.calls[1][0][0:2] == ["run", "--detach"]
     assert runner.calls[2][0][0:2] == ["container", "inspect"]

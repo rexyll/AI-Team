@@ -117,6 +117,14 @@ def _run_docker(provider: LocalDockerProvider, arguments: list[str]) -> str:
     return result.stdout
 
 
+_CLEANUP_CONTAINER_INSPECT_FORMAT = (
+    r'{{printf "{\"Id\":%q,\"Config\":{\"Labels\":%s},\"State\":{\"Running\":%t}}" .Id (json .Config.Labels) .State.Running}}'
+)
+_CLEANUP_NETWORK_INSPECT_FORMAT = (
+    r'{{printf "{\"Id\":%q,\"Labels\":%s}" .Id (json .Labels)}}'
+)
+
+
 def _inspect_json(provider: LocalDockerProvider, arguments: list[str]) -> dict[str, Any]:
     raw = _run_docker(provider, arguments)
     try:
@@ -148,7 +156,7 @@ def _cleanup_owned_resources(
             if not _RUNTIME_ID.fullmatch(router_id):
                 raise RuntimeError("refusing cleanup without a full immutable Router ID")
             current = _inspect_json(
-                provider, ["container", "inspect", "--format", "{{json .}}", router_id]
+                provider, ["container", "inspect", "--format", _CLEANUP_CONTAINER_INSPECT_FORMAT, router_id]
             )
             labels = (current.get("Config") or {}).get("Labels")
             if (
@@ -164,7 +172,7 @@ def _cleanup_owned_resources(
             if state.get("Running") is True:
                 _run_docker(provider, ["container", "stop", "--time", "5", router_id])
                 current = _inspect_json(
-                    provider, ["container", "inspect", "--format", "{{json .}}", router_id]
+                    provider, ["container", "inspect", "--format", _CLEANUP_CONTAINER_INSPECT_FORMAT, router_id]
                 )
                 state = current.get("State")
                 if (
@@ -183,7 +191,7 @@ def _cleanup_owned_resources(
             if not _RUNTIME_ID.fullmatch(network_id):
                 raise RuntimeError("refusing network cleanup without a full immutable ID")
             network = _inspect_json(
-                provider, ["network", "inspect", "--format", "{{json .}}", network_id]
+                provider, ["network", "inspect", "--format", _CLEANUP_NETWORK_INSPECT_FORMAT, network_id]
             )
             labels = network.get("Labels")
             if (
