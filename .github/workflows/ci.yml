@@ -303,6 +303,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Live process crash after provider traffic switch
+        env:
+          AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE: crash_after_switch
+          AI_TEAM_ROUTER_REPLACEMENT_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-router-switch-crash-live-smoke.json
+        run: python -m scripts.local_docker_router_replacement_live_smoke
+
+      - name: Upload Router switch-crash recovery inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-switch-crash-recovery-evidence
+          path: "${{ runner.temp }}/ai-team-router-switch-crash-live-smoke.json"
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload live Router replacement evidence
         if: always()
         uses: actions/upload-artifact@v4

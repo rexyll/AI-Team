@@ -15,7 +15,9 @@ import csv
 import io
 import json
 import os
+import select
 import shutil
+import signal
 import socket
 import tempfile
 import time
@@ -274,6 +276,105 @@ def _override_show_stat_scur(
     return output.getvalue(), observed_status
 
 
+
+def _kill_replacement_child_after_switch(
+    manager: HostDeploymentReplacementManager,
+    provider: LocalDockerRouterReplacementProvider,
+    request: DeploymentRequest,
+    candidate: DeploymentRecord,
+    *,
+    timeout_seconds: float = 45.0,
+) -> tuple[dict[str, Any], int]:
+    if not hasattr(os, "fork"):
+        raise RuntimeError("crash-after-switch live injection requires os.fork")
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:
+        try:
+            os.close(read_fd)
+            real_switch = provider.switch_traffic
+            real_execute = provider._execute
+            switch_calls = 0
+            stop_attempts = 0
+
+            def count_stop_attempts(argv, *args, **kwargs):
+                nonlocal stop_attempts
+                if argv and argv[0] == "stop":
+                    stop_attempts += 1
+                return real_execute(argv, *args, **kwargs)
+
+            def switch_then_pause(*args, **kwargs):
+                nonlocal switch_calls
+                switch_calls += 1
+                result = real_switch(*args, **kwargs)
+                message = {
+                    "event": "provider_switch_returned",
+                    "status": result.status,
+                    "detail": result.message,
+                    "switch_calls": switch_calls,
+                    "stop_attempts": stop_attempts,
+                }
+                os.write(write_fd, (json.dumps(message) + "\\n").encode("utf-8"))
+                while True:
+                    signal.pause()
+
+            provider._execute = count_stop_attempts
+            provider.switch_traffic = switch_then_pause
+            try:
+                manager.replace(request, candidate)
+                payload = {
+                    "event": "manager_returned_before_parent_kill",
+                    "switch_calls": switch_calls,
+                    "stop_attempts": stop_attempts,
+                }
+            except BaseException as exc:
+                payload = {
+                    "event": "child_exception",
+                    "exception": type(exc).__name__,
+                    "detail": str(exc)[:300],
+                    "switch_calls": switch_calls,
+                    "stop_attempts": stop_attempts,
+                }
+            try:
+                os.write(write_fd, (json.dumps(payload) + "\\n").encode("utf-8"))
+            except OSError:
+                pass
+            os._exit(73)
+        except BaseException:
+            os._exit(74)
+
+    os.close(write_fd)
+    try:
+        readable, _, _ = select.select([read_fd], [], [], timeout_seconds)
+        if not readable:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+            raise RuntimeError("replacement child did not reach the post-switch crash point")
+        raw = os.read(read_fd, 4096)
+        if not raw:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+            raise RuntimeError("replacement child exited without a post-switch boundary message")
+        try:
+            message = json.loads(raw.decode("utf-8").splitlines()[0])
+        except (UnicodeDecodeError, json.JSONDecodeError, IndexError) as exc:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+            raise RuntimeError("replacement child emitted malformed crash-boundary evidence") from exc
+        if message.get("event") != "provider_switch_returned":
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+            raise RuntimeError(
+                "replacement child did not return from provider switch successfully: "
+                f"{message!r}"
+            )
+        os.kill(child_pid, signal.SIGKILL)
+        _, wait_status = os.waitpid(child_pid, 0)
+        return message, wait_status
+    finally:
+        os.close(read_fd)
+
+
 def _open_held_tcp_connection(
     host_port: int, *, expected_marker: bytes
 ) -> tuple[socket.socket, bytes]:
@@ -295,7 +396,7 @@ def run_live_smoke() -> dict[str, Any]:
     fault_mode = os.environ.get("AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE", "").strip()
     if fault_mode not in {
         "", "applied_timeout", "previous_identity_mismatch",
-        "nonzero_scur", "held_tcp_connection",
+        "nonzero_scur", "held_tcp_connection", "crash_after_switch",
     }:
         raise ValueError("unsupported Router replacement fault injection mode")
     fault_state: dict[str, Any] = {
@@ -313,6 +414,8 @@ def run_live_smoke() -> dict[str, Any]:
         "held_scur_observations": [],
         "held_connection_response": None,
         "held_connection_ack": None,
+        "crash_boundary": None,
+        "crash_wait_status": None,
     }
     provider = LocalDockerProvider()
     project = "router-replacement-" + uuid.uuid4().hex[:16]
@@ -569,7 +672,188 @@ def run_live_smoke() -> dict[str, Any]:
         replacement_manager = HostDeploymentReplacementManager(
             replacement_provider, history
         )
-        if fault_mode == "nonzero_scur":
+        if fault_mode == "crash_after_switch":
+            crash_message, crash_wait_status = _kill_replacement_child_after_switch(
+                replacement_manager,
+                replacement_provider,
+                request,
+                candidate,
+            )
+            fault_state["crash_boundary"] = crash_message
+            fault_state["crash_wait_status"] = crash_wait_status
+
+            previous_record = history.get(previous_id)
+            candidate_record = history.get(candidate_id)
+            journal = (
+                history.get_replacement(replacement.operation_id)
+                if replacement.operation_id else None
+            )
+            router_record = history.get_traffic_router(scope)
+            host_state_readback = router_host.ensure_router(scope, bindings)
+            active_deployment = history.active_deployment(
+                provider="docker-local",
+                project=scope.project,
+                environment=scope.environment,
+            )
+            inventory = replacement_manager.recovery_inventory(
+                project=scope.project,
+                environment=scope.environment,
+            )
+            runtime_inventory = replacement_manager.inspect_recovery_runtimes(
+                project=scope.project,
+                environment=scope.environment,
+            )
+            inventory_item = next(
+                (item for item in inventory if item.operation_id == (
+                    journal.operation_id if journal is not None else ""
+                )),
+                None,
+            )
+            runtime_item = next(
+                (item for item in runtime_inventory if item.operation_id == (
+                    journal.operation_id if journal is not None else ""
+                )),
+                None,
+            )
+            selector = _runtime_selector(provider, router_id)
+            effective_target = replacement_provider.read_traffic_target(request)
+            stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
+                show_stat_servers_command(f"be_p{host_port}")
+            )
+            if stat_result.status != "succeeded":
+                raise RuntimeError(
+                    f"post-crash HAProxy stat read-back failed: {stat_result.detail}"
+                )
+            stat_rows = parse_show_stat_servers(stat_result.response)
+            old_stat = next((item for item in stat_rows if item.server == "slot_a"), None)
+            new_stat = next((item for item in stat_rows if item.server == "slot_b"), None)
+            previous_inspection = (
+                provider.inspect_runtime(previous_record)
+                if previous_record is not None else None
+            )
+            candidate_inspection = (
+                provider.inspect_runtime(candidate_record)
+                if candidate_record is not None else None
+            )
+            marker = _probe_router_tcp_route(host_port, expected_marker=_MARKER_B)
+            wait_status = int(crash_wait_status)
+            crashed_by_sigkill = (
+                os.WIFSIGNALED(wait_status)
+                and os.WTERMSIG(wait_status) == signal.SIGKILL
+            )
+            verified = (
+                crash_message.get("status") == "succeeded"
+                and crash_message.get("event") == "provider_switch_returned"
+                and crash_message.get("switch_calls") == 1
+                and crash_message.get("stop_attempts") == 0
+                and crashed_by_sigkill
+                and journal is not None
+                and journal.phase == "traffic_switch_pending"
+                and journal.candidate_runtime_id == (
+                    candidate_record.container_id if candidate_record is not None else None
+                )
+                and journal.effective_traffic_target is None
+                and previous_record is not None
+                and candidate_record is not None
+                and previous_record.status == "running"
+                and candidate_record.status == "running"
+                and active_deployment is not None
+                and active_deployment.deployment_id == previous_id
+                and router_record is not None
+                and router_record.active_slot == "slot_b"
+                and router_record.active_target is not None
+                and router_record.active_target.runtime_id == candidate_record.container_id
+                and tuple(slot for slot, _ in router_record.slot_targets) == ("slot_a", "slot_b")
+                and selector == "slot_b"
+                and effective_target == candidate_record.container_id
+                and host_state_readback.status == "ready"
+                and host_state_readback.router_record == router_record
+                and inventory_item is not None
+                and inventory_item.phase == "traffic_switch_pending"
+                and inventory_item.classification == "switch_intent_requires_inspection"
+                and inventory_item.active_deployment_id == previous_id
+                and inventory_item.external_state_verified is False
+                and inventory_item.automatic_recovery_allowed is False
+                and inventory_item.recovery_assessment.disposition == "manual_reconciliation_required"
+                and inventory_item.recovery_assessment.automatic_action == "none"
+                and runtime_item is not None
+                and runtime_item.previous_runtime is not None
+                and runtime_item.previous_runtime.status == "verified"
+                and runtime_item.previous_runtime.runtime_state == "running"
+                and runtime_item.candidate_runtime is not None
+                and runtime_item.candidate_runtime.status == "verified"
+                and runtime_item.candidate_runtime.runtime_state == "running"
+                and runtime_item.route_readback_status == "not_available"
+                and runtime_item.automatic_recovery_allowed is False
+                and previous_inspection is not None
+                and previous_inspection.status == "verified"
+                and previous_inspection.observed_runtime_id == app_a_id
+                and previous_inspection.runtime_state == "running"
+                and candidate_inspection is not None
+                and candidate_inspection.status == "verified"
+                and candidate_inspection.observed_runtime_id == candidate_record.container_id
+                and candidate_inspection.runtime_state == "running"
+                and old_stat is not None
+                and new_stat is not None
+                and new_stat.status == "UP"
+                and marker.get("status") == "passed"
+            )
+            if not verified:
+                raise RuntimeError(
+                    "post-switch process crash did not leave a read-only reconcilable state: "
+                    f"crash_message={crash_message!r}, wait_status={wait_status}, "
+                    f"journal={journal.phase if journal else 'missing'}, "
+                    f"inventory={inventory_item.classification if inventory_item else 'missing'}, "
+                    f"active_deployment={active_deployment.deployment_id if active_deployment else 'missing'}, "
+                    f"selector={selector}, target={effective_target}, "
+                    f"host_readback={host_state_readback.status}, "
+                    f"old_state={previous_inspection.runtime_state if previous_inspection else 'missing'}, "
+                    f"candidate_state={candidate_inspection.runtime_state if candidate_inspection else 'missing'}, "
+                    f"marker={marker.get('status')}"
+                )
+            evidence["checks"]["switch_crash_recovery_inventory"] = {
+                "status": "verified",
+                "fault_mode": "crash_after_switch",
+                "crash_boundary": "provider.switch_traffic returned success; before coordinator journal transition to traffic_switched",
+                "child_pid": int(crash_message.get("child_pid", 0)),
+                "crash_signal": "SIGKILL",
+                "provider_switch_status": crash_message["status"],
+                "provider_switch_calls": crash_message["switch_calls"],
+                "stop_attempts_before_crash": crash_message["stop_attempts"],
+                "journal_phase_after_crash": journal.phase,
+                "journal_effective_traffic_target": journal.effective_traffic_target,
+                "inventory_classification": inventory_item.classification,
+                "recovery_disposition": inventory_item.recovery_assessment.disposition,
+                "automatic_action": inventory_item.recovery_assessment.automatic_action,
+                "required_checks": inventory_item.recovery_assessment.required_checks,
+                "active_deployment_id": active_deployment.deployment_id,
+                "router_active_slot": router_record.active_slot,
+                "effective_runtime_id": effective_target,
+                "previous_runtime_id": app_a_id,
+                "candidate_runtime_id": candidate_record.container_id,
+                "previous_runtime_state": previous_inspection.runtime_state,
+                "candidate_runtime_state": candidate_inspection.runtime_state,
+                "host_registry_readback": {
+                    "status": host_state_readback.status,
+                    "route_generation": host_state_readback.router_record.route_generation,
+                    "server_state_sha256": host_state_readback.state_record.server_state_sha256,
+                },
+                "route_readback_status": runtime_item.route_readback_status,
+                "automatic_recovery_allowed": inventory_item.automatic_recovery_allowed,
+                "previous_backend_status": old_stat.status,
+                "candidate_backend_status": new_stat.status,
+                "tcp_marker_after_crash": marker,
+            }
+            evidence["checks"]["replacement_coordinator"] = {
+                "status": "interrupted",
+                "phase": journal.phase,
+                "operation_id": journal.operation_id,
+                "message": "child process received SIGKILL after provider switch; no automatic reconciliation attempted",
+            }
+            evidence["status"] = "fault_injection_verified"
+            return evidence
+
+        elif fault_mode == "nonzero_scur":
             real_client_type = HAProxyRuntimeAPIClient
             real_execute = provider._execute
             real_retire_previous = replacement_provider.retire_previous
@@ -1605,7 +1889,15 @@ def main() -> int:
         and evidence.get("checks", {}).get("held_tcp_drain_timeout", {}).get("status") == "verified"
         and evidence.get("cleanup", {}).get("status") == "preserved"
     )
-    return 0 if normal_pass or identity_mismatch_pass or nonzero_scur_pass or held_tcp_pass else 1
+    switch_crash_pass = (
+        evidence.get("status") == "fault_injection_verified"
+        and evidence.get("checks", {}).get("switch_crash_recovery_inventory", {}).get("status") == "verified"
+        and evidence.get("cleanup", {}).get("status") == "preserved"
+    )
+    return 0 if (
+        normal_pass or identity_mismatch_pass or nonzero_scur_pass
+        or held_tcp_pass or switch_crash_pass
+    ) else 1
 
 
 if __name__ == "__main__":

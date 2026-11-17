@@ -5,10 +5,13 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentRecord,
+    DeploymentRuntimeInspection,
     DeploymentRequest,
     HealthCheckResult,
 )
@@ -87,9 +90,13 @@ class FakeDocker:
 
     def inspect_runtime(self, record):
         if record.container_id in self.identity_mismatch_ids:
-            return SimpleNamespace(
-                status="identity_mismatch",
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=record.deployment_id,
+                expected_runtime_id=record.container_id,
                 observed_runtime_id=CANDIDATE_ID,
+                identity_match=False,
+                status="identity_mismatch",
                 runtime_state="unknown",
                 health_status="unavailable",
                 checked_at="2026-11-17T12:01:00Z",
@@ -97,9 +104,13 @@ class FakeDocker:
                 detail="Docker inspect returned a different immutable container ID",
             )
         stopped = record.container_id in self.stopped
-        return SimpleNamespace(
-            status="verified",
+        return DeploymentRuntimeInspection(
+            provider=self.name,
+            deployment_id=record.deployment_id,
+            expected_runtime_id=record.container_id,
             observed_runtime_id=record.container_id,
+            identity_match=True,
+            status="verified",
             runtime_state="exited" if stopped else "running",
             health_status="unhealthy" if stopped else "healthy",
             checked_at="2026-11-17T12:01:00Z",
@@ -386,6 +397,68 @@ def test_durable_replacement_coordinator_switches_router_then_drains_and_retires
     assert router.active_target.runtime_id == CANDIDATE_ID
     assert router.slot_targets == (("slot_b", router.active_target),)
     assert adapter.read_traffic_target(request) == CANDIDATE_ID
+
+
+class SimulatedProcessCrash(BaseException):
+    pass
+
+
+def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
+    tmp_path, monkeypatch
+):
+    history, adapter, manager, request, previous, candidate, docker, slots = _setup(
+        tmp_path, monkeypatch
+    )
+    real_switch = adapter.switch_traffic
+    switch_calls = []
+
+    def switch_then_interrupt(*args, **kwargs):
+        switch_calls.append("called")
+        result = real_switch(*args, **kwargs)
+        assert result.status == "succeeded", result.message
+        raise SimulatedProcessCrash("process interrupted after provider switch")
+
+    adapter.switch_traffic = switch_then_interrupt
+    with pytest.raises(SimulatedProcessCrash):
+        manager.replace(request, candidate)
+
+    journal = history.get_replacement("router-replace-operation-1")
+    assert len(switch_calls) == 1
+    assert journal.phase == "traffic_switch_pending"
+    assert journal.effective_traffic_target is None
+    assert docker.stopped == set()
+    assert history.get("previous").status == "running"
+    assert history.get("candidate").status == "running"
+    assert history.active_deployment(
+        provider="docker-local", project="demo", environment="staging"
+    ).deployment_id == "previous"
+    router = history.get_traffic_router(SCOPE)
+    assert router.active_slot == "slot_b"
+    assert router.active_target.runtime_id == CANDIDATE_ID
+    assert {slot for slot, _ in router.slot_targets} == {"slot_a", "slot_b"}
+    assert adapter.read_traffic_target(request) == CANDIDATE_ID
+    assert slots.calls == ["prepare", "switch"]
+
+    inventory = manager.recovery_inventory(project="demo", environment="staging")
+    assert len(inventory) == 1
+    assert inventory[0].classification == "switch_intent_requires_inspection"
+    assert inventory[0].phase == "traffic_switch_pending"
+    assert inventory[0].active_deployment_id == "previous"
+    assert inventory[0].external_state_verified is False
+    assert inventory[0].automatic_recovery_allowed is False
+    assert inventory[0].recovery_assessment.disposition == "manual_reconciliation_required"
+    assert inventory[0].recovery_assessment.automatic_action == "none"
+    assert "read_back_effective_traffic_target" in inventory[0].recovery_assessment.required_checks
+
+    runtimes = manager.inspect_recovery_runtimes(project="demo", environment="staging")
+    assert len(runtimes) == 1
+    assert runtimes[0].phase == "traffic_switch_pending"
+    assert runtimes[0].previous_runtime.status == "verified"
+    assert runtimes[0].previous_runtime.runtime_state == "running"
+    assert runtimes[0].candidate_runtime.status == "verified"
+    assert runtimes[0].candidate_runtime.runtime_state == "running"
+    assert runtimes[0].route_readback_status == "not_available"
+    assert runtimes[0].automatic_recovery_allowed is False
 
 
 def test_previous_identity_mismatch_keeps_digest_consistent_router_and_both_runtimes(
