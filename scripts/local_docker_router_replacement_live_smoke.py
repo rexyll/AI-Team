@@ -37,11 +37,13 @@ from runtime.haproxy_runtime_api import (
     HAProxyRuntimeAPIClient,
     get_map_command,
     show_maps_command,
+    show_servers_state_command,
     show_stat_servers_command,
 )
 from runtime.haproxy_runtime_readback import (
     parse_get_map_value,
     parse_show_map_registry,
+    parse_show_servers_state,
     parse_show_stat_servers,
 )
 from runtime.local_docker_provider import LocalDockerProvider
@@ -657,11 +659,25 @@ def run_live_smoke() -> dict[str, Any]:
                             (item for item in restart_stats if item.server == "slot_b"),
                             None,
                         )
+                        restart_state_result = restart_client.execute(
+                            show_servers_state_command(f"be_p{host_port}")
+                        )
+                        if restart_state_result.status == "succeeded":
+                            restart_server_states = parse_show_servers_state(
+                                restart_state_result.response
+                            )
+                            restart_new_state = next(
+                                (item for item in restart_server_states if item.server == "slot_b"),
+                                None,
+                            )
+                        else:
+                            restart_new_state = None
                         last_backend_state = (
                             f"old={restart_old_stat.status if restart_old_stat else 'missing'}:"
                             f"{restart_old_stat.current_sessions if restart_old_stat else 'n/a'},"
-                            f"new={restart_new_stat.status if restart_new_stat else 'missing'}:"
-                            f"{restart_new_stat.address if restart_new_stat else 'n/a'}"
+                            f"new={restart_new_stat.status if restart_new_stat else 'missing'},"
+                            f"address={restart_new_state.address if restart_new_state else 'missing'},"
+                            f"port={restart_new_state.port if restart_new_state else 'missing'}"
                         )
                         if (
                             restart_old_stat is not None
@@ -670,7 +686,9 @@ def run_live_smoke() -> dict[str, Any]:
                             and restart_new_stat is not None
                             and restart_new_stat.status == "UP"
                             and router_record.active_target is not None
-                            and restart_new_stat.address == router_record.active_target.address
+                            and restart_new_state is not None
+                            and restart_new_state.address == router_record.active_target.address
+                            and restart_new_state.port == router_record.active_target.port
                         ):
                             restart_marker = _probe_router_tcp_route(
                                 host_port,
@@ -697,7 +715,9 @@ def run_live_smoke() -> dict[str, Any]:
             or restart_new_stat is None
             or restart_new_stat.status != "UP"
             or router_record.active_target is None
-            or restart_new_stat.address != router_record.active_target.address
+            or restart_new_state is None
+            or restart_new_state.address != router_record.active_target.address
+            or restart_new_state.port != router_record.active_target.port
         ):
             raise RuntimeError(
                 "Router active route/backend did not recover after restart: "
