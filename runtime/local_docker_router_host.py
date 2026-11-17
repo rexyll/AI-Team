@@ -27,18 +27,15 @@ from runtime.local_docker_router_config_validator import LocalDockerRouterConfig
 from runtime.local_docker_router_container import (
     DockerRouterContainerSpec,
     build_router_container_spec,
-    verify_router_container_inspection,
 )
-from runtime.local_docker_router_container_manager import (
-    LocalDockerRouterContainerManager,
-    ROUTER_CONTAINER_INSPECT_FORMAT,
-)
+from runtime.local_docker_router_container_manager import LocalDockerRouterContainerManager
 from runtime.local_docker_router_image import (
     DockerRouterImageIdentity,
     LocalDockerRouterImageManager,
 )
 from runtime.local_docker_router_network import (
     DockerRouterNetworkRecord,
+    DockerRouterNetworkSpec,
     LocalDockerRouterNetworkManager,
     build_router_network_spec,
 )
@@ -93,8 +90,6 @@ class LocalDockerRouterHostResult:
         if self.status in {"created", "ready"}:
             if any(item is None for item in trusted):
                 raise ValueError("trusted Router Host result requires registry, state, network, image and spec")
-            if self.router_record.router_runtime_id != self.container_spec and False:
-                raise ValueError("unreachable")
         elif any(item is not None for item in trusted):
             raise ValueError("unverified Router Host result must not expose trusted resource records")
         if not isinstance(self.detail, str):
@@ -198,7 +193,7 @@ class LocalDockerRouterHostManager:
         self,
         scope: TrafficRouterScope,
         bindings: tuple[TrafficPortBinding, ...],
-        network_spec: object,
+        network_spec: DockerRouterNetworkSpec,
     ) -> LocalDockerRouterHostResult:
         scope_directory = self.state_root / network_spec.network_name
         try:
@@ -317,7 +312,7 @@ class LocalDockerRouterHostManager:
         self,
         scope: TrafficRouterScope,
         bindings: tuple[TrafficPortBinding, ...],
-        network_spec: object,
+        network_spec: DockerRouterNetworkSpec,
         record: TrafficRouterRecord,
     ) -> LocalDockerRouterHostResult:
         if (

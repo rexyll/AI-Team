@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -108,7 +109,6 @@ def _register_existing(tmp_path, history, scope, bindings, *, active_slot=None):
     target = None
     slots = ()
     if active_slot is not None:
-        from tests.test_local_docker_router_host import _server_state_snapshot_for_test
         server_state = store.persist_servers_state(
             state, bindings, _server_state_snapshot_for_test(bindings)
         )
