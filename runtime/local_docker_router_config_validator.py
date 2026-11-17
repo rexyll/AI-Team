@@ -132,7 +132,7 @@ class LocalDockerRouterConfigValidator:
             "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--user", f"{owner_uid}:{owner_gid}",
             "--security-opt", "no-new-privileges:true", "--tmpfs", tmpfs_spec,
-            "--mount", f"type=bind,src={directory},dst={_STATE_DIRECTORY_DESTINATION},readonly",
+            "--mount", f"type=bind,src={state.directory},dst={_STATE_DIRECTORY_DESTINATION},readonly",
             "--entrypoint", "/usr/local/sbin/haproxy", image.image_id,
             "-c", "-f", _CONFIG_DESTINATION,
         ]

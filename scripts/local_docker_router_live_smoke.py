@@ -25,6 +25,7 @@ from runtime.haproxy_runtime_api import (
     get_map_command,
     show_maps_command,
     show_info_command,
+    show_servers_state_command,
 )
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
@@ -368,9 +369,8 @@ def run_live_smoke() -> dict[str, Any]:
             "scope_fingerprint": scope_fingerprint,
         }
 
-        state = LocalDockerRouterStateStore(state_root).persist(
-            scope, port_bindings, active_slot=None
-        )
+        state_store = LocalDockerRouterStateStore(state_root)
+        state = state_store.persist(scope, port_bindings, active_slot=None)
         if state.status != "persisted" or state.record is None:
             raise RuntimeError(f"Router Host state persist: {state.status}: {state.detail}")
         evidence["checks"]["host_state"] = {
@@ -462,6 +462,35 @@ def run_live_smoke() -> dict[str, Any]:
         if active_slot != "none":
             raise RuntimeError("fresh Router did not load the fail-closed active none selector")
 
+        servers_state_result = client.execute(show_servers_state_command())
+        if servers_state_result.status != "succeeded":
+            raise RuntimeError(
+                f"HAProxy Runtime API show servers state: "
+                f"{servers_state_result.status}: {servers_state_result.detail}"
+            )
+        persisted_state = state_store.persist_servers_state(
+            state.record, port_bindings, servers_state_result.response
+        )
+        if persisted_state.status != "persisted" or persisted_state.record is None:
+            raise RuntimeError(
+                f"Host server-state snapshot persist: "
+                f"{persisted_state.status}: {persisted_state.detail}"
+            )
+        server_state_path = Path(persisted_state.record.server_state_path)
+        if (
+            server_state_path.stat().st_mode & 0o777 != 0o600
+            or hashlib.sha256(server_state_path.read_bytes()).hexdigest()
+            != persisted_state.record.server_state_sha256
+        ):
+            raise RuntimeError("Host server-state file permission/hash read-back failed")
+        evidence["checks"]["server_state_snapshot"] = {
+            "status": "persisted",
+            "file_mode": oct(server_state_path.stat().st_mode & 0o777),
+            "sha256": persisted_state.record.server_state_sha256,
+            "bytes": server_state_path.stat().st_size,
+            "server_rows": sum(1 for line in servers_state_result.response.splitlines() if line and not line.startswith("#") and line.strip() != "1"),
+        }
+
         evidence["checks"]["runtime_api"] = {
             "show_info": "succeeded",
             "process_name": info["Name"],
@@ -471,6 +500,7 @@ def run_live_smoke() -> dict[str, Any]:
             "map_path": HAPROXY_ACTIVE_SLOT_MAP,
             "get_map": "succeeded",
             "active_selector": active_slot,
+            "show_servers_state": "succeeded",
         }
         evidence["router"] = {
             "runtime_id": router_id,
