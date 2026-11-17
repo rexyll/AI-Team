@@ -692,3 +692,59 @@ def test_traffic_router_registry_rejects_active_target_conflicting_with_slot_inv
     )
     with pytest.raises(ValueError, match="active_target must match"):
         history.create_traffic_router(conflict, state_record)
+
+
+def test_router_registry_state_record_authorizes_readonly_reload_across_selector_update(tmp_path):
+    path = tmp_path / "history.db"
+    history = DeploymentHistoryStore(path)
+    record = make_traffic_router_record()
+    bindings = record.port_bindings
+    store = LocalDockerRouterStateStore(tmp_path / "state-demo")
+    initial_state = store.persist(record.scope, bindings, active_slot=None)
+    assert initial_state.status == "persisted"
+    history.create_traffic_router(record, initial_state.record)
+
+    reloaded_history = DeploymentHistoryStore(path)
+    durable_state = reloaded_history.get_traffic_router_state_record(record.scope)
+    assert durable_state == initial_state.record
+    loaded = store.load(record.scope, bindings, expected_record=durable_state)
+    assert loaded.status == "loaded"
+
+    target = TrafficRouteTarget(
+        "release-slot-b", "d" * 64, "172.18.0.22", bindings
+    )
+    updated_record = replace(
+        record,
+        active_slot="slot_b",
+        active_target=target,
+        slot_targets=(("slot_b", target),),
+        route_generation="gen-1",
+    )
+    switched_state = store.persist_active_slot_map(
+        initial_state.record,
+        expected_active_slot=None,
+        active_slot="slot_b",
+    )
+    assert switched_state.status == "persisted"
+    history.update_traffic_router(
+        updated_record,
+        switched_state.record,
+        expected_generation="gen-0",
+        expected_state_map_sha256=initial_state.record.active_slot_map_sha256,
+    )
+
+    next_durable_state = reloaded_history.get_traffic_router_state_record(record.scope)
+    assert next_durable_state == switched_state.record
+    next_loaded = store.load(
+        record.scope, bindings, expected_record=next_durable_state
+    )
+    assert next_loaded.status == "loaded"
+
+    Path(switched_state.record.active_slot_map_path).write_text(
+        "active slot_a\n", encoding="utf-8"
+    )
+    tampered = store.load(
+        record.scope, bindings, expected_record=next_durable_state
+    )
+    assert tampered.status == "failed"
+    assert "digest mismatch" in tampered.detail
