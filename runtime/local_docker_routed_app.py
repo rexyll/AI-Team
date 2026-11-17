@@ -238,9 +238,8 @@ def build_routed_app_container_spec(
     image_id = "sha256:" + artifact.digest
     if not _IMAGE_ID.fullmatch(image_id):
         raise ValueError("artifact digest must identify a full immutable image")
-    container_name = (
-        f"ai-team-app-{network.scope_fingerprint[:10]}-{deployment_id[:24].lower()}"
-    )[:63]
+    deployment_key = hashlib.sha256(deployment_id.encode("utf-8")).hexdigest()[:20]
+    container_name = f"ai-team-app-{network.scope_fingerprint[:10]}-{deployment_key}"
     network_alias = container_name
     labels = _build_labels(
         deployment_id, network.network_id, network.scope_fingerprint,
@@ -440,7 +439,7 @@ class LocalDockerRoutedAppManager:
     ) -> tuple[EnsureStatus | Literal["verified"], str]:
         result, error = self.provider._execute([
             "image", "inspect", "--format", ROUTED_APP_IMAGE_INSPECT_FORMAT,
-            artifact.artifact_ref,
+            spec.image_id,
         ])
         if error:
             return self._classify_error(error), error

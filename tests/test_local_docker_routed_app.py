@@ -133,6 +133,10 @@ def test_spec_uses_immutable_image_and_verified_scope_network_without_publish():
     app_spec = spec()
     argv = list(app_spec.run_argv)
     assert app_spec.image_id == "sha256:" + artifact().digest
+    other = build_routed_app_container_spec(
+        scope_network(), artifact(), "deploy-001-similar-prefix", ports()
+    )
+    assert other.container_name != app_spec.container_name
     assert argv[-1] == app_spec.image_id
     assert "--network" in argv
     assert argv[argv.index("--network") + 1] == app_spec.network_name
@@ -244,6 +248,8 @@ def test_manager_creates_and_reinspects_exact_container_without_host_publish():
         ok(inspect_result(app_spec)),
     )
     result = manager.ensure_app(app_spec, artifact())
+    assert runner.calls[0][0][-1] == app_spec.image_id
+    assert runner.calls[0][0][-1] != artifact().artifact_ref
     assert result.status == "created"
     assert result.target.runtime_id == "c" * 64
     assert result.health_status == "healthy"
