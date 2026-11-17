@@ -30,6 +30,31 @@ _OUTPUT_LIMIT = 4000
 _PORT_MAPPING = re.compile(r"^(\d{1,5}):(\d{1,5})(?:/(tcp|udp))?$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
+_CONTAINER_INSPECT_FORMAT = (
+    "{{.Id}}|{{.State.Status}}|"
+    "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
+)
+_CONTAINER_STATES = {
+    "created", "running", "paused", "restarting", "removing", "exited", "dead",
+}
+_HEALTH_STATES = {"healthy", "unhealthy", "starting", "none"}
+
+
+def _parse_container_inspection(output: str) -> tuple[str, str, str] | None:
+    """Parse bounded Docker inspect fields without transporting full container JSON."""
+    if not isinstance(output, str):
+        return None
+    fields = output.strip().split("|")
+    if len(fields) != 3:
+        return None
+    container_id, state, health = fields
+    if (
+        not _CONTAINER_ID.fullmatch(container_id)
+        or state not in _CONTAINER_STATES
+        or health not in _HEALTH_STATES
+    ):
+        return None
+    return container_id, state, health
 
 
 def _is_allowlisted_haproxy_runtime_input(input_text: str) -> bool:
@@ -367,7 +392,7 @@ class LocalDockerProvider:
             return self._failure("deploy", "Docker container start failed", output=result.stderr or result.stdout)
 
         inspected, error = self._execute(
-            ["inspect", "--format", "{{json .}}", deployment_id]
+            ["inspect", "--format", _CONTAINER_INSPECT_FORMAT, deployment_id]
         )
         if error:
             return self._failure("deploy", error, output=f"container={deployment_id}")
@@ -377,29 +402,20 @@ class LocalDockerProvider:
                 "deploy", "Container inspection failed after start",
                 output=inspected.stderr or inspected.stdout,
             )
-        try:
-            container_state = json.loads(inspected.stdout)
-        except (TypeError, json.JSONDecodeError):
+        parsed = _parse_container_inspection(inspected.stdout)
+        if parsed is None:
             return self._failure(
-                "deploy", "Docker returned malformed container inspection data",
-                output=inspected.stdout,
+                "deploy", "Docker returned malformed bounded container inspection data",
+                output=(
+                    f"stdout_chars={len(inspected.stdout)}, "
+                    f"stderr_chars={len(inspected.stderr)}"
+                ),
             )
-        if not isinstance(container_state, dict):
-            return self._failure(
-                "deploy", "Docker returned malformed container inspection data",
-                output=inspected.stdout,
-            )
-        container_id = container_state.get("Id")
-        state = container_state.get("State")
-        if (
-            not isinstance(container_id, str)
-            or not _CONTAINER_ID.fullmatch(container_id)
-            or not isinstance(state, dict)
-            or state.get("Status") != "running"
-        ):
+        container_id, container_status, _ = parsed
+        if container_status != "running":
             return self._failure(
                 "deploy", "Container identity or running state could not be verified",
-                output=inspected.stdout,
+                output=f"container_status={container_status}",
             )
         reported_id = result.stdout.strip()
         if not reported_id or not container_id.startswith(reported_id):
@@ -433,7 +449,7 @@ class LocalDockerProvider:
                 "Historical record has no immutable container identity",
             )
         result, error = self._execute(
-            ["inspect", "--format", "{{json .}}", record.deployment_id]
+            ["inspect", "--format", _CONTAINER_INSPECT_FORMAT, record.deployment_id]
         )
         if error:
             status = "unavailable" if "not found" in error.lower() else "unknown"
@@ -443,21 +459,19 @@ class LocalDockerProvider:
             message = result.stderr[-_OUTPUT_LIMIT:] or "Container inspection failed"
             status = "unavailable" if self._is_unavailable(message) else "unknown"
             return HealthCheckResult(status, _now(), "docker inspect", message)
-        try:
-            inspected = json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError):
-            return HealthCheckResult("unknown", _now(), "docker inspect", "Docker returned invalid container inspection")
-        if not isinstance(inspected, dict):
-            return HealthCheckResult("unknown", _now(), "docker inspect", "Docker returned invalid container inspection")
-        if inspected.get("Id") != record.container_id:
+        parsed = _parse_container_inspection(result.stdout)
+        if parsed is None:
+            return HealthCheckResult(
+                "unknown", _now(), "docker inspect",
+                "Docker returned malformed bounded container inspection data",
+            )
+        observed_id, container_status, docker_status = parsed
+        if observed_id != record.container_id:
             return HealthCheckResult("unavailable", _now(), "docker inspect", "Container name resolves to a different immutable ID")
-        state = inspected.get("State")
-        if not isinstance(state, dict) or state.get("Status") != "running":
+        if container_status != "running":
             return HealthCheckResult("unhealthy", _now(), "docker inspect", "Container is not running")
-        health = state.get("Health")
-        if not isinstance(health, dict):
+        if docker_status == "none":
             return HealthCheckResult("unknown", _now(), "docker healthcheck", "Image defines no Docker HEALTHCHECK")
-        docker_status = health.get("Status")
         if docker_status == "healthy":
             return HealthCheckResult("healthy", _now(), "docker healthcheck")
         if docker_status == "unhealthy":
@@ -676,18 +690,15 @@ class LocalDockerProvider:
         if record.container_id is None:
             return self._failure("stop", "Record has no immutable container identity")
         inspected, error = self._execute(
-            ["inspect", "--format", "{{json .}}", record.deployment_id]
+            ["inspect", "--format", _CONTAINER_INSPECT_FORMAT, record.deployment_id]
         )
         if error:
             return self._failure("stop", error)
         assert inspected is not None
         if inspected.returncode != 0:
             return self._failure("stop", "Docker container identity inspection failed", output=inspected.stderr)
-        try:
-            current = json.loads(inspected.stdout)
-        except (TypeError, json.JSONDecodeError):
-            return self._failure("stop", "Docker returned malformed container inspection data")
-        if not isinstance(current, dict) or current.get("Id") != record.container_id:
+        current = _parse_container_inspection(inspected.stdout)
+        if current is None or current[0] != record.container_id:
             return self._failure("stop", "Container name no longer resolves to the recorded immutable ID")
         result, error = self._execute(["stop", "--time", "10", record.deployment_id])
         if error:
