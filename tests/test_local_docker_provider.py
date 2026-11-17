@@ -261,7 +261,7 @@ def test_container_start_failure_is_reported():
 
 def test_deploy_requires_running_container_and_keeps_health_unknown():
     runner = FakeRunner(
-        ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"), ok(json.dumps({"Id": "d" * 64, "State": {"Status": "running"}}))
+        ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"), ok(inspect_output("d" * 64, "running", "none"))
     )
     result = LocalDockerProvider(runner).deploy(
         DeploymentRequest("/tmp", "demo", "local", "1.2.3", ("8080:80",)), artifact()
@@ -309,22 +309,20 @@ def test_health_check_never_assumes_missing_health_is_healthy(state, expected):
 
 
 def test_stop_reports_docker_failure():
-    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64})), failed("no such container"))
+    runner = FakeRunner(ok(inspect_output("f" * 64, "running", "none")), failed("no such container"))
     result = LocalDockerProvider(runner).stop(record())
     assert result.status == "failed"
 
 
 def test_health_check_rejects_reused_container_name():
-    runner = FakeRunner(ok(json.dumps({
-        "Id": "e" * 64, "State": {"Status": "running", "Health": {"Status": "healthy"}}
-    })))
+    runner = FakeRunner(ok(inspect_output("e" * 64, "running", "healthy")))
     result = LocalDockerProvider(runner).health_check(record())
     assert result.status == "unavailable"
     assert "different immutable id" in result.detail.lower()
 
 
 def test_stop_refuses_reused_container_name():
-    runner = FakeRunner(ok(json.dumps({"Id": "e" * 64})))
+    runner = FakeRunner(ok(inspect_output("e" * 64, "running", "none")))
     result = LocalDockerProvider(runner).stop(record())
     assert result.status == "failed"
     assert "immutable id" in result.message.lower()
