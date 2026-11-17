@@ -756,7 +756,7 @@ def run_live_smoke() -> dict[str, Any]:
             )
             log_text = ""
             if log_result is not None:
-                log_text = log_result.stdout + "\\n" + log_result.stderr
+                log_text = log_result.stdout + "\n" + log_result.stderr
             relevant_logs = [
                 line for line in log_text.splitlines()
                 if any(
@@ -764,7 +764,7 @@ def run_live_smoke() -> dict[str, Any]:
                     for token in ("error", "warn", "fatal", "failed", "state", "socket", "server")
                 )
             ]
-            log_detail = "\\n".join(relevant_logs[-20:])[-2400:]
+            log_detail = "\n".join(relevant_logs[-20:])[-2400:]
             raise RuntimeError(
                 "Router active route/backend did not recover after restart: "
                 f"selector={restart_selector}, marker_status={last_marker_status}, "
