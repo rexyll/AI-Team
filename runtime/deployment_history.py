@@ -26,6 +26,7 @@ from runtime.deployment_provider import (
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
 from runtime.deployment_traffic_router import (
+    RouterSlot,
     TrafficPortBinding,
     TrafficRouteTarget,
     TrafficRouterRecord,
@@ -58,10 +59,26 @@ def _traffic_router_from_json(payload: str) -> TrafficRouterRecord:
     scope_data = data.pop("scope")
     bindings_data = data.pop("port_bindings")
     target_data = data.pop("active_target")
+    slot_targets_data = data.pop("slot_targets", [])
     if not isinstance(scope_data, dict) or not isinstance(bindings_data, list):
         raise ValueError("traffic router scope or port bindings payload is malformed")
     scope = TrafficRouterScope(**scope_data)
     bindings = tuple(TrafficPortBinding(**item) for item in bindings_data)
+    slot_targets = tuple(
+        (
+            entry[0],
+            TrafficRouteTarget(
+                **{
+                    **entry[1],
+                    "port_bindings": tuple(
+                        TrafficPortBinding(**item)
+                        for item in entry[1]["port_bindings"]
+                    ),
+                }
+            ),
+        )
+        for entry in slot_targets_data
+    )
     target = None
     if target_data is not None:
         if not isinstance(target_data, dict):
@@ -74,6 +91,7 @@ def _traffic_router_from_json(payload: str) -> TrafficRouterRecord:
         scope=scope,
         port_bindings=bindings,
         active_target=target,
+        slot_targets=slot_targets,
         **data,
     )
 
@@ -588,6 +606,9 @@ class DeploymentHistoryStore:
         record = _traffic_router_from_json(row["record_json"])
         if record.scope != scope:
             raise ValueError("persisted traffic Router scope does not match its database key")
+        expected_network = build_router_network_spec(scope)
+        if record.network_id is None or record.network_name != expected_network.network_name:
+            raise ValueError("persisted traffic Router lacks a trusted immutable network identity")
         return record
 
     def create_traffic_router(
@@ -600,6 +621,12 @@ class DeploymentHistoryStore:
             raise TypeError("record must be a TrafficRouterRecord")
         if record.active_slot is not None or record.active_target is not None:
             raise ValueError("new traffic Router records must start with no active slot or target")
+        expected_network = build_router_network_spec(record.scope)
+        if (
+            record.network_id is None
+            or record.network_name != expected_network.network_name
+        ):
+            raise ValueError("new traffic Router records require the exact scope and immutable network identity")
         _validate_router_state_record(
             record.scope,
             host_state_record,
@@ -709,6 +736,8 @@ class DeploymentHistoryStore:
                 or current.router_deployment_id != record.router_deployment_id
                 or current.router_runtime_id != record.router_runtime_id
                 or current.network_name != record.network_name
+                or current.network_id is None
+                or current.network_id != record.network_id
                 or current.port_bindings != record.port_bindings
                 or current.created_at != record.created_at
             ):

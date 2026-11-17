@@ -111,6 +111,8 @@ class TrafficRouterRecord:
     active_target: TrafficRouteTarget | None
     route_generation: str
     created_at: str
+    network_id: str | None = None
+    slot_targets: tuple[tuple[RouterSlot, TrafficRouteTarget], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, TrafficRouterScope):
@@ -120,6 +122,27 @@ class TrafficRouterRecord:
         _non_empty(self.network_name, "network_name")
         _non_empty(self.route_generation, "route_generation")
         _non_empty(self.created_at, "created_at")
+        if self.network_id is not None and (
+            not isinstance(self.network_id, str) or not _RUNTIME_ID.fullmatch(self.network_id)
+        ):
+            raise ValueError("network_id must be a full immutable Docker network ID when provided")
+        if not isinstance(self.slot_targets, tuple):
+            raise TypeError("slot_targets must be a tuple of (slot, TrafficRouteTarget) pairs")
+        slots: set[str] = set()
+        for entry in self.slot_targets:
+            if (
+                not isinstance(entry, tuple)
+                or len(entry) != 2
+                or entry[0] not in {"slot_a", "slot_b"}
+                or not isinstance(entry[1], TrafficRouteTarget)
+            ):
+                raise ValueError("slot_targets must contain valid slot/target pairs")
+            slot, target = entry
+            if slot in slots:
+                raise ValueError("slot_targets must not contain duplicate slots")
+            slots.add(slot)
+            if target.port_bindings != self.port_bindings:
+                raise ValueError("slot target port bindings must match Router scope bindings")
         if not isinstance(self.port_bindings, tuple) or not self.port_bindings:
             raise ValueError("port_bindings must be a non-empty tuple")
         if any(not isinstance(item, TrafficPortBinding) for item in self.port_bindings):
@@ -136,6 +159,9 @@ class TrafficRouterRecord:
                 raise TypeError("active_target must be a TrafficRouteTarget")
             if self.active_target.port_bindings != self.port_bindings:
                 raise ValueError("active target port bindings must match router scope bindings")
+            targets_by_slot = dict(self.slot_targets)
+            if self.active_slot in targets_by_slot and targets_by_slot[self.active_slot] != self.active_target:
+                raise ValueError("active_target must match the durable target recorded for active_slot")
 
 
 @dataclass(frozen=True)

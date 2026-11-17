@@ -13,6 +13,7 @@ from runtime.deployment_provider import (
 )
 from runtime.deployment_history import DeploymentHistoryStore, HostDeploymentManager
 from runtime.local_docker_router_state import LocalDockerRouterStateStore
+from runtime.local_docker_router_network import build_router_network_spec
 from runtime.deployment_replacement import ReplacementJournalRecord
 from runtime.deployment_traffic_router import (
     TrafficPortBinding,
@@ -467,7 +468,8 @@ def make_traffic_router_record(*, active_slot=None, active_target=None, generati
         scope=scope,
         router_deployment_id=f"router-{project}",
         router_runtime_id="b" * 64,
-        network_name="ai-team-router-" + "c" * 20,
+        network_name=build_router_network_spec(scope).network_name,
+        network_id="c" * 64,
         port_bindings=ports,
         active_slot=active_slot,
         active_target=active_target,
@@ -511,7 +513,11 @@ def test_traffic_router_registry_route_update_uses_generation_cas(tmp_path):
         "release-2", "d" * 64, "172.18.0.9", initial.port_bindings
     )
     updated = replace(
-        initial, active_slot="slot_b", active_target=target, route_generation="gen-1"
+        initial,
+        active_slot="slot_b",
+        active_target=target,
+        slot_targets=(("slot_b", target),),
+        route_generation="gen-1",
     )
     state_next = make_traffic_router_state_record(
         tmp_path, active_slot="slot_b"
@@ -615,3 +621,73 @@ def test_traffic_router_registry_read_only_store_can_load_but_not_mutate(tmp_pat
             make_traffic_router_record(project="other"),
             make_traffic_router_state_record(tmp_path, project="other"),
         )
+
+
+def test_traffic_router_registry_requires_immutable_network_id_and_scope_name(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    record = make_traffic_router_record()
+    state_record = make_traffic_router_state_record(tmp_path)
+    with pytest.raises(ValueError, match="immutable network identity"):
+        history.create_traffic_router(
+            replace(record, network_id=None), state_record
+        )
+    with pytest.raises(ValueError, match="immutable network identity"):
+        history.create_traffic_router(
+            replace(record, network_name="ai-team-router-" + "f" * 20),
+            state_record,
+        )
+
+
+def test_traffic_router_registry_persists_slot_targets_and_checks_active_target(tmp_path):
+    path = tmp_path / "history.db"
+    history = DeploymentHistoryStore(path)
+    record = make_traffic_router_record()
+    state_record = make_traffic_router_state_record(tmp_path)
+    target_a = TrafficRouteTarget(
+        "release-a", "d" * 64, "172.18.0.10", record.port_bindings
+    )
+    target_b = TrafficRouteTarget(
+        "release-b", "e" * 64, "172.18.0.11", record.port_bindings
+    )
+    updated = replace(
+        record,
+        active_slot="slot_b",
+        active_target=target_b,
+        slot_targets=(("slot_a", target_a), ("slot_b", target_b)),
+        route_generation="gen-1",
+    )
+    changed_state = make_traffic_router_state_record(
+        tmp_path, active_slot="slot_b"
+    )
+    history.create_traffic_router(record, state_record)
+    history.update_traffic_router(
+        updated,
+        changed_state,
+        expected_generation="gen-0",
+        expected_state_map_sha256=state_record.active_slot_map_sha256,
+    )
+    loaded = DeploymentHistoryStore(path).get_traffic_router(record.scope)
+    assert loaded == updated
+    assert dict(loaded.slot_targets)["slot_a"] == target_a
+    assert dict(loaded.slot_targets)["slot_b"] == target_b
+
+
+def test_traffic_router_registry_rejects_active_target_conflicting_with_slot_inventory(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    initial = make_traffic_router_record()
+    state_record = make_traffic_router_state_record(tmp_path)
+    target_a = TrafficRouteTarget(
+        "release-a", "d" * 64, "172.18.0.10", initial.port_bindings
+    )
+    target_b = TrafficRouteTarget(
+        "release-b", "e" * 64, "172.18.0.11", initial.port_bindings
+    )
+    conflict = replace(
+        initial,
+        active_slot="slot_b",
+        active_target=target_b,
+        slot_targets=(("slot_b", target_a),),
+        route_generation="gen-1",
+    )
+    with pytest.raises(ValueError, match="active_target must match"):
+        history.create_traffic_router(conflict, state_record)
