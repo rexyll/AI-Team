@@ -30,8 +30,8 @@ def test_parse_show_info_rejects_missing_duplicate_or_unpinned_identity(response
 
 def test_parse_get_map_value_accepts_exact_active_none_entry():
     response = (
-        'type=str, case=sensitive, found=yes, idx=0, '
-        'key="active", value="none"\n'
+        'type=beg, case=sensitive, found=yes, idx=tree, '
+        'key="active", value="none", type="str"\n'
     )
     assert parse_get_map_value(response, expected_key="active") == "none"
 
@@ -44,6 +44,8 @@ def test_parse_get_map_value_accepts_exact_active_none_entry():
         'type=str, case=sensitive, found=yes, key="other", value="none"',
         'type=str, case=sensitive, found=yes, key="active", value="slot_a"',
         'type=str, found=yes, key="active", key="active", value="none"',
+        'type=str, found=yes, key="active", found=no, value="none"',
+        'type=str, found=yes, key="active", value="none", type="str", type="str"',
         'type=str, found=yes, key="active", value="none"\nextra',
         'type=str, found=yes, key="active", value="unterminated',
     ],

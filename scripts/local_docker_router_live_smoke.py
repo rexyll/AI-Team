@@ -67,19 +67,31 @@ def parse_get_map_value(response: str, *, expected_key: str) -> str:
     if len(lines) != 1:
         raise ValueError("HAProxy get map must return exactly one result line")
     fields: dict[str, str] = {}
+    type_field_count = 0
     for item in lines[0].split(","):
         key, separator, raw_value = item.partition("=")
         key = key.strip()
         raw_value = raw_value.strip()
-        if not separator or not key or key in fields or not raw_value:
-            raise ValueError("HAProxy get map returned malformed or duplicate fields")
+        if not separator or not key or not raw_value:
+            raise ValueError("HAProxy get map returned malformed fields")
         if raw_value.startswith('"'):
             if len(raw_value) < 2 or not raw_value.endswith('"'):
                 raise ValueError("HAProxy get map returned an unterminated quoted field")
             value = raw_value[1:-1]
         else:
             value = raw_value
+        # HAProxy returns both the map match type and the stored value type
+        # under the field name "type". Other fields must remain unique.
+        if key == "type":
+            type_field_count += 1
+            if type_field_count > 2:
+                raise ValueError("HAProxy get map returned too many type fields")
+            continue
+        if key in fields:
+            raise ValueError("HAProxy get map returned duplicate selector fields")
         fields[key] = value
+    if type_field_count not in {1, 2}:
+        raise ValueError("HAProxy get map omitted the map type metadata")
     if fields.get("found") != "yes" or fields.get("key") != expected_key:
         raise ValueError("HAProxy get map did not confirm the requested key")
     value = fields.get("value")
