@@ -512,8 +512,16 @@ class LocalDockerRoutedAppManager:
             return self._classify_error(output), None, output or "Docker routed app inspect failed"
         try:
             payload = json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError):
-            return "invalid_response", None, "Docker routed app inspect returned malformed JSON"
+        except json.JSONDecodeError as exc:
+            return (
+                "invalid_response",
+                None,
+                "Docker routed app inspect returned malformed JSON "
+                f"(stdout_chars={len(result.stdout)}, stderr_chars={len(result.stderr)}, "
+                f"error_pos={exc.pos}, line={exc.lineno}, column={exc.colno})",
+            )
+        except TypeError:
+            return "invalid_response", None, "Docker routed app inspect returned malformed JSON (non-text output)"
         verification = verify_routed_app_inspection(payload, spec)
         if verification.status == "verified":
             return "verified", verification, ""
