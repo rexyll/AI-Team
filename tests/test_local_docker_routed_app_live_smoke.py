@@ -131,3 +131,46 @@ def test_live_smoke_accepts_only_full_immutable_image_ids():
     assert _IMAGE_ID.fullmatch("sha256:" + "a" * 64)
     assert not _IMAGE_ID.fullmatch("a" * 64)
     assert not _IMAGE_ID.fullmatch("sha256:latest")
+
+
+def test_cleanup_router_requires_immutable_scope_and_image_identity():
+    from scripts.local_docker_routed_app_live_smoke import cleanup_owned_router_container
+
+    router_id = "a" * 64
+    labels = {
+        "com.ai-team.router.managed": "true",
+        "com.ai-team.router.scope-sha256": "b" * 64,
+        "com.ai-team.router.network-id": "c" * 64,
+        "com.ai-team.router.image-id": "sha256:" + "d" * 64,
+    }
+    payload = {
+        "Id": router_id,
+        "Config": {"Labels": labels},
+        "State": {"Running": False},
+    }
+    runner = FakeRunner(ok(json.dumps(payload)), ok())
+    result = cleanup_owned_router_container(
+        LocalDockerProvider(runner),
+        runtime_id=router_id,
+        owned=True,
+        scope_fingerprint="b" * 64,
+        network_id="c" * 64,
+        image_id="sha256:" + "d" * 64,
+        attempted=True,
+    )
+    assert result["status"] == "removed"
+    assert runner.calls[-1] == ["container", "rm", router_id]
+
+
+def test_cleanup_network_requires_router_and_app_cleanup():
+    runner = FakeRunner()
+    result = cleanup_owned_network(
+        LocalDockerProvider(runner),
+        network_id="c" * 64,
+        owned=True,
+        scope_fingerprint="b" * 64,
+        app_cleanup_status="removed",
+        router_cleanup_status="preserved",
+    )
+    assert result["status"] == "preserved"
+    assert runner.calls == []

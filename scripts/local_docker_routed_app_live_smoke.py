@@ -24,6 +24,14 @@ from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterS
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_router_image import LocalDockerRouterImageManager, ROUTER_IMAGE_TAG
 from runtime.local_docker_router_network import LocalDockerRouterNetworkManager
+from runtime.local_docker_router_config_validator import LocalDockerRouterConfigValidator
+from runtime.local_docker_router_container import build_router_container_spec
+from runtime.local_docker_router_container_manager import (
+    LocalDockerRouterContainerManager,
+    ROUTER_CONTAINER_INSPECT_FORMAT,
+)
+from runtime.local_docker_router_state import LocalDockerRouterStateStore
+from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
 from runtime.local_docker_routed_app import (
     LocalDockerRoutedAppManager,
     build_routed_app_container_spec,
@@ -143,6 +151,85 @@ def cleanup_owned_app_container(
     return outcome
 
 
+def cleanup_owned_router_container(
+    provider: LocalDockerProvider,
+    *,
+    runtime_id: str | None,
+    owned: bool,
+    scope_fingerprint: str,
+    network_id: str,
+    image_id: str,
+    attempted: bool,
+) -> dict[str, Any]:
+    outcome: dict[str, Any] = {
+        "status": "not_required",
+        "container_removed": False,
+        "detail": "",
+    }
+    if not attempted:
+        return outcome
+    if runtime_id is None:
+        return {
+            "status": "preserved",
+            "container_removed": False,
+            "detail": "Router create outcome did not yield a trusted immutable ID",
+        }
+    if not owned:
+        return {
+            "status": "preserved",
+            "container_removed": False,
+            "detail": "Router was pre-existing/concurrent and was not removed",
+        }
+    try:
+        if not _RUNTIME_ID.fullmatch(runtime_id):
+            raise RuntimeError("refusing Router cleanup without a full immutable container ID")
+        current = _inspect_json(
+            provider,
+            ["container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, runtime_id],
+        )
+        labels = (current.get("Config") or {}).get("Labels")
+        if (
+            current.get("Id") != runtime_id
+            or not isinstance(labels, dict)
+            or labels.get("com.ai-team.router.managed") != "true"
+            or labels.get("com.ai-team.router.scope-sha256") != scope_fingerprint
+            or labels.get("com.ai-team.router.network-id") != network_id
+            or labels.get("com.ai-team.router.image-id") != image_id
+        ):
+            raise RuntimeError("Router immutable identity or managed scope changed; cleanup refused")
+        state = current.get("State")
+        if not isinstance(state, dict):
+            raise RuntimeError("Router inspect omitted runtime state")
+        if state.get("Running") is True:
+            _run_docker(provider, ["container", "stop", "--time", "5", runtime_id])
+            current = _inspect_json(
+                provider,
+                ["container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, runtime_id],
+            )
+            labels = (current.get("Config") or {}).get("Labels")
+            state = current.get("State")
+            if (
+                current.get("Id") != runtime_id
+                or not isinstance(labels, dict)
+                or labels.get("com.ai-team.router.managed") != "true"
+                or labels.get("com.ai-team.router.scope-sha256") != scope_fingerprint
+                or labels.get("com.ai-team.router.network-id") != network_id
+                or labels.get("com.ai-team.router.image-id") != image_id
+                or not isinstance(state, dict)
+                or state.get("Running") is not False
+            ):
+                raise RuntimeError("Router stop was not confirmed by immutable-ID inspect")
+        elif state.get("Running") is not False:
+            raise RuntimeError("Router cleanup inspect has an unknown running state")
+        _run_docker(provider, ["container", "rm", runtime_id])
+        outcome["container_removed"] = True
+        outcome["status"] = "removed"
+    except Exception as exc:
+        outcome["status"] = "failed"
+        outcome["detail"] = f"{type(exc).__name__}: {str(exc)[:400]}"
+    return outcome
+
+
 def cleanup_owned_network(
     provider: LocalDockerProvider,
     *,
@@ -150,6 +237,7 @@ def cleanup_owned_network(
     owned: bool,
     scope_fingerprint: str | None,
     app_cleanup_status: str,
+    router_cleanup_status: str = "not_required",
 ) -> dict[str, Any]:
     outcome: dict[str, Any] = {
         "status": "not_required",
@@ -164,11 +252,14 @@ def cleanup_owned_network(
             "network_removed": False,
             "detail": "Network was not created by this smoke; it was not removed",
         }
-    if app_cleanup_status not in {"removed", "not_required"}:
+    if (
+        app_cleanup_status not in {"removed", "not_required"}
+        or router_cleanup_status not in {"removed", "not_required"}
+    ):
         return {
             "status": "preserved",
             "network_removed": False,
-            "detail": "App cleanup was not confirmed; network preserved",
+            "detail": "App or Router cleanup was not confirmed; network preserved",
         }
     try:
         if not _RUNTIME_ID.fullmatch(network_id) or not isinstance(scope_fingerprint, str):
@@ -236,6 +327,12 @@ def run_live_smoke() -> dict[str, Any]:
     app_attempted = False
     app_image_id: str | None = None
     app_tag: str | None = None
+    router_id: str | None = None
+    router_image_id: str | None = None
+    router_owned = False
+    router_attempted = False
+    router_spec = None
+    state_record = None
 
     try:
         base = LocalDockerRouterImageManager(provider, Path.cwd()).build_and_verify()
@@ -295,6 +392,41 @@ def run_live_smoke() -> dict[str, Any]:
             "scope_fingerprint": scope_fingerprint,
         }
 
+        state_store = LocalDockerRouterStateStore(temp_root / "router-state")
+        state_result = state_store.persist(scope, port_bindings, active_slot=None)
+        if state_result.status != "persisted" or state_result.record is None:
+            raise RuntimeError(
+                f"Router Host state persist: {state_result.status}: {state_result.detail}"
+            )
+        state_record = state_result.record
+        config_result = LocalDockerRouterConfigValidator(provider).validate(
+            base.identity, state_record
+        )
+        if config_result.status != "valid":
+            raise RuntimeError(
+                f"Router generated config validation: {config_result.status}: {config_result.detail}"
+            )
+        router_spec = build_router_container_spec(
+            scope, port_bindings, network.record, base.identity, state_record
+        )
+        router_image_id = base.identity.image_id
+        router_attempted = True
+        router_ensured = LocalDockerRouterContainerManager(provider).ensure_router(router_spec)
+        if router_ensured.status not in {"created", "existing"} or router_ensured.container_id is None:
+            raise RuntimeError(
+                f"Router ensure: {router_ensured.status}: {router_ensured.detail}"
+            )
+        router_id = router_ensured.container_id
+        router_owned = router_ensured.status == "created"
+        evidence["checks"]["router"] = {
+            "status": router_ensured.status,
+            "runtime_id": router_id,
+            "image_id": router_image_id,
+            "network_id": network_id,
+            "state_directory": state_record.directory,
+            "server_state_sha256": state_record.server_state_sha256,
+        }
+
         artifact = DeploymentArtifact(
             "docker-local", app_tag, app_image_id.removeprefix("sha256:"), "live-smoke"
         )
@@ -344,6 +476,52 @@ def run_live_smoke() -> dict[str, Any]:
                 f"routed app did not become freshly healthy: "
                 f"{ensured.health_status}: {ensured.health_detail}"
             )
+        if router_id is None or router_spec is None or state_record is None:
+            raise RuntimeError("Router immutable identity/spec/state is unavailable")
+        slot_result = LocalDockerRouterSlotManager(
+            provider, readback_attempts=16, readback_interval_seconds=0.5
+        ).prepare_inactive_slot(
+            router_runtime_id=router_id,
+            router_spec=router_spec,
+            network=network.record,
+            app_spec=app_spec,
+            target=ensured.target,
+            slot="slot_b",
+            state_record=state_record,
+        )
+        evidence["checks"]["inactive_slot"] = {
+            "status": slot_result.status,
+            "slot": slot_result.slot,
+            "active_selector_before": slot_result.active_selector_before,
+            "active_selector_after": slot_result.active_selector_after,
+            "server_observations": [
+                {
+                    "backend": item.backend,
+                    "server": item.server,
+                    "address": item.address,
+                    "port": item.port,
+                    "status": item.status,
+                    "current_sessions": item.current_sessions,
+                    "check_result": item.check_result,
+                    "check_state": item.check_state,
+                }
+                for item in slot_result.observations
+            ],
+            "server_state_sha256": (
+                slot_result.state_record.server_state_sha256
+                if slot_result.state_record is not None else None
+            ),
+            "detail": slot_result.detail,
+        }
+        if (
+            slot_result.status != "verified"
+            or slot_result.active_selector_before != "none"
+            or slot_result.active_selector_after != "none"
+            or slot_result.state_record is None
+        ):
+            raise RuntimeError(
+                f"inactive slot preparation failed: {slot_result.status}: {slot_result.detail}"
+            )
         evidence["status"] = "ready"
     except Exception as exc:
         evidence["status"] = "failed"
@@ -375,22 +553,34 @@ def run_live_smoke() -> dict[str, Any]:
                 "container_removed": False,
                 "detail": "",
             }
+        router_cleanup = cleanup_owned_router_container(
+            provider,
+            runtime_id=router_id,
+            owned=router_owned,
+            scope_fingerprint=scope_fingerprint or "",
+            network_id=network_id or "",
+            image_id=router_image_id or "",
+            attempted=router_attempted,
+        )
         network_cleanup = cleanup_owned_network(
             provider,
             network_id=network_id,
             owned=network_owned,
             scope_fingerprint=scope_fingerprint,
             app_cleanup_status=app_cleanup["status"],
+            router_cleanup_status=router_cleanup["status"],
         )
         evidence["cleanup"] = {
             "app": app_cleanup,
+            "router": router_cleanup,
             "network": network_cleanup,
             "status": (
                 "removed"
                 if app_cleanup["status"] in {"removed", "not_required"}
+                and router_cleanup["status"] in {"removed", "not_required"}
                 and network_cleanup["status"] in {"removed", "not_required"}
                 else "preserved" if "failed" not in {
-                    app_cleanup["status"], network_cleanup["status"]
+                    app_cleanup["status"], router_cleanup["status"], network_cleanup["status"]
                 } else "failed"
             ),
         }
