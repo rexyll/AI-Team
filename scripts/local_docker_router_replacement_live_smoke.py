@@ -577,6 +577,37 @@ def run_live_smoke() -> dict[str, Any]:
             "router_registry_slot_inventory": [slot for slot, _ in router_record.slot_targets],
         }
 
+        persisted_router_state = history.get_traffic_router_state_record(scope)
+        if persisted_router_state is None or router_record.active_target is None:
+            raise RuntimeError("durable Router state record or active target is missing before restart")
+        persisted_state_text = Path(persisted_router_state.server_state_path).read_text(
+            encoding="utf-8"
+        )
+        persisted_state_rows = parse_show_servers_state(persisted_state_text)
+        persisted_slot_b = next(
+            (item for item in persisted_state_rows if item.backend == f"be_p{host_port}" and item.server == "slot_b"),
+            None,
+        )
+        expected_active_port = router_record.active_target.port_bindings[0].container_port
+        if (
+            persisted_slot_b is None
+            or persisted_slot_b.address != router_record.active_target.address
+            or persisted_slot_b.port != expected_active_port
+        ):
+            raise RuntimeError(
+                "Host servers-state file does not contain the durable active candidate endpoint: "
+                f"address={persisted_slot_b.address if persisted_slot_b else 'missing'}, "
+                f"port={persisted_slot_b.port if persisted_slot_b else 'missing'}"
+            )
+        evidence["checks"]["persisted_server_state_before_restart"] = {
+            "status": "verified",
+            "active_slot": router_record.active_slot,
+            "server": persisted_slot_b.server,
+            "address": persisted_slot_b.address,
+            "port": persisted_slot_b.port,
+            "expected_runtime_id": router_record.active_target.runtime_id,
+        }
+
         # Verify that the active selector and persisted backend state survive
         # a real Docker container restart, not merely a Runtime API read-back.
         restart_runner = LocalDockerProvider(provider.runner, timeout=30.0)
