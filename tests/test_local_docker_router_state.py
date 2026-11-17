@@ -132,7 +132,7 @@ def test_persist_servers_state_atomically_updates_private_restart_snapshot(tmp_p
     }
 
 
-@pytest.mark.parametrize("content", ["", "1\n# missing rows\n", _server_state_snapshot().replace("be_p8080 slot_b", "be_p8080 slot_a")])
+@pytest.mark.parametrize("content", ["", "1\n# missing rows\n", _server_state_snapshot().replace("be_p8080 2 slot_b", "be_p8080 2 slot_a")])
 def test_persist_servers_state_rejects_incomplete_or_duplicate_slot_snapshots(tmp_path, content):
     store = LocalDockerRouterStateStore(tmp_path / "router-state")
     first = store.persist(scope(), bindings())

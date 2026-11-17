@@ -59,6 +59,7 @@ def make_spec(tmp_path):
     (directory / "haproxy.cfg").write_text(config, encoding="utf-8")
     (directory / "active-slot.map").write_text(active_map, encoding="utf-8")
     (directory / "servers-state").write_text(_SERVER_STATE_HEADER, encoding="utf-8")
+    (directory / "servers-state").chmod(0o600)
     (directory / "haproxy.cfg").chmod(0o600)
     (directory / "active-slot.map").chmod(0o600)
     server_state_sha256 = hashlib.sha256((directory / "servers-state").read_bytes()).hexdigest()

@@ -31,6 +31,7 @@ def verified_inputs(tmp_path, port_bindings=None):
     config_path.write_text(config, encoding="utf-8")
     map_path.write_text(active_map, encoding="utf-8")
     (directory / "servers-state").write_text(_SERVER_STATE_HEADER, encoding="utf-8")
+    (directory / "servers-state").chmod(0o600)
     config_path.chmod(0o600)
     map_path.chmod(0o600)
     server_state_sha256 = hashlib.sha256((directory / "servers-state").read_bytes()).hexdigest()
