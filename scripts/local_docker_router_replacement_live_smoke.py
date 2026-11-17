@@ -216,9 +216,9 @@ class _EvidenceSlotManager(LocalDockerRouterSlotManager):
 
 
 def _runtime_selector(
-    provider: LocalDockerProvider, router_id: str
+    provider: LocalDockerProvider, router_id: str, *, timeout: float = 5.0
 ) -> str:
-    client = HAProxyRuntimeAPIClient(provider, router_id)
+    client = HAProxyRuntimeAPIClient(provider, router_id, timeout=timeout)
     maps = client.execute(show_maps_command())
     if maps.status != "succeeded":
         raise RuntimeError(f"HAProxy show map failed: {maps.detail}")
@@ -624,14 +624,14 @@ def run_live_smoke() -> dict[str, Any]:
             )
 
         restart_selector = None
-        restart_target = None
         restart_marker = None
         restart_readback_error = ""
-        for attempt in range(40):
+        for attempt in range(12):
             try:
-                restart_selector = _runtime_selector(provider, router_id)
-                restart_target = replacement_provider.read_traffic_target(request)
-                if restart_selector == "slot_b" and restart_target == app_b_id:
+                restart_selector = _runtime_selector(
+                    provider, router_id, timeout=1.0
+                )
+                if restart_selector == "slot_b":
                     restart_marker = _probe_router_tcp_route(
                         host_port, expected_marker=_MARKER_B
                     )
@@ -639,18 +639,16 @@ def run_live_smoke() -> dict[str, Any]:
                         break
             except Exception as exc:
                 restart_readback_error = type(exc).__name__
-            if attempt < 39:
+            if attempt < 11:
                 time.sleep(0.25)
         if (
             restart_selector != "slot_b"
-            or restart_target != app_b_id
             or restart_marker is None
             or restart_marker.get("status") != "passed"
         ):
             raise RuntimeError(
                 "Router active route did not recover after restart: "
-                f"selector={restart_selector}, target_match={restart_target == app_b_id}, "
-                f"last_error={restart_readback_error}"
+                f"selector={restart_selector}, last_error={restart_readback_error}"
             )
 
         restart_stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
@@ -673,6 +671,8 @@ def run_live_smoke() -> dict[str, Any]:
             or restart_old_stat.current_sessions != 0
             or restart_new_stat is None
             or restart_new_stat.status != "UP"
+            or router_record.active_target is None
+            or restart_new_stat.address != router_record.active_target.address
         ):
             raise RuntimeError(
                 "HAProxy backend state did not survive Router restart "
@@ -683,7 +683,8 @@ def run_live_smoke() -> dict[str, Any]:
             "router_runtime_id": router_id,
             "docker_state": router_after_restart.runtime_state,
             "active_selector": restart_selector,
-            "effective_runtime_id": restart_target,
+            "effective_runtime_id": router_record.active_target.runtime_id,
+            "backend_address": restart_new_stat.address,
             "tcp_marker": restart_marker,
             "old_backend_status": restart_old_stat.status,
             "old_backend_sessions": restart_old_stat.current_sessions,
