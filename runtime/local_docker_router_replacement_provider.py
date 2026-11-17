@@ -37,11 +37,8 @@ from runtime.local_docker_routed_app import (
 )
 from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 from runtime.local_docker_router_host import LocalDockerRouterHostManager, LocalDockerRouterHostResult
-from runtime.local_docker_router_slot_manager import (
-    LocalDockerRouterSlotManager,
-    RouterSlotPrepareResult,
-    RouterSlotSwitchResult,
-)
+from runtime.local_docker_router_container import build_router_container_spec
+from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -127,7 +124,7 @@ class LocalDockerRouterReplacementProvider:
         operation_id: str,
     ) -> DeploymentOperationResult:
         host = self._host()
-        if host.status not in {"ready", "created"} or host.router_record is None or host.state_record is None or host.network is None or host.container_spec is None:
+        if host.status not in {"ready", "created"} or host.router_record is None or host.state_record is None or host.network is None or host.container_spec is None or host.image is None:
             return DeploymentOperationResult(
                 "prepare_candidate", "unavailable" if host.status in {"unavailable", "unsupported"} else "failed",
                 self.name, host.detail or "Router Host scope is not verified",
@@ -155,6 +152,7 @@ class LocalDockerRouterReplacementProvider:
             "state": host.state_record,
             "network": host.network,
             "router_spec": host.container_spec,
+            "image": host.image,
             "slot": slot,
             "previous_slot": router.active_slot,
             "previous_target": router.active_target,
@@ -202,6 +200,20 @@ class LocalDockerRouterReplacementProvider:
                 "start_candidate", status, self.name,
                 prepared.detail or "Candidate inactive slot preparation was not verified",
             )
+        try:
+            prepared_router_spec = build_router_container_spec(
+                self.scope,
+                self.port_bindings,
+                network,
+                context["image"],
+                prepared.state_record,
+                expected_active_slot=router.active_slot,
+            )
+        except (TypeError, ValueError, OSError) as exc:
+            return DeploymentOperationResult(
+                "start_candidate", "failed", self.name,
+                f"Prepared Router state could not be rebound to its immutable spec: {type(exc).__name__}",
+            )
         updated_slots = tuple(
             (existing_slot, existing_target)
             for existing_slot, existing_target in router.slot_targets
@@ -234,6 +246,7 @@ class LocalDockerRouterReplacementProvider:
         context.update({
             "router": persisted,
             "state": prepared.state_record,
+            "router_spec": prepared_router_spec,
             "app_spec": app_spec,
             "target_route": ensured.target,
             "candidate": candidate,
@@ -283,6 +296,20 @@ class LocalDockerRouterReplacementProvider:
                 "switch_traffic", status, self.name,
                 result.detail or "Router active-slot switch was not verified",
             )
+        try:
+            switched_router_spec = build_router_container_spec(
+                self.scope,
+                self.port_bindings,
+                context["network"],
+                context["image"],
+                result.state_record,
+                expected_active_slot=slot,
+            )
+        except (TypeError, ValueError, OSError) as exc:
+            return DeploymentOperationResult(
+                "switch_traffic", "failed", self.name,
+                f"Switched Router state could not be rebound to its immutable spec: {type(exc).__name__}",
+            )
         updated_router = replace(
             router,
             active_slot=slot,
@@ -301,7 +328,10 @@ class LocalDockerRouterReplacementProvider:
                 "switch_traffic", "failed", self.name,
                 f"Router switched but registry commit failed: {type(exc).__name__}",
             )
-        context.update({"router": persisted, "state": result.state_record})
+        context.update({
+            "router": persisted, "state": result.state_record,
+            "router_spec": switched_router_spec,
+        })
         return DeploymentOperationResult(
             "switch_traffic", "succeeded", self.name,
             "Router selector and Host registry active target verified",
@@ -369,6 +399,20 @@ class LocalDockerRouterReplacementProvider:
         # Remove the retired slot from the durable slot inventory only after
         # HAProxy reported MAINT + zero sessions and Docker inspect confirmed
         # the exact previous immutable container is stopped.
+        try:
+            drained_router_spec = build_router_container_spec(
+                self.scope,
+                self.port_bindings,
+                context["network"],
+                context["image"],
+                drained.state_record,
+                expected_active_slot=active_slot,
+            )
+        except (TypeError, ValueError, OSError) as exc:
+            return DeploymentOperationResult(
+                "retire_previous", "failed", self.name,
+                f"Drained Router state could not be rebound to its immutable spec: {type(exc).__name__}",
+            )
         updated_router = replace(
             router,
             slot_targets=tuple((s, t) for s, t in router.slot_targets if s != old_slot),
@@ -386,7 +430,10 @@ class LocalDockerRouterReplacementProvider:
                 "retire_previous", "failed", self.name,
                 f"Previous runtime stopped but Router registry retirement commit failed: {type(exc).__name__}",
             )
-        context.update({"router": updated_router, "state": drained.state_record})
+        context.update({
+            "router": updated_router, "state": drained.state_record,
+            "router_spec": drained_router_spec,
+        })
         return stopped
 
     def abort_candidate(
@@ -413,6 +460,20 @@ class LocalDockerRouterReplacementProvider:
         stopped = self._stop_by_immutable_id(candidate)
         if stopped.status != "succeeded":
             return stopped
+        try:
+            drained_router_spec = build_router_container_spec(
+                self.scope,
+                self.port_bindings,
+                context["network"],
+                context["image"],
+                drained.state_record,
+                expected_active_slot=active_slot,
+            )
+        except (TypeError, ValueError, OSError) as exc:
+            return DeploymentOperationResult(
+                "abort_candidate", "failed", self.name,
+                f"Aborted Router state could not be rebound to its immutable spec: {type(exc).__name__}",
+            )
         updated_router = replace(
             router,
             slot_targets=tuple((s, t) for s, t in router.slot_targets if s != slot),
@@ -430,6 +491,10 @@ class LocalDockerRouterReplacementProvider:
                 "abort_candidate", "failed", self.name,
                 f"Candidate stopped but Router registry cleanup commit failed: {type(exc).__name__}",
             )
+        context.update({
+            "router": updated_router, "state": drained.state_record,
+            "router_spec": drained_router_spec,
+        })
         return stopped
 
     def _stop_by_immutable_id(self, record: DeploymentRecord) -> DeploymentOperationResult:
