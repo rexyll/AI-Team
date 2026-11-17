@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Literal
 from uuid import uuid4
 
@@ -308,6 +309,40 @@ class LocalDockerRouterHostManager:
             image_result.identity, spec,
         )
 
+    def _inspect_router_image_id(
+        self, router_runtime_id: str
+    ) -> tuple[str, str | None, str]:
+        """Read the image identity from the registered immutable Router container."""
+        if not isinstance(router_runtime_id, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", router_runtime_id
+        ):
+            return "invalid_response", None, "Router registry runtime ID is not a full immutable Docker ID"
+        result, error = self.provider._execute(
+            ["container", "inspect", "--format", "{{.Image}}", router_runtime_id]
+        )
+        if error:
+            status = (
+                "unavailable"
+                if self.provider._is_unavailable(error) or "timeout" in error.lower()
+                else "failed"
+            )
+            return status, None, error
+        assert result is not None
+        output = (result.stderr or result.stdout or "").strip()
+        if result.returncode != 0:
+            if self._is_missing_container(output):
+                return "missing", None, output or "Registered immutable Router container is missing"
+            status = (
+                "unavailable"
+                if self.provider._is_unavailable(output) or "timeout" in output.lower()
+                else "failed"
+            )
+            return status, None, output or "Router image identity inspect failed"
+        image_id = result.stdout.strip()
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            return "invalid_response", None, "Registered Router container did not report a full immutable image ID"
+        return "verified", image_id, ""
+
     def _verify_existing_scope(
         self,
         scope: TrafficRouterScope,
@@ -355,11 +390,24 @@ class LocalDockerRouterHostManager:
                 "mismatch", detail="Docker network immutable ID differs from the durable Router registry"
             )
 
-        image_result = self.image_manager.build_and_verify()
-        if image_result.status != "verified" or image_result.identity is None:
-            status = image_result.status if image_result.status in {"unavailable", "unsupported"} else "failed"
+        image_status, image_id, image_detail = self._inspect_router_image_id(
+            record.router_runtime_id
+        )
+        if image_status == "missing":
             return LocalDockerRouterHostResult(
-                status, detail=image_result.detail or "Pinned Router image identity could not be verified"
+                "manual_reconciliation_required",
+                detail="Registered immutable Router container is missing; image identity cannot be recovered safely",
+            )
+        if image_status != "verified" or image_id is None:
+            status = image_status if image_status in {"unavailable", "invalid_response"} else "mismatch"
+            return LocalDockerRouterHostResult(
+                status, detail=image_detail or "Existing Router image identity could not be read"
+            )
+        image_result = self.image_manager.inspect_image(image_id)
+        if image_result.status != "verified" or image_result.identity is None:
+            status = image_result.status if image_result.status in {"unavailable", "unsupported"} else "mismatch"
+            return LocalDockerRouterHostResult(
+                status, detail=image_result.detail or "Registered immutable Router image failed pinned contract verification"
             )
 
         validation = self.config_validator.validate(

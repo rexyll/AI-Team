@@ -142,6 +142,45 @@ class LocalDockerRouterImageManager:
             contract_version=ROUTER_IMAGE_CONTRACT_VERSION,
         ), ""
 
+    def inspect_image(self, image_id: str) -> DockerRouterImageResult:
+        """Verify an existing immutable image by ID without building or running it."""
+        if not isinstance(image_id, str) or not _IMAGE_ID.fullmatch(image_id):
+            return DockerRouterImageResult(
+                "invalid_response",
+                detail="Existing Router image inspection requires a full immutable SHA-256 image ID",
+            )
+        inspect, error = self.provider._execute(
+            ["image", "inspect", "--format", "{{json .}}", image_id]
+        )
+        if error:
+            return self._command_failure(error)
+        assert inspect is not None
+        if inspect.returncode != 0:
+            message = inspect.stderr or inspect.stdout or "Immutable Router image is unavailable"
+            status = "unavailable" if self.provider._is_unavailable(message) else "failed"
+            return DockerRouterImageResult(status, detail=message[:1000])
+        try:
+            payload = json.loads(inspect.stdout)
+        except (TypeError, json.JSONDecodeError):
+            return DockerRouterImageResult(
+                "invalid_response", detail="Docker immutable image inspect returned malformed JSON"
+            )
+        identity, mismatch = self._inspect_identity(payload)
+        if identity is None:
+            status = (
+                "invalid_response"
+                if "JSON object" in mismatch or "malformed" in mismatch or "immutable image ID" in mismatch
+                else "mismatch"
+            )
+            return DockerRouterImageResult(status, detail=mismatch)
+        if identity.image_id != image_id:
+            return DockerRouterImageResult(
+                "mismatch", detail="Docker image inspect returned a different immutable image ID"
+            )
+        return DockerRouterImageResult(
+            "verified", identity, "Existing immutable Router image matches the pinned metadata contract"
+        )
+
     def build_and_verify(self) -> DockerRouterImageResult:
         """Build fixed recipe, inspect the image, then verify by immutable ID.
 

@@ -206,9 +206,19 @@ def test_existing_scope_reload_accepts_durable_active_selector_without_rewriting
         lambda spec: ("verified", network, ""),
     )
     monkeypatch.setattr(
+        manager,
+        "_inspect_router_image_id",
+        lambda runtime_id: ("verified", image.image_id, ""),
+    )
+    monkeypatch.setattr(
+        manager.image_manager,
+        "inspect_image",
+        lambda image_id: SimpleNamespace(status="verified", identity=image, detail=""),
+    )
+    monkeypatch.setattr(
         manager.image_manager,
         "build_and_verify",
-        lambda: SimpleNamespace(status="verified", identity=image, detail=""),
+        lambda: pytest.fail("existing Router reload must not rebuild its image"),
     )
     def validate(image_arg, state_arg, *, expected_active_slot=None):
         observed["expected_active_slot"] = expected_active_slot
@@ -247,9 +257,19 @@ def test_existing_scope_missing_router_is_manual_reconciliation_not_recreation(t
         lambda spec: ("verified", network, ""),
     )
     monkeypatch.setattr(
+        manager,
+        "_inspect_router_image_id",
+        lambda runtime_id: ("verified", _image().image_id, ""),
+    )
+    monkeypatch.setattr(
+        manager.image_manager,
+        "inspect_image",
+        lambda image_id: SimpleNamespace(status="verified", identity=_image(), detail=""),
+    )
+    monkeypatch.setattr(
         manager.image_manager,
         "build_and_verify",
-        lambda: SimpleNamespace(status="verified", identity=_image(), detail=""),
+        lambda: pytest.fail("existing Router reload must not rebuild its image"),
     )
     monkeypatch.setattr(
         manager.config_validator,
