@@ -947,10 +947,12 @@ def test_rest_transport_injects_host_token_without_returning_it():
             return Response()
 
     def fake_build_opener(*handlers):
-        assert len(handlers) == 2
-        assert isinstance(handlers[0], urllib.request.HTTPRedirectHandler)
-        assert isinstance(handlers[1], urllib.request.HTTPSHandler)
-        assert handlers[1]._context.keylog_filename is None
+        assert len(handlers) == 3
+        assert isinstance(handlers[0], urllib.request.ProxyHandler)
+        assert handlers[0].proxies == {}
+        assert isinstance(handlers[1], urllib.request.HTTPRedirectHandler)
+        assert isinstance(handlers[2], urllib.request.HTTPSHandler)
+        assert handlers[2]._context.keylog_filename is None
         return Opener()
 
     transport = GitHubRESTTransport("host-secret-token")
@@ -1004,6 +1006,44 @@ def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monk
     assert captured["verify_flags"] & ssl.VERIFY_X509_PARTIAL_CHAIN
     assert captured["verify_flags"] & ssl.VERIFY_X509_STRICT
     assert not keylog_path.exists()
+
+
+def test_rest_transport_ignores_ambient_proxy_environment(monkeypatch):
+    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.setenv(variable, "http://proxy.attacker.invalid:8080")
+
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    class Opener:
+        def open(self, request, timeout):
+            return Response()
+
+    def fake_build_opener(*handlers):
+        proxy_handlers = [
+            handler
+            for handler in handlers
+            if isinstance(handler, urllib.request.ProxyHandler)
+        ]
+        assert len(proxy_handlers) == 1
+        captured["proxies"] = proxy_handlers[0].proxies
+        return Opener()
+
+    with patch("urllib.request.build_opener", side_effect=fake_build_opener):
+        assert GitHubRESTTransport("host-secret-token").request(
+            "GET", "/repos/acme/widget"
+        ) == {"ok": True}
+
+    assert captured["proxies"] == {}
 
 
 @pytest.mark.parametrize(
