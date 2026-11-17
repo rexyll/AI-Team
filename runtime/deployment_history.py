@@ -30,6 +30,8 @@ from runtime.deployment_traffic_router import (
     TrafficRouterRecord,
     TrafficRouterScope,
 )
+from runtime.local_docker_router_network import build_router_network_spec
+from runtime.local_docker_router_state import RouterStateRecord
 
 
 def _record_to_json(record: DeploymentRecord) -> str:
@@ -72,6 +74,40 @@ def _traffic_router_from_json(payload: str) -> TrafficRouterRecord:
         active_target=target,
         **data,
     )
+
+
+def _router_state_record_to_json(record: RouterStateRecord) -> str:
+    return json.dumps(asdict(record), sort_keys=True, separators=(",", ":"))
+
+
+def _router_state_record_from_json(payload: str) -> RouterStateRecord:
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise ValueError("Router Host state record payload must be an object")
+    return RouterStateRecord(**data)
+
+
+def _validate_router_state_record(
+    scope: TrafficRouterScope,
+    record: RouterStateRecord,
+) -> None:
+    if not isinstance(scope, TrafficRouterScope):
+        raise TypeError("scope must be a TrafficRouterScope")
+    if not isinstance(record, RouterStateRecord):
+        raise TypeError("record must be a RouterStateRecord")
+    network = build_router_network_spec(scope)
+    directory = Path(record.directory)
+    if (
+        not directory.is_absolute()
+        or record.network_name != network.network_name
+        or record.scope_fingerprint != network.scope_fingerprint
+        or directory.name != network.network_name
+        or Path(record.config_path) != directory / "haproxy.cfg"
+        or Path(record.active_slot_map_path) != directory / "active-slot.map"
+        or Path(record.server_state_path) != directory / "servers-state"
+        or record.server_state_sha256 is None
+    ):
+        raise ValueError("Router Host state record does not match the immutable scope paths or digests")
 
 
 @dataclass(frozen=True)
@@ -175,10 +211,16 @@ class DeploymentHistoryStore:
                     environment TEXT NOT NULL,
                     route_generation TEXT NOT NULL,
                     record_json TEXT NOT NULL,
+                    host_state_json TEXT,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (provider, project, environment)
                 )"""
             )
+            columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(traffic_routers)")
+            }
+            if columns and "host_state_json" not in columns:
+                db.execute("ALTER TABLE traffic_routers ADD COLUMN host_state_json TEXT")
             db.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_replacements_one_active_scope
                 ON deployment_replacements(provider, project, environment)
@@ -530,64 +572,100 @@ class DeploymentHistoryStore:
             raise ValueError("persisted traffic Router scope does not match its database key")
         return record
 
-    def create_traffic_router(self, record: TrafficRouterRecord) -> TrafficRouterRecord:
-        """Create a scope Router record once; initial state must be unrouted."""
+    def create_traffic_router(
+        self,
+        record: TrafficRouterRecord,
+        host_state_record: RouterStateRecord,
+    ) -> TrafficRouterRecord:
+        """Atomically create Router identity and its digest-bound Host file record."""
         if not isinstance(record, TrafficRouterRecord):
             raise TypeError("record must be a TrafficRouterRecord")
         if record.active_slot is not None or record.active_target is not None:
             raise ValueError("new traffic Router records must start with no active slot or target")
+        _validate_router_state_record(record.scope, host_state_record)
         payload = _traffic_router_to_json(record)
+        state_payload = _router_state_record_to_json(host_state_record)
         with self._connect() as db:
             try:
                 db.execute(
                     """INSERT INTO traffic_routers
-                    (provider, project, environment, route_generation, record_json, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (provider, project, environment, route_generation, record_json,
+                     host_state_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         record.scope.provider,
                         record.scope.project,
                         record.scope.environment,
                         record.route_generation,
                         payload,
+                        state_payload,
                         record.created_at,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("traffic Router scope already has a durable record") from exc
             row = db.execute(
-                """SELECT record_json FROM traffic_routers
+                """SELECT record_json, host_state_json FROM traffic_routers
                 WHERE provider = ? AND project = ? AND environment = ?""",
                 (record.scope.provider, record.scope.project, record.scope.environment),
             ).fetchone()
             if row is None:
                 raise RuntimeError("traffic Router record insert could not be read back")
             persisted = _traffic_router_from_json(row["record_json"])
-            if persisted != record:
-                raise RuntimeError("traffic Router record insert read-back differs from the requested record")
+            persisted_state = _router_state_record_from_json(row["host_state_json"])
+            if persisted != record or persisted_state != host_state_record:
+                raise RuntimeError("traffic Router identity/state insert read-back differs from the requested records")
             return persisted
+
+    def get_traffic_router_state_record(
+        self, scope: TrafficRouterScope
+    ) -> RouterStateRecord | None:
+        """Load the Host file digests that authorize read-only state reload."""
+        if not isinstance(scope, TrafficRouterScope):
+            raise TypeError("scope must be a TrafficRouterScope")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT host_state_json FROM traffic_routers
+                WHERE provider = ? AND project = ? AND environment = ?""",
+                (scope.provider, scope.project, scope.environment),
+            ).fetchone()
+        if row is None or row["host_state_json"] is None:
+            return None
+        record = _router_state_record_from_json(row["host_state_json"])
+        _validate_router_state_record(scope, record)
+        return record
 
     def update_traffic_router(
         self,
         record: TrafficRouterRecord,
+        host_state_record: RouterStateRecord,
         *,
         expected_generation: str,
+        expected_state_map_sha256: str,
     ) -> TrafficRouterRecord:
-        """CAS route metadata; immutable Router/scope/ports cannot be rewritten."""
+        """CAS route and Host state records in one SQLite transaction."""
         if not isinstance(record, TrafficRouterRecord):
             raise TypeError("record must be a TrafficRouterRecord")
         if not isinstance(expected_generation, str) or not expected_generation.strip():
             raise ValueError("expected_generation must be a non-empty string")
+        if not isinstance(expected_state_map_sha256, str) or len(expected_state_map_sha256) != 64:
+            raise ValueError("expected_state_map_sha256 must be a SHA-256 hex digest")
         if record.route_generation == expected_generation:
             raise ValueError("traffic Router update must advance the route generation")
+        _validate_router_state_record(record.scope, host_state_record)
         with self._connect() as db:
             row = db.execute(
-                """SELECT record_json, route_generation FROM traffic_routers
+                """SELECT record_json, host_state_json, route_generation FROM traffic_routers
                 WHERE provider = ? AND project = ? AND environment = ?""",
                 (record.scope.provider, record.scope.project, record.scope.environment),
             ).fetchone()
             if row is None:
                 raise KeyError("traffic Router scope has no durable record")
             current = _traffic_router_from_json(row["record_json"])
+            current_state = (
+                _router_state_record_from_json(row["host_state_json"])
+                if row["host_state_json"] is not None else None
+            )
             if row["route_generation"] != expected_generation or current.route_generation != expected_generation:
                 raise ValueError("traffic Router generation compare-and-swap conflict")
             if (
@@ -599,33 +677,49 @@ class DeploymentHistoryStore:
                 or current.created_at != record.created_at
             ):
                 raise ValueError("traffic Router immutable identity rewrite is forbidden")
+            if (
+                current_state is None
+                or current_state.active_slot_map_sha256 != expected_state_map_sha256
+                or current_state.network_name != host_state_record.network_name
+                or current_state.scope_fingerprint != host_state_record.scope_fingerprint
+                or current_state.directory != host_state_record.directory
+                or current_state.config_path != host_state_record.config_path
+                or current_state.active_slot_map_path != host_state_record.active_slot_map_path
+                or current_state.config_sha256 != host_state_record.config_sha256
+                or current_state.directory_mode != host_state_record.directory_mode
+                or current_state.file_mode != host_state_record.file_mode
+            ):
+                raise ValueError("traffic Router Host state compare-and-swap or immutable identity conflict")
             changed = db.execute(
                 """UPDATE traffic_routers
-                SET route_generation = ?, record_json = ?, updated_at = ?
+                SET route_generation = ?, record_json = ?, host_state_json = ?, updated_at = ?
                 WHERE provider = ? AND project = ? AND environment = ?
-                  AND route_generation = ?""",
+                  AND route_generation = ? AND host_state_json = ?""",
                 (
                     record.route_generation,
                     _traffic_router_to_json(record),
+                    _router_state_record_to_json(host_state_record),
                     record.created_at,
                     record.scope.provider,
                     record.scope.project,
                     record.scope.environment,
                     expected_generation,
+                    row["host_state_json"],
                 ),
             ).rowcount
             if changed != 1:
-                raise ValueError("traffic Router generation compare-and-swap conflict")
+                raise ValueError("traffic Router generation/state compare-and-swap conflict")
             persisted_row = db.execute(
-                """SELECT record_json FROM traffic_routers
+                """SELECT record_json, host_state_json FROM traffic_routers
                 WHERE provider = ? AND project = ? AND environment = ?""",
                 (record.scope.provider, record.scope.project, record.scope.environment),
             ).fetchone()
             if persisted_row is None:
                 raise RuntimeError("traffic Router record disappeared after update")
             persisted = _traffic_router_from_json(persisted_row["record_json"])
-            if persisted != record:
-                raise RuntimeError("traffic Router record update read-back differs from the requested record")
+            persisted_state = _router_state_record_from_json(persisted_row["host_state_json"])
+            if persisted != record or persisted_state != host_state_record:
+                raise RuntimeError("traffic Router record/state update read-back differs from the requested records")
             return persisted
 
     def mark_stopped(self, record: DeploymentRecord) -> DeploymentRecord:

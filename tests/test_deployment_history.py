@@ -12,6 +12,7 @@ from runtime.deployment_provider import (
     DeploymentRequest, HealthCheckResult,
 )
 from runtime.deployment_history import DeploymentHistoryStore, HostDeploymentManager
+from runtime.local_docker_router_state import LocalDockerRouterStateStore
 from runtime.deployment_replacement import ReplacementJournalRecord
 from runtime.deployment_traffic_router import (
     TrafficPortBinding,
@@ -435,6 +436,16 @@ def test_read_only_history_store_requires_existing_db_and_rejects_writes(tmp_pat
         readonly.append(make_record("must-not-write"))
 
 
+def make_traffic_router_state_record(tmp_path, *, project="demo"):
+    scope = TrafficRouterScope("docker-local", project, "staging")
+    ports = (TrafficPortBinding(8080, 80), TrafficPortBinding(8443, 443))
+    result = LocalDockerRouterStateStore(tmp_path / f"state-{project}").persist(
+        scope, ports, active_slot=None
+    )
+    assert result.status == "persisted"
+    return result.record
+
+
 def make_traffic_router_record(*, active_slot=None, active_target=None, generation="gen-0", project="demo"):
     scope = TrafficRouterScope("docker-local", project, "staging")
     ports = (TrafficPortBinding(8080, 80), TrafficPortBinding(8443, 443))
@@ -455,40 +466,55 @@ def test_traffic_router_registry_persists_and_reloads_durable_scope_record(tmp_p
     path = tmp_path / "history.db"
     history = DeploymentHistoryStore(path)
     record = make_traffic_router_record()
-    assert history.create_traffic_router(record) == record
-    reloaded = DeploymentHistoryStore(path).get_traffic_router(record.scope)
+    state_record = make_traffic_router_state_record(tmp_path)
+    assert history.create_traffic_router(record, state_record) == record
+    reloaded_history = DeploymentHistoryStore(path)
+    reloaded = reloaded_history.get_traffic_router(record.scope)
     assert reloaded == record
+    assert reloaded_history.get_traffic_router_state_record(record.scope) == state_record
 
 
 def test_traffic_router_registry_is_scope_isolated_and_rejects_duplicate_create(tmp_path):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     first = make_traffic_router_record()
     other = make_traffic_router_record(project="other")
-    history.create_traffic_router(first)
-    history.create_traffic_router(other)
+    history.create_traffic_router(first, make_traffic_router_state_record(tmp_path, project="demo"))
+    history.create_traffic_router(other, make_traffic_router_state_record(tmp_path, project="other"))
     assert history.get_traffic_router(first.scope) == first
     assert history.get_traffic_router(other.scope) == other
+    assert history.get_traffic_router_state_record(first.scope) is not None
     with pytest.raises(ValueError, match="already has a durable record"):
-        history.create_traffic_router(first)
+        history.create_traffic_router(first, make_traffic_router_state_record(tmp_path, project="demo"))
 
 
 def test_traffic_router_registry_route_update_uses_generation_cas(tmp_path):
     path = tmp_path / "history.db"
     history = DeploymentHistoryStore(path)
     initial = make_traffic_router_record()
-    history.create_traffic_router(initial)
+    state_initial = make_traffic_router_state_record(tmp_path)
+    history.create_traffic_router(initial, state_initial)
     target = TrafficRouteTarget(
         "release-2", "d" * 64, "172.18.0.9", initial.port_bindings
     )
     updated = replace(
         initial, active_slot="slot_b", active_target=target, route_generation="gen-1"
     )
-    assert history.update_traffic_router(updated, expected_generation="gen-0") == updated
-    assert DeploymentHistoryStore(path).get_traffic_router(initial.scope) == updated
+    state_next = replace(state_initial, active_slot_map_sha256="e" * 64)
+    assert history.update_traffic_router(
+        updated,
+        state_next,
+        expected_generation="gen-0",
+        expected_state_map_sha256=state_initial.active_slot_map_sha256,
+    ) == updated
+    reloaded_history = DeploymentHistoryStore(path)
+    assert reloaded_history.get_traffic_router(initial.scope) == updated
+    assert reloaded_history.get_traffic_router_state_record(initial.scope) == state_next
     with pytest.raises(ValueError, match="generation compare-and-swap"):
         history.update_traffic_router(
             replace(updated, route_generation="gen-2"),
+            state_next,
             expected_generation="gen-0",
+            expected_state_map_sha256=state_next.active_slot_map_sha256,
         )
     assert history.get_traffic_router(initial.scope) == updated
 
@@ -496,11 +522,14 @@ def test_traffic_router_registry_route_update_uses_generation_cas(tmp_path):
 def test_traffic_router_registry_rejects_router_identity_and_port_rewrite(tmp_path):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     initial = make_traffic_router_record()
-    history.create_traffic_router(initial)
+    state_record = make_traffic_router_state_record(tmp_path)
+    history.create_traffic_router(initial, state_record)
     with pytest.raises(ValueError, match="immutable identity rewrite"):
         history.update_traffic_router(
             replace(initial, router_runtime_id="e" * 64, route_generation="gen-1"),
+            state_record,
             expected_generation="gen-0",
+            expected_state_map_sha256=state_record.active_slot_map_sha256,
         )
     with pytest.raises(ValueError, match="immutable identity rewrite"):
         history.update_traffic_router(
@@ -509,7 +538,9 @@ def test_traffic_router_registry_rejects_router_identity_and_port_rewrite(tmp_pa
                 port_bindings=(TrafficPortBinding(8081, 80),),
                 route_generation="gen-1",
             ),
+            state_record,
             expected_generation="gen-0",
+            expected_state_map_sha256=state_record.active_slot_map_sha256,
         )
 
 
@@ -529,14 +560,18 @@ def test_traffic_router_registry_rejects_initial_active_target(tmp_path):
         created_at="2026-11-17T10:00:00Z",
     )
     with pytest.raises(ValueError, match="start with no active"):
-        history.create_traffic_router(record)
+        history.create_traffic_router(
+            record, make_traffic_router_state_record(tmp_path)
+        )
 
 
 def test_traffic_router_registry_fails_closed_on_corrupt_json(tmp_path):
     path = tmp_path / "history.db"
     history = DeploymentHistoryStore(path)
     record = make_traffic_router_record()
-    history.create_traffic_router(record)
+    history.create_traffic_router(
+        record, make_traffic_router_state_record(tmp_path)
+    )
     with sqlite3.connect(path) as db:
         db.execute(
             "UPDATE traffic_routers SET record_json = ? WHERE provider = ? AND project = ? AND environment = ?",
@@ -550,8 +585,14 @@ def test_traffic_router_registry_read_only_store_can_load_but_not_mutate(tmp_pat
     path = tmp_path / "history.db"
     history = DeploymentHistoryStore(path)
     record = make_traffic_router_record()
-    history.create_traffic_router(record)
+    history.create_traffic_router(
+        record, make_traffic_router_state_record(tmp_path)
+    )
     readonly = DeploymentHistoryStore(path, read_only=True)
     assert readonly.get_traffic_router(record.scope) == record
+    assert readonly.get_traffic_router_state_record(record.scope) is not None
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
-        readonly.create_traffic_router(make_traffic_router_record(project="other"))
+        readonly.create_traffic_router(
+            make_traffic_router_record(project="other"),
+            make_traffic_router_state_record(tmp_path, project="other"),
+        )
