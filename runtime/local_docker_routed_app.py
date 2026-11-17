@@ -375,9 +375,13 @@ def verify_routed_app_inspection(
         )
     expected_exposed = {f"{item.container_port}/tcp" for item in spec.port_bindings}
     exposed = config.get("ExposedPorts")
-    if not isinstance(exposed, dict) or set(exposed) != expected_exposed:
+    if (
+        not isinstance(exposed, dict)
+        or not expected_exposed.issubset(exposed)
+        or any(not isinstance(port, str) or not _PORT.fullmatch(port) for port in exposed)
+    ):
         return DockerRoutedAppVerification(
-            "mismatch", health_detail="Docker app exposed TCP ports do not match the routed contract"
+            "mismatch", health_detail="Docker app image does not expose every requested TCP port safely"
         )
     volumes = config.get("Volumes")
     if volumes not in (None, {}):
@@ -414,9 +418,9 @@ def verify_routed_app_inspection(
             "invalid_response", health_detail="Docker app inspect did not return a valid private-network IP"
         )
     network_ports = network_settings.get("Ports")
-    if not isinstance(network_ports, dict) or set(network_ports) != expected_exposed:
+    if not isinstance(network_ports, dict) or set(network_ports) != set(exposed):
         return DockerRoutedAppVerification(
-            "invalid_response", health_detail="Docker app network port metadata does not match exposed ports"
+            "invalid_response", health_detail="Docker app network port metadata does not match image-exposed ports"
         )
     if any(value not in (None, []) for value in network_ports.values()):
         return DockerRoutedAppVerification(

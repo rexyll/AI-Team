@@ -249,6 +249,27 @@ def test_inspect_rejects_extra_or_relaxed_container_security(field, value):
     assert result.target is None
 
 
+def test_inspect_allows_image_extra_exposed_ports_when_unpublished():
+    app_spec = spec()
+    payload = inspect_payload(app_spec)
+    payload["Config"]["ExposedPorts"]["9000/tcp"] = {}
+    payload["NetworkSettings"]["Ports"]["9000/tcp"] = None
+    result = verify_routed_app_inspection(payload, app_spec)
+    assert result.status == "verified"
+    assert result.target is not None
+    assert result.route_eligible is True
+
+
+def test_inspect_rejects_host_binding_for_extra_image_exposed_port():
+    app_spec = spec()
+    payload = inspect_payload(app_spec)
+    payload["Config"]["ExposedPorts"]["9000/tcp"] = {}
+    payload["NetworkSettings"]["Ports"]["9000/tcp"] = [{"HostIp": "0.0.0.0", "HostPort": "9000"}]
+    result = verify_routed_app_inspection(payload, app_spec)
+    assert result.status == "mismatch"
+    assert result.target is None
+
+
 def test_inspect_rejects_extra_networks_and_exposed_ports():
     app_spec = spec()
     payload = inspect_payload(app_spec)
