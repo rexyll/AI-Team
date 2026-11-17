@@ -95,6 +95,7 @@ def test_inactive_slot_readback_verifies_exact_address_port_up_and_scur():
         {"admin_state": 1},
         {"check_result": 2},
         {"check_state": 2},
+        {"check_state": 7},
     ],
 )
 def test_inactive_slot_readback_fails_closed_on_endpoint_or_server_state(kwargs):

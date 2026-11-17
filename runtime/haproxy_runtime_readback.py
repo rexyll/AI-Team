@@ -123,7 +123,7 @@ class HAProxyServerStateRow:
             self.operational_state == 2
             and self.administrative_state == 0
             and self.check_result == 3
-            and (self.check_state & 0x06) == 0x06
+            and self.check_state == 0x06
         )
 
 
