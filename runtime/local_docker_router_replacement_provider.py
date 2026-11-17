@@ -497,12 +497,29 @@ class LocalDockerRouterReplacementProvider:
                 "retire_previous", status, self.name,
                 drained.detail or "Previous slot was not confirmed drained",
             )
-        stopped = self._stop_by_immutable_id(previous)
-        if stopped.status != "succeeded" or stopped.record is None:
-            return stopped
-        # Remove the retired slot from the durable slot inventory only after
-        # HAProxy reported MAINT + zero sessions and Docker inspect confirmed
-        # the exact previous immutable container is stopped.
+        # Persist the new server-state digest before the immutable stop gate.
+        # If the identity check below fails, reconciliation can still reload a
+        # digest-consistent Router with the old slot retained in its inventory.
+        checkpoint_router = replace(
+            router,
+            route_generation=uuid4().hex,
+        )
+        try:
+            persisted_router = self.history.update_traffic_router(
+                checkpoint_router,
+                drained.state_record,
+                expected_generation=router.route_generation,
+                expected_state_map_sha256=context["state"].active_slot_map_sha256,
+            )
+        except Exception as exc:
+            return DeploymentOperationResult(
+                "retire_previous", "failed", self.name,
+                f"Previous slot drained but Host server-state checkpoint failed: {type(exc).__name__}",
+            )
+        context.update({
+            "router": persisted_router,
+            "state": drained.state_record,
+        })
         try:
             drained_router_spec = build_router_container_spec(
                 self.scope,
@@ -517,17 +534,27 @@ class LocalDockerRouterReplacementProvider:
                 "retire_previous", "failed", self.name,
                 f"Drained Router state could not be rebound to its immutable spec: {type(exc).__name__}",
             )
+        context["router_spec"] = drained_router_spec
+
+        # Stop only after the drained server-state snapshot is durable and the
+        # exact previous immutable container ID has been verified.
+        stopped = self._stop_by_immutable_id(previous)
+        if stopped.status != "succeeded" or stopped.record is None:
+            return stopped
+
+        # Remove the retired slot only after Docker confirms the exact runtime
+        # stopped. The checkpoint above deliberately retains both slot targets.
         updated_router = replace(
-            router,
-            slot_targets=tuple((s, t) for s, t in router.slot_targets if s != old_slot),
+            persisted_router,
+            slot_targets=tuple((s, t) for s, t in persisted_router.slot_targets if s != old_slot),
             route_generation=uuid4().hex,
         )
         try:
             self.history.update_traffic_router(
                 updated_router,
                 drained.state_record,
-                expected_generation=router.route_generation,
-                expected_state_map_sha256=context["state"].active_slot_map_sha256,
+                expected_generation=persisted_router.route_generation,
+                expected_state_map_sha256=drained.state_record.active_slot_map_sha256,
             )
         except Exception as exc:
             return DeploymentOperationResult(
