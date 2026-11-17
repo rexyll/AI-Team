@@ -79,6 +79,91 @@ class FakeSlotManager:
         raise AssertionError("not used in this test")
 
 
+
+def test_candidate_health_wait_reuses_same_immutable_runtime_until_healthy(tmp_path, monkeypatch):
+    docker = FakeDocker()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    host = FakeHost(SimpleNamespace(status="unavailable", detail=""))
+    host.provider = docker
+    host.history = history
+    app_manager = FakeAppManager(docker)
+    provider = LocalDockerRouterReplacementProvider(
+        docker, history, host, app_manager, FakeSlotManager(docker),
+        TrafficRouterScope("docker-local", "demo", "staging"),
+        (TrafficPortBinding(42699, 18080),),
+    )
+    target = SimpleNamespace(runtime_id="c" * 64)
+    observations = [
+        SimpleNamespace(
+            status="created", target=target, route_eligible=False,
+            health_status="unknown", detail="", health_detail="health is starting",
+        ),
+        SimpleNamespace(
+            status="existing", target=target, route_eligible=True,
+            health_status="healthy", detail="", health_detail="",
+        ),
+    ]
+    calls = []
+
+    def ensure_app(spec, artifact):
+        calls.append((spec, artifact))
+        return observations.pop(0)
+
+    app_manager.ensure_app = ensure_app
+    monkeypatch.setattr(
+        "runtime.local_docker_router_replacement_provider.time.sleep",
+        lambda _seconds: None,
+    )
+
+    result = provider._ensure_candidate_route_eligible(object(), _artifact("2.0", "b" * 64))
+
+    assert result.route_eligible is True
+    assert len(calls) == 2
+    assert result.target.runtime_id == "c" * 64
+
+
+def test_candidate_health_wait_stops_if_immutable_runtime_changes(tmp_path, monkeypatch):
+    docker = FakeDocker()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    host = FakeHost(SimpleNamespace(status="unavailable", detail=""))
+    host.provider = docker
+    host.history = history
+    app_manager = FakeAppManager(docker)
+    provider = LocalDockerRouterReplacementProvider(
+        docker, history, host, app_manager, FakeSlotManager(docker),
+        TrafficRouterScope("docker-local", "demo", "staging"),
+        (TrafficPortBinding(42699, 18080),),
+    )
+    observations = [
+        SimpleNamespace(
+            status="created", target=SimpleNamespace(runtime_id="c" * 64),
+            route_eligible=False, health_status="unknown", detail="",
+            health_detail="health is starting",
+        ),
+        SimpleNamespace(
+            status="existing", target=SimpleNamespace(runtime_id="d" * 64),
+            route_eligible=True, health_status="healthy", detail="", health_detail="",
+        ),
+    ]
+    calls = []
+
+    def ensure_app(spec, artifact):
+        calls.append((spec, artifact))
+        return observations.pop(0)
+
+    app_manager.ensure_app = ensure_app
+    monkeypatch.setattr(
+        "runtime.local_docker_router_replacement_provider.time.sleep",
+        lambda _seconds: None,
+    )
+
+    result = provider._ensure_candidate_route_eligible(object(), _artifact("2.0", "b" * 64))
+
+    assert result.route_eligible is False
+    assert result.target.runtime_id == "d" * 64
+    assert len(calls) == 2
+
+
 def test_provider_never_claims_replacement_when_router_scope_is_unavailable(tmp_path):
     docker = FakeDocker()
     history = DeploymentHistoryStore(tmp_path / "history.db")
