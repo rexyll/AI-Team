@@ -1,10 +1,9 @@
-"""Live Docker Engine acceptance for the Host-owned routed-app manager.
+"""Live Docker Engine acceptance for routed-app preparation and Router cutover.
 
-Builds a tiny socat TCP service from the already verified Router base image,
-creates one container on a unique verified scope bridge, confirms private
-network identity and fresh Docker HEALTHCHECK, and verifies there is no host
-port binding. It never publishes an app port, switches the Router map, or
-retires a deployment. Cleanup is by verified immutable IDs only.
+Builds a tiny socat TCP service from the verified Router base image, creates
+one private app container, prepares its inactive HAProxy slot, switches the
+shared active selector, and verifies a TCP marker through the Router-published
+host port. The app never publishes a host port. Cleanup is by immutable IDs.
 """
 from __future__ import annotations
 
@@ -293,6 +292,48 @@ def _free_tcp_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def _probe_router_tcp_route(
+    host_port: int,
+    *,
+    expected_marker: bytes = b"ROUTED_APP_OK",
+    attempts: int = 12,
+    interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    """Require the app marker through the Router's published TCP frontend."""
+    if not isinstance(host_port, int) or isinstance(host_port, bool) or not 1 <= host_port <= 65535:
+        raise ValueError("host_port must be an integer in the range 1..65535")
+    if not isinstance(expected_marker, bytes) or not expected_marker:
+        raise ValueError("expected_marker must be non-empty bytes")
+    if not isinstance(attempts, int) or isinstance(attempts, bool) or not 1 <= attempts <= 30:
+        raise ValueError("attempts must be in the range 1..30")
+    if not isinstance(interval_seconds, (int, float)) or isinstance(interval_seconds, bool) or not 0 <= interval_seconds <= 2:
+        raise ValueError("interval_seconds must be in the range 0..2")
+    last_detail = "route marker was not observed"
+    last_response = b""
+    for attempt in range(attempts):
+        try:
+            with socket.create_connection(("127.0.0.1", host_port), timeout=2.0) as connection:
+                connection.settimeout(2.0)
+                last_response = connection.recv(1024)
+            if expected_marker in last_response:
+                return {
+                    "status": "passed",
+                    "host_port": host_port,
+                    "marker": expected_marker.decode("ascii"),
+                    "response": last_response.decode("utf-8", errors="replace"),
+                    "attempts": attempt + 1,
+                }
+            last_detail = "TCP connection completed without the expected app marker"
+        except OSError as exc:
+            last_detail = f"{type(exc).__name__}: {str(exc)[:240]}"
+        if attempt + 1 < attempts:
+            time.sleep(interval_seconds)
+    raise RuntimeError(
+        f"Router TCP route probe failed on host port {host_port}: {last_detail}; "
+        f"last_response={last_response[:256]!r}"
+    )
+
+
 def run_live_smoke() -> dict[str, Any]:
     provider = LocalDockerProvider()
     scope = TrafficRouterScope(
@@ -522,6 +563,62 @@ def run_live_smoke() -> dict[str, Any]:
             raise RuntimeError(
                 f"inactive slot preparation failed: {slot_result.status}: {slot_result.detail}"
             )
+        switch_result = LocalDockerRouterSlotManager(
+            provider, readback_attempts=8, readback_interval_seconds=0.25
+        ).switch_active_slot(
+            router_runtime_id=router_id,
+            router_spec=router_spec,
+            network=network.record,
+            app_spec=app_spec,
+            target=ensured.target,
+            slot="slot_b",
+            expected_active_slot=None,
+            state_record=slot_result.state_record,
+        )
+        evidence["checks"]["active_slot_switch"] = {
+            "status": switch_result.status,
+            "slot": switch_result.slot,
+            "active_selector_before": switch_result.active_selector_before,
+            "active_selector_after": switch_result.active_selector_after,
+            "host_map_state": switch_result.host_map_state,
+            "active_slot_map_sha256": (
+                switch_result.state_record.active_slot_map_sha256
+                if switch_result.state_record is not None else None
+            ),
+            "server_observations": [
+                {
+                    "backend": item.backend,
+                    "server": item.server,
+                    "address": item.address,
+                    "port": item.port,
+                    "status": item.status,
+                    "current_sessions": item.current_sessions,
+                    "check_result": item.check_result,
+                    "check_state": item.check_state,
+                }
+                for item in switch_result.observations
+            ],
+            "detail": switch_result.detail,
+        }
+        if (
+            switch_result.status != "verified"
+            or switch_result.active_selector_before != "none"
+            or switch_result.active_selector_after != "slot_b"
+            or switch_result.host_map_state != "target"
+            or switch_result.state_record is None
+        ):
+            raise RuntimeError(
+                f"active slot switch failed: {switch_result.status}: {switch_result.detail}"
+            )
+        state_record = switch_result.state_record
+
+        route_probe = _probe_router_tcp_route(host_port)
+        evidence["checks"]["router_tcp_route_probe"] = {
+            **route_probe,
+            "target_runtime_id": ensured.target.runtime_id,
+            "target_address": ensured.target.address,
+            "app_host_port_bindings": "none",
+        }
         evidence["status"] = "ready"
     except Exception as exc:
         evidence["status"] = "failed"

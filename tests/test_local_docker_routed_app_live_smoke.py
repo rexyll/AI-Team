@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import socket
+import threading
 
 from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 from scripts.local_docker_routed_app_live_smoke import (
     cleanup_owned_app_container,
     cleanup_owned_network,
     _IMAGE_ID,
+    _probe_router_tcp_route,
 )
 
 
@@ -174,3 +177,50 @@ def test_cleanup_network_requires_router_and_app_cleanup():
     )
     assert result["status"] == "preserved"
     assert runner.calls == []
+
+
+def test_router_tcp_route_probe_requires_the_exact_application_marker():
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.sendall(b"ROUTED_APP_OK")
+        finally:
+            listener.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    result = _probe_router_tcp_route(port, attempts=1, interval_seconds=0)
+    thread.join(timeout=2)
+    assert result["status"] == "passed"
+    assert result["marker"] == "ROUTED_APP_OK"
+    assert result["attempts"] == 1
+
+
+def test_router_tcp_route_probe_rejects_a_different_backend_marker():
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.sendall(b"WRONG_BACKEND")
+        finally:
+            listener.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    import pytest
+    with pytest.raises(RuntimeError, match="expected app marker"):
+        _probe_router_tcp_route(port, attempts=1, interval_seconds=0)
+    thread.join(timeout=2)

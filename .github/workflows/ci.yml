@@ -210,7 +210,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Live routed-app container without host port publishing
+      - name: Live routed-app, active Router slot switch, and TCP route marker
         env:
           AI_TEAM_ROUTED_APP_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-routed-app-live-smoke.json
         run: python -m scripts.local_docker_routed_app_live_smoke

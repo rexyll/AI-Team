@@ -552,3 +552,19 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 
 - CI #618（run 43797135686，commit 1951256）Docker Engine image/config validation 首次失败为 HAProxy 默认用户无法读取 Host state 的 0600 文件（Permission denied）；这证明必须使用 Host state owner UID/GID 运行语法检查器和 Router 进程，未放宽 state 文件权限。
 - 已为 config validator 增加 owner UID/GID 运行方式和同用户 tmpfs；CI #619（run 43797402029，commit f6a1acf）尚未执行到 HAProxy，因 YAML 内嵌 Python 中 config_result 行少缩进触发 IndentationError；现修复缩进后重跑。
+
+
+### 2026-11-17 CI lifecycle fixture repair
+
+- CI #797 (44019812683) 与 #798 (44019880025) 的回归套件各有 2 项失败：恢复库存测试仍直接执行 candidate_healthy -> traffic_switched，未经过新引入的 traffic_switch_pending durable intent phase。Production transition allowlist 正确拒绝了非法跳转；没有降低生产状态机门槛。
+- 提交 4dd2d280 更新两处测试夹具，显式持久化 traffic_switch_pending 后才写入 traffic_switched。该修复仅对齐测试数据与真实生命周期。
+- 主分支后续 CI 验收以该修复提交及其父提交的 workflow 结果为准。
+
+### T21.6.3.5.4.2 Host active-slot switch and Router TCP read-back（2026-11-17，CI #800 待验收）
+
+- 新增 RouterSlotSwitchResult 和 LocalDockerRouterSlotManager.switch_active_slot()，与 inactive-slot preparation 共用 per-scope exclusive Host lock。切换前核对 scope/network/ports、Router/app immutable IDs、fresh app HEALTHCHECK、当前 active selector 及目标 slot 各 backend 的 exact endpoint/check state/UP。
+- 新增 LocalDockerRouterStateStore.persist_active_slot_map()：验证旧 selector 与 config/map/server-state digest，检查 owner/mode/link/symlink，再以 atomic replace + fsync + read-back 更新 Host restart map 和摘要。
+- Runtime API 只执行一次 set map，写命令结果不被当作事实；后续 get map 是权威 read-back。读回旧 selector 时恢复 Host map 文件；读回失败/无效/不属于预期状态时保留两实例与目标 desired map，返回 indeterminate，不重试、不自动切换回旧槽、不 retire。
+- 测试覆盖：正常切换、Runtime API 写响应失败但 read-back 确认已切换、写入拒绝且 read-back 仍为旧 selector、post-write read-back timeout、旧 selector 不匹配、backend DOWN、跨 scope target 拒绝；state store 覆盖旧 selector/CAS、摘要和 symlink。
+- Docker Engine CI smoke 将在真实 HAProxy 3.4.7 Router 上切换到 slot_b，通过 Router published TCP frontend 请求 socat app fixture，并要求唯一响应 marker ROUTED_APP_OK。CI #800 run 44024203179 结果待验收。此处仍是单 app 初次 active route 证明，不代表两个 app 蓝绿替换、drain/retire、Router restart 恢复或 rollback 已完成。
+
