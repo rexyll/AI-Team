@@ -518,7 +518,8 @@ class LocalDockerRoutedAppManager:
                 None,
                 "Docker routed app inspect returned malformed JSON "
                 f"(stdout_chars={len(result.stdout)}, stderr_chars={len(result.stderr)}, "
-                f"error_pos={exc.pos}, line={exc.lineno}, column={exc.colno})",
+                f"error_pos={exc.pos}, line={exc.lineno}, column={exc.colno}, "
+                f"context={result.stdout[max(0, exc.pos - 48):min(len(result.stdout), exc.pos + 48)]!r})",
             )
         except TypeError:
             return "invalid_response", None, "Docker routed app inspect returned malformed JSON (non-text output)"
