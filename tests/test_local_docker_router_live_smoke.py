@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.local_docker_router_live_smoke import (
+from runtime.haproxy_runtime_readback import (
     parse_get_map_value,
-    parse_show_info,
     parse_show_map_registry,
 )
+from scripts.local_docker_router_live_smoke import parse_show_info
 
 
 def test_parse_show_info_accepts_the_pinned_haproxy_version():

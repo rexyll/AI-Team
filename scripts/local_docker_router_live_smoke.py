@@ -28,6 +28,7 @@ from runtime.haproxy_runtime_api import (
     show_info_command,
     show_servers_state_command,
 )
+from runtime.haproxy_runtime_readback import parse_get_map_value, parse_show_map_registry
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 from runtime.local_docker_router_config_validator import LocalDockerRouterConfigValidator
@@ -62,67 +63,6 @@ def parse_show_info(response: str) -> dict[str, str]:
     if match is None or match.group(1) != _EXPECTED_HAPROXY_VERSION:
         raise ValueError("Runtime API version does not match the pinned HAProxy release")
     return fields
-
-
-def parse_show_map_registry(response: str, *, expected_path: str) -> str:
-    """Resolve one exact HAProxy map file registration to its numeric ID."""
-    if not isinstance(response, str) or not response.strip():
-        raise ValueError("HAProxy show map returned an empty registry")
-    matches: list[str] = []
-    for line in response.splitlines():
-        match = re.match(r"^\s*([0-9]{1,6})\s+\((/[^)]+)\)(?:\s|$)", line)
-        if match is None:
-            continue
-        if match.group(2) == expected_path:
-            matches.append(f"#{match.group(1)}")
-    if len(matches) != 1:
-        raise ValueError("HAProxy show map did not return exactly one registration for the expected file")
-    return matches[0]
-
-
-def parse_get_map_value(
-    response: str, *, expected_key: str, expected_value: str
-) -> str:
-    """Parse the structured get-map response; reject missing/ambiguous fields."""
-    if not isinstance(response, str) or not response.strip():
-        raise ValueError("HAProxy get map returned an empty response")
-    lines = [line.strip() for line in response.splitlines() if line.strip()]
-    if len(lines) != 1:
-        raise ValueError("HAProxy get map must return exactly one result line")
-    fields: dict[str, str] = {}
-    type_field_count = 0
-    for item in lines[0].split(","):
-        key, separator, raw_value = item.partition("=")
-        key = key.strip()
-        raw_value = raw_value.strip()
-        if not separator or not key or not raw_value:
-            raise ValueError("HAProxy get map returned malformed fields")
-        if raw_value.startswith('"'):
-            if len(raw_value) < 2 or not raw_value.endswith('"'):
-                raise ValueError("HAProxy get map returned an unterminated quoted field")
-            value = raw_value[1:-1]
-        else:
-            value = raw_value
-        # HAProxy returns both the map match type and the stored value type
-        # under the field name "type". Other fields must remain unique.
-        if key == "type":
-            type_field_count += 1
-            if type_field_count > 2:
-                raise ValueError("HAProxy get map returned too many type fields")
-            continue
-        if key in fields:
-            raise ValueError("HAProxy get map returned duplicate selector fields")
-        fields[key] = value
-    if type_field_count not in {1, 2}:
-        raise ValueError("HAProxy get map omitted the map type metadata")
-    if fields.get("found") != "yes" or fields.get("key") != expected_key:
-        raise ValueError("HAProxy get map did not confirm the requested key")
-    value = fields.get("value")
-    if not value:
-        raise ValueError("HAProxy get map omitted the selector value")
-    if value != expected_value:
-        raise ValueError("HAProxy get map returned an unexpected selector value")
-    return value
 
 
 def wait_for_runtime_api_show_info(
