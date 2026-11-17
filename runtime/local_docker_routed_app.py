@@ -36,10 +36,9 @@ _PORTS_LABEL = "com.ai-team.router.port-bindings-sha256"
 
 ROUTED_APP_CONTAINER_INSPECT_FORMAT = (
     r'{{$health := "null"}}'
-    r'{{if .State.Health}}{{$entries := ""}}{{range $i, $log := .State.Health.Log}}'
-    r'{{if $i}}{{$entries = printf "%s," $entries}}{{end}}'
-    r'{{$entries = printf "%s{\\"ExitCode\\":%d,\\"End\\":%q}" $entries $log.ExitCode $log.End}}'
-    r'{{end}}{{$health = printf "{\\"Status\\":%q,\\"Log\\":[%s]}" .State.Health.Status $entries}}{{end}}'
+    r'{{if .State.Health}}{{$status := .State.Health.Status}}{{$exitCode := -1}}{{$end := ""}}'
+    r'{{range .State.Health.Log}}{{$exitCode = .ExitCode}}{{$end = .End}}{{end}}'
+    r'{{$health = printf "{\\"Status\\":%q,\\"Log\\":[{\\"ExitCode\\":%d,\\"End\\":%q}]}" $status $exitCode $end}}{{end}}'
     r'{{printf "{\\"Id\\":%q,\\"Name\\":%q,\\"Config\\":{\\"Image\\":%q,\\"Labels\\":%s,'
     r'\\"ExposedPorts\\":%s,\\"Volumes\\":%s},\\"State\\":{\\"Status\\":%q,\\"StartedAt\\":%q,'
     r'\\"Health\\":%s},\\"HostConfig\\":{\\"NetworkMode\\":%q,\\"Privileged\\":%t,'
