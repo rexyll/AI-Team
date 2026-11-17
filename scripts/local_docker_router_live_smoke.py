@@ -8,6 +8,7 @@ It never creates an application container or switches traffic.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
