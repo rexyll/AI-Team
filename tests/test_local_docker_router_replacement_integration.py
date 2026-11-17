@@ -72,7 +72,6 @@ def _deployment(deployment_id, version, digest, runtime_id, status):
         status=status,
         health_status="healthy" if status == "running" else "unknown",
         created_at="2026-11-17T12:00:00Z",
-        project="demo",
         container_id=runtime_id,
     )
 
