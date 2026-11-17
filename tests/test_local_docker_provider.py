@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -287,7 +286,7 @@ def test_deploy_rejects_malformed_container_inspection():
 def test_deploy_rejects_container_id_mismatch():
     runner = FakeRunner(
         ok("sha256:" + "a" * 64), ok("d" * 64 + "\n"),
-        ok(json.dumps({"Id": "e" * 64, "State": {"Status": "running"}})),
+        ok(inspect_output("e" * 64, "running", "none")),
     )
     result = LocalDockerProvider(runner).deploy(
         DeploymentRequest("/tmp", "demo", "local", "1.2.3"), artifact()
