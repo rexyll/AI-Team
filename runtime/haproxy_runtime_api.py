@@ -61,7 +61,8 @@ def _line(value: str) -> str:
 class HAProxyRuntimeCommand:
     line: str
     operation: Literal[
-        "show_info", "show_maps", "show_stat", "show_servers_state", "show_servers_conn",
+        "show_info", "show_maps", "show_stat", "show_stat_servers",
+        "show_servers_state", "show_servers_conn",
         "get_map", "set_map", "set_server_address", "set_server_state",
     ]
     mutating: bool
@@ -72,7 +73,8 @@ class HAProxyRuntimeCommand:
             "show_info": r"show info",
             "show_maps": r"show map",
             "show_stat": r"show stat",
-            "show_servers_state": r"show servers state",
+            "show_stat_servers": r"show stat [a-z][a-z0-9_-]{0,47} 4 -1",
+            "show_servers_state": r"show servers state(?: [a-z][a-z0-9_-]{0,47})?",
             "show_servers_conn": r"show servers conn(?: [a-z][a-z0-9_-]{0,47})?",
             "get_map": r"get map (?:/[a-zA-Z0-9_./-]{1,180}|#[0-9]{1,6}) [a-z][a-z0-9_-]{0,47}",
             "set_map": r"set map (?:/[a-zA-Z0-9_./-]{1,180}|#[0-9]{1,6}) [a-z][a-z0-9_-]{0,47} (?:none|slot_a|slot_b)",
@@ -95,6 +97,10 @@ class HAProxyRuntimeCommand:
         if self.operation in {"get_map", "set_map"}:
             _map_reference(parts[2])
             _identifier(parts[3], "map key")
+        elif self.operation == "show_servers_state" and len(parts) == 4:
+            _identifier(parts[3], "backend")
+        elif self.operation == "show_stat_servers":
+            _identifier(parts[2], "backend")
         elif self.operation == "show_servers_conn" and len(parts) == 4:
             _identifier(parts[3], "backend")
         elif self.operation == "set_server_address":
@@ -151,8 +157,19 @@ def show_stat_command() -> HAProxyRuntimeCommand:
     return HAProxyRuntimeCommand("show stat", "show_stat", False)
 
 
-def show_servers_state_command() -> HAProxyRuntimeCommand:
-    return HAProxyRuntimeCommand("show servers state", "show_servers_state", False)
+def show_servers_state_command(backend: str | None = None) -> HAProxyRuntimeCommand:
+    line = "show servers state"
+    if backend is not None:
+        line += " " + _identifier(backend, "backend")
+    return HAProxyRuntimeCommand(line, "show_servers_state", False)
+
+
+def show_stat_servers_command(backend: str) -> HAProxyRuntimeCommand:
+    return HAProxyRuntimeCommand(
+        f"show stat {_identifier(backend, 'backend')} 4 -1",
+        "show_stat_servers",
+        False,
+    )
 
 
 def show_servers_connections_command(backend: str | None = None) -> HAProxyRuntimeCommand:

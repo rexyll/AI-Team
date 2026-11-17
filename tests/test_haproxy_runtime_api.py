@@ -15,6 +15,7 @@ from runtime.haproxy_runtime_api import (
     show_servers_connections_command,
     show_servers_state_command,
     show_stat_command,
+    show_stat_servers_command,
 )
 
 
@@ -40,6 +41,8 @@ def test_read_commands_are_allowlisted_and_have_expected_text():
     assert show_maps_command().line == "show map"
     assert show_stat_command().line == "show stat"
     assert show_servers_state_command().line == "show servers state"
+    assert show_servers_state_command("be_p8080").line == "show servers state be_p8080"
+    assert show_stat_servers_command("be_p8080").line == "show stat be_p8080 4 -1"
     assert show_servers_connections_command().line == "show servers conn"
     assert show_servers_connections_command("be_p8080").line == "show servers conn be_p8080"
     assert get_map_command("/usr/local/etc/haproxy/active-slot.map", "active").line == (
@@ -155,3 +158,15 @@ def test_client_preserves_docker_and_runtime_api_failures():
     )
     assert result.status == "failed"
     assert "permission denied" in result.detail
+
+
+@pytest.mark.parametrize(
+    "factory,args",
+    [
+        (show_servers_state_command, ("bad backend",)),
+        (show_stat_servers_command, ("be_p8080;shutdown",)),
+    ],
+)
+def test_filtered_read_commands_reject_unsafe_backend_names(factory, args):
+    with pytest.raises(ValueError):
+        factory(*args)

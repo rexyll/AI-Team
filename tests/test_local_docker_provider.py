@@ -135,11 +135,23 @@ def test_host_input_execution_allows_show_map_and_numeric_map_id_reads():
     runner = InputRunner()
     provider = LocalDockerProvider(runner)
     argv = router_exec_args()
-    for command in ("show map\n", "get map #0 active\n", "set map #0 active none\n"):
+    for command in (
+        "show map\n",
+        "show servers state be_p8080\n",
+        "show stat be_p8080 4 -1\n",
+        "get map #0 active\n",
+        "set map #0 active none\n",
+    ):
         result, error = provider.execute_host_input(argv, input_text=command, timeout=3)
         assert error is None
         assert result.stdout == "map response"
-    assert runner.calls == ["show map\n", "get map #0 active\n", "set map #0 active none\n"]
+    assert runner.calls == [
+        "show map\n",
+        "show servers state be_p8080\n",
+        "show stat be_p8080 4 -1\n",
+        "get map #0 active\n",
+        "set map #0 active none\n",
+    ]
 
 
 def test_host_input_execution_rejects_malformed_numeric_map_ids():
@@ -548,3 +560,14 @@ def test_runtime_inspection_rejects_non_immutable_expected_ids():
             checked_at="2026-11-15T16:00:00Z",
             probe="test",
         )
+
+
+def test_host_input_execution_rejects_unfiltered_or_unsafe_stats_queries():
+    provider = LocalDockerProvider(FakeRunner())
+    for command in (
+        "show stat be_p8080 2 -1\n",
+        "show stat be_p8080;shutdown 4 -1\n",
+        "show servers state be_p8080;shutdown\n",
+    ):
+        with pytest.raises(ValueError, match="allowlisted HAProxy"):
+            provider.execute_host_input(router_exec_args(), input_text=command)
