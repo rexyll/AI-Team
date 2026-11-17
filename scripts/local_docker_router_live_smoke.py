@@ -222,6 +222,21 @@ def _cleanup_owned_resources(
     return outcome
 
 
+def _diagnostic_command(
+    provider: LocalDockerProvider, arguments: list[str]
+) -> dict[str, Any]:
+    result, error = provider._execute(arguments)
+    if error:
+        return {"status": "unavailable", "error": type(error).__name__}
+    assert result is not None
+    return {
+        "status": "completed" if result.returncode == 0 else "failed",
+        "returncode": result.returncode,
+        "stdout": (result.stdout or "")[-1200:],
+        "stderr": (result.stderr or "")[-1200:],
+    }
+
+
 def run_live_smoke() -> dict[str, Any]:
     provider = LocalDockerProvider()
     scope = TrafficRouterScope(
@@ -320,6 +335,25 @@ def run_live_smoke() -> dict[str, Any]:
         client = HAProxyRuntimeAPIClient(provider, router_id)
         info_result = client.execute(show_info_command())
         if info_result.status != "succeeded":
+            evidence["diagnostics"] = {
+                "runtime_api_stdout": info_result.response[-1200:],
+                "runtime_api_stderr": info_result.detail[-1200:],
+                "container_user": _diagnostic_command(
+                    provider, ["container", "inspect", "--format", "{{.Config.User}}", router_id]
+                ),
+                "container_logs": _diagnostic_command(
+                    provider, ["container", "logs", "--tail", "40", router_id]
+                ),
+                "process_identity": _diagnostic_command(
+                    provider, ["exec", router_id, "id"]
+                ),
+                "runtime_directory": _diagnostic_command(
+                    provider, ["exec", router_id, "ls", "-ld", "/run/haproxy"]
+                ),
+                "runtime_socket_listing": _diagnostic_command(
+                    provider, ["exec", router_id, "ls", "-l", "/run/haproxy"]
+                ),
+            }
             raise RuntimeError(
                 f"HAProxy Runtime API show info: {info_result.status}: {info_result.detail}"
             )
