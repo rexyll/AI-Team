@@ -236,9 +236,10 @@ class LocalDockerRouterReplacementProvider:
         ):
             return result
         expected_runtime_id = result.target.runtime_id
+        initial_status = result.status
         for attempt in range(40):
             if result.route_eligible:
-                return result
+                return replace(result, status=initial_status)
             if attempt == 39:
                 return result
             time.sleep(0.25)
