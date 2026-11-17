@@ -160,7 +160,7 @@ class TrafficRouterRecord:
             if self.active_target.port_bindings != self.port_bindings:
                 raise ValueError("active target port bindings must match router scope bindings")
             targets_by_slot = dict(self.slot_targets)
-            if self.active_slot in targets_by_slot and targets_by_slot[self.active_slot] != self.active_target:
+            if targets_by_slot.get(self.active_slot) != self.active_target:
                 raise ValueError("active_target must match the durable target recorded for active_slot")
 
 

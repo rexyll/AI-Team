@@ -710,12 +710,6 @@ class DeploymentHistoryStore:
             raise ValueError("expected_state_map_sha256 must be a SHA-256 hex digest")
         if record.route_generation == expected_generation:
             raise ValueError("traffic Router update must advance the route generation")
-        _validate_router_state_record(
-            record.scope,
-            host_state_record,
-            port_bindings=record.port_bindings,
-            active_slot=record.active_slot,
-        )
         with self._connect() as db:
             row = db.execute(
                 """SELECT record_json, host_state_json, route_generation FROM traffic_routers
@@ -742,6 +736,12 @@ class DeploymentHistoryStore:
                 or current.created_at != record.created_at
             ):
                 raise ValueError("traffic Router immutable identity rewrite is forbidden")
+            _validate_router_state_record(
+                record.scope,
+                host_state_record,
+                port_bindings=record.port_bindings,
+                active_slot=record.active_slot,
+            )
             if (
                 current_state is None
                 or current_state.active_slot_map_sha256 != expected_state_map_sha256
