@@ -553,9 +553,15 @@ class HostDeploymentReplacementManager:
                 or candidate.version != target.version
                 or candidate.artifact.digest != target.artifact.digest
             ):
+                start_detail = (
+                    f": {started.status}: {(started.message or '')[:600]}"
+                    if isinstance(started, DeploymentOperationResult)
+                    else ""
+                )
                 return self._needs_reconciliation(
                     journal,
-                    "candidate start did not return the expected running deployment identity",
+                    "candidate start did not return the expected running deployment identity"
+                    + start_detail,
                 )
 
             candidate_runtime_id = self.provider.immutable_runtime_id(candidate)
