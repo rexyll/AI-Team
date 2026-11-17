@@ -16,6 +16,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import tempfile
 import time
 import uuid
@@ -273,9 +274,29 @@ def _override_show_stat_scur(
     return output.getvalue(), observed_status
 
 
+def _open_held_tcp_connection(
+    host_port: int, *, expected_marker: bytes
+) -> tuple[socket.socket, bytes]:
+    connection = socket.create_connection(("127.0.0.1", host_port), timeout=3.0)
+    connection.settimeout(3.0)
+    try:
+        response = connection.recv(256)
+        if expected_marker not in response:
+            raise RuntimeError(
+                f"held TCP connection returned the wrong marker: {response[:128]!r}"
+            )
+        return connection, response
+    except Exception:
+        connection.close()
+        raise
+
+
 def run_live_smoke() -> dict[str, Any]:
     fault_mode = os.environ.get("AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE", "").strip()
-    if fault_mode not in {"", "applied_timeout", "previous_identity_mismatch", "nonzero_scur"}:
+    if fault_mode not in {
+        "", "applied_timeout", "previous_identity_mismatch",
+        "nonzero_scur", "held_tcp_connection",
+    }:
         raise ValueError("unsupported Router replacement fault injection mode")
     fault_state: dict[str, Any] = {
         "mode": fault_mode or "none",
@@ -289,6 +310,9 @@ def run_live_smoke() -> dict[str, Any]:
         "scur_reads": 0,
         "last_injected_scur": None,
         "last_injected_status": None,
+        "held_scur_observations": [],
+        "held_connection_response": None,
+        "held_connection_ack": None,
     }
     provider = LocalDockerProvider()
     project = "router-replacement-" + uuid.uuid4().hex[:16]
@@ -334,6 +358,7 @@ def run_live_smoke() -> dict[str, Any]:
     app_a_owned = False
     app_b_owned = False
     completed = False
+    held_connection: socket.socket | None = None
 
     try:
         history = DeploymentHistoryStore(history_path)
@@ -498,6 +523,20 @@ def run_live_smoke() -> dict[str, Any]:
             "runtime_id": app_a_id,
             "tcp_probe": initial_route,
         }
+        if fault_mode == "held_tcp_connection":
+            held_connection, held_response = _open_held_tcp_connection(
+                host_port, expected_marker=_MARKER_A
+            )
+            fault_state["held_connection_response"] = held_response.decode(
+                "utf-8", errors="replace"
+            )
+            evidence["checks"]["held_tcp_connection_before_switch"] = {
+                "status": "verified",
+                "marker": _MARKER_A.decode("ascii"),
+                "response": fault_state["held_connection_response"],
+                "connection_open": held_connection.fileno() >= 0,
+                "target_runtime_id": app_a_id,
+            }
 
         # Candidate image B is already built, but its app container is created
         # only inside the replacement provider after the coordinator journals
@@ -584,6 +623,65 @@ def run_live_smoke() -> dict[str, Any]:
                 with patch(
                     "runtime.local_docker_router_slot_manager.HAProxyRuntimeAPIClient",
                     NonzeroScurRuntimeAPIClient,
+                ):
+                    replacement = replacement_manager.replace(request, candidate)
+            finally:
+                provider._execute = real_execute
+                replacement_provider.retire_previous = real_retire_previous
+
+        elif fault_mode == "held_tcp_connection":
+            real_client_type = HAProxyRuntimeAPIClient
+            real_execute = provider._execute
+            real_retire_previous = replacement_provider.retire_previous
+
+            class ObserveHeldSessionRuntimeAPIClient:
+                """Observe real HAProxy scur without changing its response."""
+
+                def __init__(self, *args, **kwargs):
+                    self._delegate = real_client_type(*args, **kwargs)
+
+                def execute(self, command):
+                    result = self._delegate.execute(command)
+                    if (
+                        fault_state["armed"]
+                        and command.operation == "show_stat_servers"
+                        and result.status == "succeeded"
+                    ):
+                        backend = command.line.split(" ")[2]
+                        stat_rows = parse_show_stat_servers(result.response)
+                        old_row = next(
+                            (
+                                item for item in stat_rows
+                                if item.backend == backend and item.server == "slot_a"
+                            ),
+                            None,
+                        )
+                        if old_row is not None:
+                            fault_state["held_scur_observations"].append({
+                                "backend": backend,
+                                "status": old_row.status,
+                                "scur": old_row.current_sessions,
+                            })
+                    return result
+
+            def count_previous_stop_attempts(argv, *args, **kwargs):
+                if argv and argv[0] == "stop" and argv[-1] == app_a_id:
+                    fault_state["previous_stop_attempts"] += 1
+                return real_execute(argv, *args, **kwargs)
+
+            def retire_with_held_session(previous_record, operation_id):
+                fault_state["armed"] = True
+                try:
+                    return real_retire_previous(previous_record, operation_id)
+                finally:
+                    fault_state["armed"] = False
+
+            provider._execute = count_previous_stop_attempts
+            replacement_provider.retire_previous = retire_with_held_session
+            try:
+                with patch(
+                    "runtime.local_docker_router_slot_manager.HAProxyRuntimeAPIClient",
+                    ObserveHeldSessionRuntimeAPIClient,
                 ):
                     replacement = replacement_manager.replace(request, candidate)
             finally:
@@ -679,7 +777,138 @@ def run_live_smoke() -> dict[str, Any]:
         else:
             replacement = replacement_manager.replace(request, candidate)
 
-        if fault_mode == "nonzero_scur":
+        if fault_mode == "held_tcp_connection":
+            if held_connection is None:
+                raise RuntimeError("held TCP fault mode did not open the previous A stream")
+            held_connection.sendall(b"hold-check\n")
+            held_ack = held_connection.recv(256)
+            fault_state["held_connection_ack"] = held_ack.decode(
+                "utf-8", errors="replace"
+            )
+            previous_record = history.get(previous_id)
+            candidate_record = history.get(candidate_id)
+            journal = (
+                history.get_replacement(replacement.operation_id)
+                if replacement.operation_id else None
+            )
+            router_record = history.get_traffic_router(scope)
+            host_state_readback = router_host.ensure_router(scope, bindings)
+            active_deployment = history.active_deployment(
+                provider="docker-local",
+                project=scope.project,
+                environment=scope.environment,
+            )
+            previous_inspection = (
+                provider.inspect_runtime(previous_record)
+                if previous_record is not None else None
+            )
+            candidate_inspection = (
+                provider.inspect_runtime(candidate_record)
+                if candidate_record is not None else None
+            )
+            selector = _runtime_selector(provider, router_id)
+            effective_target = replacement_provider.read_traffic_target(request)
+            stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
+                show_stat_servers_command(f"be_p{host_port}")
+            )
+            if stat_result.status != "succeeded":
+                raise RuntimeError(
+                    f"held-session post-fault stat read failed: {stat_result.detail}"
+                )
+            stat_rows = parse_show_stat_servers(stat_result.response)
+            old_stat = next((item for item in stat_rows if item.server == "slot_a"), None)
+            new_stat = next((item for item in stat_rows if item.server == "slot_b"), None)
+            marker = _probe_router_tcp_route(host_port, expected_marker=_MARKER_B)
+            observations = tuple(fault_state["held_scur_observations"])
+            verified = (
+                replacement.status == "needs_reconciliation"
+                and replacement.phase == "needs_reconciliation"
+                and journal is not None
+                and journal.phase == "needs_reconciliation"
+                and fault_state["armed"] is False
+                and len(observations) >= 2
+                and all(
+                    item["status"] == "DRAIN" and item["scur"] >= 1
+                    for item in observations
+                )
+                and fault_state["previous_stop_attempts"] == 0
+                and held_connection.fileno() >= 0
+                and b"ACK:hold-check" in held_ack
+                and previous_record is not None
+                and candidate_record is not None
+                and previous_record.status == "running"
+                and candidate_record.status == "running"
+                and previous_inspection is not None
+                and previous_inspection.status == "verified"
+                and previous_inspection.observed_runtime_id == app_a_id
+                and previous_inspection.runtime_state == "running"
+                and candidate_inspection is not None
+                and candidate_inspection.status == "verified"
+                and candidate_inspection.observed_runtime_id == candidate_record.container_id
+                and candidate_inspection.runtime_state == "running"
+                and active_deployment is not None
+                and active_deployment.deployment_id == candidate_id
+                and router_record is not None
+                and router_record.active_slot == "slot_b"
+                and router_record.active_target is not None
+                and router_record.active_target.runtime_id == candidate_record.container_id
+                and tuple(slot for slot, _ in router_record.slot_targets) == ("slot_a", "slot_b")
+                and selector == "slot_b"
+                and effective_target == candidate_record.container_id
+                and host_state_readback.status == "ready"
+                and old_stat is not None
+                and old_stat.status == "DRAIN"
+                and old_stat.current_sessions >= 1
+                and new_stat is not None
+                and new_stat.status == "UP"
+                and marker.get("status") == "passed"
+            )
+            if not verified:
+                raise RuntimeError(
+                    "held TCP connection did not remain on the draining previous backend: "
+                    f"status={replacement.status}/{replacement.phase}, "
+                    f"selector={selector}, target={effective_target}, "
+                    f"scur_observations={observations[-4:]}, "
+                    f"held_ack={fault_state['held_connection_ack']!r}, "
+                    f"stop_attempts={fault_state['previous_stop_attempts']}, "
+                    f"old_backend={old_stat.status if old_stat else 'missing'}:"
+                    f"{old_stat.current_sessions if old_stat else 'n/a'}, "
+                    f"host_readback={host_state_readback.status}, marker={marker.get('status')}"
+                )
+            evidence["checks"]["held_tcp_drain_timeout"] = {
+                "status": "verified",
+                "fault_mode": "held_tcp_connection",
+                "fault_point": "real long-lived TCP stream established on slot_a before active cutover",
+                "previous_runtime_id": app_a_id,
+                "candidate_runtime_id": candidate_record.container_id,
+                "held_connection_initial_marker": fault_state["held_connection_response"],
+                "held_connection_ack_after_cutover": fault_state["held_connection_ack"],
+                "held_connection_still_open": held_connection.fileno() >= 0,
+                "ha_proxy_scur_observations": observations,
+                "previous_stop_attempts": fault_state["previous_stop_attempts"],
+                "previous_backend_status": old_stat.status,
+                "previous_backend_sessions": old_stat.current_sessions,
+                "candidate_backend_status": new_stat.status,
+                "active_selector": selector,
+                "effective_runtime_id": effective_target,
+                "host_registry_readback": {
+                    "status": host_state_readback.status,
+                    "server_state_sha256": host_state_readback.state_record.server_state_sha256,
+                    "route_generation": host_state_readback.router_record.route_generation,
+                },
+                "tcp_marker_after_cutover": marker,
+                "journal_phase": journal.phase,
+            }
+            evidence["checks"]["replacement_coordinator"] = {
+                "status": replacement.status,
+                "phase": replacement.phase,
+                "operation_id": replacement.operation_id,
+                "message": replacement.message,
+            }
+            evidence["status"] = "fault_injection_verified"
+            return evidence
+
+        elif fault_mode == "nonzero_scur":
             previous_record = history.get(previous_id)
             candidate_record = history.get(candidate_id)
             journal = (
@@ -1257,6 +1486,11 @@ def run_live_smoke() -> dict[str, Any]:
             "detail": str(exc)[:1000],
         }
     finally:
+        if held_connection is not None:
+            try:
+                held_connection.close()
+            except OSError:
+                pass
         if completed and router_id and network_id and scope_fingerprint and router_image_id and app_a_id and app_b_id and app_a_image_id and app_b_image_id:
             app_a_cleanup = cleanup_owned_app_container(
                 provider, runtime_id=app_a_id, owned=app_a_owned,
@@ -1366,7 +1600,12 @@ def main() -> int:
         and evidence.get("checks", {}).get("nonzero_scur_drain_timeout", {}).get("status") == "verified"
         and evidence.get("cleanup", {}).get("status") == "preserved"
     )
-    return 0 if normal_pass or identity_mismatch_pass or nonzero_scur_pass else 1
+    held_tcp_pass = (
+        evidence.get("status") == "fault_injection_verified"
+        and evidence.get("checks", {}).get("held_tcp_drain_timeout", {}).get("status") == "verified"
+        and evidence.get("cleanup", {}).get("status") == "preserved"
+    )
+    return 0 if normal_pass or identity_mismatch_pass or nonzero_scur_pass or held_tcp_pass else 1
 
 
 if __name__ == "__main__":

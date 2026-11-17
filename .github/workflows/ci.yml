@@ -288,6 +288,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Live held TCP connection blocks previous-slot retirement
+        env:
+          AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE: held_tcp_connection
+          AI_TEAM_ROUTER_REPLACEMENT_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-router-held-tcp-drain-timeout-live-smoke.json
+        run: python -m scripts.local_docker_router_replacement_live_smoke
+
+      - name: Upload held TCP drain-timeout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-held-tcp-drain-timeout-evidence
+          path: "${{ runner.temp }}/ai-team-router-held-tcp-drain-timeout-live-smoke.json"
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload live Router replacement evidence
         if: always()
         uses: actions/upload-artifact@v4
