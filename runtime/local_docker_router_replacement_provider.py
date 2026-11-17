@@ -33,6 +33,7 @@ from runtime.haproxy_runtime_api import (
 from runtime.haproxy_runtime_readback import parse_get_map_value, parse_show_map_registry
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_routed_app import (
+    DockerRoutedAppEnsureResult,
     LocalDockerRoutedAppManager,
     build_routed_app_container_spec,
 )
@@ -248,10 +249,11 @@ class LocalDockerRouterReplacementProvider:
             ):
                 return result
             if result.target.runtime_id != expected_runtime_id:
-                return replace(
-                    result,
-                    status="mismatch",
+                return DockerRoutedAppEnsureResult(
+                    "mismatch",
+                    health_status=result.health_status,
                     detail="Candidate immutable runtime ID changed during health wait",
+                    health_detail=result.health_detail,
                 )
         return result
 
