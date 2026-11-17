@@ -53,3 +53,83 @@ def test_parse_get_map_value_accepts_exact_active_none_entry():
 def test_parse_get_map_value_fails_closed_on_ambiguous_or_wrong_selector(response):
     with pytest.raises(ValueError):
         parse_get_map_value(response, expected_key="active")
+
+
+from types import SimpleNamespace
+
+from scripts.local_docker_router_live_smoke import wait_for_runtime_api_show_info
+
+
+class SequenceRuntimeClient:
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = 0
+
+    def execute(self, command):
+        self.calls += 1
+        return self.results.pop(0)
+
+
+def test_runtime_api_readiness_retries_only_transient_socket_startup(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(
+        "scripts.local_docker_router_live_smoke.time.sleep",
+        lambda delay: sleeps.append(delay),
+    )
+    transient = SimpleNamespace(
+        status="failed",
+        detail='socat: connect("/run/haproxy/admin.sock"): No such file or directory',
+    )
+    ready = SimpleNamespace(status="succeeded", detail="")
+    client = SequenceRuntimeClient(transient, transient, ready)
+
+    result = wait_for_runtime_api_show_info(client, attempts=5, interval_seconds=0.1)
+
+    assert result.status == "succeeded"
+    assert client.calls == 3
+    assert sleeps == [0.1, 0.1]
+
+
+def test_runtime_api_readiness_does_not_retry_non_transient_failures(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(
+        "scripts.local_docker_router_live_smoke.time.sleep",
+        lambda delay: sleeps.append(delay),
+    )
+    denied = SimpleNamespace(status="failed", detail="permission denied")
+    client = SequenceRuntimeClient(denied)
+
+    result = wait_for_runtime_api_show_info(client)
+
+    assert result is denied
+    assert client.calls == 1
+    assert sleeps == []
+
+
+def test_runtime_api_readiness_has_a_bounded_retry_window(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(
+        "scripts.local_docker_router_live_smoke.time.sleep",
+        lambda delay: sleeps.append(delay),
+    )
+    transient = SimpleNamespace(status="failed", detail="Connection refused")
+    client = SequenceRuntimeClient(*([transient] * 3))
+
+    result = wait_for_runtime_api_show_info(
+        client, attempts=3, interval_seconds=0.2
+    )
+
+    assert result is transient
+    assert client.calls == 3
+    assert sleeps == [0.2, 0.2]
+
+
+@pytest.mark.parametrize(
+    "attempts,interval",
+    [(0, 0.1), (81, 0.1), (True, 0.1), (3, 0), (3, 1.1), (3, True)],
+)
+def test_runtime_api_readiness_rejects_invalid_bounds(attempts, interval):
+    with pytest.raises(ValueError):
+        wait_for_runtime_api_show_info(
+            SequenceRuntimeClient(), attempts=attempts, interval_seconds=interval
+        )

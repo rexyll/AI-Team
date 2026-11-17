@@ -14,6 +14,7 @@ import re
 import shutil
 import socket
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,46 @@ def parse_get_map_value(response: str, *, expected_key: str) -> str:
     if not value:
         raise ValueError("HAProxy get map omitted the selector value")
     return value
+
+
+def wait_for_runtime_api_show_info(
+    client: HAProxyRuntimeAPIClient,
+    *,
+    attempts: int = 40,
+    interval_seconds: float = 0.25,
+):
+    """Wait briefly for HAProxy's admin socket after container start.
+
+    Only transient missing/not-yet-listening Unix-socket errors are retried.
+    This is a read-only readiness probe; no Runtime API write is retried.
+    """
+    if not isinstance(attempts, int) or isinstance(attempts, bool) or not 1 <= attempts <= 80:
+        raise ValueError("attempts must be an integer in the range 1..80")
+    if (
+        not isinstance(interval_seconds, (int, float))
+        or isinstance(interval_seconds, bool)
+        or not 0 < interval_seconds <= 1
+    ):
+        raise ValueError("interval_seconds must be in the range (0, 1]")
+    retryable_markers = (
+        "no such file or directory",
+        "connection refused",
+        "container is restarting",
+        "oci runtime exec failed",
+    )
+    result = None
+    for attempt in range(attempts):
+        result = client.execute(show_info_command())
+        if result.status == "succeeded":
+            return result
+        detail = (result.detail or "").lower()
+        if result.status != "failed" or not any(
+            marker in detail for marker in retryable_markers
+        ):
+            return result
+        if attempt + 1 < attempts:
+            time.sleep(interval_seconds)
+    return result
 
 
 def _free_tcp_port() -> int:
@@ -349,7 +390,7 @@ def run_live_smoke() -> dict[str, Any]:
         router_owned = True
 
         client = HAProxyRuntimeAPIClient(provider, router_id)
-        info_result = client.execute(show_info_command())
+        info_result = wait_for_runtime_api_show_info(client)
         if info_result.status != "succeeded":
             evidence["diagnostics"] = {
                 "runtime_api_stdout": info_result.response[-1200:],

@@ -1,6 +1,7 @@
 # Local Docker 蓝绿流量路由设计（T21.6.3.5）
 
-> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 命令通道已通过 CI。scope network manager 已实现并通过 CI #604；Router image recipe 正在进行 pinned-build CI 验收；Router container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
+> **状态：架构设计已完成；Host-only contracts、配置生成器、Runtime API 的 Unix socket 通过有界只读就绪轮询确认；启动竞态不扩大写操作重试边界。
+Runtime API 命令通道已通过 CI。scope network manager 已实现并通过 CI #604；Router image recipe 正在进行 pinned-build CI 验收；Router container、真实 Runtime API read-back、流量切换和 daemon-backed E2E 仍未完成。不得据此声称 Local Docker 已支持安全替换或零停机回滚。**  
 > 日期：2026-11-15；范围：单机 Docker Engine、单个 project/environment scope。
 
 ## 1. 问题与目标
