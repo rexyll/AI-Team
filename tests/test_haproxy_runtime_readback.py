@@ -84,6 +84,19 @@ def test_unresolved_placeholder_never_verifies_as_a_routed_endpoint():
     )
     assert result.status == "mismatch"
     assert "address/port mismatch" in result.detail
+    assert "expected=172.18.0.2:18080" in result.detail
+    assert "observed=<unresolved>:1" in result.detail
+
+
+def test_readback_mismatch_reports_concrete_observed_endpoint():
+    result = verify_inactive_slot_readback(
+        expected(),
+        servers_state_response=state_response(state_row(address="172.18.0.3")),
+        stat_response=stat_response(("slot_b", 0, "UP")),
+    )
+    assert result.status == "mismatch"
+    assert "expected=172.18.0.2:18080" in result.detail
+    assert "observed=172.18.0.3:18080" in result.detail
 
 
 def test_parse_show_stat_servers_extracts_status_and_current_sessions():

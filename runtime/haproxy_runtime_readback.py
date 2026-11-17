@@ -333,9 +333,13 @@ def verify_inactive_slot_readback(
                 f"HAProxy read-back omitted backend/server {item.backend}/{item.server}",
             )
         if state.address is None or state.address != item.address or state.port != item.port:
+            observed_address = state.address if state.address is not None else "<unresolved>"
             return HAProxySlotReadbackResult(
                 "mismatch", tuple(observations),
-                f"HAProxy server address/port mismatch for {item.backend}/{item.server}",
+                "HAProxy server address/port mismatch for "
+                f"{item.backend}/{item.server}: "
+                f"expected={item.address}:{item.port}, "
+                f"observed={observed_address}:{state.port}",
             )
         observation = HAProxySlotServerObservation(
             item.backend, item.server, state.address, state.port,

@@ -1171,15 +1171,26 @@ class LocalDockerRouterSlotManager:
         # Writes are each sent at most once. Any ambiguous write response stops
         # the mutation sequence; read-back below may prove the resulting state.
         write_error = ""
+        write_diagnostics: list[str] = []
         for binding in router_spec.port_bindings:
             backend = f"be_p{binding.host_port}"
             address_result = client.execute(
                 set_server_address_command(backend, slot, target.address, binding.container_port)
             )
+            write_diagnostics.append(
+                f"set-address {backend}/{slot} status={address_result.status} "
+                f"response={(address_result.response.strip() or '<empty>')[-180:]!r} "
+                f"detail={address_result.detail[-180:]!r}"
+            )
             if address_result.status != "succeeded":
                 write_error = address_result.detail or f"set address failed for {backend}/{slot}"
                 break
             ready_result = client.execute(set_server_state_command(backend, slot, "ready"))
+            write_diagnostics.append(
+                f"set-state {backend}/{slot} status={ready_result.status} "
+                f"response={(ready_result.response.strip() or '<empty>')[-180:]!r} "
+                f"detail={ready_result.detail[-180:]!r}"
+            )
             if ready_result.status != "succeeded":
                 write_error = ready_result.detail or f"set ready failed for {backend}/{slot}"
                 break
@@ -1227,6 +1238,8 @@ class LocalDockerRouterSlotManager:
 
         if not readback_verified:
             detail = last_mismatch or write_error or "Inactive slot did not become healthy before the read-back deadline"
+            if write_diagnostics:
+                detail = f"{detail}; runtime_writes: {'; '.join(write_diagnostics)[:500]}"
             return self._invalid(
                 "mismatch", router_id, app_id, slot, detail,
                 active_before=active_before, observations=tuple(observations),
