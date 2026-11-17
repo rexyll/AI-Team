@@ -218,11 +218,16 @@ def parse_show_servers_state(response: str) -> tuple[HAProxyServerStateRow, ...]
         if key in seen:
             raise ValueError("show servers state contains a duplicate backend/server row")
         seen.add(key)
+        raw_address = values[positions["srv_addr"]]
+        raw_port = values[positions["srv_port"]]
         try:
-            address = str(ipaddress.ip_address(values[positions["srv_addr"]]))
+            address = str(ipaddress.ip_address(raw_address))
         except ValueError as exc:
-            raise ValueError("show servers state contains an invalid server address") from exc
-        port = _integer(values[positions["srv_port"]], "srv_port", 65535)
+            raise ValueError(
+                "show servers state contains an invalid server address "
+                f"(backend={backend}, server={server}, address={raw_address!r}, port={raw_port!r})"
+            ) from exc
+        port = _integer(raw_port, "srv_port", 65535)
         if port == 0:
             raise ValueError("show servers state server port must be non-zero")
         rows.append(HAProxyServerStateRow(
