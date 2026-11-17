@@ -107,21 +107,12 @@ def _register_existing(tmp_path, history, scope, bindings, *, active_slot=None):
     initial = store.persist(scope, bindings)
     assert initial.status == "persisted"
     state = initial.record
-    target = None
-    slots = ()
     if active_slot is not None:
         server_state = store.persist_servers_state(
             state, bindings, _server_state_snapshot_for_test(bindings)
         )
         assert server_state.status == "persisted"
         state = server_state.record
-        target = TrafficRouteTarget("release", "d" * 64, "172.18.0.9", bindings)
-        slots = ((active_slot, target),)
-        updated = store.persist_active_slot_map(
-            state, expected_active_slot=None, active_slot=active_slot
-        )
-        assert updated.status == "persisted"
-        state = updated.record
     network = _network(scope)
     spec = build_router_network_spec(scope)
     record = TrafficRouterRecord(
@@ -139,7 +130,12 @@ def _register_existing(tmp_path, history, scope, bindings, *, active_slot=None):
     )
     history.create_traffic_router(record, state)
     if active_slot is not None:
-        assert target is not None
+        target = TrafficRouteTarget("release", "d" * 64, "172.18.0.9", bindings)
+        slots = ((active_slot, target),)
+        switched = store.persist_active_slot_map(
+            state, expected_active_slot=None, active_slot=active_slot
+        )
+        assert switched.status == "persisted"
         updated_record = replace(
             record,
             active_slot=active_slot,
@@ -149,11 +145,12 @@ def _register_existing(tmp_path, history, scope, bindings, *, active_slot=None):
         )
         history.update_traffic_router(
             updated_record,
-            state,
+            switched.record,
             expected_generation="generation-0",
-            expected_state_map_sha256=initial.record.active_slot_map_sha256,
+            expected_state_map_sha256=state.active_slot_map_sha256,
         )
         record = updated_record
+        state = switched.record
     return record, state, network
 
 
