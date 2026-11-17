@@ -627,21 +627,24 @@ def run_live_smoke() -> dict[str, Any]:
         restart_marker = None
         restart_readback_error = ""
         last_marker_status = "not_attempted"
-        for attempt in range(30):
+        for attempt in range(20):
             try:
                 restart_selector = _runtime_selector(
                     provider, router_id, timeout=1.0
                 )
                 if restart_selector == "slot_b":
                     restart_marker = _probe_router_tcp_route(
-                        host_port, expected_marker=_MARKER_B
+                        host_port,
+                        expected_marker=_MARKER_B,
+                        attempts=1,
+                        interval_seconds=0,
                     )
                     last_marker_status = str(restart_marker.get("status", "unknown"))
                     if restart_marker.get("status") == "passed":
                         break
             except Exception as exc:
                 restart_readback_error = type(exc).__name__
-            if attempt < 29:
+            if attempt < 19:
                 time.sleep(0.5)
         if (
             restart_selector != "slot_b"
