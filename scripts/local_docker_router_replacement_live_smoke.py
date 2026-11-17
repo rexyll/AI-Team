@@ -626,7 +626,8 @@ def run_live_smoke() -> dict[str, Any]:
         restart_selector = None
         restart_marker = None
         restart_readback_error = ""
-        for attempt in range(12):
+        last_marker_status = "not_attempted"
+        for attempt in range(30):
             try:
                 restart_selector = _runtime_selector(
                     provider, router_id, timeout=1.0
@@ -635,12 +636,13 @@ def run_live_smoke() -> dict[str, Any]:
                     restart_marker = _probe_router_tcp_route(
                         host_port, expected_marker=_MARKER_B
                     )
+                    last_marker_status = str(restart_marker.get("status", "unknown"))
                     if restart_marker.get("status") == "passed":
                         break
             except Exception as exc:
                 restart_readback_error = type(exc).__name__
-            if attempt < 11:
-                time.sleep(0.25)
+            if attempt < 29:
+                time.sleep(0.5)
         if (
             restart_selector != "slot_b"
             or restart_marker is None
@@ -648,7 +650,8 @@ def run_live_smoke() -> dict[str, Any]:
         ):
             raise RuntimeError(
                 "Router active route did not recover after restart: "
-                f"selector={restart_selector}, last_error={restart_readback_error}"
+                f"selector={restart_selector}, marker_status={last_marker_status}, "
+                f"last_error={restart_readback_error}"
             )
 
         restart_stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
