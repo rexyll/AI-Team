@@ -163,7 +163,7 @@ def test_client_reports_subprocess_timeout_as_unavailable_without_retry():
 
         def execute_input(self, args, *, input_text, cwd, timeout):
             self.calls.append((list(args), input_text, cwd, timeout))
-            raise subprocess.TimeoutExpired(args=list(args), timeout=timeout)
+            raise subprocess.TimeoutExpired(list(args), timeout)
 
     runner = TimedOutInputRunner()
     result = HAProxyRuntimeAPIClient(
