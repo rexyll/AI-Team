@@ -147,10 +147,7 @@ def test_host_runtime_inspects_recorded_runtime_by_immutable_id_without_route_cl
             self.calls.append((list(args), cwd, timeout))
             return DockerCommandResult(
                 0,
-                json.dumps({
-                    "Id": "a" * 64,
-                    "State": {"Status": "running", "Health": {"Status": "healthy"}},
-                }),
+                "a" * 64 + "|running|healthy",
                 "",
             )
 
@@ -170,7 +167,7 @@ def test_host_runtime_inspects_recorded_runtime_by_immutable_id_without_route_cl
     assert observation["automatic_recovery_allowed"] is False
     assert report["route_readback_available"] is False
     assert report["automatic_recovery_allowed"] is False
-    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", "a" * 64]
+    assert runner.calls[0][0] == ["inspect", "--format", "{{.Id}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", "a" * 64]
 
 
 def test_host_runtime_reports_daemon_unavailable_without_authorizing_recovery(tmp_path):
@@ -220,10 +217,7 @@ def test_host_runtime_inspects_journal_candidate_id_when_candidate_record_is_mis
             runtime_id = args[-1]
             return DockerCommandResult(
                 0,
-                json.dumps({
-                    "Id": runtime_id,
-                    "State": {"Status": "running"},
-                }),
+                runtime_id + "|running|none",
                 "",
             )
 
