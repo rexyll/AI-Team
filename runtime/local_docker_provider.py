@@ -527,7 +527,11 @@ class LocalDockerProvider:
             )
 
         expected_id = runtime_id
-        result, error = self._execute(["inspect", "--format", "{{json .}}", expected_id])
+        inspect_format = (
+            "{{.Id}}\\n{{.State.Status}}\\n"
+            "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
+        )
+        result, error = self._execute(["inspect", "--format", inspect_format, expected_id])
         if error:
             lowered = error.lower()
             if "no such container" in lowered or "no such object" in lowered:
@@ -580,24 +584,8 @@ class LocalDockerProvider:
                 detail=output or "Docker inspect failed",
             )
 
-        parse_detail = ""
-        try:
-            inspected = json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError) as exc:
-            inspected = None
-            parse_detail = f"JSON decode {type(exc).__name__}"
-            if isinstance(exc, json.JSONDecodeError):
-                parse_detail += f" at character {exc.pos}: {exc.msg}"
-        if not isinstance(inspected, dict):
-            shape = type(inspected).__name__ if inspected is not None else "invalid JSON"
-            detail = (
-                "Docker returned malformed container inspection data "
-                f"(exit={result.returncode}, shape={shape}, "
-                f"stdout_chars={len(result.stdout)}, stderr_chars={len(result.stderr)}"
-            )
-            if parse_detail:
-                detail += f", {parse_detail}"
-            detail += ")"
+        fields = result.stdout.strip().splitlines()
+        if len(fields) != 3:
             return DeploymentRuntimeInspection(
                 provider=self.name,
                 deployment_id=deployment_id,
@@ -609,10 +597,14 @@ class LocalDockerProvider:
                 health_status="unknown",
                 checked_at=checked_at,
                 probe=probe,
-                detail=detail,
+                detail=(
+                    "Docker returned malformed bounded container inspection data "
+                    f"(exit={result.returncode}, fields={len(fields)}, "
+                    f"stdout_chars={len(result.stdout)}, stderr_chars={len(result.stderr)})"
+                ),
             )
 
-        observed_id = inspected.get("Id")
+        observed_id, raw_state, raw_health = fields
         if not isinstance(observed_id, str) or not _CONTAINER_ID.fullmatch(observed_id):
             return DeploymentRuntimeInspection(
                 provider=self.name,
@@ -642,26 +634,19 @@ class LocalDockerProvider:
                 detail="Docker inspect returned a different immutable container ID",
             )
 
-        state = inspected.get("State")
         runtime_state = "unknown"
         health_status = "unknown"
-        if isinstance(state, dict):
-            raw_state = state.get("Status")
-            if isinstance(raw_state, str) and raw_state in {
-                "created", "running", "paused", "restarting",
-                "removing", "exited", "dead",
-            }:
-                runtime_state = raw_state
-                if runtime_state != "running":
-                    health_status = "unhealthy"
-                else:
-                    health = state.get("Health")
-                    if isinstance(health, dict):
-                        docker_health = health.get("Status")
-                        if docker_health == "healthy":
-                            health_status = "healthy"
-                        elif docker_health == "unhealthy":
-                            health_status = "unhealthy"
+        if raw_state in {
+            "created", "running", "paused", "restarting",
+            "removing", "exited", "dead",
+        }:
+            runtime_state = raw_state
+            if runtime_state != "running":
+                health_status = "unhealthy"
+            elif raw_health == "healthy":
+                health_status = "healthy"
+            elif raw_health == "unhealthy":
+                health_status = "unhealthy"
                         else:
                             health_status = "unknown"
 

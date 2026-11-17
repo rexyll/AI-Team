@@ -303,7 +303,7 @@ def test_deploy_rejects_container_id_mismatch():
     ({"Status": "exited"}, "unhealthy"),
 ])
 def test_health_check_never_assumes_missing_health_is_healthy(state, expected):
-    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64, "State": state})))
+    runner = FakeRunner(ok(inspect_output("f" * 64, state.get("Status", "unexpected"), state.get("Health", {}).get("Status", "none"))))
     result = LocalDockerProvider(runner).health_check(record())
     assert result.status == expected
 
@@ -338,12 +338,13 @@ def test_rollback_is_explicitly_unsupported_until_host_history_exists():
     assert result.status == "unsupported"
 
 
+def inspect_output(runtime_id, state, health="none"):
+    return f"{runtime_id}\\n{state}\\n{health}"
+
+
 def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
     expected_id = "f" * 64
-    runner = FakeRunner(ok(json.dumps({
-        "Id": expected_id,
-        "State": {"Status": "running", "Health": {"Status": "healthy"}},
-    })))
+    runner = FakeRunner(ok(inspect_output(expected_id, "running", "healthy")))
 
     result = LocalDockerProvider(runner).inspect_runtime(record())
 
@@ -353,14 +354,15 @@ def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
     assert result.observed_runtime_id == expected_id
     assert result.runtime_state == "running"
     assert result.health_status == "healthy"
-    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", expected_id]
+    assert runner.calls[0][0] == [
+        "inspect", "--format",
+        "{{.Id}}\\n{{.State.Status}}\\n{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        expected_id,
+    ]
 
 
 def test_inspect_runtime_reports_identity_mismatch_without_trusting_name():
-    runner = FakeRunner(ok(json.dumps({
-        "Id": "e" * 64,
-        "State": {"Status": "running", "Health": {"Status": "healthy"}},
-    })))
+    runner = FakeRunner(ok(inspect_output("e" * 64, "running", "healthy")))
 
     result = LocalDockerProvider(runner).inspect_runtime(record())
 
@@ -383,7 +385,7 @@ def test_inspect_runtime_reports_identity_mismatch_without_trusting_name():
     ],
 )
 def test_inspect_runtime_keeps_lifecycle_and_health_separate(state, expected_health):
-    runner = FakeRunner(ok(json.dumps({"Id": "f" * 64, "State": state})))
+    runner = FakeRunner(ok(inspect_output("f" * 64, state.get("Status", "unexpected"), state.get("Health", {}).get("Status", "none"))))
 
     result = LocalDockerProvider(runner).inspect_runtime(record())
 
@@ -394,10 +396,7 @@ def test_inspect_runtime_keeps_lifecycle_and_health_separate(state, expected_hea
 
 def test_inspect_runtime_identity_supports_journal_id_without_history_record():
     runtime_id = "f" * 64
-    runner = FakeRunner(ok(json.dumps({
-        "Id": runtime_id,
-        "State": {"Status": "running", "Health": {"Status": "starting"}},
-    })))
+    runner = FakeRunner(ok(inspect_output(runtime_id, "running", "starting")))
 
     result = LocalDockerProvider(runner).inspect_runtime_identity(
         "journal-candidate", runtime_id
@@ -407,7 +406,8 @@ def test_inspect_runtime_identity_supports_journal_id_without_history_record():
     assert result.deployment_id == "journal-candidate"
     assert result.expected_runtime_id == runtime_id
     assert result.health_status == "unknown"
-    assert runner.calls[0][0] == ["inspect", "--format", "{{json .}}", runtime_id]
+    assert runner.calls[0][0][-1] == runtime_id
+    assert "{{json .}}" not in runner.calls[0][0]
 
 
 def test_inspect_runtime_identity_rejects_invalid_id_without_docker_call():
@@ -532,10 +532,7 @@ def test_runtime_inspection_contract_rejects_false_identity_claims():
 
 
 def test_inspect_runtime_treats_unclassified_state_payload_as_unknown():
-    runner = FakeRunner(ok(json.dumps({
-        "Id": "f" * 64,
-        "State": {"Status": ["unexpected"]},
-    })))
+    runner = FakeRunner(ok(inspect_output("f" * 64, "unexpected", "none")))
 
     result = LocalDockerProvider(runner).inspect_runtime(record())
 
