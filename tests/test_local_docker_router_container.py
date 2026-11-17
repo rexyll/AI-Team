@@ -150,7 +150,7 @@ def test_valid_docker_inspect_readback_verifies_container_identity_and_ports(tmp
     (lambda p: p["HostConfig"].update({"NetworkMode": "bridge"}), "security"),
     (lambda p: p["NetworkSettings"]["Networks"][next(iter(p["NetworkSettings"]["Networks"]))].update({"NetworkID": "d" * 64}), "network immutable ID"),
     (lambda p: p["HostConfig"].update({"PortBindings": {}}), "TCP port bindings"),
-    (lambda p: p["Mounts"][0].update({"RW": True}), "read-only bind mounts"),
+    (lambda p: p["Mounts"][0].update({"RW": True}), "read-only bind mount"),
 ])
 def test_inspect_mismatch_fails_closed(tmp_path, mutator, match):
     spec = build_router_container_spec(*verified_inputs(tmp_path))

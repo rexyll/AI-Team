@@ -7,6 +7,9 @@ from runtime.deployment_traffic_router import TrafficPortBinding
 from runtime.local_docker_router_config import (
     HAPROXY_ACTIVE_SLOT_MAP,
     HAPROXY_ADMIN_SOCKET,
+    HAPROXY_CONFIG_FILE,
+    HAPROXY_STATE_DIRECTORY,
+    HAPROXY_SERVERS_STATE_FILE,
     render_active_slot_map,
     render_haproxy_router_config,
 )
