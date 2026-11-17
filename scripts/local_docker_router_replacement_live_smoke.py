@@ -632,6 +632,7 @@ def run_live_smoke() -> dict[str, Any]:
         last_backend_state = "not_read"
         restart_old_stat = None
         restart_new_stat = None
+        restart_new_state = None
         restart_client = HAProxyRuntimeAPIClient(provider, router_id, timeout=1.0)
         for attempt in range(20):
             try:
