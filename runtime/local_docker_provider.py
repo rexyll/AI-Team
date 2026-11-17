@@ -30,8 +30,9 @@ _PORT_MAPPING = re.compile(r"^(\d{1,5}):(\d{1,5})(?:/(tcp|udp))?$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _CONTAINER_INSPECT_FORMAT = (
+    "{{$health := index .State \"Health\"}}"
     "{{.Id}}|{{.State.Status}}|"
-    "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
+    "{{if $health}}{{$health.Status}}{{else}}none{{end}}"
 )
 _CONTAINER_STATES = {
     "created", "running", "paused", "restarting", "removing", "exited", "dead",
@@ -540,10 +541,7 @@ class LocalDockerProvider:
             )
 
         expected_id = runtime_id
-        inspect_format = (
-            "{{.Id}}|{{.State.Status}}|"
-            "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
-        )
+        inspect_format = _CONTAINER_INSPECT_FORMAT
         result, error = self._execute(["inspect", "--format", inspect_format, expected_id])
         if error:
             lowered = error.lower()
