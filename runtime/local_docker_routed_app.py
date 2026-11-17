@@ -42,7 +42,7 @@ ROUTED_APP_CONTAINER_INSPECT_FORMAT = (
     r'\"SecurityOpt\":%s},\"Mounts\":%s,\"NetworkSettings\":{\"Networks\":%s,'
     r'\"Ports\":%s}}" .Id .Name .Config.Image (json .Config.Labels) '
     r'(json .Config.ExposedPorts) (json (index .Config "Volumes")) .State.Status '
-    r'.State.StartedAt (json (index .State "Health")) .HostConfig.NetworkMode '
+    r'.State.StartedAt .HostConfig.NetworkMode '
     r'.HostConfig.Privileged .HostConfig.PublishAllPorts (json .HostConfig.PortBindings) '
     r'(json .HostConfig.CapDrop) (json .HostConfig.CapAdd) '
     r'(json .HostConfig.SecurityOpt) (json .Mounts) '
