@@ -237,6 +237,16 @@ def _diagnostic_command(
     }
 
 
+_ROUTER_CONTRACT_DIAGNOSTIC_FORMAT = (
+    r'{{printf "{\"ConfigUser\":%q,\"ReadonlyRootfs\":%t,\"Privileged\":%t,'
+    r'\"CapDrop\":%s,\"CapAdd\":%s,\"SecurityOpt\":%s,\"NetworkMode\":%q,'
+    r'\"RestartPolicy\":%q,\"Tmpfs\":%s}" .Config.User .HostConfig.ReadonlyRootfs '
+    r'.HostConfig.Privileged (json .HostConfig.CapDrop) (json .HostConfig.CapAdd) '
+    r'(json .HostConfig.SecurityOpt) .HostConfig.NetworkMode '
+    r'.HostConfig.RestartPolicy.Name (json .HostConfig.Tmpfs)}}'
+)
+
+
 def run_live_smoke() -> dict[str, Any]:
     provider = LocalDockerProvider()
     scope = TrafficRouterScope(
@@ -323,6 +333,12 @@ def run_live_smoke() -> dict[str, Any]:
             "detail": ensured.detail,
         }
         if ensured.status != "created" or ensured.container_id is None:
+            evidence["diagnostics"] = {
+                "router_container_inspect": _diagnostic_command(
+                    provider,
+                    ["container", "inspect", "--format", _ROUTER_CONTRACT_DIAGNOSTIC_FORMAT, spec.container_name],
+                )
+            }
             if ensured.container_id is not None:
                 router_id = ensured.container_id
             raise RuntimeError(
