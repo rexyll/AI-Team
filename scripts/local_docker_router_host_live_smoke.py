@@ -13,7 +13,6 @@ import os
 import shutil
 import socket
 import tempfile
-import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,7 +22,6 @@ from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterS
 from runtime.haproxy_runtime_api import (
     HAProxyRuntimeAPIClient,
     get_map_command,
-    show_info_command,
     show_maps_command,
 )
 from runtime.haproxy_runtime_readback import parse_get_map_value, parse_show_map_registry
