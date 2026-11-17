@@ -105,15 +105,47 @@ class LocalDockerRouterReplacementProvider:
             or record.environment != self.scope.environment
             or record.container_id is None
         ):
-            return HealthCheckResult("unavailable", _now(), "docker immutable inspect", "Deployment record has no routed app identity")
+            return HealthCheckResult("unavailable", _now(), "routed app identity", "Deployment record has no routed app identity")
         inspection = self.provider.inspect_runtime(record)
-        if inspection.status != "verified" or inspection.observed_runtime_id != record.container_id:
+        if (
+            inspection.status != "verified"
+            or inspection.observed_runtime_id != record.container_id
+            or inspection.runtime_state != "running"
+        ):
             return HealthCheckResult(
                 "unavailable", _now(), "docker immutable inspect",
-                inspection.detail or "Routed app immutable identity could not be verified",
+                inspection.detail or "Routed app immutable identity is not a running container",
+            )
+        host = self._host()
+        if host.status != "ready" or host.network is None:
+            return HealthCheckResult(
+                "unavailable", _now(), "Router Host identity",
+                host.detail or "Router Host scope is not ready for routed app health verification",
+            )
+        try:
+            app_spec = build_routed_app_container_spec(
+                host.network, record.artifact, record.deployment_id, self.port_bindings
+            )
+        except (TypeError, ValueError) as exc:
+            return HealthCheckResult(
+                "unavailable", _now(), "routed app spec",
+                f"Routed app immutable spec is invalid: {type(exc).__name__}",
+            )
+        status, verification, detail = self.app_manager._inspect(app_spec)
+        if (
+            status != "verified"
+            or verification is None
+            or not verification.route_eligible
+            or verification.target is None
+            or verification.target.runtime_id != record.container_id
+        ):
+            return HealthCheckResult(
+                "unhealthy", _now(), "routed app identity/network/health read-back",
+                detail or "Routed app network, endpoint, immutable ID or fresh health did not verify",
             )
         return HealthCheckResult(
-            inspection.health_status, inspection.checked_at, inspection.probe, inspection.detail
+            "healthy", inspection.checked_at,
+            "docker immutable inspect + routed app network/health read-back",
         )
 
     def immutable_runtime_id(self, record: DeploymentRecord) -> str | None:
