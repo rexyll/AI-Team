@@ -687,6 +687,7 @@ def run_live_smoke() -> dict[str, Any]:
                 "message": replacement.message,
             }
             evidence["status"] = "fault_injection_verified"
+            return evidence
 
         elif fault_mode == "applied_timeout":
             if (
