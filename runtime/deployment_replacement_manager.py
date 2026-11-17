@@ -678,9 +678,15 @@ class HostDeploymentReplacementManager:
                 or retired.record.environment != previous.environment
                 or retired.record.artifact.digest != previous.artifact.digest
             ):
+                retirement_detail = (
+                    retired.message
+                    if isinstance(retired, DeploymentOperationResult)
+                    else "provider returned a malformed retirement result"
+                )
                 return self._needs_reconciliation(
                     journal,
-                    "previous retirement lacks a verified stopped deployment record",
+                    "previous retirement lacks a verified stopped deployment record: "
+                    + retirement_detail,
                 )
             try:
                 retired_runtime_id = self.provider.immutable_runtime_id(retired.record)
@@ -777,8 +783,14 @@ class HostDeploymentReplacementManager:
             or aborted.record.environment != candidate.environment
             or aborted.record.artifact.digest != candidate.artifact.digest
         ):
+            abort_detail = (
+                aborted.message
+                if isinstance(aborted, DeploymentOperationResult)
+                else "provider returned a malformed abort result"
+            )
             return self._needs_reconciliation(
-                journal, f"{reason}; abort did not provide an inspected stopped candidate record"
+                journal,
+                f"{reason}; abort did not provide an inspected stopped candidate record: {abort_detail}",
             )
         try:
             stopped_runtime_id = self.provider.immutable_runtime_id(aborted.record)
