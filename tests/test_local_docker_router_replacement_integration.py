@@ -102,9 +102,10 @@ class FakeDocker:
 
 
 class FakeAppManager:
-    def __init__(self, provider, candidate_target):
+    def __init__(self, provider, targets):
         self.provider = provider
-        self.candidate_target = candidate_target
+        self.targets = targets
+        self.candidate_target = targets["candidate"]
 
     def ensure_app(self, spec, artifact):
         return SimpleNamespace(
@@ -117,11 +118,12 @@ class FakeAppManager:
         )
 
     def _inspect(self, spec):
+        target = self.targets[spec.deployment_id]
         return (
             "verified",
             SimpleNamespace(
                 status="verified",
-                target=self.candidate_target,
+                target=target,
                 route_eligible=True,
                 health_status="healthy",
                 health_detail="",
@@ -274,7 +276,9 @@ def _setup(tmp_path, monkeypatch):
     app_target = TrafficRouteTarget(
         "candidate", CANDIDATE_ID, "172.18.0.3", BINDINGS
     )
-    app_manager = FakeAppManager(docker, app_target)
+    app_manager = FakeAppManager(
+        docker, {"previous": previous_target, "candidate": app_target}
+    )
     slot_manager = FakeSlotManager(docker, state_store)
     host = FakeRouterHost(
         docker, history, network, image, initial_spec, tmp_path / "router-state"
