@@ -34,6 +34,11 @@ def _target(runtime_id="a" * 64, address="172.20.0.4", deployment_id="candidate"
 def _router(active_slot="slot_a", active_target=None):
     if active_target is None and active_slot is not None:
         active_target = _target("b" * 64, "172.20.0.3", "previous")
+    slot_targets = (
+        ((active_slot, active_target),)
+        if active_slot is not None and active_target is not None
+        else ()
+    )
     return TrafficRouterRecord(
         scope=_scope(),
         router_deployment_id="router-demo-staging",
@@ -44,6 +49,7 @@ def _router(active_slot="slot_a", active_target=None):
         active_target=active_target,
         route_generation="generation-001",
         created_at="2026-11-15T16:00:00Z",
+        slot_targets=slot_targets,
     )
 
 

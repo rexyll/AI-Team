@@ -683,14 +683,14 @@ def test_traffic_router_registry_rejects_active_target_conflicting_with_slot_inv
     target_b = TrafficRouteTarget(
         "release-b", "e" * 64, "172.18.0.11", initial.port_bindings
     )
-    conflict = replace(
-        initial,
-        active_slot="slot_b",
-        active_target=target_b,
-        slot_targets=(("slot_b", target_a),),
-        route_generation="gen-1",
-    )
     with pytest.raises(ValueError, match="active_target must match"):
+        conflict = replace(
+            initial,
+            active_slot="slot_b",
+            active_target=target_b,
+            slot_targets=(("slot_b", target_a),),
+            route_generation="gen-1",
+        )
         history.create_traffic_router(conflict, state_record)
 
 
