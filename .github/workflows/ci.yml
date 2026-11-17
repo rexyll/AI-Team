@@ -273,6 +273,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Live previous-slot drain timeout with nonzero HAProxy scur
+        env:
+          AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE: nonzero_scur
+          AI_TEAM_ROUTER_REPLACEMENT_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-router-nonzero-scur-live-smoke.json
+        run: python -m scripts.local_docker_router_replacement_live_smoke
+
+      - name: Upload Router nonzero-scur drain-timeout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-nonzero-scur-drain-timeout-evidence
+          path: "${{ runner.temp }}/ai-team-router-nonzero-scur-live-smoke.json"
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload live Router replacement evidence
         if: always()
         uses: actions/upload-artifact@v4

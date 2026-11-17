@@ -11,6 +11,8 @@ inspection. Cleanup runs only after every replacement postcondition is proven.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import shutil
@@ -234,9 +236,46 @@ def _runtime_selector(
     return parse_get_map_value(value.response, expected_key="active")
 
 
+def _override_show_stat_scur(
+    response: str, *, backend: str, server: str, sessions: int
+) -> tuple[str, str]:
+    """Change only one bounded HAProxy CSV row, preserving its reported status."""
+    if not isinstance(response, str) or not response.strip():
+        raise ValueError("cannot inject scur into an empty HAProxy show stat response")
+    try:
+        records = list(csv.reader(io.StringIO(response, newline=""), strict=True))
+    except csv.Error as exc:
+        raise ValueError("cannot inject scur into malformed HAProxy CSV") from exc
+    if not records:
+        raise ValueError("cannot inject scur without a HAProxy CSV header")
+    header = [cell.strip() for cell in records[0]]
+    if header:
+        header[0] = header[0].lstrip("#").strip()
+    positions = {name: index for index, name in enumerate(header)}
+    if not {"pxname", "svname", "scur", "status"}.issubset(positions):
+        raise ValueError("HAProxy show stat header omitted required injection columns")
+    changed = 0
+    observed_status = ""
+    for row in records[1:]:
+        if len(row) != len(header):
+            continue
+        if row[positions["pxname"]].strip() == backend and row[positions["svname"]].strip() == server:
+            row[positions["scur"]] = str(sessions)
+            observed_status = row[positions["status"]].strip()
+            changed += 1
+    if changed != 1:
+        raise ValueError(
+            f"expected exactly one HAProxy row for {backend}/{server}, found {changed}"
+        )
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerows(records)
+    return output.getvalue(), observed_status
+
+
 def run_live_smoke() -> dict[str, Any]:
     fault_mode = os.environ.get("AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE", "").strip()
-    if fault_mode not in {"", "applied_timeout", "previous_identity_mismatch"}:
+    if fault_mode not in {"", "applied_timeout", "previous_identity_mismatch", "nonzero_scur"}:
         raise ValueError("unsupported Router replacement fault injection mode")
     fault_state: dict[str, Any] = {
         "mode": fault_mode or "none",
@@ -247,6 +286,9 @@ def run_live_smoke() -> dict[str, Any]:
         "identity_mismatch_reads": 0,
         "mismatched_observed_runtime_id": None,
         "previous_stop_attempts": 0,
+        "scur_reads": 0,
+        "last_injected_scur": None,
+        "last_injected_status": None,
     }
     provider = LocalDockerProvider()
     project = "router-replacement-" + uuid.uuid4().hex[:16]
@@ -488,7 +530,67 @@ def run_live_smoke() -> dict[str, Any]:
         replacement_manager = HostDeploymentReplacementManager(
             replacement_provider, history
         )
-        if fault_mode == "previous_identity_mismatch":
+        if fault_mode == "nonzero_scur":
+            real_client_type = HAProxyRuntimeAPIClient
+            real_execute = provider._execute
+            real_retire_previous = replacement_provider.retire_previous
+
+            class NonzeroScurRuntimeAPIClient:
+                """Keep old backend read-back at DRAIN/scur=1 until the deadline."""
+
+                def __init__(self, *args, **kwargs):
+                    self._delegate = real_client_type(*args, **kwargs)
+
+                def execute(self, command):
+                    result = self._delegate.execute(command)
+                    if (
+                        fault_state["armed"]
+                        and command.operation == "show_stat_servers"
+                        and result.status == "succeeded"
+                    ):
+                        backend = command.line.split(" ")[2]
+                        response, status = _override_show_stat_scur(
+                            result.response,
+                            backend=backend,
+                            server="slot_a",
+                            sessions=1,
+                        )
+                        parsed = parse_show_stat_servers(response)
+                        row = next(
+                            item for item in parsed
+                            if item.backend == backend and item.server == "slot_a"
+                        )
+                        fault_state["scur_reads"] += 1
+                        fault_state["last_injected_scur"] = row.current_sessions
+                        fault_state["last_injected_status"] = row.status
+                        return replace(result, response=response)
+                    return result
+
+            def count_previous_stop_attempts(argv, *args, **kwargs):
+                if argv and argv[0] == "stop" and argv[-1] == app_a_id:
+                    fault_state["previous_stop_attempts"] += 1
+                return real_execute(argv, *args, **kwargs)
+
+            def retire_with_nonzero_scur(previous_record, operation_id):
+                fault_state["armed"] = True
+                try:
+                    return real_retire_previous(previous_record, operation_id)
+                finally:
+                    fault_state["armed"] = False
+
+            provider._execute = count_previous_stop_attempts
+            replacement_provider.retire_previous = retire_with_nonzero_scur
+            try:
+                with patch(
+                    "runtime.local_docker_router_slot_manager.HAProxyRuntimeAPIClient",
+                    NonzeroScurRuntimeAPIClient,
+                ):
+                    replacement = replacement_manager.replace(request, candidate)
+            finally:
+                provider._execute = real_execute
+                replacement_provider.retire_previous = real_retire_previous
+
+        elif fault_mode == "previous_identity_mismatch":
             real_inspect_runtime = provider.inspect_runtime
             real_execute = provider._execute
             real_retire_previous = replacement_provider.retire_previous
@@ -577,7 +679,127 @@ def run_live_smoke() -> dict[str, Any]:
         else:
             replacement = replacement_manager.replace(request, candidate)
 
-        if fault_mode == "previous_identity_mismatch":
+        if fault_mode == "nonzero_scur":
+            previous_record = history.get(previous_id)
+            candidate_record = history.get(candidate_id)
+            journal = (
+                history.get_replacement(replacement.operation_id)
+                if replacement.operation_id else None
+            )
+            router_record = history.get_traffic_router(scope)
+            host_state_readback = router_host.ensure_router(scope, bindings)
+            active_deployment = history.active_deployment(
+                provider="docker-local",
+                project=scope.project,
+                environment=scope.environment,
+            )
+            previous_inspection = (
+                provider.inspect_runtime(previous_record)
+                if previous_record is not None else None
+            )
+            candidate_inspection = (
+                provider.inspect_runtime(candidate_record)
+                if candidate_record is not None else None
+            )
+            selector = _runtime_selector(provider, router_id)
+            effective_target = replacement_provider.read_traffic_target(request)
+            stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
+                show_stat_servers_command(f"be_p{host_port}")
+            )
+            if stat_result.status != "succeeded":
+                raise RuntimeError(
+                    f"nonzero-scur post-fault stat read failed: {stat_result.detail}"
+                )
+            stat_rows = parse_show_stat_servers(stat_result.response)
+            old_stat = next((item for item in stat_rows if item.server == "slot_a"), None)
+            new_stat = next((item for item in stat_rows if item.server == "slot_b"), None)
+            marker = _probe_router_tcp_route(host_port, expected_marker=_MARKER_B)
+            verified = (
+                replacement.status == "needs_reconciliation"
+                and replacement.phase == "needs_reconciliation"
+                and journal is not None
+                and journal.phase == "needs_reconciliation"
+                and fault_state["armed"] is False
+                and fault_state["scur_reads"] >= 2
+                and fault_state["last_injected_scur"] == 1
+                and fault_state["last_injected_status"] == "DRAIN"
+                and fault_state["previous_stop_attempts"] == 0
+                and previous_record is not None
+                and candidate_record is not None
+                and previous_record.status == "running"
+                and candidate_record.status == "running"
+                and previous_inspection is not None
+                and previous_inspection.status == "verified"
+                and previous_inspection.observed_runtime_id == app_a_id
+                and previous_inspection.runtime_state == "running"
+                and candidate_inspection is not None
+                and candidate_inspection.status == "verified"
+                and candidate_inspection.observed_runtime_id == candidate_record.container_id
+                and candidate_inspection.runtime_state == "running"
+                and active_deployment is not None
+                and active_deployment.deployment_id == candidate_id
+                and router_record is not None
+                and router_record.active_slot == "slot_b"
+                and router_record.active_target is not None
+                and router_record.active_target.runtime_id == candidate_record.container_id
+                and tuple(slot for slot, _ in router_record.slot_targets) == ("slot_a", "slot_b")
+                and selector == "slot_b"
+                and effective_target == candidate_record.container_id
+                and host_state_readback.status == "ready"
+                and host_state_readback.router_record == router_record
+                and old_stat is not None
+                and old_stat.status == "DRAIN"
+                and new_stat is not None
+                and new_stat.status == "UP"
+                and marker.get("status") == "passed"
+            )
+            if not verified:
+                raise RuntimeError(
+                    "nonzero-scur drain fault did not fail closed as expected: "
+                    f"status={replacement.status}/{replacement.phase}, "
+                    f"selector={selector}, target={effective_target}, "
+                    f"scur_reads={fault_state['scur_reads']}, "
+                    f"last_scur={fault_state['last_injected_scur']}, "
+                    f"last_status={fault_state['last_injected_status']}, "
+                    f"stop_attempts={fault_state['previous_stop_attempts']}, "
+                    f"old_backend={old_stat.status if old_stat else 'missing'}, "
+                    f"host_readback={host_state_readback.status}, "
+                    f"marker={marker.get('status')}"
+                )
+            evidence["checks"]["nonzero_scur_drain_timeout"] = {
+                "status": "verified",
+                "fault_mode": "nonzero_scur",
+                "fault_point": "HAProxy show stat read-back during previous slot drain",
+                "injected_previous_backend_status": fault_state["last_injected_status"],
+                "injected_previous_backend_scur": fault_state["last_injected_scur"],
+                "injected_scur_readbacks": fault_state["scur_reads"],
+                "previous_stop_attempts": fault_state["previous_stop_attempts"],
+                "expected_behavior": "needs_reconciliation; do not set MAINT or stop previous; retain both runtimes",
+                "observed_behavior": "needs_reconciliation; previous remains running/DRAIN; candidate remains active",
+                "active_selector": selector,
+                "effective_runtime_id": effective_target,
+                "previous_backend_status_after_injection": old_stat.status,
+                "previous_backend_sessions_after_injection": old_stat.current_sessions,
+                "candidate_backend_status": new_stat.status,
+                "host_registry_readback": {
+                    "status": host_state_readback.status,
+                    "server_state_sha256": host_state_readback.state_record.server_state_sha256,
+                    "route_generation": host_state_readback.router_record.route_generation,
+                },
+                "tcp_marker": marker,
+                "journal_phase": journal.phase,
+                "active_deployment_id": active_deployment.deployment_id,
+            }
+            evidence["checks"]["replacement_coordinator"] = {
+                "status": replacement.status,
+                "phase": replacement.phase,
+                "operation_id": replacement.operation_id,
+                "message": replacement.message,
+            }
+            evidence["status"] = "fault_injection_verified"
+            return evidence
+
+        elif fault_mode == "previous_identity_mismatch":
             previous_record = history.get(previous_id)
             candidate_record = history.get(candidate_id)
             journal = (
@@ -1139,7 +1361,12 @@ def main() -> int:
         and evidence.get("checks", {}).get("immutable_identity_mismatch", {}).get("status") == "verified"
         and evidence.get("cleanup", {}).get("status") == "preserved"
     )
-    return 0 if normal_pass or identity_mismatch_pass else 1
+    nonzero_scur_pass = (
+        evidence.get("status") == "fault_injection_verified"
+        and evidence.get("checks", {}).get("nonzero_scur_drain_timeout", {}).get("status") == "verified"
+        and evidence.get("cleanup", {}).get("status") == "preserved"
+    )
+    return 0 if normal_pass or identity_mismatch_pass or nonzero_scur_pass else 1
 
 
 if __name__ == "__main__":

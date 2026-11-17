@@ -149,12 +149,14 @@ class FakeSlotManager:
     def __init__(
         self, provider, state_store, runtime_state, *,
         drain_status="verified", identity_mismatch_on_drain=False,
+        drain_remaining_connections=0,
     ):
         self.provider = provider
         self.state_store = state_store
         self.runtime_state = runtime_state
         self.drain_status = drain_status
         self.identity_mismatch_on_drain = identity_mismatch_on_drain
+        self.drain_remaining_connections = drain_remaining_connections
         self.last_drained_state_record = None
         self.calls = []
 
@@ -178,7 +180,11 @@ class FakeSlotManager:
         if self.drain_status != "verified":
             return SimpleNamespace(
                 status=self.drain_status, state_record=None,
-                detail="injected connection drain timeout",
+                remaining_connections=self.drain_remaining_connections,
+                detail=(
+                    "injected connection drain timeout; "
+                    f"remaining_connections={self.drain_remaining_connections}"
+                ),
             )
         result = self.state_store.persist_servers_state(
             kwargs["state_record"], BINDINGS, _snapshot()
@@ -248,6 +254,7 @@ class FakeRuntimeAPI:
 def _setup(
     tmp_path, monkeypatch, *,
     drain_status="verified", identity_mismatch_on_stop=False,
+    drain_remaining_connections=0,
 ):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     state_store = LocalDockerRouterStateStore(tmp_path / "router-state")
@@ -317,6 +324,7 @@ def _setup(
         docker, state_store, runtime_state,
         drain_status=drain_status,
         identity_mismatch_on_drain=identity_mismatch_on_stop,
+        drain_remaining_connections=drain_remaining_connections,
     )
     host = FakeRouterHost(
         docker, history, network, image, initial_spec, tmp_path / "router-state"
@@ -421,13 +429,16 @@ def test_drain_timeout_keeps_previous_runtime_running_and_reserves_reconciliatio
     tmp_path, monkeypatch
 ):
     history, adapter, manager, request, previous, candidate, docker, slots = _setup(
-        tmp_path, monkeypatch, drain_status="indeterminate"
+        tmp_path, monkeypatch, drain_status="indeterminate",
+        drain_remaining_connections=1,
     )
 
     result = manager.replace(request, candidate)
 
     assert result.status == "needs_reconciliation"
     assert "drain timeout" in result.message
+    assert "remaining_connections=1" in result.message
+    assert slots.drain_remaining_connections == 1
     assert docker.stopped == set()
     assert history.get("previous").status == "running"
     assert history.active_deployment(
