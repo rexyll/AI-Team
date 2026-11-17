@@ -160,9 +160,8 @@ def test_spec_rejects_non_docker_artifact_and_invalid_immutable_digest():
     wrong_provider = DeploymentArtifact("other", "ref", "a" * 64, "v1")
     with pytest.raises(ValueError):
         build_routed_app_container_spec(scope_network(), wrong_provider, "deploy-003", ports())
-    wrong_digest = DeploymentArtifact("docker-local", "ref", "bad", "v1")
-    with pytest.raises(ValueError):
-        build_routed_app_container_spec(scope_network(), wrong_digest, "deploy-004", ports())
+    with pytest.raises(ValueError, match="digest"):
+        DeploymentArtifact("docker-local", "ref", "bad", "v1")
 
 
 def test_inspect_verifies_exact_network_id_ip_and_no_host_publish():
