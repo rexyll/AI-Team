@@ -161,7 +161,7 @@ def test_candidate_health_wait_stops_if_immutable_runtime_changes(tmp_path, monk
 
     assert result.route_eligible is False
     assert result.status == "mismatch"
-    assert result.target.runtime_id == "d" * 64
+    assert result.target is None
     assert len(calls) == 2
 
 
