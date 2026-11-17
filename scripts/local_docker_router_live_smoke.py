@@ -68,7 +68,7 @@ def parse_show_map_registry(response: str, *, expected_path: str) -> str:
         raise ValueError("HAProxy show map returned an empty registry")
     matches: list[str] = []
     for line in response.splitlines():
-        match = re.match(r"^\\s*([0-9]{1,6})\\s+\\((/[^)]+)\\)(?:\\s|$)", line)
+        match = re.match(r"^\s*([0-9]{1,6})\s+\((/[^)]+)\)(?:\s|$)", line)
         if match is None:
             continue
         if match.group(2) == expected_path:

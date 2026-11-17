@@ -61,7 +61,7 @@ def _line(value: str) -> str:
 class HAProxyRuntimeCommand:
     line: str
     operation: Literal[
-        "show_info", "show_stat", "show_servers_state", "show_servers_conn",
+        "show_info", "show_maps", "show_stat", "show_servers_state", "show_servers_conn",
         "get_map", "set_map", "set_server_address", "set_server_state",
     ]
     mutating: bool
@@ -70,7 +70,7 @@ class HAProxyRuntimeCommand:
         _line(self.line)
         patterns = {
             "show_info": r"show info",
-        "show_maps": r"show map",
+            "show_maps": r"show map",
             "show_stat": r"show stat",
             "show_servers_state": r"show servers state",
             "show_servers_conn": r"show servers conn(?: [a-z][a-z0-9_-]{0,47})?",
