@@ -99,7 +99,12 @@ class LocalDockerRouterReplacementProvider:
         return None
 
     def health_check(self, record: DeploymentRecord) -> HealthCheckResult:
-        if record.provider != self.name or record.container_id is None:
+        if (
+            record.provider != self.name
+            or record.project != self.scope.project
+            or record.environment != self.scope.environment
+            or record.container_id is None
+        ):
             return HealthCheckResult("unavailable", _now(), "docker immutable inspect", "Deployment record has no routed app identity")
         inspection = self.provider.inspect_runtime(record)
         if inspection.status != "verified" or inspection.observed_runtime_id != record.container_id:
@@ -123,6 +128,23 @@ class LocalDockerRouterReplacementProvider:
         previous: DeploymentRecord,
         operation_id: str,
     ) -> DeploymentOperationResult:
+        if (
+            request.project != self.scope.project
+            or request.environment != self.scope.environment
+            or target.project != self.scope.project
+            or target.environment != self.scope.environment
+            or previous.project != self.scope.project
+            or previous.environment != self.scope.environment
+        ):
+            return DeploymentOperationResult(
+                "prepare_candidate", "failed", self.name,
+                "Deployment request and previous/candidate records must match the Router scope",
+            )
+        if operation_id in self._operations:
+            return DeploymentOperationResult(
+                "prepare_candidate", "failed", self.name,
+                "Replacement operation ID is already bound to a Router context",
+            )
         host = self._host()
         if host.status not in {"ready", "created"} or host.router_record is None or host.state_record is None or host.network is None or host.container_spec is None or host.image is None:
             return DeploymentOperationResult(
