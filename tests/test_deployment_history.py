@@ -437,6 +437,25 @@ def test_read_only_history_store_requires_existing_db_and_rejects_writes(tmp_pat
         readonly.append(make_record("must-not-write"))
 
 
+def make_servers_state_snapshot(port_bindings):
+    header = (
+        "# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state "
+        "srv_uweight srv_iweight srv_time_since_last_change srv_check_status "
+        "srv_check_result srv_check_health srv_check_state srv_agent_state "
+        "bk_f_forced_id srv_f_forced_id srv_fqdn srv_port srvrecord srv_use_ssl "
+        "srv_check_port srv_check_addr srv_agent_addr srv_agent_port"
+    )
+    rows = []
+    for index, binding in enumerate(port_bindings, start=1):
+        for server_id, server in enumerate(("slot_a", "slot_b"), start=1):
+            rows.append(
+                f"{index} be_p{binding.host_port} {server_id} {server} 127.0.0.1 0 0 "
+                f"0 0 0 6 0 0 6 0 0 0 - {binding.container_port} - 0 "
+                f"{binding.container_port} 127.0.0.1 - 0"
+            )
+    return "1\n" + header + "\n" + "\n".join(rows) + "\n"
+
+
 def make_traffic_router_state_record(
     tmp_path, *, project="demo", port_bindings=None, active_slot=None
 ):
@@ -445,16 +464,17 @@ def make_traffic_router_state_record(
         TrafficPortBinding(8080, 80),
         TrafficPortBinding(8443, 443),
     )
-    result = LocalDockerRouterStateStore(tmp_path / f"state-{project}").persist(
-        scope, ports, active_slot=None
-    )
+    store = LocalDockerRouterStateStore(tmp_path / f"state-{project}")
+    result = store.persist(scope, ports, active_slot=None)
     assert result.status == "persisted"
     record = result.record
     if active_slot is not None:
-        updated = LocalDockerRouterStateStore(
-            tmp_path / f"state-{project}"
-        ).persist_active_slot_map(
-            record, expected_active_slot=None, active_slot=active_slot
+        servers = store.persist_servers_state(
+            record, ports, make_servers_state_snapshot(ports)
+        )
+        assert servers.status == "persisted"
+        updated = store.persist_active_slot_map(
+            servers.record, expected_active_slot=None, active_slot=active_slot
         )
         assert updated.status == "persisted"
         record = updated.record
@@ -702,11 +722,15 @@ def test_router_registry_state_record_authorizes_readonly_reload_across_selector
     store = LocalDockerRouterStateStore(tmp_path / "state-demo")
     initial_state = store.persist(record.scope, bindings, active_slot=None)
     assert initial_state.status == "persisted"
-    history.create_traffic_router(record, initial_state.record)
+    prepared_state = store.persist_servers_state(
+        initial_state.record, bindings, make_servers_state_snapshot(bindings)
+    )
+    assert prepared_state.status == "persisted"
+    history.create_traffic_router(record, prepared_state.record)
 
     reloaded_history = DeploymentHistoryStore(path)
     durable_state = reloaded_history.get_traffic_router_state_record(record.scope)
-    assert durable_state == initial_state.record
+    assert durable_state == prepared_state.record
     loaded = store.load(record.scope, bindings, expected_record=durable_state)
     assert loaded.status == "loaded"
 
@@ -721,7 +745,7 @@ def test_router_registry_state_record_authorizes_readonly_reload_across_selector
         route_generation="gen-1",
     )
     switched_state = store.persist_active_slot_map(
-        initial_state.record,
+        prepared_state.record,
         expected_active_slot=None,
         active_slot="slot_b",
     )
@@ -730,7 +754,7 @@ def test_router_registry_state_record_authorizes_readonly_reload_across_selector
         updated_record,
         switched_state.record,
         expected_generation="gen-0",
-        expected_state_map_sha256=initial_state.record.active_slot_map_sha256,
+        expected_state_map_sha256=prepared_state.record.active_slot_map_sha256,
     )
 
     next_durable_state = reloaded_history.get_traffic_router_state_record(record.scope)
