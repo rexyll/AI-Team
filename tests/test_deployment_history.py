@@ -579,6 +579,7 @@ def test_traffic_router_registry_rejects_initial_active_target(tmp_path):
         active_slot="slot_a",
         active_target=target,
         route_generation="gen-0",
+        slot_targets=(("slot_a", target),),
         created_at="2026-11-17T10:00:00Z",
     )
     with pytest.raises(ValueError, match="start with no active"):
