@@ -353,7 +353,7 @@ def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
     assert result.health_status == "healthy"
     assert runner.calls[0][0] == [
         "inspect", "--format",
-        "{{.Id}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        '{{$health := index .State "Health"}}{{.Id}}|{{.State.Status}}|{{if $health}}{{$health.Status}}{{else}}none{{end}}',
         expected_id,
     ]
 
