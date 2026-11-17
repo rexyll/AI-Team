@@ -41,13 +41,15 @@ def _is_allowlisted_haproxy_runtime_input(input_text: str) -> bool:
     line = input_text[:-1]
     identifier = r"[a-z][a-z0-9_-]{0,47}"
     map_path = r"/[a-zA-Z0-9_./-]{1,180}"
+    map_reference = rf"(?:{map_path}|#[0-9]{{1,6}})"
     patterns = (
         r"show info",
+        r"show map",
         r"show stat",
         r"show servers state",
         rf"show servers conn(?: {identifier})?",
-        rf"get map ({map_path}) ({identifier})",
-        rf"set map ({map_path}) ({identifier}) (?:none|slot_a|slot_b)",
+        rf"get map ({map_reference}) ({identifier})",
+        rf"set map ({map_reference}) ({identifier}) (?:none|slot_a|slot_b)",
         rf"set server ({identifier})/({identifier}) addr ([0-9a-fA-F:.]+) port ([0-9]{{1,5}})",
         rf"set server ({identifier})/({identifier}) state (?:ready|drain|maint)",
     )
@@ -56,8 +58,12 @@ def _is_allowlisted_haproxy_runtime_input(input_text: str) -> bool:
         if match is None:
             continue
         if line.startswith(("get map ", "set map ")):
-            path = match.group(1)
-            if any(part in {"", ".", ".."} for part in path.split("/")[1:]):
+            reference = match.group(1)
+            if reference.startswith("/") and any(
+                part in {"", ".", ".."} for part in reference.split("/")[1:]
+            ):
+                return False
+            if reference.startswith("#") and not re.fullmatch(r"#[0-9]{1,6}", reference):
                 return False
         if line.startswith("set server ") and " addr " in line:
             try:

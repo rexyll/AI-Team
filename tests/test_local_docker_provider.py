@@ -123,6 +123,32 @@ def test_host_input_execution_requires_runner_stdin_capability():
     assert runner.calls == []
 
 
+def test_host_input_execution_allows_show_map_and_numeric_map_id_reads():
+    class InputRunner:
+        def __init__(self):
+            self.calls = []
+        def execute(self, args, *, cwd, timeout):
+            raise AssertionError("execute() must not be used for stdin")
+        def execute_input(self, args, *, input_text, cwd, timeout):
+            self.calls.append(input_text)
+            return ok("map response")
+    runner = InputRunner()
+    provider = LocalDockerProvider(runner)
+    argv = router_exec_args()
+    for command in ("show map\\n", "get map #0 active\\n", "set map #0 active none\\n"):
+        result, error = provider.execute_host_input(argv, input_text=command, timeout=3)
+        assert error is None
+        assert result.stdout == "map response"
+    assert runner.calls == ["show map\\n", "get map #0 active\\n", "set map #0 active none\\n"]
+
+
+def test_host_input_execution_rejects_malformed_numeric_map_ids():
+    provider = LocalDockerProvider(FakeRunner())
+    for command in ("get map #x active\\n", "set map #-1 active none\\n", "get map #1000000 active\\n"):
+        with pytest.raises(ValueError, match="allowlisted HAProxy"):
+            provider.execute_host_input(router_exec_args(), input_text=command)
+
+
 def test_host_input_execution_uses_input_runner_without_shell():
     class InputRunner:
         def __init__(self):
