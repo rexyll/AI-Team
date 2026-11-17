@@ -251,14 +251,6 @@ def run_live_smoke() -> dict[str, Any]:
         if not (context / "Dockerfile").is_file():
             raise RuntimeError("routed-app smoke Dockerfile is missing")
         app_tag = "ai-team/routed-app-smoke:" + uuid.uuid4().hex[:16]
-        build = _run_docker(
-            provider,
-            [
-                "build", "--file", "Dockerfile",
-                "--build-arg", f"ROUTER_BASE_IMAGE={ROUTER_IMAGE_TAG}",
-                "--tag", app_tag, ".",
-            ],
-        ) if False else None
         build_result, build_error = provider._execute(
             [
                 "build", "--file", "Dockerfile",
