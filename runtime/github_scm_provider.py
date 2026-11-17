@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 import urllib.error
@@ -48,6 +49,45 @@ class GitHubRESTTransport:
         self._api_base = api_base.rstrip("/")
         self._timeout = float(timeout_seconds)
 
+    @staticmethod
+    def _create_tls_context() -> ssl.SSLContext:
+        """Build strict system-root TLS without ambient CA-path overrides.
+
+        OpenSSL's default CA file/directory environment variables are read by
+        load_default_certs(). They are host-process settings, but allowing an
+        implicit override here would silently expand the trust roots used for
+        requests carrying the host GitHub Bearer token. Custom roots must be
+        installed in the operating-system trust store by the host operator.
+        """
+        verify_paths = ssl.get_default_verify_paths()
+        ca_environment_names = {
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            getattr(verify_paths, "openssl_cafile_env", None),
+            getattr(verify_paths, "openssl_capath_env", None),
+        }
+        normalized_names = {
+            name.upper()
+            for name in ca_environment_names
+            if isinstance(name, str) and name
+        }
+        configured_overrides = sorted(
+            name for name in os.environ if name.upper() in normalized_names
+        )
+        if configured_overrides:
+            raise GitHubAPIError(
+                "GitHub TLS trust-store environment overrides are not allowed"
+            )
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_default_certs()
+        context.verify_flags |= (
+            ssl.VERIFY_X509_PARTIAL_CHAIN | ssl.VERIFY_X509_STRICT
+        )
+        if hasattr(context, "keylog_filename"):
+            context.keylog_filename = None
+        return context
+
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         if not isinstance(method, str) or method.upper() not in {"GET", "POST", "PATCH", "PUT"}:
             raise ValueError("unsupported GitHub HTTP method")
@@ -79,13 +119,7 @@ class GitHubRESTTransport:
             # create_default_context honors SSLKEYLOGFILE and may create the
             # target file before key logging is disabled. Construct a client
             # context directly, load system roots, and retain strict validation.
-            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            tls_context.load_default_certs()
-            tls_context.verify_flags |= (
-                ssl.VERIFY_X509_PARTIAL_CHAIN | ssl.VERIFY_X509_STRICT
-            )
-            if hasattr(tls_context, "keylog_filename"):
-                tls_context.keylog_filename = None
+            tls_context = self._create_tls_context()
             opener = urllib.request.build_opener(
                 _NoRedirectHandler(),
                 urllib.request.HTTPSHandler(context=tls_context),
