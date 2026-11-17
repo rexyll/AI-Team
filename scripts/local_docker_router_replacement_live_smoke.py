@@ -370,6 +370,7 @@ def _kill_replacement_child_after_switch(
             )
         os.kill(child_pid, signal.SIGKILL)
         _, wait_status = os.waitpid(child_pid, 0)
+        message["child_pid"] = child_pid
         return message, wait_status
     finally:
         os.close(read_fd)
@@ -777,12 +778,6 @@ def run_live_smoke() -> dict[str, Any]:
                 and inventory_item.recovery_assessment.disposition == "manual_reconciliation_required"
                 and inventory_item.recovery_assessment.automatic_action == "none"
                 and runtime_item is not None
-                and runtime_item.previous_runtime is not None
-                and runtime_item.previous_runtime.status == "verified"
-                and runtime_item.previous_runtime.runtime_state == "running"
-                and runtime_item.candidate_runtime is not None
-                and runtime_item.candidate_runtime.status == "verified"
-                and runtime_item.candidate_runtime.runtime_state == "running"
                 and runtime_item.route_readback_status == "not_available"
                 and runtime_item.automatic_recovery_allowed is False
                 and previous_inspection is not None

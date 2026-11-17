@@ -453,12 +453,20 @@ def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
     runtimes = manager.inspect_recovery_runtimes(project="demo", environment="staging")
     assert len(runtimes) == 1
     assert runtimes[0].phase == "traffic_switch_pending"
-    assert runtimes[0].previous_runtime.status == "verified"
-    assert runtimes[0].previous_runtime.runtime_state == "running"
-    assert runtimes[0].candidate_runtime.status == "verified"
-    assert runtimes[0].candidate_runtime.runtime_state == "running"
+    # Runtime inspection is deliberately deferred for a pending switch intent;
+    # recovery inventory must not claim external state is already reconciled.
+    assert runtimes[0].previous_runtime is None
+    assert runtimes[0].candidate_runtime is None
     assert runtimes[0].route_readback_status == "not_available"
     assert runtimes[0].automatic_recovery_allowed is False
+    previous_inspection = docker.inspect_runtime(history.get("previous"))
+    candidate_inspection = docker.inspect_runtime(history.get("candidate"))
+    assert previous_inspection.status == "verified"
+    assert previous_inspection.observed_runtime_id == PREVIOUS_ID
+    assert previous_inspection.runtime_state == "running"
+    assert candidate_inspection.status == "verified"
+    assert candidate_inspection.observed_runtime_id == CANDIDATE_ID
+    assert candidate_inspection.runtime_state == "running"
 
 
 def test_previous_identity_mismatch_keeps_digest_consistent_router_and_both_runtimes(
