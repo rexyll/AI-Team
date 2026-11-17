@@ -560,11 +560,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 提交 4dd2d280 更新两处测试夹具，显式持久化 traffic_switch_pending 后才写入 traffic_switched。该修复仅对齐测试数据与真实生命周期。
 - 主分支后续 CI 验收以该修复提交及其父提交的 workflow 结果为准。
 
-### T21.6.3.5.4.2 Host active-slot switch and Router TCP read-back（2026-11-17，CI #800 待验收）
+### T21.6.3.5.4.2 Host active-slot switch and Router TCP read-back（2026-11-17，CI #801 全部通过）
 
-- 新增 RouterSlotSwitchResult 和 LocalDockerRouterSlotManager.switch_active_slot()，与 inactive-slot preparation 共用 per-scope exclusive Host lock。切换前核对 scope/network/ports、Router/app immutable IDs、fresh app HEALTHCHECK、当前 active selector 及目标 slot 各 backend 的 exact endpoint/check state/UP。
-- 新增 LocalDockerRouterStateStore.persist_active_slot_map()：验证旧 selector 与 config/map/server-state digest，检查 owner/mode/link/symlink，再以 atomic replace + fsync + read-back 更新 Host restart map 和摘要。
-- Runtime API 只执行一次 set map，写命令结果不被当作事实；后续 get map 是权威 read-back。读回旧 selector 时恢复 Host map 文件；读回失败/无效/不属于预期状态时保留两实例与目标 desired map，返回 indeterminate，不重试、不自动切换回旧槽、不 retire。
-- 测试覆盖：正常切换、Runtime API 写响应失败但 read-back 确认已切换、写入拒绝且 read-back 仍为旧 selector、post-write read-back timeout、旧 selector 不匹配、backend DOWN、跨 scope target 拒绝；state store 覆盖旧 selector/CAS、摘要和 symlink。
-- Docker Engine CI smoke 将在真实 HAProxy 3.4.7 Router 上切换到 slot_b，通过 Router published TCP frontend 请求 socat app fixture，并要求唯一响应 marker ROUTED_APP_OK。CI #800 run 44024203179 结果待验收。此处仍是单 app 初次 active route 证明，不代表两个 app 蓝绿替换、drain/retire、Router restart 恢复或 rollback 已完成。
+- 新增 RouterSlotSwitchResult 与 LocalDockerRouterSlotManager.switch_active_slot()，复用 inactive-slot preparation 的 per-scope exclusive Host lock。切换前核验 Router/app immutable IDs、scope/network/port bindings、app fresh HEALTHCHECK、当前 active selector，以及目标 slot 每个 backend 的 exact endpoint、HAProxy check flags 与 UP 状态。
+- 新增 LocalDockerRouterStateStore.persist_active_slot_map()：检查当前 selector、config/map/server-state SHA-256、Host owner、0700/0600 mode、link count 与 symlink；以 atomic replace + fsync + read-back 更新 Host restart map 并返回新 digest。
+- Runtime API 仅发送一次 set map，之后以 get map 读回为准，不根据写命令返回码猜测结果。读回确认旧 selector 时恢复 Host map 文件；读回失败、非法或落在意外 selector 时保留可供重启恢复核对的目标 Host map，并返回 indeterminate；不重试、不自动切回、不 retire。
+- 单测覆盖正常切换、写响应失败但 read-back 确认已切换、写入被拒绝且 read-back 仍为旧 selector、post-write read-back timeout、prior selector mismatch、backend DOWN 与 cross-scope refusal；state store 测试覆盖 selector CAS、digest 和 symlink 防护。
+- Docker Engine live smoke 在真实 HAProxy 3.4.7 Router 上完成 inactive slot_b preparation，再将 active selector 从 none 切换到 slot_b。Runtime API 精确读回成功；backend be_p42699/slot_b 为 172.18.0.3:18080、UP、check_result=3、check_state=6；请求 Router host port 42699 一次即获得 app 唯一 marker ROUTED_APP_OK。App 没有 host port publish；临时 app、Router、network 均按 immutable ID 清理成功。结构化 evidence artifact 14302043129 报告 status=ready、active switch verified、TCP probe passed、cleanup removed。
+- CI #801（run 44024362240，commit 69ad157c9e1af56f59b75132017095e56276ec16）全部通过：全量 Regression 3,100 passed / 14 skipped；Security 252 passed / 9 skipped；Coverage baseline 3,080 passed / 14 skipped、总行覆盖率 84%、所有配置的模块行/分支门槛通过；Windows Python/Node E2E 7 passed；Docker Engine Router bootstrap、active-slot switch 与 TCP marker smoke 成功。CI #800（run 44024203179）也全绿：Regression 3,098 passed / 14 skipped、Security 252 passed / 9 skipped、Coverage baseline 3,078 passed / 14 skipped、Windows 与 Docker Engine jobs 成功。
+- 实现提交：7e7aed57（Host switch/state/tests）、69ad157c（live Docker switch/TCP marker、CI、设计文档）。前置状态机测试夹具修复提交 4dd2d280；CI #799（run 44023868725）全绿，Regression 3,088 passed / 14 skipped、Security 252 passed / 9 skipped、Coverage/Windows/Docker jobs 全部成功。
 
+**范围边界**：CI #801 证明的是单个 routed app 首次激活到真实 HAProxy Router，并通过 Router 发布端口完成 TCP 请求；不证明两个应用实例同端口共存与互相切换，不证明完整蓝绿替换、connection drain/retire、Router restart/journal crash recovery 或自动 rollback。needs_reconciliation 仍锁定。下一项为 T21.6.3.5.5：将 Router 能力与 durable replacement coordinator 集成，并继续保留人工恢复与安全审批门。
