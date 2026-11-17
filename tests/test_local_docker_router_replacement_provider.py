@@ -118,6 +118,7 @@ def test_candidate_health_wait_reuses_same_immutable_runtime_until_healthy(tmp_p
     result = provider._ensure_candidate_route_eligible(object(), _artifact("2.0", "b" * 64))
 
     assert result.route_eligible is True
+    assert result.status == "created"
     assert len(calls) == 2
     assert result.target.runtime_id == "c" * 64
 
