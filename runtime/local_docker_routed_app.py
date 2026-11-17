@@ -38,7 +38,7 @@ ROUTED_APP_CONTAINER_INSPECT_FORMAT = (
     r'{{$health := "null"}}'
     r'{{if .State.Health}}{{$status := .State.Health.Status}}{{$exitCode := -1}}{{$end := ""}}'
     r'{{range .State.Health.Log}}{{$exitCode = .ExitCode}}{{$end = .End}}{{end}}'
-    r'{{$health = printf "{\"Status\":%q,\"Log\":[{\"ExitCode\":%d,\"End\":%q}]}" $status $exitCode $end}}{{end}}'
+    r'{{$health = printf "{\"Status\":%q,\"Log\":[{\"ExitCode\":%v,\"End\":%q}]}" $status $exitCode $end}}{{end}}'
     r'{{printf "{\"Id\":%q,\"Name\":%q,\"Config\":{\"Image\":%q,\"Labels\":%s,'
     r'\"ExposedPorts\":%s,\"Volumes\":%s},\"State\":{\"Status\":%q,\"StartedAt\":%q,'
     r'\"Health\":%s},\"HostConfig\":{\"NetworkMode\":%q,\"Privileged\":%t,'
