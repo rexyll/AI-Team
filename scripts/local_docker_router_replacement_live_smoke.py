@@ -574,6 +574,98 @@ def run_live_smoke() -> dict[str, Any]:
             "router_registry_active_slot": router_record.active_slot,
             "router_registry_slot_inventory": [slot for slot, _ in router_record.slot_targets],
         }
+
+        # Verify that the active selector and persisted backend state survive
+        # a real Docker container restart, not merely a Runtime API read-back.
+        restarted, restart_error = provider._execute(["restart", router_id])
+        if restart_error:
+            raise RuntimeError(
+                f"Router restart command unavailable: {type(restart_error).__name__}"
+            )
+        assert restarted is not None
+        if restarted.returncode != 0:
+            raise RuntimeError(
+                f"Router restart failed: {(restarted.stderr or restarted.stdout)[-500:]}"
+            )
+        router_after_restart = provider.inspect_runtime_identity(
+            "router-" + scope.project, router_id
+        )
+        if (
+            router_after_restart.status != "verified"
+            or router_after_restart.observed_runtime_id != router_id
+            or router_after_restart.runtime_state != "running"
+        ):
+            raise RuntimeError(
+                "Router immutable runtime identity/state did not recover after restart: "
+                f"{router_after_restart.status}/{router_after_restart.runtime_state}"
+            )
+
+        restart_selector = None
+        restart_target = None
+        restart_marker = None
+        restart_readback_error = ""
+        for attempt in range(40):
+            try:
+                restart_selector = _runtime_selector(provider, router_id)
+                restart_target = replacement_provider.read_traffic_target(request)
+                if restart_selector == "slot_b" and restart_target == app_b_id:
+                    restart_marker = _probe_router_tcp_route(
+                        host_port, expected_marker=_MARKER_B
+                    )
+                    if restart_marker.get("status") == "passed":
+                        break
+            except Exception as exc:
+                restart_readback_error = type(exc).__name__
+            if attempt < 39:
+                time.sleep(0.25)
+        if (
+            restart_selector != "slot_b"
+            or restart_target != app_b_id
+            or restart_marker is None
+            or restart_marker.get("status") != "passed"
+        ):
+            raise RuntimeError(
+                "Router active route did not recover after restart: "
+                f"selector={restart_selector}, target_match={restart_target == app_b_id}, "
+                f"last_error={restart_readback_error}"
+            )
+
+        restart_stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
+            show_stat_servers_command(f"be_p{host_port}")
+        )
+        if restart_stat_result.status != "succeeded":
+            raise RuntimeError(
+                f"HAProxy post-restart show stat failed: {restart_stat_result.detail}"
+            )
+        restart_stats = parse_show_stat_servers(restart_stat_result.response)
+        restart_old_stat = next(
+            (item for item in restart_stats if item.server == "slot_a"), None
+        )
+        restart_new_stat = next(
+            (item for item in restart_stats if item.server == "slot_b"), None
+        )
+        if (
+            restart_old_stat is None
+            or restart_old_stat.status != "MAINT"
+            or restart_old_stat.current_sessions != 0
+            or restart_new_stat is None
+            or restart_new_stat.status != "UP"
+        ):
+            raise RuntimeError(
+                "HAProxy backend state did not survive Router restart "
+                "(old slot MAINT/zero sessions, candidate slot UP required)"
+            )
+        evidence["checks"]["router_restart_recovery"] = {
+            "status": "verified",
+            "router_runtime_id": router_id,
+            "docker_state": router_after_restart.runtime_state,
+            "active_selector": restart_selector,
+            "effective_runtime_id": restart_target,
+            "tcp_marker": restart_marker,
+            "old_backend_status": restart_old_stat.status,
+            "old_backend_sessions": restart_old_stat.current_sessions,
+            "candidate_backend_status": restart_new_stat.status,
+        }
         evidence["status"] = "ready"
         completed = True
     except Exception as exc:
