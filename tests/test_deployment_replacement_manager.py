@@ -339,6 +339,7 @@ def test_unhealthy_previous_blocks_before_candidate_operations_and_without_journ
     result = manager.replace(_request(), target)
 
     assert result.status == "failed"
+    assert "fake previous probe" in result.detail
     assert "prepare" not in [item[0] for item in provider.calls]
     assert "start" not in [item[0] for item in provider.calls]
     assert history.get_replacement("operation-001") is None
