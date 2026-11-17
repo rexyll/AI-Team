@@ -60,7 +60,9 @@ def parse_show_info(response: str) -> dict[str, str]:
     return fields
 
 
-def parse_get_map_value(response: str, *, expected_key: str) -> str:
+def parse_get_map_value(
+    response: str, *, expected_key: str, expected_value: str
+) -> str:
     """Parse the structured get-map response; reject missing/ambiguous fields."""
     if not isinstance(response, str) or not response.strip():
         raise ValueError("HAProxy get map returned an empty response")
@@ -98,6 +100,8 @@ def parse_get_map_value(response: str, *, expected_key: str) -> str:
     value = fields.get("value")
     if not value:
         raise ValueError("HAProxy get map omitted the selector value")
+    if value != expected_value:
+        raise ValueError("HAProxy get map returned an unexpected selector value")
     return value
 
 
@@ -423,7 +427,9 @@ def run_live_smoke() -> dict[str, Any]:
                 f"HAProxy Runtime API get map: {map_result.status}: {map_result.detail}"
             )
         try:
-            active_slot = parse_get_map_value(map_result.response, expected_key="active")
+            active_slot = parse_get_map_value(
+                map_result.response, expected_key="active", expected_value="none"
+            )
         except ValueError:
             evidence["diagnostics"] = {
                 "get_map_response": map_result.response[-1600:],

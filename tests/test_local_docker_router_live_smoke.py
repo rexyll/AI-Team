@@ -33,7 +33,7 @@ def test_parse_get_map_value_accepts_exact_active_none_entry():
         'type=beg, case=sensitive, found=yes, idx=tree, '
         'key="active", value="none", type="str"\n'
     )
-    assert parse_get_map_value(response, expected_key="active") == "none"
+    assert parse_get_map_value(response, expected_key="active", expected_value="none") == "none"
 
 
 @pytest.mark.parametrize(
@@ -52,7 +52,7 @@ def test_parse_get_map_value_accepts_exact_active_none_entry():
 )
 def test_parse_get_map_value_fails_closed_on_ambiguous_or_wrong_selector(response):
     with pytest.raises(ValueError):
-        parse_get_map_value(response, expected_key="active")
+        parse_get_map_value(response, expected_key="active", expected_value="none")
 
 
 from types import SimpleNamespace
