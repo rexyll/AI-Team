@@ -110,3 +110,18 @@ def test_server_state_hash_mismatch_fails_before_docker_call(tmp_path):
     runner = FakeRunner(DockerCommandResult(0, "", ""))
     result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), modified)
     assert result.status == "invalid_state" and runner.calls == []
+
+def test_malformed_server_state_header_fails_before_docker_call(tmp_path):
+    from dataclasses import replace
+
+    state = prepare_state(tmp_path)
+    path = __import__("pathlib").Path(state.server_state_path)
+    raw = b"not-a-versioned-state-header\\n"
+    path.write_bytes(raw)
+    os.chmod(path, 0o600)
+    modified = replace(state, server_state_sha256=hashlib.sha256(raw).hexdigest())
+    runner = FakeRunner(DockerCommandResult(0, "", ""))
+    result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), modified)
+    assert result.status == "invalid_state"
+    assert "versioned HAProxy state header" in result.detail
+    assert runner.calls == []

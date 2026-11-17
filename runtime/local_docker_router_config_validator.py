@@ -111,7 +111,7 @@ class LocalDockerRouterConfigValidator:
                 contents[path] = raw
             if contents[map_path] != _EXPECTED_MAP.encode("utf-8"):
                 return None, None, None, None, "Router startup map must be the fail-closed active none selector"
-            if not contents[server_state_path].startswith(b"1\\n# "):
+            if not contents[server_state_path].startswith(b"1\n# "):
                 return None, None, None, None, "Router server-state file must contain a versioned HAProxy state header"
         except OSError as exc:
             return None, None, None, None, f"{type(exc).__name__}: {exc}"
