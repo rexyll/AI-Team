@@ -549,7 +549,7 @@ def run_live_smoke() -> dict[str, Any]:
                         and result.status == "succeeded"
                     ):
                         backend = command.line.split(" ")[2]
-                        response, status = _override_show_stat_scur(
+                        response, _status = _override_show_stat_scur(
                             result.response,
                             backend=backend,
                             server="slot_a",
