@@ -488,8 +488,10 @@ class HostDeploymentReplacementManager:
                 raise TypeError("provider returned an invalid previous health result")
             previous = self.history.update_health(previous.deployment_id, previous_health)
             if previous_health.status != "healthy":
-                detail = previous_health.detail.strip()
-                suffix = f": {detail[:700]}" if detail else ""
+                detail = (previous_health.detail or "").strip()
+                probe = (previous_health.probe or "").strip()
+                diagnostic = detail or probe
+                suffix = f": {diagnostic[:700]}" if diagnostic else ""
                 return DeploymentReplacementResult(
                     "failed",
                     f"active deployment is not freshly healthy ({previous_health.status}){suffix}",
