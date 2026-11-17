@@ -37,7 +37,7 @@ def parse_show_map_registry(response: str, *, expected_path: str) -> str:
 
 
 def parse_get_map_value(
-    response: str, *, expected_key: str, expected_value: str
+    response: str, *, expected_key: str, expected_value: str | None = None
 ) -> str:
     """Parse the structured get-map response; reject missing/ambiguous fields."""
     if not isinstance(response, str) or not response.strip():
@@ -76,7 +76,9 @@ def parse_get_map_value(
     value = fields.get("value")
     if not value:
         raise ValueError("HAProxy get map omitted the selector value")
-    if value != expected_value:
+    if value not in {"none", "slot_a", "slot_b"}:
+        raise ValueError("HAProxy get map returned an unknown selector value")
+    if expected_value is not None and value != expected_value:
         raise ValueError("HAProxy get map returned an unexpected selector value")
     return value
 

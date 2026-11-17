@@ -156,3 +156,20 @@ def test_expected_server_rejects_noncanonical_or_unbounded_endpoint():
         ExpectedHAProxyServer("be_p8080", "slot_b", "172.018.0.2", 18080)
     with pytest.raises(ValueError):
         ExpectedHAProxyServer("be_p8080", "slot_b", "172.18.0.2", True)
+
+
+def test_parse_get_map_value_returns_the_current_known_selector_without_expected_value():
+    response = (
+        'type=beg, case=sensitive, found=yes, idx=tree, '
+        'key="active", value="slot_b", type="str"\n'
+    )
+    assert parse_get_map_value(response, expected_key="active") == "slot_b"
+
+
+@pytest.mark.parametrize("value", ["unexpected", "slot_c", ""])
+def test_parse_get_map_value_rejects_unknown_selector_values(value):
+    response = (
+        'type=beg, found=yes, key="active", value="' + value + '"'
+    )
+    with pytest.raises(ValueError):
+        parse_get_map_value(response, expected_key="active")
