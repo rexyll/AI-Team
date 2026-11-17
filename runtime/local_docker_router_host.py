@@ -2,11 +2,12 @@
 
 The first call may create the network, private state files and Router container,
 then bind their immutable identities and file digests into DeploymentHistoryStore.
-Calls for an existing registry entry are read-only with respect to Docker
-resources and router files: they verify the existing network/container and
-reload the persisted files without resetting the active selector. Missing or
-mismatched resources require manual reconciliation; they are never recreated
-or silently adopted.
+Calls for an existing registry entry never recreate persistent scope resources
+or rewrite router files: they inspect the registered network/container and
+image by immutable identity, run the pinned config validator in a temporary
+network-none/read-only container, and reload persisted files without resetting
+the active selector. Missing or mismatched resources require manual
+reconciliation; they are never recreated or silently adopted.
 """
 from __future__ import annotations
 
@@ -91,6 +92,29 @@ class LocalDockerRouterHostResult:
         if self.status in {"created", "ready"}:
             if any(item is None for item in trusted):
                 raise ValueError("trusted Router Host result requires registry, state, network, image and spec")
+            assert self.router_record is not None
+            assert self.state_record is not None
+            assert self.network is not None
+            assert self.image is not None
+            assert self.container_spec is not None
+            expected_network = build_router_network_spec(self.router_record.scope)
+            if (
+                self.router_record.network_name != self.network.network_name
+                or self.router_record.network_id != self.network.network_id
+                or self.network.network_name != expected_network.network_name
+                or self.network.scope_fingerprint != expected_network.scope_fingerprint
+                or self.router_record.port_bindings != self.container_spec.port_bindings
+                or self.container_spec.network_name != self.network.network_name
+                or self.container_spec.network_id != self.network.network_id
+                or self.container_spec.scope_fingerprint != self.network.scope_fingerprint
+                or self.container_spec.image_id != self.image.image_id
+                or self.state_record.network_name != self.network.network_name
+                or self.state_record.scope_fingerprint != self.network.scope_fingerprint
+                or Path(self.container_spec.config_path) != Path(self.state_record.config_path)
+                or Path(self.container_spec.active_slot_map_path) != Path(self.state_record.active_slot_map_path)
+                or self.container_spec.server_state_sha256 != self.state_record.server_state_sha256
+            ):
+                raise ValueError("trusted Router Host result contains conflicting immutable resource identities")
         elif any(item is not None for item in trusted):
             raise ValueError("unverified Router Host result must not expose trusted resource records")
         if not isinstance(self.detail, str):
