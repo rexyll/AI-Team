@@ -171,6 +171,7 @@ def test_inspect_verifies_exact_network_id_ip_and_no_host_publish():
     assert verified.target.runtime_id == "c" * 64
     assert verified.target.address == "172.30.0.8"
     assert verified.health_status == "healthy"
+    assert verified.route_eligible is True
 
 
 @pytest.mark.parametrize(
@@ -196,6 +197,55 @@ def test_inspect_rejects_identity_network_and_publish_mismatches(mutator, expect
     mutator(payload)
     result = verify_routed_app_inspection(payload, app_spec)
     assert result.status == expected_status
+    assert result.target is None
+
+
+def test_inspect_unhealthy_container_is_identity_verified_but_not_route_eligible():
+    app_spec = spec()
+    result = verify_routed_app_inspection(
+        inspect_payload(app_spec, health="unhealthy"), app_spec
+    )
+    assert result.status == "verified"
+    assert result.target is not None
+    assert result.health_status == "unhealthy"
+    assert result.route_eligible is False
+
+
+def test_healthcheck_future_timestamp_is_not_route_eligible():
+    app_spec = spec()
+    payload = inspect_payload(app_spec)
+    future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    payload["State"]["Health"]["Log"][0]["End"] = future
+    result = verify_routed_app_inspection(payload, app_spec)
+    assert result.status == "verified"
+    assert result.health_status == "unknown"
+    assert result.route_eligible is False
+
+
+def test_direct_spec_construction_cannot_forge_labels_or_identity_name():
+    from dataclasses import replace
+
+    app_spec = spec()
+    with pytest.raises(ValueError, match="labels"):
+        replace(app_spec, labels=app_spec.labels[:-1])
+    with pytest.raises(ValueError, match="deployment identity"):
+        replace(app_spec, container_name="ai-team-app-forged")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("CapDrop", ["NET_RAW"]),
+        ("CapAdd", ["SYS_ADMIN"]),
+        ("SecurityOpt", ["no-new-privileges:true", "seccomp=unconfined"]),
+    ],
+)
+def test_inspect_rejects_extra_or_relaxed_container_security(field, value):
+    app_spec = spec()
+    payload = inspect_payload(app_spec)
+    payload["HostConfig"][field] = value
+    result = verify_routed_app_inspection(payload, app_spec)
+    assert result.status == "mismatch"
     assert result.target is None
 
 
@@ -252,6 +302,7 @@ def test_manager_creates_and_reinspects_exact_container_without_host_publish():
     assert result.status == "created"
     assert result.target.runtime_id == "c" * 64
     assert result.health_status == "healthy"
+    assert result.route_eligible is True
     run_args = runner.calls[2][0]
     assert run_args == list(app_spec.run_argv)
     assert "--publish" not in run_args and "-p" not in run_args
@@ -271,6 +322,7 @@ def test_existing_verified_container_is_reused_without_create():
     result = manager.ensure_app(app_spec, artifact())
     assert result.status == "existing"
     assert result.health_status == "healthy"
+    assert result.route_eligible is True
     assert len(runner.calls) == 2
 
 

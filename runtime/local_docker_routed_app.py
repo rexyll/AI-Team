@@ -12,7 +12,7 @@ import ipaddress
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from runtime.deployment_provider import DeploymentArtifact
@@ -24,6 +24,7 @@ _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _DEPLOYMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _CONTAINER_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+_NETWORK_NAME = re.compile(r"^ai-team-router-[0-9a-f]{20}$")
 _PORT = re.compile(r"^[0-9]{1,5}/tcp$")
 
 _MANAGED_LABEL = "com.ai-team.router.routed-app.managed"
@@ -78,8 +79,8 @@ class DockerRoutedAppContainerSpec:
             raise ValueError("deployment_id must contain only Docker-safe identity characters")
         if not isinstance(self.container_name, str) or not _CONTAINER_NAME.fullmatch(self.container_name):
             raise ValueError("container_name is invalid")
-        if not isinstance(self.network_name, str) or not self.network_name:
-            raise ValueError("network_name must be non-empty")
+        if not isinstance(self.network_name, str) or not _NETWORK_NAME.fullmatch(self.network_name):
+            raise ValueError("network_name must be a deterministic verified Router bridge name")
         for name in ("network_id", "scope_fingerprint"):
             value = getattr(self, name)
             if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
@@ -99,10 +100,21 @@ class DockerRoutedAppContainerSpec:
         expected_caps = ("NET_BIND_SERVICE",) if any(
             item.container_port < 1024 for item in self.port_bindings
         ) else ()
-        if self.capabilities != expected_caps:
+        if not isinstance(self.capabilities, tuple) or self.capabilities != expected_caps:
             raise ValueError("routed app capabilities must be the minimum port-specific set")
+        deployment_key = hashlib.sha256(self.deployment_id.encode("utf-8")).hexdigest()[:20]
+        expected_name = f"ai-team-app-{self.scope_fingerprint[:10]}-{deployment_key}"
+        if self.container_name != expected_name:
+            raise ValueError("container_name must be derived from the scope and full deployment identity")
+        if self.network_alias != expected_name:
+            raise ValueError("network_alias must match the deterministic app container name")
         if not isinstance(self.labels, tuple) or tuple(sorted(self.labels)) != self.labels:
             raise ValueError("labels must be a sorted immutable tuple")
+        if self.labels != _build_labels(
+            self.deployment_id, self.network_id, self.scope_fingerprint,
+            self.image_id, self.port_bindings,
+        ):
+            raise ValueError("labels must exactly bind the immutable app/network/port identities")
         expected_argv = _build_run_argv(
             self.container_name, self.network_name, self.network_alias,
             self.image_id, self.port_bindings, self.labels, self.capabilities,
@@ -131,6 +143,11 @@ class DockerRoutedAppVerification:
         if not isinstance(self.health_detail, str):
             raise TypeError("health_detail must be a string")
 
+    @property
+    def route_eligible(self) -> bool:
+        """Identity is verified separately; only a fresh healthy check permits routing."""
+        return self.status == "verified" and self.health_status == "healthy"
+
 
 @dataclass(frozen=True)
 class DockerRoutedAppEnsureResult:
@@ -154,6 +171,11 @@ class DockerRoutedAppEnsureResult:
             raise ValueError("invalid routed app health status")
         if not isinstance(self.detail, str) or not isinstance(self.health_detail, str):
             raise TypeError("details must be strings")
+
+    @property
+    def route_eligible(self) -> bool:
+        """True only when the container, endpoint and fresh health are all verified."""
+        return self.status in {"created", "existing"} and self.target is not None and self.health_status == "healthy"
 
 
 def _ports_digest(port_bindings: tuple[TrafficPortBinding, ...]) -> str:
@@ -293,8 +315,13 @@ def _health_observation(state: object) -> tuple[HealthStatus, str]:
         ended = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
         return "unknown", "Docker HEALTHCHECK timestamps are invalid"
-    if started.tzinfo is None or ended.tzinfo is None or ended <= started:
-        return "unknown", "Docker HEALTHCHECK observation is not newer than container start"
+    if (
+        started.tzinfo is None
+        or ended.tzinfo is None
+        or ended <= started
+        or ended > datetime.now(timezone.utc)
+    ):
+        return "unknown", "Docker HEALTHCHECK observation is not a valid completed check after container start"
     return "healthy", ""
 
 
@@ -339,12 +366,9 @@ def verify_routed_app_inspection(
         or host.get("Privileged") is not False
         or host.get("PublishAllPorts") is not False
         or host.get("PortBindings") not in (None, {})
-        or not isinstance(host.get("CapDrop"), list)
-        or "ALL" not in host.get("CapDrop")
-        or host.get("CapAdd") not in (None, [])
-        and host.get("CapAdd") != list(spec.capabilities)
-        or not isinstance(host.get("SecurityOpt"), list)
-        or "no-new-privileges:true" not in host.get("SecurityOpt")
+        or host.get("CapDrop") != ["ALL"]
+        or (host.get("CapAdd") or []) != list(spec.capabilities)
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
     ):
         return DockerRoutedAppVerification(
             "mismatch", health_detail="Docker app runtime security or no-host-publish contract mismatch"
