@@ -528,7 +528,7 @@ class LocalDockerProvider:
 
         expected_id = runtime_id
         inspect_format = (
-            "{{.Id}}\\n{{.State.Status}}\\n"
+            "{{.Id}}\n{{.State.Status}}\n"
             "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
         )
         result, error = self._execute(["inspect", "--format", inspect_format, expected_id])
