@@ -41,15 +41,15 @@ ROUTED_APP_CONTAINER_INSPECT_FORMAT = (
     r'\"PublishAllPorts\":%t,\"PortBindings\":%s,\"CapDrop\":%s,\"CapAdd\":%s,'
     r'\"SecurityOpt\":%s},\"Mounts\":%s,\"NetworkSettings\":{\"Networks\":%s,'
     r'\"Ports\":%s}}" .Id .Name .Config.Image (json .Config.Labels) '
-    r'(json .Config.ExposedPorts) (json .Config.Volumes) .State.Status '
-    r'.State.StartedAt (json .State.Health) .HostConfig.NetworkMode '
+    r'(json .Config.ExposedPorts) (json (index .Config "Volumes")) .State.Status '
+    r'.State.StartedAt (json (index .State "Health")) .HostConfig.NetworkMode '
     r'.HostConfig.Privileged .HostConfig.PublishAllPorts (json .HostConfig.PortBindings) '
     r'(json .HostConfig.CapDrop) (json .HostConfig.CapAdd) '
     r'(json .HostConfig.SecurityOpt) (json .Mounts) '
     r'(json .NetworkSettings.Networks) (json .NetworkSettings.Ports)}}'
 )
 ROUTED_APP_IMAGE_INSPECT_FORMAT = (
-    r'{{printf "{\"Id\":%q,\"Config\":{\"Volumes\":%s}}" .Id (json .Config.Volumes)}}'
+    r'{{printf "{\"Id\":%q,\"Config\":{\"Volumes\":%s}}" .Id (json (index .Config "Volumes"))}}'
 )
 
 EnsureStatus = Literal[

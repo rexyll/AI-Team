@@ -417,3 +417,9 @@ def test_malformed_image_response_fails_before_mutation():
     result = manager.ensure_app(app_spec, artifact())
     assert result.status == "invalid_response"
     assert len(runner.calls) == 1
+
+def test_docker_inspect_templates_tolerate_optional_absent_image_fields():
+    assert '(json (index .Config "Volumes"))' in ROUTED_APP_IMAGE_INSPECT_FORMAT
+    assert '(json (index .Config "Volumes"))' in ROUTED_APP_CONTAINER_INSPECT_FORMAT
+    assert '(json (index .State "Health"))' in ROUTED_APP_CONTAINER_INSPECT_FORMAT
+
