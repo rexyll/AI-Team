@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+import hashlib
 from types import SimpleNamespace
 
 from runtime.deployment_history import DeploymentHistoryStore
@@ -81,8 +83,19 @@ class FakeDocker:
 
     def __init__(self):
         self.stopped = set()
+        self.identity_mismatch_ids = set()
 
     def inspect_runtime(self, record):
+        if record.container_id in self.identity_mismatch_ids:
+            return SimpleNamespace(
+                status="identity_mismatch",
+                observed_runtime_id=CANDIDATE_ID,
+                runtime_state="unknown",
+                health_status="unavailable",
+                checked_at="2026-11-17T12:01:00Z",
+                probe="fake immutable Docker inspect",
+                detail="Docker inspect returned a different immutable container ID",
+            )
         stopped = record.container_id in self.stopped
         return SimpleNamespace(
             status="verified",
@@ -133,11 +146,16 @@ class FakeAppManager:
 
 
 class FakeSlotManager:
-    def __init__(self, provider, state_store, runtime_state, *, drain_status="verified"):
+    def __init__(
+        self, provider, state_store, runtime_state, *,
+        drain_status="verified", identity_mismatch_on_drain=False,
+    ):
         self.provider = provider
         self.state_store = state_store
         self.runtime_state = runtime_state
         self.drain_status = drain_status
+        self.identity_mismatch_on_drain = identity_mismatch_on_drain
+        self.last_drained_state_record = None
         self.calls = []
 
     def prepare_inactive_slot(self, **kwargs):
@@ -166,6 +184,9 @@ class FakeSlotManager:
             kwargs["state_record"], BINDINGS, _snapshot()
         )
         assert result.status == "persisted"
+        self.last_drained_state_record = result.record
+        if self.identity_mismatch_on_drain and kwargs["slot"] == "slot_a":
+            self.provider.identity_mismatch_ids.add(PREVIOUS_ID)
         return SimpleNamespace(status="verified", state_record=result.record)
 
 
@@ -224,7 +245,10 @@ class FakeRuntimeAPI:
         return SimpleNamespace(status="failed", response="", detail="unexpected Runtime API operation")
 
 
-def _setup(tmp_path, monkeypatch, *, drain_status="verified"):
+def _setup(
+    tmp_path, monkeypatch, *,
+    drain_status="verified", identity_mismatch_on_stop=False,
+):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     state_store = LocalDockerRouterStateStore(tmp_path / "router-state")
     network_spec = build_router_network_spec(SCOPE)
@@ -290,7 +314,9 @@ def _setup(tmp_path, monkeypatch, *, drain_status="verified"):
     )
     runtime_state = {"selector": "slot_a"}
     slot_manager = FakeSlotManager(
-        docker, state_store, runtime_state, drain_status=drain_status
+        docker, state_store, runtime_state,
+        drain_status=drain_status,
+        identity_mismatch_on_drain=identity_mismatch_on_stop,
     )
     host = FakeRouterHost(
         docker, history, network, image, initial_spec, tmp_path / "router-state"
@@ -352,6 +378,43 @@ def test_durable_replacement_coordinator_switches_router_then_drains_and_retires
     assert router.active_target.runtime_id == CANDIDATE_ID
     assert router.slot_targets == (("slot_b", router.active_target),)
     assert adapter.read_traffic_target(request) == CANDIDATE_ID
+
+
+def test_previous_identity_mismatch_keeps_digest_consistent_router_and_both_runtimes(
+    tmp_path, monkeypatch
+):
+    history, adapter, manager, request, previous, candidate, docker, slots = _setup(
+        tmp_path, monkeypatch, identity_mismatch_on_stop=True
+    )
+
+    result = manager.replace(request, candidate)
+
+    assert result.status == "needs_reconciliation"
+    assert result.phase == "needs_reconciliation"
+    assert history.get_replacement("router-replace-operation-1").phase == "needs_reconciliation"
+    assert docker.stopped == set()
+    assert history.get("previous").status == "running"
+    assert history.get("candidate").status == "running"
+    active = history.active_deployment(
+        provider="docker-local", project="demo", environment="staging"
+    )
+    assert active.deployment_id == "candidate"
+
+    router = history.get_traffic_router(SCOPE)
+    assert router.active_slot == "slot_b"
+    assert router.active_target.runtime_id == CANDIDATE_ID
+    assert {slot for slot, _ in router.slot_targets} == {"slot_a", "slot_b"}
+
+    # The drained server-state file must be checkpointed before the stop gate.
+    stored_state = history.get_traffic_router_state_record(SCOPE)
+    assert slots.last_drained_state_record is not None
+    assert stored_state == slots.last_drained_state_record
+    assert stored_state.server_state_sha256 == hashlib.sha256(
+        Path(stored_state.server_state_path).read_bytes()
+    ).hexdigest()
+    # Host read-back must remain available while the scope is held for reconciliation.
+    assert adapter.read_traffic_target(request) == CANDIDATE_ID
+    assert slots.calls == ["prepare", "switch", ("drain", "slot_a")]
 
 
 def test_drain_timeout_keeps_previous_runtime_running_and_reserves_reconciliation(
