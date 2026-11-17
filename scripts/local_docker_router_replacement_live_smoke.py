@@ -587,17 +587,38 @@ def run_live_smoke() -> dict[str, Any]:
             raise RuntimeError(
                 f"Router restart failed: {(restarted.stderr or restarted.stdout)[-500:]}"
             )
-        router_after_restart = provider.inspect_runtime_identity(
-            "router-" + scope.project, router_id
-        )
+        router_after_restart = None
+        for attempt in range(40):
+            router_after_restart = provider.inspect_runtime_identity(
+                "router-" + scope.project, router_id
+            )
+            if (
+                router_after_restart.status == "identity_mismatch"
+                or (
+                    router_after_restart.status == "verified"
+                    and router_after_restart.observed_runtime_id != router_id
+                )
+            ):
+                break
+            if (
+                router_after_restart.status == "verified"
+                and router_after_restart.observed_runtime_id == router_id
+                and router_after_restart.runtime_state == "running"
+            ):
+                break
+            if attempt < 39:
+                time.sleep(0.25)
         if (
-            router_after_restart.status != "verified"
+            router_after_restart is None
+            or router_after_restart.status != "verified"
             or router_after_restart.observed_runtime_id != router_id
             or router_after_restart.runtime_state != "running"
         ):
             raise RuntimeError(
                 "Router immutable runtime identity/state did not recover after restart: "
-                f"{router_after_restart.status}/{router_after_restart.runtime_state}"
+                f"{router_after_restart.status if router_after_restart else 'missing'}/"
+                f"{router_after_restart.runtime_state if router_after_restart else 'unknown'}: "
+                f"{router_after_restart.detail[:500] if router_after_restart else ''}"
             )
 
         restart_selector = None
