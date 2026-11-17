@@ -195,3 +195,17 @@ jobs:
                   raise SystemExit(f"HAProxy generated-config syntax validation failed: {config_result.status}: {config_result.detail}")
               print("PASS: generated HAProxy config and active map accepted by pinned HAProxy -c")
           PY
+
+      - name: Live Router bootstrap and Runtime API read-back
+        env:
+          AI_TEAM_ROUTER_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-router-live-smoke.json
+        run: python -m scripts.local_docker_router_live_smoke
+
+      - name: Upload live Router bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-live-bootstrap-evidence
+          path: "${{ runner.temp }}/ai-team-router-live-smoke.json"
+          if-no-files-found: warn
+          retention-days: 30
