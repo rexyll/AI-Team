@@ -18,6 +18,7 @@ ServerRuntimeState = Literal["ready", "drain", "maint"]
 _RUNTIME_ID = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 _MAP_PATH = re.compile(r"^/[a-zA-Z0-9_./-]{1,180}$")
+_MAP_ID = re.compile(r"^#[0-9]{1,6}$")
 _MAX_COMMAND_BYTES = 1023
 _DEFAULT_ADMIN_SOCKET = "/run/haproxy/admin.sock"
 
@@ -37,6 +38,12 @@ def _map_path(value: str) -> str:
     ):
         raise ValueError("map_path must be a safe absolute Router map path")
     return value
+
+
+def _map_reference(value: str) -> str:
+    if isinstance(value, str) and _MAP_ID.fullmatch(value):
+        return value
+    return _map_path(value)
 
 
 def _line(value: str) -> str:
@@ -63,11 +70,12 @@ class HAProxyRuntimeCommand:
         _line(self.line)
         patterns = {
             "show_info": r"show info",
+        "show_maps": r"show map",
             "show_stat": r"show stat",
             "show_servers_state": r"show servers state",
             "show_servers_conn": r"show servers conn(?: [a-z][a-z0-9_-]{0,47})?",
-            "get_map": r"get map /[a-zA-Z0-9_./-]{1,180} [a-z][a-z0-9_-]{0,47}",
-            "set_map": r"set map /[a-zA-Z0-9_./-]{1,180} [a-z][a-z0-9_-]{0,47} (?:none|slot_a|slot_b)",
+            "get_map": r"get map (?:/[a-zA-Z0-9_./-]{1,180}|#[0-9]{1,6}) [a-z][a-z0-9_-]{0,47}",
+            "set_map": r"set map (?:/[a-zA-Z0-9_./-]{1,180}|#[0-9]{1,6}) [a-z][a-z0-9_-]{0,47} (?:none|slot_a|slot_b)",
             "set_server_address": (
                 r"set server [a-z][a-z0-9_-]{0,47}/[a-z][a-z0-9_-]{0,47} "
                 r"addr [0-9a-fA-F:.]+ port [0-9]{1,5}"
@@ -85,7 +93,7 @@ class HAProxyRuntimeCommand:
             raise ValueError("Runtime API command text does not match its allowlisted operation")
         parts = self.line.split(" ")
         if self.operation in {"get_map", "set_map"}:
-            _map_path(parts[2])
+            _map_reference(parts[2])
             _identifier(parts[3], "map key")
         elif self.operation == "show_servers_conn" and len(parts) == 4:
             _identifier(parts[3], "backend")
@@ -135,6 +143,10 @@ def show_info_command() -> HAProxyRuntimeCommand:
     return HAProxyRuntimeCommand("show info", "show_info", False)
 
 
+def show_maps_command() -> HAProxyRuntimeCommand:
+    return HAProxyRuntimeCommand("show map", "show_maps", False)
+
+
 def show_stat_command() -> HAProxyRuntimeCommand:
     return HAProxyRuntimeCommand("show stat", "show_stat", False)
 
@@ -152,7 +164,7 @@ def show_servers_connections_command(backend: str | None = None) -> HAProxyRunti
 
 def get_map_command(map_path: str, key: str) -> HAProxyRuntimeCommand:
     return HAProxyRuntimeCommand(
-        f"get map {_map_path(map_path)} {_identifier(key, 'map key')}",
+        f"get map {_map_reference(map_path)} {_identifier(key, 'map key')}",
         "get_map", False,
     )
 
@@ -161,7 +173,7 @@ def set_map_command(map_path: str, key: str, value: str) -> HAProxyRuntimeComman
     if value not in {"none", "slot_a", "slot_b"}:
         raise ValueError("map value must be none, slot_a, or slot_b")
     return HAProxyRuntimeCommand(
-        f"set map {_map_path(map_path)} {_identifier(key, 'map key')} {value}",
+        f"set map {_map_reference(map_path)} {_identifier(key, 'map key')} {value}",
         "set_map", True,
     )
 

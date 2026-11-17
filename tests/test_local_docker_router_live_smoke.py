@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.local_docker_router_live_smoke import parse_get_map_value, parse_show_info
+from scripts.local_docker_router_live_smoke import (
+    parse_get_map_value,
+    parse_show_info,
+    parse_show_map_registry,
+)
 
 
 def test_parse_show_info_accepts_the_pinned_haproxy_version():
@@ -26,6 +30,33 @@ def test_parse_show_info_accepts_the_pinned_haproxy_version():
 def test_parse_show_info_rejects_missing_duplicate_or_unpinned_identity(response):
     with pytest.raises(ValueError):
         parse_show_info(response)
+
+
+def test_parse_show_map_registry_resolves_exact_active_map_id():
+    response = (
+        "# id (file) description\\n"
+        "0 (/etc/other.map) other map\\n"
+        "7 (/usr/local/etc/haproxy/active-slot.map) router map\\n"
+    )
+    assert parse_show_map_registry(
+        response, expected_path="/usr/local/etc/haproxy/active-slot.map"
+    ) == "#7"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "",
+        "# id (file) description\\n0 (/etc/other.map) other map\\n",
+        "0 (/usr/local/etc/haproxy/active-slot.map) first\\n1 (/usr/local/etc/haproxy/active-slot.map) duplicate\\n",
+        "0 (relative.map) invalid\\n",
+    ],
+)
+def test_parse_show_map_registry_rejects_missing_or_ambiguous_map(response):
+    with pytest.raises(ValueError):
+        parse_show_map_registry(
+            response, expected_path="/usr/local/etc/haproxy/active-slot.map"
+        )
 
 
 def test_parse_get_map_value_accepts_exact_active_none_entry():

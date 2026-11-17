@@ -23,9 +23,11 @@ from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterS
 from runtime.haproxy_runtime_api import (
     HAProxyRuntimeAPIClient,
     get_map_command,
+    show_maps_command,
     show_info_command,
 )
 from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 from runtime.local_docker_router_config_validator import LocalDockerRouterConfigValidator
 from runtime.local_docker_router_container import build_router_container_spec
 from runtime.local_docker_router_container_manager import LocalDockerRouterContainerManager
@@ -58,6 +60,22 @@ def parse_show_info(response: str) -> dict[str, str]:
     if match is None or match.group(1) != _EXPECTED_HAPROXY_VERSION:
         raise ValueError("Runtime API version does not match the pinned HAProxy release")
     return fields
+
+
+def parse_show_map_registry(response: str, *, expected_path: str) -> str:
+    """Resolve one exact HAProxy map file registration to its numeric ID."""
+    if not isinstance(response, str) or not response.strip():
+        raise ValueError("HAProxy show map returned an empty registry")
+    matches: list[str] = []
+    for line in response.splitlines():
+        match = re.match(r"^\\s*([0-9]{1,6})\\s+\\((/[^)]+)\\)(?:\\s|$)", line)
+        if match is None:
+            continue
+        if match.group(2) == expected_path:
+            matches.append(f"#{match.group(1)}")
+    if len(matches) != 1:
+        raise ValueError("HAProxy show map did not return exactly one registration for the expected file")
+    return matches[0]
 
 
 def parse_get_map_value(
@@ -419,9 +437,15 @@ def run_live_smoke() -> dict[str, Any]:
                 f"HAProxy Runtime API show info: {info_result.status}: {info_result.detail}"
             )
         info = parse_show_info(info_result.response)
-        map_result = client.execute(
-            get_map_command(state.record.active_slot_map_path, "active")
+        maps_result = client.execute(show_maps_command())
+        if maps_result.status != "succeeded":
+            raise RuntimeError(
+                f"HAProxy Runtime API show map: {maps_result.status}: {maps_result.detail}"
+            )
+        map_id = parse_show_map_registry(
+            maps_result.response, expected_path=HAPROXY_ACTIVE_SLOT_MAP
         )
+        map_result = client.execute(get_map_command(map_id, "active"))
         if map_result.status != "succeeded":
             raise RuntimeError(
                 f"HAProxy Runtime API get map: {map_result.status}: {map_result.detail}"
@@ -442,6 +466,9 @@ def run_live_smoke() -> dict[str, Any]:
             "show_info": "succeeded",
             "process_name": info["Name"],
             "haproxy_version": info["Version"],
+            "show_map_registry": "succeeded",
+            "map_id": map_id,
+            "map_path": HAPROXY_ACTIVE_SLOT_MAP,
             "get_map": "succeeded",
             "active_selector": active_slot,
         }

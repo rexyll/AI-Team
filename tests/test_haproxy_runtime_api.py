@@ -11,6 +11,7 @@ from runtime.haproxy_runtime_api import (
     set_server_address_command,
     set_server_state_command,
     show_info_command,
+    show_maps_command,
     show_servers_connections_command,
     show_servers_state_command,
     show_stat_command,
@@ -36,6 +37,7 @@ def _provider(runner):
 
 def test_read_commands_are_allowlisted_and_have_expected_text():
     assert show_info_command().line == "show info"
+    assert show_maps_command().line == "show map"
     assert show_stat_command().line == "show stat"
     assert show_servers_state_command().line == "show servers state"
     assert show_servers_connections_command().line == "show servers conn"
@@ -67,6 +69,14 @@ def test_backend_and_server_names_reject_command_injection(bad):
 def test_map_paths_reject_traversal_and_newlines(bad):
     with pytest.raises(ValueError):
         get_map_command(bad, "active")
+
+
+def test_runtime_api_accepts_only_numeric_map_ids_or_safe_paths():
+    assert get_map_command("#0", "active").line == "get map #0 active"
+    assert set_map_command("#0", "active", "none").line == "set map #0 active none"
+    for bad in ("#x", "#-1", "#1000000", "#0;shutdown"):
+        with pytest.raises(ValueError):
+            get_map_command(bad, "active")
 
 
 def test_map_values_are_limited_to_known_router_slots():

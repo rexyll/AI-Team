@@ -164,3 +164,5 @@ HAProxy Runtime API 只改运行中内存；Host map 文件是 Router 重启后�
 - show servers conn (diagnostic only): https://www.haproxy.com/documentation/haproxy-runtime-api/reference/show-servers-conn/
 - set map / prepare map / commit map: https://www.haproxy.com/documentation/haproxy-runtime-api/reference/set-map/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/prepare-map/ and https://www.haproxy.com/documentation/haproxy-runtime-api/reference/commit-map/
 - Unix socket security: https://www.haproxy.com/documentation/haproxy-configuration-manual/new/latest/management/
+
+Runtime API map read-back resolves the numeric map ID from the read-only `show map` registry and verifies the exact in-container map path before issuing `get map #ID active`. Host state file paths must never be sent to the in-container Runtime API. The live bootstrap smoke expects the returned selector to be exactly `none`.
