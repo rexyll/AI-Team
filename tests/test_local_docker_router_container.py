@@ -40,6 +40,7 @@ def make_inspect(spec):
         "Name": "/" + spec.container_name,
         "Config": {
             "Image": spec.image_id,
+            "User": f"{spec.container_uid}:{spec.container_gid}",
             "Entrypoint": ["/docker-entrypoint.sh"],
             "Cmd": ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"],
             "Labels": dict(spec.labels),
@@ -49,7 +50,7 @@ def make_inspect(spec):
             "ReadonlyRootfs": True, "Privileged": False, "CapDrop": ["ALL"],
             "CapAdd": list(spec.capabilities), "SecurityOpt": ["no-new-privileges:true"],
             "NetworkMode": spec.network_name, "RestartPolicy": {"Name": "unless-stopped"},
-            "Tmpfs": {"/run/haproxy": "rw,noexec,nosuid,nodev,size=1048576,mode=700"},
+            "Tmpfs": {"/run/haproxy": f"rw,noexec,nosuid,nodev,size=1048576,uid={spec.container_uid},gid={spec.container_gid},mode=700"},
             "PortBindings": ports,
         },
         "Mounts": [
@@ -121,6 +122,7 @@ def test_valid_docker_inspect_readback_verifies_container_identity_and_ports(tmp
 @pytest.mark.parametrize("mutator,match", [
     (lambda p: p.update({"Name": "/other"}), "identity"),
     (lambda p: p["Config"].update({"Image": "sha256:" + "d" * 64}), "identity"),
+    (lambda p: p["Config"].update({"User": "99:99"}), "identity"),
     (lambda p: p["State"].update({"Running": False}), "identity"),
     (lambda p: p["HostConfig"].update({"ReadonlyRootfs": False}), "security"),
     (lambda p: p["HostConfig"].update({"Privileged": True}), "security"),

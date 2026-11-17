@@ -5,7 +5,9 @@ read-back data. It does not invoke Docker or create a persistent container.
 """
 from __future__ import annotations
 import hashlib
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -25,7 +27,6 @@ _NETWORK_LABEL = "com.ai-team.router.network-id"
 _IMAGE_LABEL = "com.ai-team.router.image-id"
 _CONFIG_DESTINATION = "/usr/local/etc/haproxy/haproxy.cfg"
 _MAP_DESTINATION = "/usr/local/etc/haproxy/active-slot.map"
-_TMPFS_SPEC = "/run/haproxy:rw,noexec,nosuid,nodev,size=1m,mode=700"
 _EXPECTED_ENTRYPOINT = ["/docker-entrypoint.sh"]
 _EXPECTED_COMMAND = ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
 
@@ -56,15 +57,21 @@ def _build_run_argv(
     container_name: str, network_name: str, image_id: str,
     labels: tuple[tuple[str, str], ...], capabilities: tuple[str, ...],
     port_bindings: tuple[TrafficPortBinding, ...], config_path: str, map_path: str,
+    container_uid: int, container_gid: int,
 ) -> tuple[str, ...]:
-    argv: list[str] = ["run", "--detach", "--name", container_name]
+    argv: list[str] = ["run", "--detach", "--name", container_name,
+                      "--user", f"{container_uid}:{container_gid}"]
     for key, value in labels:
         argv.extend(["--label", f"{key}={value}"])
     argv.extend(["--network", network_name, "--restart", "unless-stopped"])
     argv.extend(["--read-only", "--cap-drop", "ALL"])
     if capabilities:
         argv.extend(["--cap-add", "NET_BIND_SERVICE"])
-    argv.extend(["--security-opt", "no-new-privileges:true", "--tmpfs", _TMPFS_SPEC])
+    tmpfs_spec = (
+        f"/run/haproxy:rw,noexec,nosuid,nodev,size=1m,"
+        f"uid={container_uid},gid={container_gid},mode=700"
+    )
+    argv.extend(["--security-opt", "no-new-privileges:true", "--tmpfs", tmpfs_spec])
     argv.extend(["--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly"])
     argv.extend(["--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly"])
     for item in port_bindings:
@@ -78,6 +85,8 @@ class DockerRouterContainerSpec:
     image_id: str
     network_name: str
     network_id: str
+    container_uid: int
+    container_gid: int
     port_bindings: tuple[TrafficPortBinding, ...]
     config_path: str
     active_slot_map_path: str
@@ -96,6 +105,10 @@ class DockerRouterContainerSpec:
             raise ValueError("image_id must be a full immutable image ID")
         if not _CONTAINER_ID.fullmatch(self.network_id):
             raise ValueError("network_id must be a full immutable Docker network ID")
+        for name in ("container_uid", "container_gid"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 2**31 - 1:
+                raise ValueError(f"{name} must be a non-negative container numeric identity")
         if not isinstance(self.port_bindings, tuple) or not self.port_bindings or any(not isinstance(x, TrafficPortBinding) for x in self.port_bindings):
             raise ValueError("port_bindings must be a non-empty tuple of TCP bindings")
         if tuple(sorted(self.port_bindings, key=lambda item: item.host_port)) != self.port_bindings:
@@ -117,6 +130,7 @@ class DockerRouterContainerSpec:
         expected_argv = _build_run_argv(
             self.container_name, self.network_name, self.image_id, self.labels,
             self.capabilities, self.port_bindings, self.config_path, self.active_slot_map_path,
+            self.container_uid, self.container_gid,
         )
         if self.run_argv != expected_argv:
             raise ValueError("Router container argv does not match the fixed allowlisted contract")
@@ -138,6 +152,35 @@ class RouterContainerVerification:
             raise ValueError("unverified Router container must not expose a trusted ID")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
+
+
+def _verified_state_owner(state: RouterStateRecord) -> tuple[int, int]:
+    """Return the numeric Host owner used by private files and Router process.
+
+    Host state remains 0700/0600. The Router runs as this exact UID/GID so it
+    can read the read-only bind mounts without making those files world-readable.
+    """
+    directory = Path(state.directory)
+    info = directory.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o700
+        or info.st_uid != os.geteuid()
+    ):
+        raise ValueError("Router state directory must be Host-owned, real and mode 0700")
+    for raw_path in (state.config_path, state.active_slot_map_path):
+        file_info = Path(raw_path).lstat()
+        if (
+            not stat.S_ISREG(file_info.st_mode)
+            or stat.S_ISLNK(file_info.st_mode)
+            or file_info.st_uid != info.st_uid
+            or file_info.st_gid != info.st_gid
+            or file_info.st_nlink != 1
+            or stat.S_IMODE(file_info.st_mode) != 0o600
+        ):
+            raise ValueError("Router state files must be singly linked Host-owned regular files mode 0600")
+    return info.st_uid, info.st_gid
 
 
 def build_router_container_spec(
@@ -176,6 +219,7 @@ def build_router_container_spec(
         raise ValueError("Router bootstrap map must have the fail-closed active none selector")
     config_path = _safe_mount_path(state.config_path, "config_path")
     map_path = _safe_mount_path(state.active_slot_map_path, "active_slot_map_path")
+    container_uid, container_gid = _verified_state_owner(state)
     expected_dir = state.directory.rstrip("/") + "/"
     if not config_path.startswith(expected_dir) or not map_path.startswith(expected_dir):
         raise ValueError("Router state mount files must be contained in their scope directory")
@@ -184,14 +228,25 @@ def build_router_container_spec(
     capabilities = _expected_container_capabilities(ordered)
     argv = _build_run_argv(
         container_name, network.network_name, image.image_id, labels, capabilities,
-        ordered, config_path, map_path,
+        ordered, config_path, map_path, container_uid, container_gid,
     )
     return DockerRouterContainerSpec(
         container_name=container_name, scope_fingerprint=expected_scope.scope_fingerprint,
         image_id=image.image_id, network_name=network.network_name, network_id=network.network_id,
         port_bindings=ordered, config_path=config_path, active_slot_map_path=map_path,
+        container_uid=container_uid, container_gid=container_gid,
         labels=labels, capabilities=capabilities, run_argv=argv,
     )
+
+
+def _tmpfs_matches_identity(value: object, uid: int, gid: int) -> bool:
+    if not isinstance(value, str):
+        return False
+    options = {item.strip() for item in value.split(",")}
+    return {
+        f"uid={uid}", f"gid={gid}", "mode=700",
+        "rw", "noexec", "nosuid", "nodev", "size=1048576",
+    }.issubset(options)
 
 
 def verify_router_container_inspection(payload: object, spec: DockerRouterContainerSpec) -> RouterContainerVerification:
@@ -218,6 +273,7 @@ def verify_router_container_inspection(payload: object, spec: DockerRouterContai
         or config.get("Image") != spec.image_id
         or config.get("Entrypoint") != _EXPECTED_ENTRYPOINT
         or config.get("Cmd") != _EXPECTED_COMMAND
+        or config.get("User") != f"{spec.container_uid}:{spec.container_gid}"
         or any(labels.get(key) != value for key, value in expected_labels.items())
         or state.get("Running") is not True
     ):
@@ -231,6 +287,10 @@ def verify_router_container_inspection(payload: object, spec: DockerRouterContai
         or host.get("NetworkMode") != spec.network_name
         or (host.get("RestartPolicy") or {}).get("Name") != "unless-stopped"
         or "/run/haproxy" not in (host.get("Tmpfs") or {})
+        or not _tmpfs_matches_identity(
+            (host.get("Tmpfs") or {}).get("/run/haproxy"),
+            spec.container_uid, spec.container_gid,
+        )
     ):
         return RouterContainerVerification("mismatch", detail="Router container security, network or restart policy mismatch")
     mounts = payload.get("Mounts")

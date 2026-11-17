@@ -55,6 +55,11 @@ def make_spec(tmp_path):
     active_map = render_active_slot_map(None)
     config_path = directory / "haproxy.cfg"
     map_path = directory / "active-slot.map"
+    directory.chmod(0o700)
+    (directory / "haproxy.cfg").write_text(config, encoding="utf-8")
+    (directory / "active-slot.map").write_text(active_map, encoding="utf-8")
+    (directory / "haproxy.cfg").chmod(0o600)
+    (directory / "active-slot.map").chmod(0o600)
     state = RouterStateRecord(
         network_spec.network_name, network_spec.scope_fingerprint, str(directory),
         str(config_path), str(map_path), hashlib.sha256(config.encode()).hexdigest(),
@@ -73,6 +78,7 @@ def inspect_payload(spec, **changes):
         "Name": "/" + spec.container_name,
         "Config": {
             "Image": spec.image_id,
+            "User": f"{spec.container_uid}:{spec.container_gid}",
             "Entrypoint": ["/docker-entrypoint.sh"],
             "Cmd": ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"],
             "Labels": dict(spec.labels),
@@ -82,7 +88,7 @@ def inspect_payload(spec, **changes):
             "ReadonlyRootfs": True, "Privileged": False, "CapDrop": ["ALL"],
             "CapAdd": list(spec.capabilities), "SecurityOpt": ["no-new-privileges:true"],
             "NetworkMode": spec.network_name, "RestartPolicy": {"Name": "unless-stopped"},
-            "Tmpfs": {"/run/haproxy": "rw,noexec,nosuid,nodev,size=1048576,mode=700"},
+            "Tmpfs": {"/run/haproxy": f"rw,noexec,nosuid,nodev,size=1048576,uid={spec.container_uid},gid={spec.container_gid},mode=700"},
             "PortBindings": ports,
         },
         "Mounts": [
