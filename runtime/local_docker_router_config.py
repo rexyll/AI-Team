@@ -15,6 +15,9 @@ HAPROXY_CONFIG_FILE = f"{HAPROXY_STATE_DIRECTORY}/haproxy.cfg"
 HAPROXY_ACTIVE_SLOT_MAP = f"{HAPROXY_STATE_DIRECTORY}/active-slot.map"
 HAPROXY_SERVERS_STATE_FILE = f"{HAPROXY_STATE_DIRECTORY}/servers-state"
 HAPROXY_INITIAL_PLACEHOLDER_ADDRESS = "router-slot.invalid"
+# RFC 5737 TEST-NET-1: an IPv4-only, non-production fallback that establishes
+# the server address family until Runtime API installs a real app endpoint.
+HAPROXY_INITIAL_FALLBACK_ADDRESS = "192.0.2.1"
 HAPROXY_INITIAL_PLACEHOLDER_PORT = 1
 HAPROXY_INITIAL_SERVER_WEIGHT = 0
 
@@ -47,7 +50,9 @@ def render_haproxy_router_config(
 
     Both servers have weight 0. Only an explicit use-server rule can select a
     slot; an absent selector or unavailable selected server cannot fall back
-    through the normal load-balancing scheduler.
+    through the normal load-balancing scheduler. HAProxy first restores the last
+    persisted address, then uses a fixed documentation-only IPv4 fallback so
+    Runtime API address updates stay within a known address family.
     """
     bindings = _validated_bindings(port_bindings)
     lines = [
@@ -88,13 +93,13 @@ def render_haproxy_router_config(
                 f"    server slot_a {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
                 f"{HAPROXY_INITIAL_PLACEHOLDER_PORT} check weight "
                 f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2 "
-                "init-addr last,none"
+                f"init-addr last,{HAPROXY_INITIAL_FALLBACK_ADDRESS}"
             ),
             (
                 f"    server slot_b {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
                 f"{HAPROXY_INITIAL_PLACEHOLDER_PORT} check weight "
                 f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2 "
-                "init-addr last,none"
+                f"init-addr last,{HAPROXY_INITIAL_FALLBACK_ADDRESS}"
             ),
         ])
     return "\n".join(lines) + "\n"
