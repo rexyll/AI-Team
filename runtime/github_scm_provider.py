@@ -596,7 +596,7 @@ class GitHubSCMProvider:
         }
         latest_by_user: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
         has_unknown_review_state = False
-        has_ambiguous_review_timestamp = False
+        ambiguous_reviewers: set[str] = set()
         for review in reviews:
             user = review["user"]
             login = user["login"]
@@ -624,6 +624,9 @@ class GitHubSCMProvider:
                 latest_by_user[login] = (submitted_at, review)
             elif submitted_at > previous[0]:
                 latest_by_user[login] = (submitted_at, review)
+                # A strictly newer submitted decision resolves any tie at the
+                # older instant for this reviewer.
+                ambiguous_reviewers.discard(login)
             elif (
                 submitted_at == previous[0]
                 and str(previous[1].get("state") or "").upper() != normalized_state
@@ -631,7 +634,7 @@ class GitHubSCMProvider:
                 # GitHub timestamps may have only second-level precision.
                 # Different decisions with the same instant have no reliable
                 # ordering, so an approval must not win by response-array order.
-                has_ambiguous_review_timestamp = True
+                ambiguous_reviewers.add(login)
 
         states = [str(item[1].get("state") or "").upper() for item in latest_by_user.values()]
         status = (
@@ -639,7 +642,7 @@ class GitHubSCMProvider:
             if (
                 not reviews_complete
                 or has_unknown_review_state
-                or has_ambiguous_review_timestamp
+                or bool(ambiguous_reviewers)
             )
             else "changes_requested"
             if "CHANGES_REQUESTED" in states
