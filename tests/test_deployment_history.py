@@ -436,14 +436,28 @@ def test_read_only_history_store_requires_existing_db_and_rejects_writes(tmp_pat
         readonly.append(make_record("must-not-write"))
 
 
-def make_traffic_router_state_record(tmp_path, *, project="demo"):
+def make_traffic_router_state_record(
+    tmp_path, *, project="demo", port_bindings=None, active_slot=None
+):
     scope = TrafficRouterScope("docker-local", project, "staging")
-    ports = (TrafficPortBinding(8080, 80), TrafficPortBinding(8443, 443))
+    ports = port_bindings or (
+        TrafficPortBinding(8080, 80),
+        TrafficPortBinding(8443, 443),
+    )
     result = LocalDockerRouterStateStore(tmp_path / f"state-{project}").persist(
         scope, ports, active_slot=None
     )
     assert result.status == "persisted"
-    return result.record
+    record = result.record
+    if active_slot is not None:
+        updated = LocalDockerRouterStateStore(
+            tmp_path / f"state-{project}"
+        ).persist_active_slot_map(
+            record, expected_active_slot=None, active_slot=active_slot
+        )
+        assert updated.status == "persisted"
+        record = updated.record
+    return record
 
 
 def make_traffic_router_record(*, active_slot=None, active_target=None, generation="gen-0", project="demo"):
@@ -499,7 +513,9 @@ def test_traffic_router_registry_route_update_uses_generation_cas(tmp_path):
     updated = replace(
         initial, active_slot="slot_b", active_target=target, route_generation="gen-1"
     )
-    state_next = replace(state_initial, active_slot_map_sha256="e" * 64)
+    state_next = make_traffic_router_state_record(
+        tmp_path, active_slot="slot_b"
+    )
     assert history.update_traffic_router(
         updated,
         state_next,
@@ -561,7 +577,10 @@ def test_traffic_router_registry_rejects_initial_active_target(tmp_path):
     )
     with pytest.raises(ValueError, match="start with no active"):
         history.create_traffic_router(
-            record, make_traffic_router_state_record(tmp_path)
+            record,
+            make_traffic_router_state_record(
+                tmp_path, port_bindings=ports, active_slot="slot_a"
+            ),
         )
 
 

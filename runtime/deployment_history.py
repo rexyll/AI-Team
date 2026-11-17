@@ -6,6 +6,7 @@ as authority.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -32,6 +33,7 @@ from runtime.deployment_traffic_router import (
 )
 from runtime.local_docker_router_network import build_router_network_spec
 from runtime.local_docker_router_state import RouterStateRecord
+from runtime.local_docker_router_config import render_active_slot_map, render_haproxy_router_config
 
 
 def _record_to_json(record: DeploymentRecord) -> str:
@@ -90,13 +92,24 @@ def _router_state_record_from_json(payload: str) -> RouterStateRecord:
 def _validate_router_state_record(
     scope: TrafficRouterScope,
     record: RouterStateRecord,
+    *,
+    port_bindings: tuple[TrafficPortBinding, ...],
+    active_slot: str | None,
 ) -> None:
     if not isinstance(scope, TrafficRouterScope):
         raise TypeError("scope must be a TrafficRouterScope")
     if not isinstance(record, RouterStateRecord):
         raise TypeError("record must be a RouterStateRecord")
+    if not isinstance(port_bindings, tuple) or not port_bindings or any(
+        not isinstance(item, TrafficPortBinding) for item in port_bindings
+    ):
+        raise ValueError("Router port bindings must be a non-empty tuple of TCP bindings")
+    if active_slot not in {None, "slot_a", "slot_b"}:
+        raise ValueError("Router active_slot must be none, slot_a, or slot_b")
     network = build_router_network_spec(scope)
     directory = Path(record.directory)
+    expected_config = render_haproxy_router_config(port_bindings).encode("utf-8")
+    expected_map = render_active_slot_map(active_slot).encode("utf-8")
     if (
         not directory.is_absolute()
         or record.network_name != network.network_name
@@ -106,8 +119,13 @@ def _validate_router_state_record(
         or Path(record.active_slot_map_path) != directory / "active-slot.map"
         or Path(record.server_state_path) != directory / "servers-state"
         or record.server_state_sha256 is None
+        or record.config_sha256 != hashlib.sha256(expected_config).hexdigest()
+        or record.active_slot_map_sha256 != hashlib.sha256(expected_map).hexdigest()
     ):
-        raise ValueError("Router Host state record does not match the immutable scope paths or digests")
+        raise ValueError(
+            "Router Host state record does not match the immutable scope, port bindings, "
+            "active selector, paths, or deterministic file digests"
+        )
 
 
 @dataclass(frozen=True)
@@ -582,7 +600,12 @@ class DeploymentHistoryStore:
             raise TypeError("record must be a TrafficRouterRecord")
         if record.active_slot is not None or record.active_target is not None:
             raise ValueError("new traffic Router records must start with no active slot or target")
-        _validate_router_state_record(record.scope, host_state_record)
+        _validate_router_state_record(
+            record.scope,
+            host_state_record,
+            port_bindings=record.port_bindings,
+            active_slot=record.active_slot,
+        )
         payload = _traffic_router_to_json(record)
         state_payload = _router_state_record_to_json(host_state_record)
         with self._connect() as db:
@@ -625,14 +648,22 @@ class DeploymentHistoryStore:
             raise TypeError("scope must be a TrafficRouterScope")
         with self._connect() as db:
             row = db.execute(
-                """SELECT host_state_json FROM traffic_routers
+                """SELECT record_json, host_state_json FROM traffic_routers
                 WHERE provider = ? AND project = ? AND environment = ?""",
                 (scope.provider, scope.project, scope.environment),
             ).fetchone()
         if row is None or row["host_state_json"] is None:
             return None
+        router = _traffic_router_from_json(row["record_json"])
+        if router.scope != scope:
+            raise ValueError("persisted traffic Router scope does not match its database key")
         record = _router_state_record_from_json(row["host_state_json"])
-        _validate_router_state_record(scope, record)
+        _validate_router_state_record(
+            scope,
+            record,
+            port_bindings=router.port_bindings,
+            active_slot=router.active_slot,
+        )
         return record
 
     def update_traffic_router(
@@ -652,7 +683,12 @@ class DeploymentHistoryStore:
             raise ValueError("expected_state_map_sha256 must be a SHA-256 hex digest")
         if record.route_generation == expected_generation:
             raise ValueError("traffic Router update must advance the route generation")
-        _validate_router_state_record(record.scope, host_state_record)
+        _validate_router_state_record(
+            record.scope,
+            host_state_record,
+            port_bindings=record.port_bindings,
+            active_slot=record.active_slot,
+        )
         with self._connect() as db:
             row = db.execute(
                 """SELECT record_json, host_state_json, route_generation FROM traffic_routers
