@@ -577,7 +577,9 @@ def run_live_smoke() -> dict[str, Any]:
 
         # Verify that the active selector and persisted backend state survive
         # a real Docker container restart, not merely a Runtime API read-back.
-        restarted, restart_error = provider._execute(["restart", router_id])
+        restart_runner = LocalDockerProvider(provider.runner, timeout=30.0)
+        restart_inspector = LocalDockerProvider(provider.runner, timeout=5.0)
+        restarted, restart_error = restart_runner._execute(["restart", router_id])
         if restart_error:
             raise RuntimeError(
                 f"Router restart command unavailable: {type(restart_error).__name__}"
@@ -588,8 +590,8 @@ def run_live_smoke() -> dict[str, Any]:
                 f"Router restart failed: {(restarted.stderr or restarted.stdout)[-500:]}"
             )
         router_after_restart = None
-        for attempt in range(40):
-            router_after_restart = provider.inspect_runtime_identity(
+        for attempt in range(20):
+            router_after_restart = restart_inspector.inspect_runtime_identity(
                 "router-" + scope.project, router_id
             )
             if (
@@ -606,7 +608,7 @@ def run_live_smoke() -> dict[str, Any]:
                 and router_after_restart.runtime_state == "running"
             ):
                 break
-            if attempt < 39:
+            if attempt < 19:
                 time.sleep(0.25)
         if (
             router_after_restart is None
