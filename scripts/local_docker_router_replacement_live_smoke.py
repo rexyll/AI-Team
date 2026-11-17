@@ -236,13 +236,17 @@ def _runtime_selector(
 
 def run_live_smoke() -> dict[str, Any]:
     fault_mode = os.environ.get("AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE", "").strip()
-    if fault_mode not in {"", "applied_timeout"}:
+    if fault_mode not in {"", "applied_timeout", "previous_identity_mismatch"}:
         raise ValueError("unsupported Router replacement fault injection mode")
     fault_state: dict[str, Any] = {
         "mode": fault_mode or "none",
         "injected": False,
         "set_map_attempts": 0,
         "underlying_status": None,
+        "armed": False,
+        "identity_mismatch_reads": 0,
+        "mismatched_observed_runtime_id": None,
+        "previous_stop_attempts": 0,
     }
     provider = LocalDockerProvider()
     project = "router-replacement-" + uuid.uuid4().hex[:16]
@@ -484,7 +488,59 @@ def run_live_smoke() -> dict[str, Any]:
         replacement_manager = HostDeploymentReplacementManager(
             replacement_provider, history
         )
-        if fault_mode == "applied_timeout":
+        if fault_mode == "previous_identity_mismatch":
+            real_inspect_runtime = provider.inspect_runtime
+            real_execute = provider._execute
+            real_retire_previous = replacement_provider.retire_previous
+
+            def inspect_with_wrong_previous_identity(record):
+                inspection = real_inspect_runtime(record)
+                if fault_state["armed"] and record.deployment_id == previous_id:
+                    candidate_record = history.get(candidate_id)
+                    observed_id = (
+                        candidate_record.container_id
+                        if candidate_record is not None else None
+                    )
+                    if observed_id is not None and observed_id != record.container_id:
+                        fault_state["identity_mismatch_reads"] += 1
+                        fault_state["mismatched_observed_runtime_id"] = observed_id
+                        return replace(
+                            inspection,
+                            status="identity_mismatch",
+                            observed_runtime_id=observed_id,
+                            identity_match=False,
+                            runtime_state="unknown",
+                            health_status="unavailable",
+                            detail=(
+                                "injected Docker immutable identity mismatch "
+                                "at the previous-runtime stop gate"
+                            ),
+                        )
+                return inspection
+
+            def count_previous_stop_attempts(argv, *args, **kwargs):
+                if argv and argv[0] == "stop" and argv[-1] == app_a_id:
+                    fault_state["previous_stop_attempts"] += 1
+                return real_execute(argv, *args, **kwargs)
+
+            def retire_with_identity_mismatch(previous_record, operation_id):
+                fault_state["armed"] = True
+                try:
+                    return real_retire_previous(previous_record, operation_id)
+                finally:
+                    fault_state["armed"] = False
+
+            provider.inspect_runtime = inspect_with_wrong_previous_identity
+            provider._execute = count_previous_stop_attempts
+            replacement_provider.retire_previous = retire_with_identity_mismatch
+            try:
+                replacement = replacement_manager.replace(request, candidate)
+            finally:
+                provider.inspect_runtime = real_inspect_runtime
+                provider._execute = real_execute
+                replacement_provider.retire_previous = real_retire_previous
+
+        elif fault_mode == "applied_timeout":
             real_client_type = HAProxyRuntimeAPIClient
 
             class ResponseLossRuntimeAPIClient:
@@ -521,7 +577,118 @@ def run_live_smoke() -> dict[str, Any]:
         else:
             replacement = replacement_manager.replace(request, candidate)
 
-        if fault_mode == "applied_timeout":
+        if fault_mode == "previous_identity_mismatch":
+            previous_record = history.get(previous_id)
+            candidate_record = history.get(candidate_id)
+            journal = (
+                history.get_replacement(replacement.operation_id)
+                if replacement.operation_id else None
+            )
+            router_record = history.get_traffic_router(scope)
+            active_deployment = history.active_deployment(
+                provider="docker-local",
+                project=scope.project,
+                environment=scope.environment,
+            )
+            previous_inspection = (
+                provider.inspect_runtime(previous_record)
+                if previous_record is not None else None
+            )
+            candidate_inspection = (
+                provider.inspect_runtime(candidate_record)
+                if candidate_record is not None else None
+            )
+            selector = _runtime_selector(provider, router_id)
+            effective_target = replacement_provider.read_traffic_target(request)
+            stat_result = HAProxyRuntimeAPIClient(provider, router_id).execute(
+                show_stat_servers_command(f"be_p{host_port}")
+            )
+            if stat_result.status != "succeeded":
+                raise RuntimeError(
+                    f"HAProxy identity-mismatch post-fault stat read failed: {stat_result.detail}"
+                )
+            stat_rows = parse_show_stat_servers(stat_result.response)
+            old_stat = next((item for item in stat_rows if item.server == "slot_a"), None)
+            new_stat = next((item for item in stat_rows if item.server == "slot_b"), None)
+            marker = _probe_router_tcp_route(host_port, expected_marker=_MARKER_B)
+            verified = (
+                replacement.status == "needs_reconciliation"
+                and replacement.phase == "needs_reconciliation"
+                and fault_state["identity_mismatch_reads"] == 1
+                and fault_state["mismatched_observed_runtime_id"] == (
+                    candidate_record.container_id if candidate_record is not None else None
+                )
+                and fault_state["mismatched_observed_runtime_id"] != app_a_id
+                and fault_state["previous_stop_attempts"] == 0
+                and journal is not None
+                and journal.phase == "needs_reconciliation"
+                and journal.previous_runtime_id == app_a_id
+                and candidate_record is not None
+                and journal.candidate_runtime_id == candidate_record.container_id
+                and previous_record is not None
+                and previous_record.status == "running"
+                and candidate_record.status == "running"
+                and active_deployment is not None
+                and active_deployment.deployment_id == candidate_id
+                and router_record is not None
+                and router_record.active_slot == "slot_b"
+                and router_record.active_target is not None
+                and router_record.active_target.runtime_id == candidate_record.container_id
+                and selector == "slot_b"
+                and effective_target == candidate_record.container_id
+                and previous_inspection is not None
+                and previous_inspection.status == "verified"
+                and previous_inspection.observed_runtime_id == app_a_id
+                and previous_inspection.runtime_state == "running"
+                and candidate_inspection is not None
+                and candidate_inspection.status == "verified"
+                and candidate_inspection.observed_runtime_id == candidate_record.container_id
+                and candidate_inspection.runtime_state == "running"
+                and old_stat is not None
+                and old_stat.status == "MAINT"
+                and old_stat.current_sessions == 0
+                and new_stat is not None
+                and new_stat.status == "UP"
+                and marker.get("status") == "passed"
+            )
+            if not verified:
+                raise RuntimeError(
+                    "immutable identity mismatch did not fail closed as expected: "
+                    f"status={replacement.status}/{replacement.phase}, "
+                    f"selector={selector}, target={effective_target}, "
+                    f"mismatch_reads={fault_state['identity_mismatch_reads']}, "
+                    f"stop_attempts={fault_state['previous_stop_attempts']}, "
+                    f"old_state={previous_inspection.runtime_state if previous_inspection else 'missing'}, "
+                    f"marker={marker.get('status')}"
+                )
+            evidence["checks"]["immutable_identity_mismatch"] = {
+                "status": "verified",
+                "fault_mode": "previous_identity_mismatch",
+                "fault_point": "previous runtime immutable-ID inspect immediately before stop",
+                "expected_previous_runtime_id": app_a_id,
+                "injected_observed_runtime_id": fault_state["mismatched_observed_runtime_id"],
+                "identity_mismatch_reads": fault_state["identity_mismatch_reads"],
+                "previous_stop_attempts": fault_state["previous_stop_attempts"],
+                "expected_behavior": "needs_reconciliation; do not stop previous runtime; preserve both runtimes",
+                "observed_behavior": "needs_reconciliation; previous remains running; active candidate remains routed",
+                "active_selector": selector,
+                "effective_runtime_id": effective_target,
+                "previous_backend_status": old_stat.status,
+                "previous_backend_sessions": old_stat.current_sessions,
+                "candidate_backend_status": new_stat.status,
+                "tcp_marker": marker,
+                "journal_phase": journal.phase,
+                "active_deployment_id": active_deployment.deployment_id,
+            }
+            evidence["checks"]["replacement_coordinator"] = {
+                "status": replacement.status,
+                "phase": replacement.phase,
+                "operation_id": replacement.operation_id,
+                "message": replacement.message,
+            }
+            evidence["status"] = "fault_injection_verified"
+
+        elif fault_mode == "applied_timeout":
             if (
                 not fault_state["injected"]
                 or fault_state["underlying_status"] != "succeeded"
@@ -953,7 +1120,16 @@ def main() -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
-    return 0 if evidence.get("status") == "ready" and evidence.get("cleanup", {}).get("status") == "removed" else 1
+    normal_pass = (
+        evidence.get("status") == "ready"
+        and evidence.get("cleanup", {}).get("status") == "removed"
+    )
+    identity_mismatch_pass = (
+        evidence.get("status") == "fault_injection_verified"
+        and evidence.get("checks", {}).get("immutable_identity_mismatch", {}).get("status") == "verified"
+        and evidence.get("cleanup", {}).get("status") == "preserved"
+    )
+    return 0 if normal_pass or identity_mismatch_pass else 1
 
 
 if __name__ == "__main__":

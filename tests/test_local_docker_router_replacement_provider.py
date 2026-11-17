@@ -214,6 +214,33 @@ def test_immutable_stop_uses_runtime_id_and_inspect_confirmation(tmp_path):
     assert docker.stopped == {"a" * 64}
 
 
+def test_immutable_stop_refuses_to_stop_when_inspect_returns_a_different_runtime_id(tmp_path):
+    docker = FakeDocker()
+    history = DeploymentHistoryStore(tmp_path / "history.db")
+    host = FakeHost(SimpleNamespace(status="unavailable", detail=""))
+    host.provider = docker
+    host.history = history
+    provider = LocalDockerRouterReplacementProvider(
+        docker, history, host, FakeAppManager(docker),
+        FakeSlotManager(docker),
+        TrafficRouterScope("docker-local", "demo", "staging"),
+        (TrafficPortBinding(42699, 18080),),
+    )
+    previous = _record("previous", "1.0", "a" * 64, "a" * 64)
+    docker.inspect_runtime = lambda _record: SimpleNamespace(
+        status="identity_mismatch",
+        observed_runtime_id="b" * 64,
+        runtime_state="unknown",
+        detail="Docker inspect returned a different immutable container ID",
+    )
+
+    result = provider._stop_by_immutable_id(previous)
+
+    assert result.status == "failed"
+    assert "expected running immutable runtime" in result.message
+    assert docker.stopped == set()
+
+
 def test_provider_rejects_cross_provider_artifact_at_constructor_boundary(tmp_path):
     docker = FakeDocker()
     history = DeploymentHistoryStore(tmp_path / "history.db")
