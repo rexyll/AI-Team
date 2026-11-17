@@ -528,7 +528,7 @@ class LocalDockerProvider:
 
         expected_id = runtime_id
         inspect_format = (
-            "{{.Id}}\n{{.State.Status}}\n"
+            "{{.Id}}|{{.State.Status}}|"
             "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
         )
         result, error = self._execute(["inspect", "--format", inspect_format, expected_id])
@@ -584,7 +584,7 @@ class LocalDockerProvider:
                 detail=output or "Docker inspect failed",
             )
 
-        fields = result.stdout.strip().splitlines()
+        fields = result.stdout.strip().split('|')
         if len(fields) != 3:
             return DeploymentRuntimeInspection(
                 provider=self.name,

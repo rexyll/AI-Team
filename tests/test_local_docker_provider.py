@@ -339,7 +339,7 @@ def test_rollback_is_explicitly_unsupported_until_host_history_exists():
 
 
 def inspect_output(runtime_id, state, health="none"):
-    return f"{runtime_id}\n{state}\n{health}"
+    return f"{runtime_id}|{state}|{health}"
 
 
 def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
@@ -356,7 +356,7 @@ def test_inspect_runtime_uses_immutable_container_id_not_mutable_name():
     assert result.health_status == "healthy"
     assert runner.calls[0][0] == [
         "inspect", "--format",
-        "{{.Id}}\n{{.State.Status}}\n{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        "{{.Id}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
         expected_id,
     ]
 
