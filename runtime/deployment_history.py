@@ -24,6 +24,12 @@ from runtime.deployment_provider import (
     is_rollback_candidate,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
+from runtime.deployment_traffic_router import (
+    TrafficPortBinding,
+    TrafficRouteTarget,
+    TrafficRouterRecord,
+    TrafficRouterScope,
+)
 
 
 def _record_to_json(record: DeploymentRecord) -> str:
@@ -35,6 +41,37 @@ def _record_from_json(payload: str) -> DeploymentRecord:
     artifact = data.pop("artifact")
     from runtime.deployment_provider import DeploymentArtifact
     return DeploymentRecord(**data, artifact=DeploymentArtifact(**artifact))
+
+
+def _traffic_router_to_json(record: TrafficRouterRecord) -> str:
+    return json.dumps(asdict(record), sort_keys=True, separators=(",", ":"))
+
+
+def _traffic_router_from_json(payload: str) -> TrafficRouterRecord:
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise ValueError("traffic router record payload must be an object")
+    scope_data = data.pop("scope")
+    bindings_data = data.pop("port_bindings")
+    target_data = data.pop("active_target")
+    if not isinstance(scope_data, dict) or not isinstance(bindings_data, list):
+        raise ValueError("traffic router scope or port bindings payload is malformed")
+    scope = TrafficRouterScope(**scope_data)
+    bindings = tuple(TrafficPortBinding(**item) for item in bindings_data)
+    target = None
+    if target_data is not None:
+        if not isinstance(target_data, dict):
+            raise ValueError("traffic router active target payload is malformed")
+        target_data["port_bindings"] = tuple(
+            TrafficPortBinding(**item) for item in target_data["port_bindings"]
+        )
+        target = TrafficRouteTarget(**target_data)
+    return TrafficRouterRecord(
+        scope=scope,
+        port_bindings=bindings,
+        active_target=target,
+        **data,
+    )
 
 
 @dataclass(frozen=True)
@@ -129,6 +166,17 @@ class DeploymentHistoryStore:
                     record_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )"""
+            )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS traffic_routers (
+                    provider TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    route_generation TEXT NOT NULL,
+                    record_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (provider, project, environment)
                 )"""
             )
             db.execute(
@@ -462,6 +510,123 @@ class DeploymentHistoryStore:
                     )
                 )
         return snapshots
+
+    def get_traffic_router(
+        self, scope: TrafficRouterScope
+    ) -> TrafficRouterRecord | None:
+        """Load the durable Router identity for exactly one deployment scope."""
+        if not isinstance(scope, TrafficRouterScope):
+            raise TypeError("scope must be a TrafficRouterScope")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT record_json FROM traffic_routers
+                WHERE provider = ? AND project = ? AND environment = ?""",
+                (scope.provider, scope.project, scope.environment),
+            ).fetchone()
+        if row is None:
+            return None
+        record = _traffic_router_from_json(row["record_json"])
+        if record.scope != scope:
+            raise ValueError("persisted traffic Router scope does not match its database key")
+        return record
+
+    def create_traffic_router(self, record: TrafficRouterRecord) -> TrafficRouterRecord:
+        """Create a scope Router record once; initial state must be unrouted."""
+        if not isinstance(record, TrafficRouterRecord):
+            raise TypeError("record must be a TrafficRouterRecord")
+        if record.active_slot is not None or record.active_target is not None:
+            raise ValueError("new traffic Router records must start with no active slot or target")
+        payload = _traffic_router_to_json(record)
+        with self._connect() as db:
+            try:
+                db.execute(
+                    """INSERT INTO traffic_routers
+                    (provider, project, environment, route_generation, record_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.scope.provider,
+                        record.scope.project,
+                        record.scope.environment,
+                        record.route_generation,
+                        payload,
+                        record.created_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("traffic Router scope already has a durable record") from exc
+            row = db.execute(
+                """SELECT record_json FROM traffic_routers
+                WHERE provider = ? AND project = ? AND environment = ?""",
+                (record.scope.provider, record.scope.project, record.scope.environment),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("traffic Router record insert could not be read back")
+            persisted = _traffic_router_from_json(row["record_json"])
+            if persisted != record:
+                raise RuntimeError("traffic Router record insert read-back differs from the requested record")
+            return persisted
+
+    def update_traffic_router(
+        self,
+        record: TrafficRouterRecord,
+        *,
+        expected_generation: str,
+    ) -> TrafficRouterRecord:
+        """CAS route metadata; immutable Router/scope/ports cannot be rewritten."""
+        if not isinstance(record, TrafficRouterRecord):
+            raise TypeError("record must be a TrafficRouterRecord")
+        if not isinstance(expected_generation, str) or not expected_generation.strip():
+            raise ValueError("expected_generation must be a non-empty string")
+        if record.route_generation == expected_generation:
+            raise ValueError("traffic Router update must advance the route generation")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT record_json, route_generation FROM traffic_routers
+                WHERE provider = ? AND project = ? AND environment = ?""",
+                (record.scope.provider, record.scope.project, record.scope.environment),
+            ).fetchone()
+            if row is None:
+                raise KeyError("traffic Router scope has no durable record")
+            current = _traffic_router_from_json(row["record_json"])
+            if row["route_generation"] != expected_generation or current.route_generation != expected_generation:
+                raise ValueError("traffic Router generation compare-and-swap conflict")
+            if (
+                current.scope != record.scope
+                or current.router_deployment_id != record.router_deployment_id
+                or current.router_runtime_id != record.router_runtime_id
+                or current.network_name != record.network_name
+                or current.port_bindings != record.port_bindings
+                or current.created_at != record.created_at
+            ):
+                raise ValueError("traffic Router immutable identity rewrite is forbidden")
+            changed = db.execute(
+                """UPDATE traffic_routers
+                SET route_generation = ?, record_json = ?, updated_at = ?
+                WHERE provider = ? AND project = ? AND environment = ?
+                  AND route_generation = ?""",
+                (
+                    record.route_generation,
+                    _traffic_router_to_json(record),
+                    record.created_at,
+                    record.scope.provider,
+                    record.scope.project,
+                    record.scope.environment,
+                    expected_generation,
+                ),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("traffic Router generation compare-and-swap conflict")
+            persisted_row = db.execute(
+                """SELECT record_json FROM traffic_routers
+                WHERE provider = ? AND project = ? AND environment = ?""",
+                (record.scope.provider, record.scope.project, record.scope.environment),
+            ).fetchone()
+            if persisted_row is None:
+                raise RuntimeError("traffic Router record disappeared after update")
+            persisted = _traffic_router_from_json(persisted_row["record_json"])
+            if persisted != record:
+                raise RuntimeError("traffic Router record update read-back differs from the requested record")
+            return persisted
 
     def mark_stopped(self, record: DeploymentRecord) -> DeploymentRecord:
         """Commit a stopped state only after the host has verified the runtime.
