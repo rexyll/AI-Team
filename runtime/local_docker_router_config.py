@@ -14,7 +14,7 @@ HAPROXY_STATE_DIRECTORY = "/usr/local/etc/haproxy"
 HAPROXY_CONFIG_FILE = f"{HAPROXY_STATE_DIRECTORY}/haproxy.cfg"
 HAPROXY_ACTIVE_SLOT_MAP = f"{HAPROXY_STATE_DIRECTORY}/active-slot.map"
 HAPROXY_SERVERS_STATE_FILE = f"{HAPROXY_STATE_DIRECTORY}/servers-state"
-HAPROXY_INITIAL_PLACEHOLDER_ADDRESS = "127.0.0.1"
+HAPROXY_INITIAL_PLACEHOLDER_ADDRESS = "router-slot.invalid"
 HAPROXY_INITIAL_PLACEHOLDER_PORT = 1
 HAPROXY_INITIAL_SERVER_WEIGHT = 0
 
@@ -88,13 +88,13 @@ def render_haproxy_router_config(
                 f"    server slot_a {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
                 f"{HAPROXY_INITIAL_PLACEHOLDER_PORT} check weight "
                 f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2 "
-                "init-addr last,libc,none"
+                "init-addr last,none"
             ),
             (
                 f"    server slot_b {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
                 f"{HAPROXY_INITIAL_PLACEHOLDER_PORT} check weight "
                 f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2 "
-                "init-addr last,libc,none"
+                "init-addr last,none"
             ),
         ])
     return "\n".join(lines) + "\n"
