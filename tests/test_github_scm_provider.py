@@ -1006,6 +1006,25 @@ def test_rest_transport_disables_ssl_key_logging_from_environment(tmp_path, monk
     assert not keylog_path.exists()
 
 
+@pytest.mark.parametrize(
+    "variable",
+    ["SSL_CERT_FILE", "SSL_CERT_DIR", "ssl_cert_file", "ssl_cert_dir"],
+)
+def test_rest_transport_rejects_ambient_ca_path_overrides(
+    tmp_path, monkeypatch, variable
+):
+    monkeypatch.setenv(variable, str(tmp_path / "untrusted-ca.pem"))
+    transport = GitHubRESTTransport("host-secret-token")
+
+    with patch("urllib.request.build_opener") as build_opener:
+        with pytest.raises(
+            GitHubAPIError, match="TLS trust-store environment overrides"
+        ):
+            transport.request("GET", "/repos/acme/widget")
+
+    build_opener.assert_not_called()
+
+
 @pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
 @pytest.mark.parametrize("redirect_code", [301, 302, 303, 307, 308])
 def test_rest_transport_does_not_follow_redirect_or_forward_token(
