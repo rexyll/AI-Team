@@ -97,7 +97,7 @@ def test_provider_never_claims_replacement_when_router_scope_is_unavailable(tmp_
         _record("previous", "1.0", "a" * 64, "a" * 64),
         "operation-1",
     )
-    assert result.status == "failed"
+    assert result.status == "unavailable"
     assert "unavailable" in result.message or "daemon" in result.message
 
 
