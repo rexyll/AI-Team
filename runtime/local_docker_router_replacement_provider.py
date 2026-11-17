@@ -198,6 +198,12 @@ class LocalDockerRouterReplacementProvider:
                 "prepare_candidate", "failed", self.name,
                 "Active Router target does not match the Host active deployment record",
             )
+        effective_previous = self.read_traffic_target(request)
+        if effective_previous != previous.container_id:
+            return DeploymentOperationResult(
+                "prepare_candidate", "failed", self.name,
+                "Live Router selector/read-back does not confirm the recorded previous immutable runtime",
+            )
         slot: RouterSlot = "slot_b" if router.active_slot == "slot_a" else "slot_a"
         if target.artifact.provider != self.name:
             return DeploymentOperationResult("prepare_candidate", "failed", self.name, "Candidate artifact provider mismatch")
