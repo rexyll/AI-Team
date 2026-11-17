@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
@@ -149,6 +151,36 @@ def test_client_reports_runner_without_stdin_as_unavailable():
     assert result.status == "unavailable"
     assert "does not support stdin" in result.detail
     assert runner.calls == []
+
+
+def test_client_reports_subprocess_timeout_as_unavailable_without_retry():
+    class TimedOutInputRunner:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, args, *, cwd, timeout):
+            raise AssertionError("Runtime API must use the bounded stdin execution path")
+
+        def execute_input(self, args, *, input_text, cwd, timeout):
+            self.calls.append((list(args), input_text, cwd, timeout))
+            raise subprocess.TimeoutExpired(args=list(args), timeout=timeout)
+
+    runner = TimedOutInputRunner()
+    result = HAProxyRuntimeAPIClient(
+        _provider(runner), "a" * 64, timeout=0.25
+    ).execute(
+        set_map_command(
+            "/usr/local/etc/haproxy/active-slot.map", "active", "slot_b"
+        )
+    )
+
+    assert result.status == "unavailable"
+    assert "timed out" in result.detail.lower()
+    assert result.operation == "set_map"
+    assert len(runner.calls) == 1
+    assert runner.calls[0][1] == (
+        "set map /usr/local/etc/haproxy/active-slot.map active slot_b\n"
+    )
 
 
 def test_client_preserves_docker_and_runtime_api_failures():

@@ -21,6 +21,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_provider import (
@@ -234,6 +235,15 @@ def _runtime_selector(
 
 
 def run_live_smoke() -> dict[str, Any]:
+    fault_mode = os.environ.get("AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE", "").strip()
+    if fault_mode not in {"", "applied_timeout"}:
+        raise ValueError("unsupported Router replacement fault injection mode")
+    fault_state: dict[str, Any] = {
+        "mode": fault_mode or "none",
+        "injected": False,
+        "set_map_attempts": 0,
+        "underlying_status": None,
+    }
     provider = LocalDockerProvider()
     project = "router-replacement-" + uuid.uuid4().hex[:16]
     scope = TrafficRouterScope("docker-local", project, "ci")
@@ -474,7 +484,62 @@ def run_live_smoke() -> dict[str, Any]:
         replacement_manager = HostDeploymentReplacementManager(
             replacement_provider, history
         )
-        replacement = replacement_manager.replace(request, candidate)
+        if fault_mode == "applied_timeout":
+            real_client_type = HAProxyRuntimeAPIClient
+
+            class ResponseLossRuntimeAPIClient:
+                """Apply one real set-map, then lose only its response to the caller."""
+
+                def __init__(self, *args, **kwargs):
+                    self._delegate = real_client_type(*args, **kwargs)
+
+                def execute(self, command):
+                    if command.operation == "set_map":
+                        fault_state["set_map_attempts"] += 1
+                        result = self._delegate.execute(command)
+                        if not fault_state["injected"]:
+                            fault_state["injected"] = True
+                            fault_state["underlying_status"] = result.status
+                            if result.status == "succeeded":
+                                return replace(
+                                    result,
+                                    status="unavailable",
+                                    response="",
+                                    detail=(
+                                        "injected Runtime API response timeout after "
+                                        "HAProxy accepted the set-map mutation"
+                                    ),
+                                )
+                        return result
+                    return self._delegate.execute(command)
+
+            with patch(
+                "runtime.local_docker_router_slot_manager.HAProxyRuntimeAPIClient",
+                ResponseLossRuntimeAPIClient,
+            ):
+                replacement = replacement_manager.replace(request, candidate)
+        else:
+            replacement = replacement_manager.replace(request, candidate)
+
+        if fault_mode == "applied_timeout":
+            if (
+                not fault_state["injected"]
+                or fault_state["underlying_status"] != "succeeded"
+                or fault_state["set_map_attempts"] != 1
+            ):
+                raise RuntimeError(
+                    "ambiguous-write injection did not prove exactly one accepted HAProxy set-map"
+                )
+            evidence["checks"]["runtime_api_timeout_injection"] = {
+                "status": "verified",
+                "fault_mode": "applied_timeout",
+                "command": "set map active slot_b",
+                "underlying_ha_proxy_result": fault_state["underlying_status"],
+                "caller_observed_result": "unavailable",
+                "response_loss_injected_after_apply": True,
+                "set_map_attempts": fault_state["set_map_attempts"],
+                "expected_resolution": "get-map read-back confirms slot_b; no write retry",
+            }
         evidence["checks"]["replacement_coordinator"] = {
             "status": replacement.status,
             "phase": replacement.phase,
