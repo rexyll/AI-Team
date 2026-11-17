@@ -59,7 +59,7 @@ class RuntimeRunner:
         elif command.startswith("get map"):
             output = "type=ip,type=string,found=yes,key=active,value=slot_a\n"
         elif command.startswith("set server") and command.endswith(" state drain") and self.fail_drain:
-            return DockerCommandResult(1, "", "injected drain failure"), None
+            return DockerCommandResult(1, "", "injected drain failure")
         elif command.startswith("show stat"):
             state = "DRAIN" if any(x.endswith(" state drain") for x in self.commands) else "UP"
             if any(x.endswith(" state maint") for x in self.commands):
@@ -72,8 +72,8 @@ class RuntimeRunner:
         elif command == "show servers state":
             output = _servers_state()
         else:
-            return DockerCommandResult(1, "", "unexpected Runtime API command"), None
-        return DockerCommandResult(0, output, ""), None
+            return DockerCommandResult(1, "", "unexpected Runtime API command")
+        return DockerCommandResult(0, output, "")
 
 
 def _fixture(tmp_path, monkeypatch, *, sessions=0, fail_drain=False):
