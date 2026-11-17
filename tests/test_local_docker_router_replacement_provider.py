@@ -8,7 +8,8 @@ import pytest
 from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_provider import DeploymentArtifact, DeploymentOperationResult, DeploymentRecord, DeploymentRequest, HealthCheckResult
 from runtime.deployment_replacement_manager import HostDeploymentReplacementManager
-from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
+from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouteTarget, TrafficRouterScope
+from runtime.local_docker_routed_app import DockerRoutedAppEnsureResult
 from runtime.local_docker_router_replacement_provider import LocalDockerRouterReplacementProvider
 
 
@@ -92,16 +93,15 @@ def test_candidate_health_wait_reuses_same_immutable_runtime_until_healthy(tmp_p
         TrafficRouterScope("docker-local", "demo", "staging"),
         (TrafficPortBinding(42699, 18080),),
     )
-    target = SimpleNamespace(runtime_id="c" * 64)
+    target = TrafficRouteTarget(
+        "candidate", "c" * 64, "172.18.0.3",
+        (TrafficPortBinding(42699, 18080),),
+    )
     observations = [
-        SimpleNamespace(
-            status="created", target=target, route_eligible=False,
-            health_status="unknown", detail="", health_detail="health is starting",
+        DockerRoutedAppEnsureResult(
+            "created", target, "unknown", health_detail="health is starting",
         ),
-        SimpleNamespace(
-            status="existing", target=target, route_eligible=True,
-            health_status="healthy", detail="", health_detail="",
-        ),
+        DockerRoutedAppEnsureResult("existing", target, "healthy"),
     ]
     calls = []
 
@@ -136,14 +136,21 @@ def test_candidate_health_wait_stops_if_immutable_runtime_changes(tmp_path, monk
         (TrafficPortBinding(42699, 18080),),
     )
     observations = [
-        SimpleNamespace(
-            status="created", target=SimpleNamespace(runtime_id="c" * 64),
-            route_eligible=False, health_status="unknown", detail="",
-            health_detail="health is starting",
+        DockerRoutedAppEnsureResult(
+            "created",
+            TrafficRouteTarget(
+                "candidate", "c" * 64, "172.18.0.3",
+                (TrafficPortBinding(42699, 18080),),
+            ),
+            "unknown", health_detail="health is starting",
         ),
-        SimpleNamespace(
-            status="existing", target=SimpleNamespace(runtime_id="d" * 64),
-            route_eligible=True, health_status="healthy", detail="", health_detail="",
+        DockerRoutedAppEnsureResult(
+            "existing",
+            TrafficRouteTarget(
+                "candidate", "d" * 64, "172.18.0.4",
+                (TrafficPortBinding(42699, 18080),),
+            ),
+            "healthy",
         ),
     ]
     calls = []
