@@ -230,7 +230,8 @@ def test_load_rejects_file_digest_drift_without_rewriting_or_reauthorizing_it(tm
     store = LocalDockerRouterStateStore(tmp_path / "router-state")
     initial = store.persist(scope(), bindings(), active_slot=None)
     outside_change = Path(initial.record.server_state_path)
-    outside_change.write_text(_SERVER_STATE_HEADER + "tampered\n", encoding="utf-8")
+    original_bytes = outside_change.read_bytes()
+    outside_change.write_bytes(original_bytes + b"tampered\n")
     after = outside_change.read_bytes()
 
     loaded = store.load(scope(), bindings(), expected_record=initial.record)
@@ -250,10 +251,11 @@ def test_load_rejects_scope_record_mismatch_and_symlinked_state_file(tmp_path):
     assert wrong_scope.status == "failed"
 
     outside = tmp_path / "outside-state"
-    outside.write_bytes(Path(initial.record.server_state_path).read_bytes())
+    original_bytes = Path(initial.record.server_state_path).read_bytes()
+    outside.write_bytes(original_bytes)
     os.chmod(outside, 0o600)
     Path(initial.record.server_state_path).unlink()
     Path(initial.record.server_state_path).symlink_to(outside)
     linked = store.load(scope(), bindings(), expected_record=initial.record)
     assert linked.status == "failed"
-    assert outside.read_bytes() == _SERVER_STATE_HEADER.encode("utf-8")
+    assert outside.read_bytes() == original_bytes
