@@ -122,7 +122,7 @@ def _unresolved_server_state_snapshot():
             fields = line.split()
             fields[4] = "-"
             lines[index] = " ".join(fields)
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
 
 def test_persist_and_load_accept_unresolved_bootstrap_servers_with_exact_placeholder(tmp_path):
