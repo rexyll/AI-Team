@@ -17,7 +17,7 @@ def scope():
 def bindings(low=False):
     return (TrafficPortBinding(8080, 80), TrafficPortBinding(8443, 443)) if not low else (TrafficPortBinding(80, 80), TrafficPortBinding(8443, 443))
 
-def verified_inputs(tmp_path, port_bindings=None):
+def verified_inputs(tmp_path, port_bindings=None, active_slot=None):
     scope_value = scope()
     network_spec = build_router_network_spec(scope_value)
     network = DockerRouterNetworkRecord(network_spec.network_name, "b" * 64, network_spec.scope_fingerprint, "bridge", False, False)
@@ -25,7 +25,7 @@ def verified_inputs(tmp_path, port_bindings=None):
     directory = tmp_path / network_spec.network_name
     directory.mkdir(mode=0o700)
     config = render_haproxy_router_config(port_bindings or bindings())
-    active_map = render_active_slot_map(None)
+    active_map = render_active_slot_map(active_slot)
     config_path = directory / "haproxy.cfg"
     map_path = directory / "active-slot.map"
     config_path.write_text(config, encoding="utf-8")
@@ -108,11 +108,19 @@ def test_router_container_spec_rejects_state_hash_mismatch(tmp_path):
     with pytest.raises(ValueError, match="config hash"):
         build_router_container_spec(scope_value, ports, network, image, wrong_state)
 
-def test_router_container_spec_rejects_map_not_initially_closed(tmp_path):
+def test_router_container_spec_rejects_map_selector_mismatch(tmp_path):
     scope_value, ports, network, image, state = verified_inputs(tmp_path)
-    wrong_state = RouterStateRecord(state.network_name, state.scope_fingerprint, state.directory, state.config_path, state.active_slot_map_path, state.config_sha256, hashlib.sha256(b"active slot_a\n").hexdigest(), 0o700, 0o600)
-    with pytest.raises(ValueError, match="active none"):
-        build_router_container_spec(scope_value, ports, network, image, wrong_state)
+    wrong_state = RouterStateRecord(
+        state.network_name, state.scope_fingerprint, state.directory,
+        state.config_path, state.active_slot_map_path, state.config_sha256,
+        hashlib.sha256(b"active slot_a\n").hexdigest(), 0o700, 0o600,
+        state.server_state_sha256,
+    )
+    with pytest.raises(ValueError, match="expected selector"):
+        build_router_container_spec(
+            scope_value, ports, network, image, wrong_state,
+            expected_active_slot=None,
+        )
 
 def test_direct_container_spec_construction_cannot_bypass_fixed_argv(tmp_path):
     from dataclasses import replace
@@ -164,3 +172,12 @@ def test_malformed_inspect_does_not_expose_container_id(tmp_path):
     spec = build_router_container_spec(*verified_inputs(tmp_path))
     result = verify_router_container_inspection([], spec)
     assert result.status == "invalid_response" and result.container_id is None
+
+
+@pytest.mark.parametrize("active_slot", ["slot_a", "slot_b"])
+def test_router_container_spec_accepts_a_digest_bound_persisted_active_selector(tmp_path, active_slot):
+    inputs = verified_inputs(tmp_path, active_slot=active_slot)
+    spec = build_router_container_spec(
+        *inputs, expected_active_slot=active_slot
+    )
+    assert spec.active_slot_map_path.endswith("active-slot.map")

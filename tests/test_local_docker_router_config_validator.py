@@ -68,15 +68,39 @@ def test_config_file_hash_mismatch_fails_before_docker_call(tmp_path):
     result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), state)
     assert result.status == "invalid_state" and runner.calls == []
 
-def test_non_initial_active_map_is_rejected_before_docker_call(tmp_path):
+def test_persisted_active_map_is_valid_only_for_its_explicit_expected_selector(tmp_path):
+    from dataclasses import replace
+
     state = prepare_state(tmp_path)
-    with open(state.active_slot_map_path, "w", encoding="utf-8") as stream:
-        stream.write("active slot_a\n")
-    os.chmod(state.active_slot_map_path, 0o600)
-    modified = type(state)(state.network_name, state.scope_fingerprint, state.directory, state.config_path, state.active_slot_map_path, state.config_sha256, hashlib.sha256(b"active slot_a\n").hexdigest(), 0o700, 0o600)
-    runner = FakeRunner(DockerCommandResult(0, "", ""))
-    result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), modified)
-    assert result.status == "invalid_state" and runner.calls == []
+    store = LocalDockerRouterStateStore(tmp_path / "state")
+    updated = store.persist_active_slot_map(
+        state, expected_active_slot=None, active_slot="slot_a"
+    )
+    assert updated.status == "persisted"
+    runner = FakeRunner(DockerCommandResult(0, "Configuration file is valid\n", ""))
+    validator = LocalDockerRouterConfigValidator(LocalDockerProvider(runner))
+
+    accepted = validator.validate(
+        image(), updated.record, expected_active_slot="slot_a"
+    )
+    assert accepted.status == "valid"
+    assert len(runner.calls) == 1
+
+    rejected = validator.validate(
+        image(), updated.record, expected_active_slot=None
+    )
+    assert rejected.status == "invalid_state"
+    assert len(runner.calls) == 1
+
+    tampered = replace(
+        updated.record,
+        active_slot_map_sha256=hashlib.sha256(b"active slot_b\n").hexdigest(),
+    )
+    rejected_wrong_hash = validator.validate(
+        image(), tampered, expected_active_slot="slot_b"
+    )
+    assert rejected_wrong_hash.status == "invalid_state"
+    assert len(runner.calls) == 1
 
 def test_symlink_config_is_rejected(tmp_path):
     state = prepare_state(tmp_path)

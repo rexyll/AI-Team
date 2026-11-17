@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
+from runtime.deployment_traffic_router import RouterSlot, TrafficPortBinding, TrafficRouterScope
 from runtime.local_docker_router_config import (
     HAPROXY_CONFIG_FILE,
     HAPROXY_ACTIVE_SLOT_MAP,
@@ -211,6 +211,8 @@ def build_router_container_spec(
     network: DockerRouterNetworkRecord,
     image: DockerRouterImageIdentity,
     state: RouterStateRecord,
+    *,
+    expected_active_slot: RouterSlot | None = None,
 ) -> DockerRouterContainerSpec:
     """Build the single permitted Router container argv from verified inputs."""
     if not isinstance(scope, TrafficRouterScope):
@@ -233,12 +235,14 @@ def build_router_container_spec(
         raise ValueError("Router state directory does not match the requested scope")
     if state.directory_mode != 0o700 or state.file_mode != 0o600:
         raise ValueError("Router state permissions are not private")
+    if expected_active_slot not in {None, "slot_a", "slot_b"}:
+        raise ValueError("expected_active_slot must be none, slot_a, or slot_b")
     config = render_haproxy_router_config(ordered)
-    initial_map = render_active_slot_map(None)
+    expected_map = render_active_slot_map(expected_active_slot)
     if hashlib.sha256(config.encode("utf-8")).hexdigest() != state.config_sha256:
         raise ValueError("persisted HAProxy config hash does not match the requested TCP port bindings")
-    if hashlib.sha256(initial_map.encode("utf-8")).hexdigest() != state.active_slot_map_sha256:
-        raise ValueError("Router bootstrap map must have the fail-closed active none selector")
+    if hashlib.sha256(expected_map.encode("utf-8")).hexdigest() != state.active_slot_map_sha256:
+        raise ValueError("persisted active-slot map digest does not match the expected selector")
     if state.server_state_sha256 is None:
         raise ValueError("Router server-state snapshot must be persisted before container creation")
     config_path = _safe_mount_path(state.config_path, "config_path")

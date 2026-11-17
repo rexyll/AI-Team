@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from runtime.deployment_traffic_router import RouterSlot
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_router_config import (
     HAPROXY_CONFIG_FILE,
     HAPROXY_STATE_DIRECTORY,
+    render_active_slot_map,
 )
 from runtime.local_docker_router_image import DockerRouterImageIdentity
 from runtime.local_docker_router_state import RouterStateRecord
@@ -26,7 +28,7 @@ _STATE_DIRECTORY_DESTINATION = HAPROXY_STATE_DIRECTORY
 _TMPFS_SPEC = "/run/haproxy:rw,noexec,nosuid,nodev,size=1m,mode=700"
 _DIRECTORY_MODE = 0o700
 _FILE_MODE = 0o600
-_EXPECTED_MAP = "active none\n"
+
 ConfigValidationStatus = Literal["valid", "invalid_config", "invalid_state", "unavailable", "unsupported"]
 
 @dataclass(frozen=True)
@@ -65,7 +67,11 @@ class LocalDockerRouterConfigValidator:
         return True
 
     @classmethod
-    def _validate_state(cls, state: RouterStateRecord) -> tuple[Path | None, Path | None, int | None, int | None, str | None]:
+    def _validate_state(
+        cls,
+        state: RouterStateRecord,
+        expected_active_slot: RouterSlot | None,
+    ) -> tuple[Path | None, Path | None, int | None, int | None, str | None]:
         if not isinstance(state, RouterStateRecord):
             return None, None, None, None, "state must be a RouterStateRecord"
         if os.name != "posix" or not hasattr(os, "geteuid"):
@@ -109,19 +115,29 @@ class LocalDockerRouterConfigValidator:
                 if hashlib.sha256(raw).hexdigest() != expected_hash:
                     return None, None, None, None, f"Router state file hash mismatch: {path.name}"
                 contents[path] = raw
-            if contents[map_path] != _EXPECTED_MAP.encode("utf-8"):
-                return None, None, None, None, "Router startup map must be the fail-closed active none selector"
+            if expected_active_slot not in {None, "slot_a", "slot_b"}:
+                return None, None, None, None, "expected active selector must be none, slot_a, or slot_b"
+            if contents[map_path] != render_active_slot_map(expected_active_slot).encode("utf-8"):
+                return None, None, None, None, "Router active-slot map does not match the expected durable selector"
             if not contents[server_state_path].startswith(b"1\n# "):
                 return None, None, None, None, "Router server-state file must contain a versioned HAProxy state header"
         except OSError as exc:
             return None, None, None, None, f"{type(exc).__name__}: {exc}"
         return config_path, map_path, directory_info.st_uid, directory_info.st_gid, None
 
-    def validate(self, image: DockerRouterImageIdentity, state: RouterStateRecord) -> RouterConfigValidationResult:
+    def validate(
+        self,
+        image: DockerRouterImageIdentity,
+        state: RouterStateRecord,
+        *,
+        expected_active_slot: RouterSlot | None = None,
+    ) -> RouterConfigValidationResult:
         """Return valid only when pinned HAProxy accepts the exact Host files."""
         if not isinstance(image, DockerRouterImageIdentity):
             raise TypeError("image must be a DockerRouterImageIdentity")
-        config_path, map_path, owner_uid, owner_gid, state_error = self._validate_state(state)
+        config_path, map_path, owner_uid, owner_gid, state_error = self._validate_state(
+            state, expected_active_slot
+        )
         if state_error:
             if state_error.startswith("unsupported:"):
                 return RouterConfigValidationResult("unsupported", state_error)
