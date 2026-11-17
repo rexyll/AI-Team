@@ -239,7 +239,13 @@ class LocalDockerRouterReplacementProvider:
         initial_status = result.status
         for attempt in range(40):
             if result.route_eligible:
-                return replace(result, status=initial_status)
+                return DockerRoutedAppEnsureResult(
+                    initial_status,
+                    target=result.target,
+                    health_status=result.health_status,
+                    detail=result.detail,
+                    health_detail=result.health_detail,
+                )
             if attempt == 39:
                 return result
             time.sleep(0.25)
