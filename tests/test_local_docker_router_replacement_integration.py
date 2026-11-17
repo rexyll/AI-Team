@@ -133,9 +133,11 @@ class FakeAppManager:
 
 
 class FakeSlotManager:
-    def __init__(self, provider, state_store):
+    def __init__(self, provider, state_store, runtime_state, *, drain_status="verified"):
         self.provider = provider
         self.state_store = state_store
+        self.runtime_state = runtime_state
+        self.drain_status = drain_status
         self.calls = []
 
     def prepare_inactive_slot(self, **kwargs):
@@ -150,10 +152,16 @@ class FakeSlotManager:
             active_slot=kwargs["slot"],
         )
         assert result.status == "persisted"
+        self.runtime_state["selector"] = kwargs["slot"]
         return SimpleNamespace(status="verified", state_record=result.record)
 
     def drain_inactive_slot(self, **kwargs):
         self.calls.append(("drain", kwargs["slot"]))
+        if self.drain_status != "verified":
+            return SimpleNamespace(
+                status=self.drain_status, state_record=None,
+                detail="injected connection drain timeout",
+            )
         result = self.state_store.persist_servers_state(
             kwargs["state_record"], BINDINGS, _snapshot()
         )
@@ -194,9 +202,10 @@ class FakeRouterHost:
 
 
 class FakeRuntimeAPI:
-    def __init__(self, history, scope):
+    def __init__(self, history, scope, runtime_state):
         self.history = history
         self.scope = scope
+        self.runtime_state = runtime_state
 
     def execute(self, command):
         if command.operation == "show_maps":
@@ -209,13 +218,13 @@ class FakeRuntimeAPI:
             record = self.history.get_traffic_router(self.scope)
             return SimpleNamespace(
                 status="succeeded",
-                response=f"type=ip,type=string,found=yes,key=active,value={record.active_slot}\n",
+                response=f"type=ip,type=string,found=yes,key=active,value={self.runtime_state['selector']}\n",
                 detail="",
             )
         return SimpleNamespace(status="failed", response="", detail="unexpected Runtime API operation")
 
 
-def _setup(tmp_path, monkeypatch):
+def _setup(tmp_path, monkeypatch, *, drain_status="verified"):
     history = DeploymentHistoryStore(tmp_path / "history.db")
     state_store = LocalDockerRouterStateStore(tmp_path / "router-state")
     network_spec = build_router_network_spec(SCOPE)
@@ -279,7 +288,10 @@ def _setup(tmp_path, monkeypatch):
     app_manager = FakeAppManager(
         docker, {"previous": previous_target, "candidate": app_target}
     )
-    slot_manager = FakeSlotManager(docker, state_store)
+    runtime_state = {"selector": "slot_a"}
+    slot_manager = FakeSlotManager(
+        docker, state_store, runtime_state, drain_status=drain_status
+    )
     host = FakeRouterHost(
         docker, history, network, image, initial_spec, tmp_path / "router-state"
     )
@@ -288,7 +300,7 @@ def _setup(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         adapter_module, "HAProxyRuntimeAPIClient",
-        lambda provider, router_id: FakeRuntimeAPI(history, SCOPE),
+        lambda provider, router_id: FakeRuntimeAPI(history, SCOPE, runtime_state),
     )
     previous = _deployment("previous", "1.0", "1" * 64, PREVIOUS_ID, "running")
     candidate = _deployment("candidate", "2.0", "2" * 64, None, "prepared")
@@ -340,3 +352,23 @@ def test_durable_replacement_coordinator_switches_router_then_drains_and_retires
     assert router.active_target.runtime_id == CANDIDATE_ID
     assert router.slot_targets == (("slot_b", router.active_target),)
     assert adapter.read_traffic_target(request) == CANDIDATE_ID
+
+
+def test_drain_timeout_keeps_previous_runtime_running_and_reserves_reconciliation(
+    tmp_path, monkeypatch
+):
+    history, adapter, manager, request, previous, candidate, docker, slots = _setup(
+        tmp_path, monkeypatch, drain_status="indeterminate"
+    )
+
+    result = manager.replace(request, candidate)
+
+    assert result.status == "needs_reconciliation"
+    assert "drain timeout" in result.message
+    assert docker.stopped == set()
+    assert history.get("previous").status == "running"
+    assert history.active_deployment(
+        provider="docker-local", project="demo", environment="staging"
+    ).deployment_id == "candidate"
+    assert history.get_replacement("router-replace-operation-1").phase == "needs_reconciliation"
+    assert slots.calls == ["prepare", "switch", ("drain", "slot_a")]
