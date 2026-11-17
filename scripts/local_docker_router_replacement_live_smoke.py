@@ -52,7 +52,9 @@ from runtime.local_docker_routed_app import (
 from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 from runtime.local_docker_router_container import build_router_container_spec
 from runtime.local_docker_router_host import LocalDockerRouterHostManager
+from runtime.local_docker_router_image import ROUTER_IMAGE_TAG
 from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
+from runtime.local_docker_router_replacement_provider import LocalDockerRouterReplacementProvider
 from scripts.local_docker_routed_app_live_smoke import (
     _free_tcp_port,
     _probe_router_tcp_route,
@@ -75,6 +77,7 @@ def _build_app_image(
     provider: LocalDockerProvider,
     *,
     base_image_id: str,
+    base_image_tag: str,
     marker: str,
     tag: str,
 ) -> tuple[str, str]:
@@ -82,10 +85,15 @@ def _build_app_image(
         raise ValueError("app marker is outside the fixed smoke allowlist")
     if not tag.startswith("ai-team/router-replacement-smoke:"):
         raise ValueError("smoke image tag is outside the fixed namespace")
+    observed_base_id = _run_docker(
+        provider, ["image", "inspect", "--format", "{{.Id}}", base_image_tag]
+    ).strip()
+    if observed_base_id != base_image_id:
+        raise RuntimeError("pinned Router base tag no longer resolves to the verified immutable image ID")
     result, error = provider._execute(
         [
             "build", "--file", "Dockerfile",
-            "--build-arg", f"ROUTER_BASE_IMAGE={base_image_id}",
+            "--build-arg", f"ROUTER_BASE_IMAGE={base_image_tag}",
             "--build-arg", f"APP_MARKER={marker}",
             "--tag", tag, ".",
         ],
@@ -305,12 +313,14 @@ def run_live_smoke() -> dict[str, Any]:
         app_a_tag, app_a_image_id = _build_app_image(
             provider,
             base_image_id=router_image_id,
+            base_image_tag=ROUTER_IMAGE_TAG,
             marker="ROUTED_APP_A",
             tag=f"ai-team/router-replacement-smoke:{tag_suffix}-a",
         )
         app_b_tag, app_b_image_id = _build_app_image(
             provider,
             base_image_id=router_image_id,
+            base_image_tag=ROUTER_IMAGE_TAG,
             marker="ROUTED_APP_B",
             tag=f"ai-team/router-replacement-smoke:{tag_suffix}-b",
         )
@@ -455,10 +465,7 @@ def run_live_smoke() -> dict[str, Any]:
         evidence_slots = _EvidenceSlotManager(
             provider, app_manager, app_a_spec, host_port, evidence
         )
-        replacement_provider = __import__(
-            "runtime.local_docker_router_replacement_provider",
-            fromlist=["LocalDockerRouterReplacementProvider"],
-        ).LocalDockerRouterReplacementProvider(
+        replacement_provider = LocalDockerRouterReplacementProvider(
             provider, history, router_host, app_manager, evidence_slots,
             scope, bindings,
         )
