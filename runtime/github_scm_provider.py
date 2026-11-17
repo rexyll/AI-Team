@@ -596,6 +596,7 @@ class GitHubSCMProvider:
         }
         latest_by_user: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
         has_unknown_review_state = False
+        has_ambiguous_review_timestamp = False
         for review in reviews:
             user = review["user"]
             login = user["login"]
@@ -619,13 +620,27 @@ class GitHubSCMProvider:
             if submitted_at is None:
                 # Non-PENDING states were validated before any metadata refresh.
                 raise GitHubAPIError("GitHub returned an invalid review submission timestamp")
-            if previous is None or previous[0] is None or submitted_at >= previous[0]:
+            if previous is None or previous[0] is None:
                 latest_by_user[login] = (submitted_at, review)
+            elif submitted_at > previous[0]:
+                latest_by_user[login] = (submitted_at, review)
+            elif (
+                submitted_at == previous[0]
+                and str(previous[1].get("state") or "").upper() != normalized_state
+            ):
+                # GitHub timestamps may have only second-level precision.
+                # Different decisions with the same instant have no reliable
+                # ordering, so an approval must not win by response-array order.
+                has_ambiguous_review_timestamp = True
 
         states = [str(item[1].get("state") or "").upper() for item in latest_by_user.values()]
         status = (
             "pending"
-            if not reviews_complete or has_unknown_review_state
+            if (
+                not reviews_complete
+                or has_unknown_review_state
+                or has_ambiguous_review_timestamp
+            )
             else "changes_requested"
             if "CHANGES_REQUESTED" in states
             else "approved"
