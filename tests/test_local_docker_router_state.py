@@ -183,3 +183,77 @@ def test_persist_active_slot_map_refuses_symlinked_map_without_touching_target(t
     )
     assert result.status == "failed"
     assert outside.read_text(encoding="utf-8") == "outside\n"
+
+
+def test_load_revalidates_bootstrap_state_without_rewriting_selector_or_files(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    original = store.persist(scope(), bindings(), active_slot=None)
+    assert original.status == "persisted"
+    before = {
+        path: Path(path).read_bytes()
+        for path in (
+            original.record.config_path,
+            original.record.active_slot_map_path,
+            original.record.server_state_path,
+        )
+    }
+
+    loaded = store.load(scope(), bindings(), expected_record=original.record)
+
+    assert loaded.status == "loaded"
+    assert loaded.record == original.record
+    assert {
+        path: Path(path).read_bytes()
+        for path in before
+    } == before
+    assert Path(original.record.active_slot_map_path).read_text(encoding="utf-8") == "active none\n"
+
+
+def test_load_revalidates_active_selector_and_complete_server_state_snapshot(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    servers = store.persist_servers_state(initial.record, bindings(), _server_state_snapshot())
+    assert servers.status == "persisted"
+    active = store.persist_active_slot_map(
+        servers.record, expected_active_slot=None, active_slot="slot_a"
+    )
+    assert active.status == "persisted"
+
+    loaded = store.load(scope(), bindings(), expected_record=active.record)
+
+    assert loaded.status == "loaded"
+    assert loaded.record == active.record
+    assert Path(active.record.active_slot_map_path).read_text(encoding="utf-8") == "active slot_a\n"
+
+
+def test_load_rejects_file_digest_drift_without_rewriting_or_reauthorizing_it(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    outside_change = Path(initial.record.server_state_path)
+    outside_change.write_text(_SERVER_STATE_HEADER + "tampered\n", encoding="utf-8")
+    after = outside_change.read_bytes()
+
+    loaded = store.load(scope(), bindings(), expected_record=initial.record)
+
+    assert loaded.status == "failed"
+    assert "digest mismatch" in loaded.detail
+    assert outside_change.read_bytes() == after
+    assert Path(initial.record.active_slot_map_path).read_text(encoding="utf-8") == "active none\n"
+
+
+def test_load_rejects_scope_record_mismatch_and_symlinked_state_file(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    wrong_scope = store.load(
+        scope(project="other"), bindings(), expected_record=initial.record
+    )
+    assert wrong_scope.status == "failed"
+
+    outside = tmp_path / "outside-state"
+    outside.write_bytes(Path(initial.record.server_state_path).read_bytes())
+    os.chmod(outside, 0o600)
+    Path(initial.record.server_state_path).unlink()
+    Path(initial.record.server_state_path).symlink_to(outside)
+    linked = store.load(scope(), bindings(), expected_record=initial.record)
+    assert linked.status == "failed"
+    assert outside.read_bytes() == _SERVER_STATE_HEADER.encode("utf-8")
