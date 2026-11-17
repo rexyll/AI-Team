@@ -324,7 +324,7 @@ def test_durable_replacement_coordinator_switches_router_then_drains_and_retires
 
     result = manager.replace(request, candidate)
 
-    assert result.status == "replaced"
+    assert result.status == "replaced", result.message
     assert result.phase == "previous_retired"
     assert result.record is not None
     assert result.record.deployment_id == "candidate"
