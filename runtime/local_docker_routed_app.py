@@ -35,9 +35,9 @@ _IMAGE_ID_LABEL = "com.ai-team.router.image-id"
 _PORTS_LABEL = "com.ai-team.router.port-bindings-sha256"
 
 ROUTED_APP_CONTAINER_INSPECT_FORMAT = (
-    r'{{$health := "null"}}'
-    r'{{if .State.Health}}{{$status := .State.Health.Status}}{{$exitCode := -1}}{{$end := ""}}'
-    r'{{range .State.Health.Log}}{{$exitCode = .ExitCode}}{{$end = .End}}{{end}}'
+    r'{{$healthState := index .State "Health"}}{{$health := "null"}}'
+    r'{{if $healthState}}{{$status := $healthState.Status}}{{$exitCode := -1}}{{$end := ""}}'
+    r'{{range $healthState.Log}}{{$exitCode = .ExitCode}}{{$end = .End}}{{end}}'
     r'{{$health = printf "{\"Status\":%q,\"Log\":[{\"ExitCode\":%v,\"End\":%q}]}" $status $exitCode $end}}{{end}}'
     r'{{printf "{\"Id\":%q,\"Name\":%q,\"Config\":{\"Image\":%q,\"Labels\":%s,'
     r'\"ExposedPorts\":%s,\"Volumes\":%s},\"State\":{\"Status\":%q,\"StartedAt\":%q,'
