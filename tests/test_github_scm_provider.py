@@ -704,6 +704,21 @@ def test_review_status_fails_closed_on_conflicting_same_timestamp_decisions(revi
     assert result["reviews_complete"] is True
 
 
+def test_newer_review_decision_resolves_an_older_timestamp_tie():
+    same_timestamp = "2026-01-01T00:00:00Z"
+    transport = FakeTransport([[
+        _review("reviewer", "APPROVED", same_timestamp),
+        _review("reviewer", "CHANGES_REQUESTED", same_timestamp),
+        _review("reviewer", "APPROVED", "2026-01-02T00:00:00Z"),
+    ], _review_pr_metadata()])
+    provider = GitHubSCMProvider(transport, git_service=FakeGitService())
+
+    result = provider.get_review_status("acme/widget", 12)
+
+    assert result["status"] == "approved"
+    assert result["states"] == ["APPROVED"]
+
+
 def test_review_status_fails_closed_on_unknown_review_state_even_with_current_head_approval():
     transport = FakeTransport([[
         _review("reviewer", "APPROVED", "2026-01-01T00:00:00Z"),
