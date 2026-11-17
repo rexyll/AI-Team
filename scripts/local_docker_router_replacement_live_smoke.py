@@ -31,7 +31,6 @@ from runtime.deployment_provider import (
 from runtime.deployment_replacement_manager import HostDeploymentReplacementManager
 from runtime.deployment_traffic_router import (
     TrafficPortBinding,
-    TrafficRouterRecord,
     TrafficRouterScope,
 )
 from runtime.haproxy_runtime_api import (
@@ -54,7 +53,6 @@ from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 from runtime.local_docker_router_container import build_router_container_spec
 from runtime.local_docker_router_host import LocalDockerRouterHostManager
 from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
-from runtime.local_docker_router_state import LocalDockerRouterStateStore
 from scripts.local_docker_routed_app_live_smoke import (
     _free_tcp_port,
     _probe_router_tcp_route,
@@ -312,7 +310,7 @@ def run_live_smoke() -> dict[str, Any]:
         )
         app_b_tag, app_b_image_id = _build_app_image(
             provider,
-            base_image_id=router_id,
+            base_image_id=router_image_id,
             marker="ROUTED_APP_B",
             tag=f"ai-team/router-replacement-smoke:{tag_suffix}-b",
         )
@@ -330,8 +328,10 @@ def run_live_smoke() -> dict[str, Any]:
         app_a_owned_status, app_a = _ensure_healthy_app(
             app_manager, app_a_spec, artifact_a
         )
+        if app_a_owned_status != "created":
+            raise RuntimeError("old app smoke container must be newly created, not adopted")
         app_a_id = app_a.target.runtime_id
-        app_a_owned = app_a_owned_status == "created"
+        app_a_owned = True
         evidence["checks"]["old_app"] = {
             "status": "healthy",
             "runtime_id": app_a_id,
@@ -485,6 +485,13 @@ def run_live_smoke() -> dict[str, Any]:
         app_b_id = replacement.record.container_id
         if app_b_id is None or app_b_id == app_a_id:
             raise RuntimeError("replacement candidate did not receive a distinct immutable runtime ID")
+        operation_context = replacement_provider._operations.get(replacement.operation_id or "")
+        app_b_owned = bool(
+            operation_context
+            and operation_context.get("app_ensure_status") == "created"
+        )
+        if not app_b_owned:
+            raise RuntimeError("candidate app was not confirmed newly created by the routed-app manager")
 
         selector = _runtime_selector(provider, router_id)
         if selector != "slot_b":
@@ -576,7 +583,7 @@ def run_live_smoke() -> dict[str, Any]:
                 deployment_id=previous_id, image_id=app_a_image_id,
             )
             app_b_cleanup = cleanup_owned_app_container(
-                provider, runtime_id=app_b_id, owned=True,
+                provider, runtime_id=app_b_id, owned=app_b_owned,
                 scope_fingerprint=scope_fingerprint, network_id=network_id,
                 deployment_id=candidate_id, image_id=app_b_image_id,
             )

@@ -309,6 +309,7 @@ class LocalDockerRouterReplacementProvider:
             "router_spec": prepared_router_spec,
             "app_spec": app_spec,
             "target_route": ensured.target,
+            "app_ensure_status": ensured.status,
             "candidate": candidate,
         })
         return DeploymentOperationResult(
