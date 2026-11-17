@@ -160,6 +160,7 @@ def test_candidate_health_wait_stops_if_immutable_runtime_changes(tmp_path, monk
     result = provider._ensure_candidate_route_eligible(object(), _artifact("2.0", "b" * 64))
 
     assert result.route_eligible is False
+    assert result.status == "mismatch"
     assert result.target.runtime_id == "d" * 64
     assert len(calls) == 2
 
