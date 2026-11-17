@@ -10,7 +10,10 @@ from __future__ import annotations
 from runtime.deployment_traffic_router import RouterSlot, TrafficPortBinding
 
 HAPROXY_ADMIN_SOCKET = "/run/haproxy/admin.sock"
-HAPROXY_ACTIVE_SLOT_MAP = "/usr/local/etc/haproxy/active-slot.map"
+HAPROXY_STATE_DIRECTORY = "/usr/local/etc/haproxy/state"
+HAPROXY_CONFIG_FILE = f"{HAPROXY_STATE_DIRECTORY}/haproxy.cfg"
+HAPROXY_ACTIVE_SLOT_MAP = f"{HAPROXY_STATE_DIRECTORY}/active-slot.map"
+HAPROXY_SERVERS_STATE_FILE = f"{HAPROXY_STATE_DIRECTORY}/servers-state"
 HAPROXY_INITIAL_PLACEHOLDER_ADDRESS = "127.0.0.1"
 HAPROXY_INITIAL_PLACEHOLDER_PORT = 1
 HAPROXY_INITIAL_SERVER_WEIGHT = 0
@@ -52,9 +55,11 @@ def render_haproxy_router_config(
         "    log stdout format raw local0",
         "    maxconn 4096",
         f"    stats socket {HAPROXY_ADMIN_SOCKET} mode 600 level admin",
+        f"    server-state-file {HAPROXY_SERVERS_STATE_FILE}",
         "",
         "defaults",
         "    log global",
+        "    load-server-state-from-file global",
         "    mode tcp",
         "    option tcplog",
         "    timeout connect 5s",

@@ -14,12 +14,22 @@ from typing import Literal
 
 from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
 from runtime.local_docker_router_config import render_active_slot_map, render_haproxy_router_config
+from runtime.haproxy_runtime_readback import parse_show_servers_state
 from runtime.local_docker_router_network import build_router_network_spec
 
 _DIRECTORY_MODE = 0o700
 _FILE_MODE = 0o600
 RouterSlotValue = Literal["slot_a", "slot_b"]
 RouterStateStatus = Literal["persisted", "unsupported", "failed"]
+
+_SERVER_STATE_HEADER = (
+    "1\n"
+    "# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state "
+    "srv_uweight srv_iweight srv_time_since_last_change srv_check_status "
+    "srv_check_result srv_check_health srv_check_state srv_agent_state "
+    "bk_f_forced_id srv_f_forced_id srv_fqdn srv_port srvrecord srv_use_ssl "
+    "srv_check_port srv_check_addr srv_agent_addr srv_agent_port\n"
+)
 
 @dataclass(frozen=True)
 class RouterStateRecord:
@@ -32,13 +42,26 @@ class RouterStateRecord:
     active_slot_map_sha256: str
     directory_mode: int
     file_mode: int
+    server_state_sha256: str | None = None
+
+    @property
+    def server_state_path(self) -> str:
+        return str(Path(self.directory) / "servers-state")
 
     def __post_init__(self) -> None:
         if self.directory_mode != _DIRECTORY_MODE or self.file_mode != _FILE_MODE:
             raise ValueError("Router state permissions must be directory 0700 and files 0600")
-        for name, value in (("config_sha256", self.config_sha256), ("active_slot_map_sha256", self.active_slot_map_sha256)):
+        for name, value in (
+            ("config_sha256", self.config_sha256),
+            ("active_slot_map_sha256", self.active_slot_map_sha256),
+        ):
             if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
                 raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+        if self.server_state_sha256 is not None and (
+            len(self.server_state_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in self.server_state_sha256)
+        ):
+            raise ValueError("server_state_sha256 must be a lowercase SHA-256 digest when provided")
 
 @dataclass(frozen=True)
 class RouterStateResult:
@@ -150,6 +173,59 @@ class LocalDockerRouterStateStore:
             except FileNotFoundError:
                 pass
 
+    def persist_servers_state(
+        self,
+        record: RouterStateRecord,
+        port_bindings: tuple[TrafficPortBinding, ...],
+        content: str,
+    ) -> RouterStateResult:
+        """Atomically persist a complete HAProxy show-servers-state snapshot.
+
+        The snapshot must contain exactly both slots for every declared TCP
+        backend. The Router bind-mounts the state directory read-only; atomic
+        replacement of this file is visible to a later Router process restart.
+        """
+        if os.name != "posix" or not hasattr(os, "geteuid") or not hasattr(os, "fchmod"):
+            return RouterStateResult("unsupported", detail="Private Router state storage requires POSIX filesystem semantics")
+        try:
+            if not isinstance(record, RouterStateRecord):
+                raise TypeError("record must be a RouterStateRecord")
+            if not isinstance(port_bindings, tuple) or not port_bindings or any(
+                not isinstance(item, TrafficPortBinding) for item in port_bindings
+            ):
+                raise ValueError("port_bindings must be a non-empty tuple of TCP bindings")
+            rows = parse_show_servers_state(content)
+            expected = {
+                (f"be_p{binding.host_port}", server)
+                for binding in port_bindings
+                for server in ("slot_a", "slot_b")
+            }
+            observed = {(row.backend, row.server) for row in rows}
+            if observed != expected:
+                raise ValueError("server-state snapshot does not contain exactly both slots for every Router backend")
+            directory = Path(record.directory)
+            self._check_no_symlink_components(directory)
+            self._ensure_private_directory(directory)
+            if directory.name != record.network_name:
+                raise ValueError("server-state directory does not match its recorded scope name")
+            server_state_path = directory / "servers-state"
+            self._atomic_write(server_state_path, content)
+            updated = RouterStateRecord(
+                network_name=record.network_name,
+                scope_fingerprint=record.scope_fingerprint,
+                directory=record.directory,
+                config_path=record.config_path,
+                active_slot_map_path=record.active_slot_map_path,
+                config_sha256=record.config_sha256,
+                active_slot_map_sha256=record.active_slot_map_sha256,
+                directory_mode=record.directory_mode,
+                file_mode=record.file_mode,
+                server_state_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            )
+            return RouterStateResult("persisted", updated)
+        except (OSError, TypeError, ValueError) as exc:
+            return RouterStateResult("failed", detail=f"{type(exc).__name__}: {exc}"[:1000])
+
     def persist(self, scope: TrafficRouterScope, port_bindings: tuple[TrafficPortBinding, ...], *, active_slot: RouterSlotValue | None = None) -> RouterStateResult:
         """Persist bootstrap files; call before creating Router, not during live routing.
 
@@ -169,8 +245,10 @@ class LocalDockerRouterStateStore:
             self._ensure_private_directory(scope_dir)
             config_path = scope_dir / "haproxy.cfg"
             map_path = scope_dir / "active-slot.map"
+            server_state_path = scope_dir / "servers-state"
             self._atomic_write(config_path, config)
             self._atomic_write(map_path, active_map)
+            self._atomic_write(server_state_path, _SERVER_STATE_HEADER)
             record = RouterStateRecord(
                 network_name=spec.network_name, scope_fingerprint=spec.scope_fingerprint,
                 directory=str(scope_dir), config_path=str(config_path),
@@ -178,6 +256,7 @@ class LocalDockerRouterStateStore:
                 config_sha256=hashlib.sha256(config.encode("utf-8")).hexdigest(),
                 active_slot_map_sha256=hashlib.sha256(active_map.encode("utf-8")).hexdigest(),
                 directory_mode=_DIRECTORY_MODE, file_mode=_FILE_MODE,
+                server_state_sha256=hashlib.sha256(_SERVER_STATE_HEADER.encode("utf-8")).hexdigest(),
             )
             return RouterStateResult("persisted", record)
         except (OSError, TypeError, ValueError) as exc:

@@ -87,3 +87,11 @@ def test_config_generation_is_deterministic():
     assert render_haproxy_router_config(bindings) == render_haproxy_router_config(
         tuple(reversed(bindings))
     )
+
+
+def test_router_config_uses_host_owned_server_state_file_on_readonly_state_mount():
+    config = render_haproxy_router_config(bindings())
+    assert f"server-state-file {HAPROXY_SERVERS_STATE_FILE}" in config
+    assert "load-server-state-from-file global" in config
+    assert HAPROXY_CONFIG_FILE == f"{HAPROXY_STATE_DIRECTORY}/haproxy.cfg"
+    assert HAPROXY_ACTIVE_SLOT_MAP == f"{HAPROXY_STATE_DIRECTORY}/active-slot.map"
