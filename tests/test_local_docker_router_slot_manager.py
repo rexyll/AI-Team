@@ -218,7 +218,7 @@ class FakeRuntimeAPIClient:
 
 
 TARGET_ADDRESS = "172.18.0.2"
-ROUTER_ID = "r" * 64
+ROUTER_ID = "f" * 64
 APP_ID = "c" * 64
 BINDINGS = (TrafficPortBinding(8080, 80), TrafficPortBinding(8443, 443))
 
@@ -454,18 +454,29 @@ def test_prepare_rejects_cross_scope_app_or_router_before_docker_io(tmp_path, mo
     _, network, _, state, router_spec, app_spec, target = _fixture(tmp_path)
     runner = FakeDockerRunner()
     manager, client_type = _manager(monkeypatch, runner=runner)
-    other_app = app_spec.__class__(
-        **{
-            **app_spec.__dict__,
-            "network_id": "e" * 64,
-        }
+    other_network = DockerRouterNetworkRecord(
+        network.network_name,
+        "e" * 64,
+        network.scope_fingerprint,
+        "bridge",
+        False,
+        False,
+    )
+    other_artifact = DeploymentArtifact(
+        "docker-local", "app:other-scope", "d" * 64, "v1"
+    )
+    other_app = build_routed_app_container_spec(
+        other_network, other_artifact, "deploy-other-scope", BINDINGS
+    )
+    other_target = TrafficRouteTarget(
+        "deploy-other-scope", APP_ID, TARGET_ADDRESS, BINDINGS
     )
     result = manager.prepare_inactive_slot(
         router_runtime_id=ROUTER_ID,
         router_spec=router_spec,
         network=network,
         app_spec=other_app,
-        target=target,
+        target=other_target,
         slot="slot_b",
         state_record=state,
     )
