@@ -167,7 +167,7 @@ def test_host_runtime_inspects_recorded_runtime_by_immutable_id_without_route_cl
     assert observation["automatic_recovery_allowed"] is False
     assert report["route_readback_available"] is False
     assert report["automatic_recovery_allowed"] is False
-    assert runner.calls[0][0] == ["inspect", "--format", "{{.Id}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", "a" * 64]
+    assert runner.calls[0][0] == ["inspect", "--format", '{{$health := index .State "Health"}}{{.Id}}|{{.State.Status}}|{{if $health}}{{$health.Status}}{{else}}none{{end}}', "a" * 64]
 
 
 def test_host_runtime_reports_daemon_unavailable_without_authorizing_recovery(tmp_path):
