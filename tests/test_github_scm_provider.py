@@ -1124,9 +1124,9 @@ def test_rest_transport_does_not_follow_redirect_or_forward_token(
     real_build_opener = urllib.request.build_opener
 
     def build_local_opener(*handlers):
-        # Use real urllib redirect processing, but bypass ambient proxy settings
-        # so the test remains strictly loopback-only on developer machines/CI.
-        return real_build_opener(urllib.request.ProxyHandler({}), *handlers)
+        # Production supplies an explicit empty ProxyHandler; retain it while
+        # using real urllib redirect processing for this loopback-only test.
+        return real_build_opener(*handlers)
 
     monkeypatch.setattr(
         "runtime.github_scm_provider.urllib.request.build_opener",
