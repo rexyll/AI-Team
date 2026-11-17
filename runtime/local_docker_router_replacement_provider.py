@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Literal
 from uuid import uuid4
 
 from runtime.deployment_history import DeploymentHistoryStore
@@ -18,7 +17,6 @@ from runtime.deployment_provider import (
     DeploymentOperationResult,
     DeploymentRecord,
     DeploymentRequest,
-    DeploymentRuntimeInspection,
     HealthCheckResult,
 )
 from runtime.deployment_traffic_router import (
@@ -63,28 +61,26 @@ class LocalDockerRouterReplacementProvider:
         slot_manager: LocalDockerRouterSlotManager,
         scope: TrafficRouterScope,
         port_bindings,
-        *,
-        drain_timeout_seconds: float = 10.0,
     ) -> None:
-        if not isinstance(provider, LocalDockerProvider):
-            raise TypeError("provider must be a LocalDockerProvider")
+        if not all(callable(getattr(provider, name, None)) for name in ("_execute", "inspect_runtime")):
+            raise TypeError("provider must expose Host Docker execution and immutable runtime inspection")
         if not isinstance(history, DeploymentHistoryStore):
             raise TypeError("history must be a DeploymentHistoryStore")
-        if not isinstance(router_host, LocalDockerRouterHostManager):
-            raise TypeError("router_host must be a LocalDockerRouterHostManager")
-        if not isinstance(app_manager, LocalDockerRoutedAppManager):
-            raise TypeError("app_manager must be a LocalDockerRoutedAppManager")
-        if not isinstance(slot_manager, LocalDockerRouterSlotManager):
-            raise TypeError("slot_manager must be a LocalDockerRouterSlotManager")
+        if not callable(getattr(router_host, "ensure_router", None)):
+            raise TypeError("router_host must expose ensure_router")
+        if not callable(getattr(app_manager, "ensure_app", None)) or not callable(getattr(app_manager, "_inspect", None)):
+            raise TypeError("app_manager must expose ensure_app and inspect")
+        if not all(callable(getattr(slot_manager, name, None)) for name in (
+            "prepare_inactive_slot", "switch_active_slot", "drain_inactive_slot"
+        )):
+            raise TypeError("slot_manager must expose prepare, switch and drain operations")
         if not isinstance(scope, TrafficRouterScope) or scope.provider != "docker-local":
             raise ValueError("scope must be a docker-local TrafficRouterScope")
         if not isinstance(port_bindings, tuple) or not port_bindings:
             raise ValueError("port_bindings must be a non-empty tuple")
-        if not isinstance(drain_timeout_seconds, (int, float)) or isinstance(drain_timeout_seconds, bool) or not 0.1 <= drain_timeout_seconds <= 300:
-            raise ValueError("drain_timeout_seconds must be in the range 0.1..300")
-        if router_host.provider is not provider or router_host.history is not history:
+        if getattr(router_host, "provider", None) is not provider or getattr(router_host, "history", None) is not history:
             raise ValueError("Router Host manager must share the exact provider and history instances")
-        if app_manager.provider is not provider or slot_manager.provider is not provider:
+        if getattr(app_manager, "provider", None) is not provider or getattr(slot_manager, "provider", None) is not provider:
             raise ValueError("app and slot managers must share the exact LocalDockerProvider instance")
         self.provider = provider
         self.history = history
@@ -93,7 +89,6 @@ class LocalDockerRouterReplacementProvider:
         self.slot_manager = slot_manager
         self.scope = scope
         self.port_bindings = router_host._validate_bindings(port_bindings)
-        self.drain_timeout_seconds = float(drain_timeout_seconds)
         self._operations: dict[str, dict[str, object]] = {}
 
     def _host(self) -> LocalDockerRouterHostResult:

@@ -52,12 +52,31 @@ class FakeHost:
         self.result = result
         self.provider = None
         self.history = None
-        self.bindings = ()
     @staticmethod
     def _validate_bindings(bindings):
         return tuple(sorted(bindings, key=lambda item: item.host_port))
     def ensure_router(self, scope, bindings):
         return self.result
+
+
+class FakeAppManager:
+    def __init__(self, provider):
+        self.provider = provider
+    def ensure_app(self, spec, artifact):
+        raise AssertionError("not used in this test")
+    def _inspect(self, spec):
+        raise AssertionError("not used in this test")
+
+
+class FakeSlotManager:
+    def __init__(self, provider):
+        self.provider = provider
+    def prepare_inactive_slot(self, **kwargs):
+        raise AssertionError("not used in this test")
+    def switch_active_slot(self, **kwargs):
+        raise AssertionError("not used in this test")
+    def drain_inactive_slot(self, **kwargs):
+        raise AssertionError("not used in this test")
 
 
 def test_provider_never_claims_replacement_when_router_scope_is_unavailable(tmp_path):
@@ -67,8 +86,8 @@ def test_provider_never_claims_replacement_when_router_scope_is_unavailable(tmp_
     host.provider = docker
     host.history = history
     provider = LocalDockerRouterReplacementProvider(
-        docker, history, host, SimpleNamespace(provider=docker),
-        SimpleNamespace(provider=docker),
+        docker, history, host, FakeAppManager(docker),
+        FakeSlotManager(docker),
         TrafficRouterScope("docker-local", "demo", "staging"),
         (TrafficPortBinding(42699, 18080),),
     )
@@ -89,8 +108,8 @@ def test_immutable_stop_uses_runtime_id_and_inspect_confirmation(tmp_path):
     host.provider = docker
     host.history = history
     provider = LocalDockerRouterReplacementProvider(
-        docker, history, host, SimpleNamespace(provider=docker),
-        SimpleNamespace(provider=docker),
+        docker, history, host, FakeAppManager(docker),
+        FakeSlotManager(docker),
         TrafficRouterScope("docker-local", "demo", "staging"),
         (TrafficPortBinding(42699, 18080),),
     )
@@ -108,8 +127,8 @@ def test_provider_rejects_cross_provider_artifact_at_constructor_boundary(tmp_pa
     host.provider = docker
     host.history = history
     provider = LocalDockerRouterReplacementProvider(
-        docker, history, host, SimpleNamespace(provider=docker),
-        SimpleNamespace(provider=docker),
+        docker, history, host, FakeAppManager(docker),
+        FakeSlotManager(docker),
         TrafficRouterScope("docker-local", "demo", "staging"),
         (TrafficPortBinding(42699, 18080),),
     )
