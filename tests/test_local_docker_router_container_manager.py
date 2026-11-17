@@ -13,7 +13,7 @@ from runtime.local_docker_router_image import (
     DockerRouterImageIdentity, ROUTER_BASE_IMAGE_REF, ROUTER_HAPROXY_VERSION, ROUTER_SOCAT_PACKAGE_VERSION,
 )
 from runtime.local_docker_router_network import DockerRouterNetworkRecord, build_router_network_spec
-from runtime.local_docker_router_state import RouterStateRecord
+from runtime.local_docker_router_state import RouterStateRecord, _SERVER_STATE_HEADER
 from runtime.local_docker_router_container_manager import LocalDockerRouterContainerManager, ROUTER_CONTAINER_INSPECT_FORMAT
 
 
@@ -58,12 +58,15 @@ def make_spec(tmp_path):
     directory.chmod(0o700)
     (directory / "haproxy.cfg").write_text(config, encoding="utf-8")
     (directory / "active-slot.map").write_text(active_map, encoding="utf-8")
+    (directory / "servers-state").write_text(_SERVER_STATE_HEADER, encoding="utf-8")
     (directory / "haproxy.cfg").chmod(0o600)
     (directory / "active-slot.map").chmod(0o600)
+    server_state_sha256 = hashlib.sha256((directory / "servers-state").read_bytes()).hexdigest()
     state = RouterStateRecord(
         network_spec.network_name, network_spec.scope_fingerprint, str(directory),
         str(config_path), str(map_path), hashlib.sha256(config.encode()).hexdigest(),
         hashlib.sha256(active_map.encode()).hexdigest(), 0o700, 0o600,
+        server_state_sha256,
     )
     return build_router_container_spec(scope, ports, network, image, state)
 
@@ -92,8 +95,7 @@ def inspect_payload(spec, **changes):
             "PortBindings": ports,
         },
         "Mounts": [
-            {"Type": "bind", "Source": spec.config_path, "Destination": "/usr/local/etc/haproxy/haproxy.cfg", "RW": False},
-            {"Type": "bind", "Source": spec.active_slot_map_path, "Destination": "/usr/local/etc/haproxy/active-slot.map", "RW": False},
+            {"Type": "bind", "Source": spec.state_directory, "Destination": "/usr/local/etc/haproxy", "RW": False},
         ],
         "NetworkSettings": {
             "Networks": {spec.network_name: {"NetworkID": spec.network_id}},

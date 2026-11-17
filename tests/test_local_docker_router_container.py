@@ -7,7 +7,7 @@ import pytest
 from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
 from runtime.local_docker_router_image import DockerRouterImageIdentity, ROUTER_BASE_IMAGE_REF, ROUTER_HAPROXY_VERSION, ROUTER_SOCAT_PACKAGE_VERSION
 from runtime.local_docker_router_network import DockerRouterNetworkRecord, build_router_network_spec
-from runtime.local_docker_router_state import RouterStateRecord
+from runtime.local_docker_router_state import RouterStateRecord, _SERVER_STATE_HEADER
 from runtime.local_docker_router_config import render_active_slot_map, render_haproxy_router_config
 from runtime.local_docker_router_container import build_router_container_spec, verify_router_container_inspection
 
@@ -30,9 +30,16 @@ def verified_inputs(tmp_path, port_bindings=None):
     map_path = directory / "active-slot.map"
     config_path.write_text(config, encoding="utf-8")
     map_path.write_text(active_map, encoding="utf-8")
+    (directory / "servers-state").write_text(_SERVER_STATE_HEADER, encoding="utf-8")
     config_path.chmod(0o600)
     map_path.chmod(0o600)
-    state = RouterStateRecord(network_spec.network_name, network_spec.scope_fingerprint, str(directory), str(config_path), str(map_path), hashlib.sha256(config.encode()).hexdigest(), hashlib.sha256(active_map.encode()).hexdigest(), 0o700, 0o600)
+    server_state_sha256 = hashlib.sha256((directory / "servers-state").read_bytes()).hexdigest()
+    state = RouterStateRecord(
+        network_spec.network_name, network_spec.scope_fingerprint, str(directory),
+        str(config_path), str(map_path), hashlib.sha256(config.encode()).hexdigest(),
+        hashlib.sha256(active_map.encode()).hexdigest(), 0o700, 0o600,
+        server_state_sha256,
+    )
     return scope_value, port_bindings or bindings(), network, image, state
 
 def make_inspect(spec):
@@ -56,8 +63,7 @@ def make_inspect(spec):
             "PortBindings": ports,
         },
         "Mounts": [
-            {"Type": "bind", "Source": spec.config_path, "Destination": "/usr/local/etc/haproxy/haproxy.cfg", "RW": False},
-            {"Type": "bind", "Source": spec.active_slot_map_path, "Destination": "/usr/local/etc/haproxy/active-slot.map", "RW": False},
+            {"Type": "bind", "Source": spec.state_directory, "Destination": "/usr/local/etc/haproxy", "RW": False},
         ],
         "NetworkSettings": {
             "Networks": {spec.network_name: {"NetworkID": spec.network_id}},
@@ -72,7 +78,8 @@ def test_router_container_argv_uses_immutable_ids_readonly_mounts_and_no_privile
     assert spec.image_id == argv[-1] and argv[-1].startswith("sha256:")
     assert "--read-only" in argv and "--cap-drop" in argv and argv[argv.index("--cap-drop") + 1] == "ALL"
     assert "--privileged" not in argv
-    assert argv.count("--mount") == 2
+    assert argv.count("--mount") == 1
+    assert argv[argv.index("--mount") + 1] == f"type=bind,src={spec.state_directory},dst=/usr/local/etc/haproxy,readonly"
     assert all("readonly" in argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--mount")
     assert argv.count("--publish") == 2
     assert all("/tcp" in argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--publish")

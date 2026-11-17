@@ -10,7 +10,7 @@ from __future__ import annotations
 from runtime.deployment_traffic_router import RouterSlot, TrafficPortBinding
 
 HAPROXY_ADMIN_SOCKET = "/run/haproxy/admin.sock"
-HAPROXY_STATE_DIRECTORY = "/usr/local/etc/haproxy/state"
+HAPROXY_STATE_DIRECTORY = "/usr/local/etc/haproxy"
 HAPROXY_CONFIG_FILE = f"{HAPROXY_STATE_DIRECTORY}/haproxy.cfg"
 HAPROXY_ACTIVE_SLOT_MAP = f"{HAPROXY_STATE_DIRECTORY}/active-slot.map"
 HAPROXY_SERVERS_STATE_FILE = f"{HAPROXY_STATE_DIRECTORY}/servers-state"

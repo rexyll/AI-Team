@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Literal
 
 from runtime.deployment_traffic_router import TrafficPortBinding, TrafficRouterScope
-from runtime.local_docker_router_config import render_active_slot_map, render_haproxy_router_config
+from runtime.local_docker_router_config import (
+    HAPROXY_CONFIG_FILE,
+    HAPROXY_ACTIVE_SLOT_MAP,
+    HAPROXY_STATE_DIRECTORY,
+    render_active_slot_map,
+    render_haproxy_router_config,
+)
 from runtime.local_docker_router_image import DockerRouterImageIdentity
 from runtime.local_docker_router_network import DockerRouterNetworkRecord, build_router_network_spec
 from runtime.local_docker_router_state import RouterStateRecord
@@ -25,8 +31,9 @@ _CONTRACT_LABEL = "com.ai-team.router.container-contract"
 _SCOPE_LABEL = "com.ai-team.router.scope-sha256"
 _NETWORK_LABEL = "com.ai-team.router.network-id"
 _IMAGE_LABEL = "com.ai-team.router.image-id"
-_CONFIG_DESTINATION = "/usr/local/etc/haproxy/haproxy.cfg"
-_MAP_DESTINATION = "/usr/local/etc/haproxy/active-slot.map"
+_CONFIG_DESTINATION = HAPROXY_CONFIG_FILE
+_MAP_DESTINATION = HAPROXY_ACTIVE_SLOT_MAP
+_STATE_DIRECTORY_DESTINATION = HAPROXY_STATE_DIRECTORY
 _EXPECTED_ENTRYPOINT = ["/docker-entrypoint.sh"]
 _EXPECTED_COMMAND = ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
 
@@ -72,8 +79,11 @@ def _build_run_argv(
         f"uid={container_uid},gid={container_gid},mode=700"
     )
     argv.extend(["--security-opt", "no-new-privileges:true", "--tmpfs", tmpfs_spec])
-    argv.extend(["--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly"])
-    argv.extend(["--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly"])
+    state_directory = str(Path(config_path).parent)
+    argv.extend([
+        "--mount",
+        f"type=bind,src={state_directory},dst={_STATE_DIRECTORY_DESTINATION},readonly",
+    ])
     for item in port_bindings:
         argv.extend(["--publish", f"0.0.0.0:{item.host_port}:{item.host_port}/tcp"])
     argv.append(image_id)
@@ -90,9 +100,14 @@ class DockerRouterContainerSpec:
     port_bindings: tuple[TrafficPortBinding, ...]
     config_path: str
     active_slot_map_path: str
+    server_state_sha256: str
     labels: tuple[tuple[str, str], ...]
     capabilities: tuple[str, ...]
     run_argv: tuple[str, ...]
+
+    @property
+    def state_directory(self) -> str:
+        return str(Path(self.config_path).parent)
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", self.scope_fingerprint):
@@ -119,6 +134,8 @@ class DockerRouterContainerSpec:
         map_path = _safe_mount_path(self.active_slot_map_path, "active_slot_map_path")
         if Path(config_path).name != "haproxy.cfg" or Path(map_path).name != "active-slot.map" or Path(config_path).parent != Path(map_path).parent:
             raise ValueError("Router config and map files must be sibling files with fixed names")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.server_state_sha256):
+            raise ValueError("server_state_sha256 must be a full lowercase SHA-256 digest")
         expected_labels = _expected_container_labels(self.scope_fingerprint, self.network_id, self.image_id)
         if self.labels != expected_labels:
             raise ValueError("Router container labels do not match the verified scope/network/image identity")
@@ -169,7 +186,9 @@ def _verified_state_owner(state: RouterStateRecord) -> tuple[int, int]:
         or info.st_uid != os.geteuid()
     ):
         raise ValueError("Router state directory must be Host-owned, real and mode 0700")
-    for raw_path in (state.config_path, state.active_slot_map_path):
+    if state.server_state_sha256 is None:
+        raise ValueError("Router server-state file must have a persisted SHA-256 digest")
+    for raw_path in (state.config_path, state.active_slot_map_path, state.server_state_path):
         file_info = Path(raw_path).lstat()
         if (
             not stat.S_ISREG(file_info.st_mode)
@@ -180,6 +199,9 @@ def _verified_state_owner(state: RouterStateRecord) -> tuple[int, int]:
             or stat.S_IMODE(file_info.st_mode) != 0o600
         ):
             raise ValueError("Router state files must be singly linked Host-owned regular files mode 0600")
+    server_state = Path(state.server_state_path).read_bytes()
+    if hashlib.sha256(server_state).hexdigest() != state.server_state_sha256:
+        raise ValueError("Router server-state file hash does not match its Host state record")
     return info.st_uid, info.st_gid
 
 
@@ -217,6 +239,8 @@ def build_router_container_spec(
         raise ValueError("persisted HAProxy config hash does not match the requested TCP port bindings")
     if hashlib.sha256(initial_map.encode("utf-8")).hexdigest() != state.active_slot_map_sha256:
         raise ValueError("Router bootstrap map must have the fail-closed active none selector")
+    if state.server_state_sha256 is None:
+        raise ValueError("Router server-state snapshot must be persisted before container creation")
     config_path = _safe_mount_path(state.config_path, "config_path")
     map_path = _safe_mount_path(state.active_slot_map_path, "active_slot_map_path")
     container_uid, container_gid = _verified_state_owner(state)
@@ -234,6 +258,7 @@ def build_router_container_spec(
         container_name=container_name, scope_fingerprint=expected_scope.scope_fingerprint,
         image_id=image.image_id, network_name=network.network_name, network_id=network.network_id,
         port_bindings=ordered, config_path=config_path, active_slot_map_path=map_path,
+        server_state_sha256=state.server_state_sha256,
         container_uid=container_uid, container_gid=container_gid,
         labels=labels, capabilities=capabilities, run_argv=argv,
     )
@@ -302,8 +327,7 @@ def verify_router_container_inspection(payload: object, spec: DockerRouterContai
     if not isinstance(mounts, list):
         return RouterContainerVerification("invalid_response", detail="Docker inspect mounts are malformed")
     expected_mounts = {
-        (_CONFIG_DESTINATION, spec.config_path),
-        (_MAP_DESTINATION, spec.active_slot_map_path),
+        (_STATE_DIRECTORY_DESTINATION, spec.state_directory),
     }
     observed_mounts = set()
     for mount in mounts:
@@ -311,9 +335,9 @@ def verify_router_container_inspection(payload: object, spec: DockerRouterContai
             return RouterContainerVerification("invalid_response", detail="Docker mount entry is malformed")
         observed_mounts.add((mount.get("Destination"), mount.get("Source")))
         if mount.get("Type") != "bind" or mount.get("RW") is not False:
-            return RouterContainerVerification("mismatch", detail="Router config and map mounts must be read-only bind mounts")
-    if observed_mounts != expected_mounts or len(mounts) != 2:
-        return RouterContainerVerification("mismatch", detail="Router container has unexpected or missing bind mounts")
+            return RouterContainerVerification("mismatch", detail="Router state directory mount must be a read-only bind mount")
+    if observed_mounts != expected_mounts or len(mounts) != 1:
+        return RouterContainerVerification("mismatch", detail="Router container must have exactly one read-only Host state directory mount")
     networks = network_settings.get("Networks")
     if not isinstance(networks, dict) or set(networks) != {spec.network_name}:
         return RouterContainerVerification("mismatch", detail="Router container is not isolated to the expected scope network")
