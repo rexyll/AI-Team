@@ -18,6 +18,8 @@ _REQUIRED_STATE_COLUMNS = frozenset({
     "srv_admin_state", "srv_check_result", "srv_check_state", "srv_port",
 })
 _REQUIRED_STAT_COLUMNS = frozenset({"pxname", "svname", "status", "scur"})
+_UNRESOLVED_SERVER_ADDRESS = "-"
+_UNRESOLVED_SERVER_PORT = 1
 
 
 def parse_show_map_registry(response: str, *, expected_path: str) -> str:
@@ -108,7 +110,8 @@ class ExpectedHAProxyServer:
 class HAProxyServerStateRow:
     backend: str
     server: str
-    address: str
+    # None represents HAProxy's exact unresolved placeholder endpoint (-:1).
+    address: str | None
     port: int
     operational_state: int
     administrative_state: int
@@ -220,16 +223,24 @@ def parse_show_servers_state(response: str) -> tuple[HAProxyServerStateRow, ...]
         seen.add(key)
         raw_address = values[positions["srv_addr"]]
         raw_port = values[positions["srv_port"]]
-        try:
-            address = str(ipaddress.ip_address(raw_address))
-        except ValueError as exc:
-            raise ValueError(
-                "show servers state contains an invalid server address "
-                f"(backend={backend}, server={server}, address={raw_address!r}, port={raw_port!r})"
-            ) from exc
         port = _integer(raw_port, "srv_port", 65535)
         if port == 0:
             raise ValueError("show servers state server port must be non-zero")
+        if raw_address == _UNRESOLVED_SERVER_ADDRESS:
+            if port != _UNRESOLVED_SERVER_PORT:
+                raise ValueError(
+                    "show servers state unresolved server address must use the initial placeholder port 1 "
+                    f"(backend={backend}, server={server}, address={raw_address!r}, port={port})"
+                )
+            address = None
+        else:
+            try:
+                address = str(ipaddress.ip_address(raw_address))
+            except ValueError as exc:
+                raise ValueError(
+                    "show servers state contains an invalid server address "
+                    f"(backend={backend}, server={server}, address={raw_address!r}, port={raw_port!r})"
+                ) from exc
         rows.append(HAProxyServerStateRow(
             backend, server, address, port,
             _integer(values[positions["srv_op_state"]], "srv_op_state", 3),
@@ -321,7 +332,7 @@ def verify_inactive_slot_readback(
                 "mismatch", tuple(observations),
                 f"HAProxy read-back omitted backend/server {item.backend}/{item.server}",
             )
-        if state.address != item.address or state.port != item.port:
+        if state.address is None or state.address != item.address or state.port != item.port:
             return HAProxySlotReadbackResult(
                 "mismatch", tuple(observations),
                 f"HAProxy server address/port mismatch for {item.backend}/{item.server}",

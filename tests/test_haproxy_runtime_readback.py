@@ -66,6 +66,26 @@ def test_parse_show_servers_state_uses_header_not_fixed_column_indexes():
     assert parsed[0].fully_up_and_enabled is True
 
 
+def test_parse_show_servers_state_accepts_only_the_exact_initial_unresolved_placeholder():
+    parsed = parse_show_servers_state(state_response(state_row(address="-", port=1)))
+    assert len(parsed) == 1
+    assert parsed[0].address is None
+    assert parsed[0].port == 1
+
+    with pytest.raises(ValueError, match="unresolved server address"):
+        parse_show_servers_state(state_response(state_row(address="-", port=2)))
+
+
+def test_unresolved_placeholder_never_verifies_as_a_routed_endpoint():
+    result = verify_inactive_slot_readback(
+        expected(),
+        servers_state_response=state_response(state_row(address="-", port=1)),
+        stat_response=stat_response(("slot_b", 0, "UP")),
+    )
+    assert result.status == "mismatch"
+    assert "address/port mismatch" in result.detail
+
+
 def test_parse_show_stat_servers_extracts_status_and_current_sessions():
     parsed = parse_show_stat_servers(stat_response(("slot_b", 4, "UP")))
     assert len(parsed) == 1

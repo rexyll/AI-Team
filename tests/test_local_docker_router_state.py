@@ -115,6 +115,50 @@ def _server_state_snapshot():
     return "1\n" + header + "\n" + "\n".join(rows) + "\n"
 
 
+def _unresolved_server_state_snapshot():
+    lines = _server_state_snapshot().splitlines()
+    for index, line in enumerate(lines):
+        if line and not line.startswith("#") and line != "1":
+            fields = line.split()
+            fields[4] = "-"
+            lines[index] = " ".join(fields)
+    return "\\n".join(lines) + "\\n"
+
+
+def test_persist_and_load_accept_unresolved_bootstrap_servers_with_exact_placeholder(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    assert initial.status == "persisted"
+
+    persisted = store.persist_servers_state(
+        initial.record, bindings(), _unresolved_server_state_snapshot()
+    )
+    assert persisted.status == "persisted"
+    rows = parse_show_servers_state(Path(persisted.record.server_state_path).read_text(encoding="utf-8"))
+    assert len(rows) == 4
+    assert all(row.address is None and row.port == 1 for row in rows)
+
+    loaded = store.load(scope(), bindings(), expected_record=persisted.record)
+    assert loaded.status == "loaded"
+
+
+def test_load_rejects_active_selector_with_unresolved_backend_endpoint(tmp_path):
+    store = LocalDockerRouterStateStore(tmp_path / "router-state")
+    initial = store.persist(scope(), bindings(), active_slot=None)
+    persisted = store.persist_servers_state(
+        initial.record, bindings(), _unresolved_server_state_snapshot()
+    )
+    assert persisted.status == "persisted"
+
+    active = store.persist_active_slot_map(
+        persisted.record, expected_active_slot=None, active_slot="slot_a"
+    )
+    assert active.status == "persisted"
+    loaded = store.load(scope(), bindings(), expected_record=active.record)
+    assert loaded.status == "failed"
+    assert "unresolved server endpoints" in loaded.detail
+
+
 def test_persist_servers_state_atomically_updates_private_restart_snapshot(tmp_path):
     store = LocalDockerRouterStateStore(tmp_path / "router-state")
     first = store.persist(scope(), bindings())

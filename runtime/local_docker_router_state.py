@@ -490,6 +490,14 @@ class LocalDockerRouterStateStore:
                 observed_rows = {(row.backend, row.server) for row in rows}
                 if observed_rows != expected_rows:
                     raise ValueError("persisted server-state snapshot does not contain exactly both slots for every backend")
+                if active_slot is not None:
+                    active_rows = tuple(row for row in rows if row.server == active_slot)
+                    if len(active_rows) != len(port_bindings) or any(
+                        row.address is None for row in active_rows
+                    ):
+                        raise ValueError(
+                            "active Router selector cannot load from unresolved server endpoints"
+                        )
 
             return RouterStateLoadResult("loaded", expected_record)
         except (OSError, TypeError, ValueError, UnicodeDecodeError) as exc:
