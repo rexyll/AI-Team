@@ -87,7 +87,8 @@ def render_haproxy_router_config(
             (
                 f"    server slot_a {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
                 f"{HAPROXY_INITIAL_PLACEHOLDER_PORT} check weight "
-                f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2"
+                f"{HAPROXY_INITIAL_SERVER_WEIGHT} inter 1s fall 2 rise 2 "
+                "init-addr last,libc,none"
             ),
             (
                 f"    server slot_b {HAPROXY_INITIAL_PLACEHOLDER_ADDRESS}:"
