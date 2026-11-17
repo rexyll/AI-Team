@@ -30,6 +30,7 @@ from runtime.local_docker_routed_app import (
 )
 
 _RUNTIME_ID = re.compile(r"^[0-9a-f]{64}$")
+_IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _APP_MANAGED_LABEL = "com.ai-team.router.routed-app.managed"
 _SCOPE_LABEL = "com.ai-team.router.scope-sha256"
 _NETWORK_ID_LABEL = "com.ai-team.router.network-id"

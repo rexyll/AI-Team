@@ -6,6 +6,7 @@ from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvid
 from scripts.local_docker_routed_app_live_smoke import (
     cleanup_owned_app_container,
     cleanup_owned_network,
+    _IMAGE_ID,
 )
 
 
@@ -124,3 +125,9 @@ def test_cleanup_network_removes_only_exact_scope_identity():
     )
     assert result["status"] == "removed"
     assert runner.calls[-1] == ["network", "rm", "c" * 64]
+
+
+def test_live_smoke_accepts_only_full_immutable_image_ids():
+    assert _IMAGE_ID.fullmatch("sha256:" + "a" * 64)
+    assert not _IMAGE_ID.fullmatch("a" * 64)
+    assert not _IMAGE_ID.fullmatch("sha256:latest")
