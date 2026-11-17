@@ -647,8 +647,6 @@ class LocalDockerProvider:
                 health_status = "healthy"
             elif raw_health == "unhealthy":
                 health_status = "unhealthy"
-                        else:
-                            health_status = "unknown"
 
         detail = ""
         if runtime_state == "unknown":
