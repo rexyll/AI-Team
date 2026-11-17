@@ -49,7 +49,9 @@ def test_validates_generated_config_with_verified_image_id_and_readonly_isolated
     assert args[args.index("--entrypoint") + 2] == image().image_id
     assert args[-3:] == ["-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
     mounts = [args[i + 1] for i, value in enumerate(args[:-1]) if value == "--mount"]
-    assert len(mounts) == 2 and all(item.endswith(",readonly") for item in mounts)
+    assert mounts == [
+        f"type=bind,src={state.directory},dst=/usr/local/etc/haproxy,readonly"
+    ]
     assert "--publish" not in args and "--privileged" not in args
 
 def test_haproxy_syntax_error_is_reported_as_invalid_config(tmp_path):
@@ -98,3 +100,13 @@ def test_missing_docker_executable_is_unavailable(tmp_path):
     runner = FakeRunner(error=FileNotFoundError())
     result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), state)
     assert result.status == "unavailable" and len(runner.calls) == 1
+
+
+def test_server_state_hash_mismatch_fails_before_docker_call(tmp_path):
+    from dataclasses import replace
+
+    state = prepare_state(tmp_path)
+    modified = replace(state, server_state_sha256="0" * 64)
+    runner = FakeRunner(DockerCommandResult(0, "", ""))
+    result = LocalDockerRouterConfigValidator(LocalDockerProvider(runner)).validate(image(), modified)
+    assert result.status == "invalid_state" and runner.calls == []

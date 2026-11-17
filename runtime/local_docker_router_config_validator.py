@@ -14,11 +14,15 @@ from pathlib import Path
 from typing import Literal
 
 from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_router_config import (
+    HAPROXY_CONFIG_FILE,
+    HAPROXY_STATE_DIRECTORY,
+)
 from runtime.local_docker_router_image import DockerRouterImageIdentity
 from runtime.local_docker_router_state import RouterStateRecord
 
-_CONFIG_DESTINATION = "/usr/local/etc/haproxy/haproxy.cfg"
-_MAP_DESTINATION = "/usr/local/etc/haproxy/active-slot.map"
+_CONFIG_DESTINATION = HAPROXY_CONFIG_FILE
+_STATE_DIRECTORY_DESTINATION = HAPROXY_STATE_DIRECTORY
 _TMPFS_SPEC = "/run/haproxy:rw,noexec,nosuid,nodev,size=1m,mode=700"
 _DIRECTORY_MODE = 0o700
 _FILE_MODE = 0o600
@@ -71,12 +75,19 @@ class LocalDockerRouterConfigValidator:
         directory = Path(state.directory)
         config_path = Path(state.config_path)
         map_path = Path(state.active_slot_map_path)
-        if not all(cls._safe_path(path) for path in (directory, config_path, map_path)):
+        server_state_path = Path(state.server_state_path)
+        if not all(cls._safe_path(path) for path in (directory, config_path, map_path, server_state_path)):
             return None, None, None, None, "Router state paths must be absolute and contain no symlinks or Docker mount delimiters"
-        if config_path.parent != directory or map_path.parent != directory:
-            return None, None, None, None, "Router config/map files must be direct children of the scope directory"
-        if config_path.name != "haproxy.cfg" or map_path.name != "active-slot.map":
-            return None, None, None, None, "Router config/map filenames are not canonical"
+        if any(path.parent != directory for path in (config_path, map_path, server_state_path)):
+            return None, None, None, None, "Router config/map/server-state files must be direct children of the scope directory"
+        if (
+            config_path.name != "haproxy.cfg"
+            or map_path.name != "active-slot.map"
+            or server_state_path.name != "servers-state"
+        ):
+            return None, None, None, None, "Router config/map/server-state filenames are not canonical"
+        if state.server_state_sha256 is None:
+            return None, None, None, None, "Router server-state digest is missing"
         try:
             directory_info = directory.lstat()
             if not stat.S_ISDIR(directory_info.st_mode) or stat.S_ISLNK(directory_info.st_mode):
@@ -84,7 +95,11 @@ class LocalDockerRouterConfigValidator:
             if directory_info.st_uid != os.geteuid() or stat.S_IMODE(directory_info.st_mode) != _DIRECTORY_MODE:
                 return None, None, None, None, "Router state directory owner/mode must be current user/0700"
             contents: dict[Path, bytes] = {}
-            for path, expected_hash in ((config_path, state.config_sha256), (map_path, state.active_slot_map_sha256)):
+            for path, expected_hash in (
+                (config_path, state.config_sha256),
+                (map_path, state.active_slot_map_sha256),
+                (server_state_path, state.server_state_sha256),
+            ):
                 info = path.lstat()
                 if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
                     return None, None, None, None, f"Router state file is not a regular non-symlink file: {path.name}"
@@ -96,6 +111,8 @@ class LocalDockerRouterConfigValidator:
                 contents[path] = raw
             if contents[map_path] != _EXPECTED_MAP.encode("utf-8"):
                 return None, None, None, None, "Router startup map must be the fail-closed active none selector"
+            if not contents[server_state_path].startswith(b"1\\n# "):
+                return None, None, None, None, "Router server-state file must contain a versioned HAProxy state header"
         except OSError as exc:
             return None, None, None, None, f"{type(exc).__name__}: {exc}"
         return config_path, map_path, directory_info.st_uid, directory_info.st_gid, None
@@ -115,8 +132,7 @@ class LocalDockerRouterConfigValidator:
             "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
             "--user", f"{owner_uid}:{owner_gid}",
             "--security-opt", "no-new-privileges:true", "--tmpfs", tmpfs_spec,
-            "--mount", f"type=bind,src={config_path},dst={_CONFIG_DESTINATION},readonly",
-            "--mount", f"type=bind,src={map_path},dst={_MAP_DESTINATION},readonly",
+            "--mount", f"type=bind,src={directory},dst={_STATE_DIRECTORY_DESTINATION},readonly",
             "--entrypoint", "/usr/local/sbin/haproxy", image.image_id,
             "-c", "-f", _CONFIG_DESTINATION,
         ]
