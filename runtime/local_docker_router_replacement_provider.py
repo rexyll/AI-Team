@@ -245,9 +245,14 @@ class LocalDockerRouterReplacementProvider:
             if (
                 result.status not in {"created", "existing"}
                 or result.target is None
-                or result.target.runtime_id != expected_runtime_id
             ):
                 return result
+            if result.target.runtime_id != expected_runtime_id:
+                return replace(
+                    result,
+                    status="mismatch",
+                    detail="Candidate immutable runtime ID changed during health wait",
+                )
         return result
 
     def start_candidate(
