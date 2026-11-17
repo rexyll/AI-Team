@@ -229,7 +229,11 @@ def test_direct_spec_construction_cannot_forge_labels_or_identity_name():
     with pytest.raises(ValueError, match="labels"):
         replace(app_spec, labels=app_spec.labels[:-1])
     with pytest.raises(ValueError, match="deployment identity"):
-        replace(app_spec, container_name="ai-team-app-forged")
+        replace(
+            app_spec,
+            container_name="ai-team-app-forged",
+            network_alias="ai-team-app-forged",
+        )
 
 
 @pytest.mark.parametrize(
@@ -281,7 +285,7 @@ def test_inspect_rejects_extra_networks_and_exposed_ports():
     payload = inspect_payload(app_spec)
     payload["Config"]["ExposedPorts"]["9000/tcp"] = {}
     result = verify_routed_app_inspection(payload, app_spec)
-    assert result.status == "mismatch"
+    assert result.status == "invalid_response"
 
 
 def test_inspect_requires_exact_managed_scope_labels():
