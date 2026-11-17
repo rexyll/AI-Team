@@ -40,6 +40,7 @@ from runtime.haproxy_runtime_readback import (
     HAProxySlotServerObservation,
     parse_get_map_value,
     parse_show_map_registry,
+    parse_show_stat_servers,
     verify_inactive_slot_readback,
 )
 from runtime.local_docker_provider import LocalDockerProvider
@@ -177,6 +178,56 @@ class RouterSlotSwitchResult:
                 )
         if self.host_map_state == "target" and not isinstance(self.state_record, RouterStateRecord):
             raise ValueError("target Host map state requires its updated digest-bound record")
+        if not isinstance(self.detail, str):
+            raise TypeError("detail must be a string")
+
+
+
+DrainStatus = Literal[
+    "verified", "busy", "unavailable", "failed",
+    "mismatch", "invalid_response", "indeterminate",
+]
+
+
+@dataclass(frozen=True)
+class RouterSlotDrainResult:
+    """Evidence that a non-active slot was drained and placed in maintenance."""
+
+    status: DrainStatus
+    router_runtime_id: str
+    slot: RouterSlot
+    active_selector: str | None = None
+    remaining_connections: int | None = None
+    state_record: RouterStateRecord | None = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            "verified", "busy", "unavailable", "failed",
+            "mismatch", "invalid_response", "indeterminate",
+        }:
+            raise ValueError("invalid Router slot drain status")
+        if not isinstance(self.router_runtime_id, str) or not _RUNTIME_ID.fullmatch(self.router_runtime_id):
+            raise ValueError("router_runtime_id must be a full immutable Docker ID")
+        if self.slot not in {"slot_a", "slot_b"}:
+            raise ValueError("invalid slot")
+        if self.active_selector is not None and self.active_selector not in _SELECTOR_VALUES:
+            raise ValueError("invalid active selector")
+        if self.remaining_connections is not None and (
+            not isinstance(self.remaining_connections, int)
+            or isinstance(self.remaining_connections, bool)
+            or self.remaining_connections < 0
+        ):
+            raise ValueError("remaining_connections must be a non-negative integer")
+        if self.status == "verified":
+            if (
+                self.active_selector == self.slot
+                or self.remaining_connections != 0
+                or not isinstance(self.state_record, RouterStateRecord)
+            ):
+                raise ValueError("verified drain requires an inactive slot, zero sessions, and persisted server state")
+        elif self.state_record is not None:
+            raise ValueError("unverified drain must not expose trusted state")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
 
@@ -466,6 +517,242 @@ class LocalDockerRouterSlotManager:
                 "failed", router_id, app_id, slot,
                 detail=f"{type(exc).__name__}: {str(exc)[:700]}",
             )
+
+
+    def drain_inactive_slot(
+        self,
+        *,
+        router_runtime_id: str,
+        router_spec: DockerRouterContainerSpec,
+        network: DockerRouterNetworkRecord,
+        slot: RouterSlot,
+        expected_active_slot: RouterSlot,
+        state_record: RouterStateRecord,
+    ) -> RouterSlotDrainResult:
+        """Drain a non-active slot, wait for zero sessions, then mark it MAINT.
+
+        Every mutating Runtime API command is sent at most once. Read-only
+        connection/stat queries may be polled; timeout or ambiguous mutation
+        leaves the app running and reports indeterminate for manual recovery.
+        """
+        if not isinstance(router_runtime_id, str) or not _RUNTIME_ID.fullmatch(router_runtime_id):
+            raise ValueError("router_runtime_id must be a full immutable Docker ID")
+        if not isinstance(router_spec, DockerRouterContainerSpec):
+            raise TypeError("router_spec must be a DockerRouterContainerSpec")
+        if not isinstance(network, DockerRouterNetworkRecord):
+            raise TypeError("network must be a verified DockerRouterNetworkRecord")
+        if slot not in {"slot_a", "slot_b"}:
+            raise ValueError("slot must be slot_a or slot_b")
+        if expected_active_slot not in {"slot_a", "slot_b"} or slot == expected_active_slot:
+            raise ValueError("drained slot must differ from a concrete expected active slot")
+        if not isinstance(state_record, RouterStateRecord):
+            raise TypeError("state_record must be a RouterStateRecord")
+        if (
+            router_spec.network_id != network.network_id
+            or router_spec.network_name != network.network_name
+            or router_spec.scope_fingerprint != network.scope_fingerprint
+            or state_record.network_name != network.network_name
+            or state_record.scope_fingerprint != network.scope_fingerprint
+            or Path(state_record.directory) != Path(router_spec.state_directory)
+            or state_record.active_slot_map_path != router_spec.active_slot_map_path
+        ):
+            return RouterSlotDrainResult(
+                "mismatch", router_runtime_id, slot,
+                detail="Router, network, and Host state scope identities do not match",
+            )
+        if fcntl is None or os.name != "posix":
+            return RouterSlotDrainResult(
+                "unavailable", router_runtime_id, slot,
+                detail="Router slot draining requires POSIX scope locking",
+            )
+        try:
+            with _scope_operation_lock(state_record):
+                return self._drain_locked(
+                    router_runtime_id, router_spec, network, slot,
+                    expected_active_slot, state_record,
+                )
+        except _ScopeLockBusy as exc:
+            return RouterSlotDrainResult("busy", router_runtime_id, slot, detail=str(exc))
+        except NotImplementedError as exc:
+            return RouterSlotDrainResult("unavailable", router_runtime_id, slot, detail=str(exc))
+        except (OSError, ValueError) as exc:
+            return RouterSlotDrainResult(
+                "failed", router_runtime_id, slot,
+                detail=f"{type(exc).__name__}: {str(exc)[:700]}",
+            )
+
+    def _drain_locked(
+        self,
+        router_id: str,
+        router_spec: DockerRouterContainerSpec,
+        network: DockerRouterNetworkRecord,
+        slot: RouterSlot,
+        expected_active_slot: RouterSlot,
+        state_record: RouterStateRecord,
+    ) -> RouterSlotDrainResult:
+        state_error = self._verify_host_state(state_record)
+        if state_error:
+            return RouterSlotDrainResult("mismatch", router_id, slot, detail=state_error)
+        router_status, router_payload, router_detail = self._inspect_payload([
+            "container", "inspect", "--format", ROUTER_CONTAINER_INSPECT_FORMAT, router_id,
+        ])
+        if router_status != "verified" or router_payload is None:
+            return RouterSlotDrainResult(router_status, router_id, slot, detail=router_detail)
+        verification = verify_router_container_inspection(router_payload, router_spec)
+        if verification.status != "verified" or verification.container_id != router_id:
+            return RouterSlotDrainResult(
+                "mismatch", router_id, slot,
+                detail=verification.detail or "Router immutable identity mismatch before drain",
+            )
+
+        client = HAProxyRuntimeAPIClient(self.provider, router_id)
+        registry = client.execute(show_maps_command())
+        if registry.status != "succeeded":
+            return RouterSlotDrainResult(registry.status, router_id, slot, detail=registry.detail)
+        try:
+            map_id = parse_show_map_registry(registry.response, expected_path=HAPROXY_ACTIVE_SLOT_MAP)
+        except ValueError as exc:
+            return RouterSlotDrainResult("invalid_response", router_id, slot, detail=str(exc))
+        selector = client.execute(get_map_command(map_id, "active"))
+        if selector.status != "succeeded":
+            return RouterSlotDrainResult(selector.status, router_id, slot, detail=selector.detail)
+        try:
+            active = parse_get_map_value(selector.response, expected_key="active", expected_value=expected_active_slot)
+        except ValueError as exc:
+            return RouterSlotDrainResult("mismatch", router_id, slot, detail=str(exc))
+        if active == slot:
+            return RouterSlotDrainResult(
+                "mismatch", router_id, slot, active_selector=active,
+                detail="Refusing to drain the active Router slot",
+            )
+
+        # First prevent new connections to the old slot. Never retry a write,
+        # even if the Runtime API response is lost.
+        for binding in router_spec.port_bindings:
+            result = client.execute(set_server_state_command(
+                f"be_p{binding.host_port}", slot, "drain"
+            ))
+            if result.status != "succeeded":
+                return RouterSlotDrainResult(
+                    "indeterminate", router_id, slot, active_selector=active,
+                    detail="Drain command outcome is ambiguous; app was not stopped: "
+                    + (result.detail or result.status),
+                )
+
+        remaining = None
+        drained = False
+        for attempt in range(self.readback_attempts):
+            total = 0
+            all_draining = True
+            for binding in router_spec.port_bindings:
+                result = client.execute(show_stat_servers_command(f"be_p{binding.host_port}"))
+                if result.status != "succeeded":
+                    return RouterSlotDrainResult(
+                        "indeterminate", router_id, slot, active_selector=active,
+                        detail="Connection drain read-back failed; app was not stopped: " + result.detail,
+                    )
+                try:
+                    rows = parse_show_stat_servers(result.response)
+                except ValueError as exc:
+                    return RouterSlotDrainResult(
+                        "invalid_response", router_id, slot, active_selector=active,
+                        detail="Connection drain statistics are malformed: " + str(exc),
+                    )
+                matches = [row for row in rows if row.backend == f"be_p{binding.host_port}" and row.server == slot]
+                if len(matches) != 1:
+                    return RouterSlotDrainResult(
+                        "invalid_response", router_id, slot, active_selector=active,
+                        detail="Connection drain read-back omitted or duplicated the target server",
+                    )
+                row = matches[0]
+                total += row.current_sessions
+                if row.status not in {"DRAIN", "MAINT"}:
+                    all_draining = False
+            remaining = total
+            if all_draining and remaining == 0:
+                drained = True
+                break
+            if attempt + 1 < self.readback_attempts:
+                time.sleep(self.readback_interval_seconds)
+        if not drained:
+            return RouterSlotDrainResult(
+                "indeterminate", router_id, slot,
+                active_selector=active, remaining_connections=remaining,
+                detail="Connection drain deadline expired; old app remains running",
+            )
+
+        # Once no sessions remain, remove the old slot from service. Each
+        # backend transition is still one-shot and must be read back.
+        for binding in router_spec.port_bindings:
+            result = client.execute(set_server_state_command(
+                f"be_p{binding.host_port}", slot, "maint"
+            ))
+            if result.status != "succeeded":
+                return RouterSlotDrainResult(
+                    "indeterminate", router_id, slot,
+                    active_selector=active, remaining_connections=0,
+                    detail="MAINT transition is ambiguous; old app remains running",
+                )
+        for binding in router_spec.port_bindings:
+            result = client.execute(show_stat_servers_command(f"be_p{binding.host_port}"))
+            if result.status != "succeeded":
+                return RouterSlotDrainResult(
+                    "indeterminate", router_id, slot,
+                    active_selector=active, remaining_connections=0,
+                    detail="MAINT state read-back failed; old app remains running",
+                )
+            try:
+                rows = parse_show_stat_servers(result.response)
+            except ValueError as exc:
+                return RouterSlotDrainResult(
+                    "invalid_response", router_id, slot,
+                    active_selector=active, remaining_connections=0,
+                    detail="MAINT statistics are malformed: " + str(exc),
+                )
+            matches = [row for row in rows if row.backend == f"be_p{binding.host_port}" and row.server == slot]
+            if len(matches) != 1 or matches[0].status != "MAINT" or matches[0].current_sessions != 0:
+                return RouterSlotDrainResult(
+                    "indeterminate", router_id, slot,
+                    active_selector=active, remaining_connections=0,
+                    detail="HAProxy did not confirm the drained server in MAINT with zero sessions",
+                )
+
+        # Confirm the active selector did not move during drain.
+        selector_after = client.execute(get_map_command(map_id, "active"))
+        if selector_after.status != "succeeded":
+            return RouterSlotDrainResult(
+                "indeterminate", router_id, slot, active_selector=active,
+                remaining_connections=0, detail="Active selector read-back failed after drain",
+            )
+        try:
+            parse_get_map_value(
+                selector_after.response, expected_key="active", expected_value=expected_active_slot
+            )
+        except ValueError as exc:
+            return RouterSlotDrainResult(
+                "indeterminate", router_id, slot, active_selector=active,
+                remaining_connections=0, detail=f"Active selector changed during drain: {exc}",
+            )
+
+        full_state = client.execute(show_servers_state_command())
+        if full_state.status != "succeeded":
+            return RouterSlotDrainResult(
+                "indeterminate", router_id, slot, active_selector=active,
+                remaining_connections=0, detail="Server state snapshot failed after drain",
+            )
+        persisted = LocalDockerRouterStateStore(str(Path(state_record.directory).parent)).persist_servers_state(
+            state_record, router_spec.port_bindings, full_state.response
+        )
+        if persisted.status != "persisted" or persisted.record is None:
+            return RouterSlotDrainResult(
+                "failed", router_id, slot, active_selector=active,
+                remaining_connections=0,
+                detail=persisted.detail or "Drained server state could not be persisted",
+            )
+        return RouterSlotDrainResult(
+            "verified", router_id, slot, active_selector=active,
+            remaining_connections=0, state_record=persisted.record,
+        )
 
     def _observe_slot(
         self,
