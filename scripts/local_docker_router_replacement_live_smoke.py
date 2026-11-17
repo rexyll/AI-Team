@@ -689,7 +689,7 @@ def run_live_smoke() -> dict[str, Any]:
                             and router_record.active_target is not None
                             and restart_new_state is not None
                             and restart_new_state.address == router_record.active_target.address
-                            and restart_new_state.port == router_record.active_target.port
+                            and restart_new_state.port == router_record.active_target.port_bindings[0].container_port
                         ):
                             restart_marker = _probe_router_tcp_route(
                                 host_port,
