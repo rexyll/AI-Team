@@ -57,9 +57,9 @@ def test_each_backend_has_both_explicit_selectors_and_zero_weight_servers():
         next_frontend = config.find("\nfrontend ", backend_start)
         backend_text = config[backend_start:next_frontend if next_frontend >= 0 else None]
         assert backend_text.count("weight 0") == 2
-        assert "server slot_a 127.0.0.1:1" in backend_text
-        assert "server slot_b 127.0.0.1:1" in backend_text
-        assert backend_text.count("init-addr last,libc,none") == 2
+        assert "server slot_a router-slot.invalid:1" in backend_text
+        assert "server slot_b router-slot.invalid:1" in backend_text
+        assert backend_text.count("init-addr last,none") == 2
 
 
 def test_haproxy_config_rejects_empty_or_duplicate_host_ports():
