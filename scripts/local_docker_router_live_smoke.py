@@ -422,7 +422,13 @@ def run_live_smoke() -> dict[str, Any]:
             raise RuntimeError(
                 f"HAProxy Runtime API get map: {map_result.status}: {map_result.detail}"
             )
-        active_slot = parse_get_map_value(map_result.response, expected_key="active")
+        try:
+            active_slot = parse_get_map_value(map_result.response, expected_key="active")
+        except ValueError:
+            evidence["diagnostics"] = {
+                "get_map_response": map_result.response[-1600:],
+            }
+            raise
         if active_slot != "none":
             raise RuntimeError("fresh Router did not load the fail-closed active none selector")
 
