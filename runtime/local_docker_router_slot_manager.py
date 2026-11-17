@@ -501,7 +501,7 @@ class LocalDockerRouterSlotManager:
         # Host persistence. No active-map write is performed in this method.
         router_after_status, router_after_payload, router_after_detail = self._inspect_payload([
             "container", "inspect", "--format",
-            __import__("runtime.local_docker_router_container_manager", fromlist=["ROUTER_CONTAINER_INSPECT_FORMAT"]).ROUTER_CONTAINER_INSPECT_FORMAT,
+            ROUTER_CONTAINER_INSPECT_FORMAT,
             router_id,
         ])
         app_after_status, app_after_payload, app_after_detail = self._inspect_payload([
