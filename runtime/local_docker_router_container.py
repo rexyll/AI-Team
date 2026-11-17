@@ -243,10 +243,15 @@ def _tmpfs_matches_identity(value: object, uid: int, gid: int) -> bool:
     if not isinstance(value, str):
         return False
     options = {item.strip() for item in value.split(",")}
-    return {
+    required = {
         f"uid={uid}", f"gid={gid}", "mode=700",
-        "rw", "noexec", "nosuid", "nodev", "size=1048576",
-    }.issubset(options)
+        "rw", "noexec", "nosuid", "nodev",
+    }
+    # Docker inspect preserves the accepted shorthand size=1m instead of
+    # always normalizing it to bytes; both represent the same 1 MiB tmpfs cap.
+    return required.issubset(options) and bool(
+        {"size=1m", "size=1048576"}.intersection(options)
+    )
 
 
 def verify_router_container_inspection(payload: object, spec: DockerRouterContainerSpec) -> RouterContainerVerification:

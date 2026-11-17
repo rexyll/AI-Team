@@ -114,6 +114,17 @@ def test_direct_container_spec_construction_cannot_bypass_fixed_argv(tmp_path):
     with pytest.raises(ValueError, match="labels"):
         replace(spec, labels=(( "com.ai-team.router.managed", "false"),))
 
+def test_valid_docker_inspect_accepts_docker_tmpfs_size_shorthand(tmp_path):
+    spec = build_router_container_spec(*verified_inputs(tmp_path))
+    payload = make_inspect(spec)
+    payload["HostConfig"]["Tmpfs"]["/run/haproxy"] = (
+        f"rw,noexec,nosuid,nodev,size=1m,uid={spec.container_uid},"
+        f"gid={spec.container_gid},mode=700"
+    )
+    result = verify_router_container_inspection(payload, spec)
+    assert result.status == "verified" and result.container_id == "c" * 64
+
+
 def test_valid_docker_inspect_readback_verifies_container_identity_and_ports(tmp_path):
     spec = build_router_container_spec(*verified_inputs(tmp_path))
     result = verify_router_container_inspection(make_inspect(spec), spec)
