@@ -306,7 +306,8 @@ class DeploymentHistoryStore:
         allowed = {
             "prepared": {"candidate_started", "aborted", "needs_reconciliation"},
             "candidate_started": {"candidate_healthy", "aborted", "needs_reconciliation"},
-            "candidate_healthy": {"traffic_switched", "aborted", "needs_reconciliation"},
+            "candidate_healthy": {"traffic_switch_pending", "aborted", "needs_reconciliation"},
+            "traffic_switch_pending": {"traffic_switched", "aborted", "needs_reconciliation"},
             "traffic_switched": {"previous_retired", "needs_reconciliation"},
             "needs_reconciliation": set(),
             "previous_retired": set(),

@@ -162,6 +162,28 @@ def _active(history):
     )
 
 
+def test_switch_intent_is_durably_committed_before_provider_route_mutation(tmp_path):
+    history, provider, manager, previous, target = _setup(tmp_path)
+    original_switch = provider.switch_traffic
+
+    def inspect_pending_before_switch(candidate, old, operation_id):
+        journal = history.get_replacement(operation_id)
+        assert journal.phase == "traffic_switch_pending"
+        assert journal.candidate_runtime_id == "runtime:candidate"
+        assert journal.previous_runtime_id == "runtime:previous"
+        provider.calls.append(("journal_pending_verified", operation_id))
+        return original_switch(candidate, old, operation_id)
+
+    provider.switch_traffic = inspect_pending_before_switch
+    result = manager.replace(_request(), target)
+
+    assert result.status == "replaced"
+    calls = [item[0] for item in provider.calls]
+    assert calls.index("journal_pending_verified") < calls.index("switch_traffic")
+    journal = history.get_replacement("operation-001")
+    assert journal.phase == "previous_retired"
+
+
 def test_successful_replacement_requires_inspected_stopped_records(tmp_path):
     history, provider, manager, previous, target = _setup(tmp_path)
 

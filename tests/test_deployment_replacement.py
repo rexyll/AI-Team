@@ -39,6 +39,7 @@ def test_replacement_journal_records_both_deployments_and_phase():
         "prepared",
         "candidate_started",
         "candidate_healthy",
+        "traffic_switch_pending",
         "traffic_switched",
         "previous_retired",
         "aborted",

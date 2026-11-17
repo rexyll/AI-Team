@@ -46,6 +46,14 @@ def test_pre_switch_crash_requires_phase_specific_inspection_and_never_auto_abor
     assert assessment.automatic_action == "none"
 
 
+def test_traffic_switch_pending_requires_manual_route_reconciliation():
+    assessment = classify_replacement_recovery(record("traffic_switch_pending"))
+    assert assessment.disposition == "manual_reconciliation_required"
+    assert "read_back_effective_traffic_target" in assessment.required_checks
+    assert "compare_runtime_route_with_durable_switch_intent" in assessment.required_checks
+    assert assessment.automatic_action == "none"
+
+
 def test_candidate_healthy_requires_fresh_health_and_route_readback():
     assessment = classify_replacement_recovery(record("candidate_healthy"))
     assert assessment.disposition == "candidate_health_and_route_require_verification"

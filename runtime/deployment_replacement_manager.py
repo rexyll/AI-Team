@@ -49,6 +49,7 @@ RecoveryInventoryClassification = Literal[
     "active_pointer_missing",
     "active_pointer_mismatch",
     "journal_route_evidence_incomplete",
+    "switch_intent_requires_inspection",
     "journal_history_incomplete",
     "previous_retired_commit_pending",
     "candidate_stopped_commit_pending",
@@ -226,7 +227,7 @@ class HostDeploymentReplacementManager:
                     # record immediately before its terminal aborted journal phase.
                     abort_committed = (
                         journal.phase in {
-                            "candidate_started", "candidate_healthy", "needs_reconciliation"
+                            "candidate_started", "candidate_healthy", "traffic_switch_pending", "needs_reconciliation"
                         }
                         and journal.candidate_runtime_id is not None
                         and journal.candidate_runtime_id != journal.previous_runtime_id
@@ -258,6 +259,12 @@ class HostDeploymentReplacementManager:
                     classification = "prepared_candidate_not_persisted"
                 elif candidate is None:
                     classification = "candidate_record_missing"
+                elif journal.phase == "traffic_switch_pending":
+                    classification = (
+                        "switch_intent_requires_inspection"
+                        if active_id == journal.previous_deployment_id
+                        else "active_pointer_mismatch"
+                    )
                 elif journal.phase == "traffic_switched" and (
                     journal.candidate_runtime_id is None
                     or journal.effective_traffic_target != journal.candidate_runtime_id
@@ -585,6 +592,15 @@ class HostDeploymentReplacementManager:
                 journal,
                 "candidate_healthy",
                 detail="candidate health verified healthy",
+            )
+
+            # Persist a durable intent before the first external route mutation.
+            # A crash after this point is ambiguous and must be resolved only by
+            # fresh provider/route inspection; startup never retries the switch.
+            journal = self._advance(
+                journal,
+                "traffic_switch_pending",
+                detail="traffic switch intent durably committed before provider mutation",
             )
 
             try:

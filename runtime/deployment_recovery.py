@@ -74,6 +74,15 @@ def classify_replacement_recovery(
             "read_back_effective_traffic_target",
             "confirm_previous_runtime_remains_available",
         )
+    elif record.phase == "traffic_switch_pending":
+        disposition = "manual_reconciliation_required"
+        checks = (
+            "inspect_candidate_and_previous_by_immutable_runtime_identity",
+            "freshly_verify_candidate_health",
+            "read_back_effective_traffic_target",
+            "compare_runtime_route_with_durable_switch_intent",
+            "record_explicit_reconciliation_decision",
+        )
     elif record.phase == "traffic_switched":
         disposition = "route_readback_required_before_retire"
         checks = (
