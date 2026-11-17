@@ -20,6 +20,7 @@ from runtime.local_docker_router_network import (
 from runtime.local_docker_router_container import build_router_container_spec
 from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
 from runtime.local_docker_router_state import LocalDockerRouterStateStore
+from runtime.local_docker_router_config import HAPROXY_ACTIVE_SLOT_MAP
 
 
 ROUTER_ID = "a" * 64
@@ -54,7 +55,7 @@ class RuntimeRunner:
         command = input_text.strip()
         self.commands.append(command)
         if command.startswith("show map"):
-            output = "0 (/etc/haproxy/active-slot.map) type=map\n"
+            output = f"0 ({HAPROXY_ACTIVE_SLOT_MAP}) type=map\n"
         elif command.startswith("get map"):
             output = "type=ip,type=string,found=yes,key=active,value=slot_a\n"
         elif command.startswith("set server") and command.endswith(" state drain") and self.fail_drain:
