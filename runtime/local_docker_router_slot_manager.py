@@ -338,7 +338,7 @@ class LocalDockerRouterSlotManager:
 
         router_status, router_payload, router_detail = self._inspect_payload([
             "container", "inspect", "--format",
-            __import__("runtime.local_docker_router_container_manager", fromlist=["ROUTER_CONTAINER_INSPECT_FORMAT"]).ROUTER_CONTAINER_INSPECT_FORMAT,
+            ROUTER_CONTAINER_INSPECT_FORMAT,
             router_id,
         ])
         if router_status != "verified" or router_payload is None:
@@ -513,13 +513,22 @@ class LocalDockerRouterSlotManager:
             return self._invalid(router_after_status, router_id, app_id, slot, router_after_detail)
         if app_after_status != "verified" or app_after_payload is None:
             return self._invalid(app_after_status, router_id, app_id, slot, app_after_detail)
+        router_after_verification = verify_router_container_inspection(
+            router_after_payload, router_spec
+        )
+        app_after_verification = verify_routed_app_inspection(
+            app_after_payload, app_spec
+        )
         if (
-            verify_router_container_inspection(router_after_payload, router_spec).container_id != router_id
-            or not verify_routed_app_inspection(app_after_payload, app_spec).route_eligible
+            router_after_verification.status != "verified"
+            or router_after_verification.container_id != router_id
+            or app_after_verification.status != "verified"
+            or app_after_verification.target != target
+            or not app_after_verification.route_eligible
         ):
             return self._invalid(
                 "mismatch", router_id, app_id, slot,
-                "Router or routed app identity/health changed during slot preparation",
+                "Router or routed app immutable identity, endpoint, or health changed during slot preparation",
                 active_before=active_before, active_after=active_after,
                 observations=tuple(observations),
             )

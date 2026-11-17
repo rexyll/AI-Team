@@ -6,6 +6,7 @@ from runtime.haproxy_runtime_readback import (
     ExpectedHAProxyServer,
     parse_show_servers_state,
     parse_show_stat_servers,
+    parse_get_map_value,
     verify_inactive_slot_readback,
 )
 
