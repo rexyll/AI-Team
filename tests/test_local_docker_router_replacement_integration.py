@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
-import hashlib
 from types import SimpleNamespace
 
 from runtime.deployment_history import DeploymentHistoryStore

@@ -585,6 +585,7 @@ def run_live_smoke() -> dict[str, Any]:
                 if replacement.operation_id else None
             )
             router_record = history.get_traffic_router(scope)
+            host_state_readback = router_host.ensure_router(scope, bindings)
             active_deployment = history.active_deployment(
                 provider="docker-local",
                 project=scope.project,
@@ -631,6 +632,9 @@ def run_live_smoke() -> dict[str, Any]:
                 and active_deployment is not None
                 and active_deployment.deployment_id == candidate_id
                 and router_record is not None
+                and host_state_readback.status == "ready"
+                and host_state_readback.router_record == router_record
+                and host_state_readback.state_record == history.get_traffic_router_state_record(scope)
                 and router_record.active_slot == "slot_b"
                 and router_record.active_target is not None
                 and router_record.active_target.runtime_id == candidate_record.container_id
@@ -673,6 +677,11 @@ def run_live_smoke() -> dict[str, Any]:
                 "observed_behavior": "needs_reconciliation; previous remains running; active candidate remains routed",
                 "active_selector": selector,
                 "effective_runtime_id": effective_target,
+                "host_registry_readback": {
+                    "status": host_state_readback.status,
+                    "server_state_sha256": host_state_readback.state_record.server_state_sha256,
+                    "route_generation": host_state_readback.router_record.route_generation,
+                },
                 "previous_backend_status": old_stat.status,
                 "previous_backend_sessions": old_stat.current_sessions,
                 "candidate_backend_status": new_stat.status,
