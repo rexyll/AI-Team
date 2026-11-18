@@ -636,4 +636,11 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - CI #931（run `44253105127`，commit `c90113f7bc2e2a4ca102212218a1605c38f7a052`）全部通过：Regression `3,141 passed / 14 skipped`；Security `252 passed / 9 skipped`；Coverage baseline `3,121 passed / 14 skipped`，总行覆盖率 `83%`，所有模块 line/branch floors 通过（agents 86.76%/74.44%，core 89.85%/74.44%，runtime 87.05%/73.92%，security 74.02%/66.22%，tools 67.92%/63.56%）；Windows Python/Node.js E2E `7 passed`；Docker Engine job `25/25 steps success`，包含 Router image/bootstrap、Host lifecycle、routed-app、正常 blue-green replacement、ambiguous write、identity mismatch、nonzero-scur、真实 held TCP 与 crash-after-switch fault injection。Artifacts：crash evidence `14404812999`、coverage `14404683319`、Windows E2E `14403669856`。
 - 恢复边界：该测试只证明 crash 后状态可被准确分类并保持 fail-closed，不代表自动 reconciliation 已实现。pending journal 的 runtime-inventory API 对外仍报告 route readback `not_available`；smoke 另行直接读取 selector/effective target 以证明外部当前状态。下一步 T21.6.3.5.11 实现 operator-facing 的人工只读 reconciliation read-back report；在人工决策与独立审批/审计门实现前，禁止修改 selector、active pointer、journal phase 或 retire 任一 runtime。
 
+### T21.6.3.5.11 Operator-facing manual reconciliation read-back（实现中）
+
+- 已有底层 report 汇总 durable journal/active pointer、previous/candidate immutable runtime identity 与 health、Router registry、HAProxy live selector/effective runtime，以及所选 backend 的真实 endpoint/UP 状态；评估结果只提供人工判断依据，`automatic_action=none`、`automatic_recovery_allowed=false`。
+- 当前补齐 Host 聚合入口与独立 CLI `--deployment-reconciliation-readback`：只读取已有 SQLite 数据库，只对已有 Router registry + digest-bound Host state 执行 inspect-only Docker/HAProxy read-back；缺失 registry/state、provider 不支持或读回异常均明确报告 not-found/unsupported/unavailable/invalid-response，不创建、接管或修复资源。
+- 新增 Host 缺失 Router 的 fail-closed/SQLite read-only 测试，以及 CLI 独立 JSON 输出测试；同时更新运维命令说明。此节点仍待本次提交的 GitHub Actions 回归、安全、Coverage、Windows 和 Docker Engine 验收通过后才能标记完成。
+- 仍禁止任何自动 retry/rollback/stop/cleanup 或 selector、active pointer、journal phase 更新；`needs_reconciliation` 继续保留 scope reservation。独立可信 operator 身份、双人审批及不可篡改审计事务不在本节点实现范围内。
+
 
