@@ -19,7 +19,6 @@ AuditAction = Literal[
     "reconciliation_proposed",
     "reconciliation_approved",
     "reconciliation_approval_consumption_started",
-    "reconciliation_approval_consumption_started",
     "reconciliation_approval_consumed",
     "reconciliation_applied",
     "reconciliation_rejected",
@@ -29,6 +28,7 @@ _ZERO_DIGEST = "0" * 64
 _ACTIONS = {
     "reconciliation_proposed",
     "reconciliation_approved",
+    "reconciliation_approval_consumption_started",
     "reconciliation_approval_consumed",
     "reconciliation_applied",
     "reconciliation_rejected",
