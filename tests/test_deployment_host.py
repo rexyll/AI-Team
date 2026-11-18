@@ -235,3 +235,43 @@ def test_host_runtime_inspects_journal_candidate_id_when_candidate_record_is_mis
     assert report["route_readback_available"] is False
     assert len(runner.calls) == 2
     assert runner.calls[1][0][-1] == "b" * 64
+
+
+def test_manual_reconciliation_readback_is_read_only_and_fails_closed_without_router(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_pending_replacement(path)
+
+    class InspectRunner:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, args, *, cwd, timeout):
+            self.calls.append((list(args), cwd, timeout))
+            runtime_id = args[-1]
+            return DockerCommandResult(0, runtime_id + "|running|healthy", "")
+
+    runner = InspectRunner()
+    report = DeploymentHostRuntime(
+        path, provider=LocalDockerProvider(runner=runner)
+    ).inspect_manual_reconciliation_readback()
+
+    assert report["status"] == "ok"
+    assert report["read_only"] is True
+    assert report["unfinished_replacements"] == 1
+    assert report["automatic_action"] == "none"
+    assert report["automatic_recovery_allowed"] is False
+    item = report["readbacks"][0]
+    assert item["operation_id"] == "startup-operation-001"
+    assert item["previous_runtime"]["status"] == "verified"
+    assert item["previous_runtime"]["health_status"] == "healthy"
+    assert item["candidate_runtime"]["status"] == "invalid_response"
+    assert item["route_readback"]["status"] == "not_found"
+    assert item["assessment"] == "route_readback_unavailable"
+    assert item["automatic_action"] == "none"
+    assert item["automatic_recovery_allowed"] is False
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0][-1] == "a" * 64
+
+    readonly = DeploymentHistoryStore(path, read_only=True)
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        readonly.append(_record("manual-readback-must-not-write"))
