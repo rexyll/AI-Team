@@ -5,6 +5,7 @@ and provider operations, but performs no runtime I/O or replacement itself.
 """
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
