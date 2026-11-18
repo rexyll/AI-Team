@@ -18,6 +18,7 @@ from runtime.deployment_reconciliation_contract import AuthenticatedPrincipal
 AuditAction = Literal[
     "reconciliation_proposed",
     "reconciliation_approved",
+    "reconciliation_approval_consumed",
     "reconciliation_applied",
     "reconciliation_rejected",
 ]

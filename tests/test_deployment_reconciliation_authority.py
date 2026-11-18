@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
+from runtime.deployment_reconciliation_authority import (
+    ReconciliationApprovalAuthority,
+    ReconciliationApprovalGrant,
+    ReconciliationAuthorizationError,
+)
+from runtime.deployment_reconciliation_contract import (
+    AuthenticatedPrincipal,
+    ReconciliationApproval,
+    ReconciliationEvidence,
+    ReconciliationProposal,
+)
+from runtime.deployment_replacement import ReplacementJournalRecord
+
+
+class _Clock:
+    def __init__(self):
+        self.value = datetime(2026, 11, 18, 10, 0, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.value
+
+
+class _Authenticator:
+    def __init__(self, principals):
+        self.principals = principals
+        self.challenges = []
+
+    def authenticate(self, challenge, response):
+        self.challenges.append(challenge)
+        if response not in self.principals:
+            raise PermissionError("invalid test proof")
+        return self.principals[response]
+
+
+def _principal(subject, *, issuer="https://id.example.test", method="webauthn"):
+    return AuthenticatedPrincipal(
+        subject=subject,
+        issuer=issuer,
+        authentication_method=method,
+        authenticated_at="2026-11-18T10:00:00Z",
+    )
+
+
+def _proposal():
+    record = ReplacementJournalRecord(
+        operation_id="replace-001",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        target_deployment_id="release-new",
+        previous_deployment_id="release-current",
+        phase="needs_reconciliation",
+        created_at="2026-11-18T09:00:00Z",
+        updated_at="2026-11-18T09:10:00Z",
+        candidate_runtime_id="runtime-candidate-immutable",
+        previous_runtime_id="runtime-previous-immutable",
+    )
+    template = ReconciliationApproval(
+        approval_id="template-approval",
+        operation="abort_candidate",
+        provider=record.provider,
+        project=record.project,
+        environment=record.environment,
+        operation_id=record.operation_id,
+        expected_phase="needs_reconciliation",
+        target_deployment_id=record.target_deployment_id,
+        previous_deployment_id=record.previous_deployment_id,
+        candidate_runtime_id=record.candidate_runtime_id,
+        previous_runtime_id=record.previous_runtime_id,
+        requested_by=_principal("untrusted-template-requester"),
+        approved_by=_principal("untrusted-template-approver"),
+        issued_at="2026-11-18T09:11:00Z",
+        expires_at="2026-11-18T09:16:00Z",
+    )
+    evidence = (
+        ReconciliationEvidence(
+            evidence_id="ev-1",
+            kind="provider_operation_inspection",
+            source="docker-inspect",
+            observed_at="2026-11-18T09:10:00Z",
+            digest_sha256="1" * 64,
+        ),
+        ReconciliationEvidence(
+            evidence_id="ev-2",
+            kind="candidate_absence",
+            source="docker-inspect",
+            observed_at="2026-11-18T09:10:00Z",
+            digest_sha256="2" * 64,
+            subject_runtime_id=record.candidate_runtime_id,
+        ),
+        ReconciliationEvidence(
+            evidence_id="ev-3",
+            kind="previous_runtime_inspection",
+            source="docker-inspect",
+            observed_at="2026-11-18T09:10:00Z",
+            digest_sha256="3" * 64,
+            subject_runtime_id=record.previous_runtime_id,
+        ),
+        ReconciliationEvidence(
+            evidence_id="ev-4",
+            kind="previous_route_readback",
+            source="haproxy-runtime-api",
+            observed_at="2026-11-18T09:10:00Z",
+            digest_sha256="4" * 64,
+            observed_runtime_id=record.previous_runtime_id,
+        ),
+    )
+    return ReconciliationProposal(
+        record=record,
+        approval=template,
+        evidence=evidence,
+        proposed_at="2026-11-18T09:11:00Z",
+    )
+
+
+def _authority(tmp_path, principals, *, clock=None, **kwargs):
+    return ReconciliationApprovalAuthority(
+        authenticator=_Authenticator(principals),
+        trusted_issuers=frozenset({"https://id.example.test"}),
+        trusted_authentication_methods=frozenset({"webauthn"}),
+        audit_store=DurableReconciliationAuditStore(tmp_path),
+        clock=clock or _Clock(),
+        **kwargs,
+    )
+
+
+def test_authority_requires_explicit_trusted_dependencies(tmp_path):
+    with pytest.raises(TypeError, match="HostAuthenticator"):
+        ReconciliationApprovalAuthority(
+            authenticator=None,
+            trusted_issuers=frozenset({"issuer"}),
+            trusted_authentication_methods=frozenset({"webauthn"}),
+            audit_store=DurableReconciliationAuditStore(tmp_path),
+        )
+
+
+def test_authorize_uses_authenticated_principals_not_template_identity(tmp_path):
+    requester = _principal("alice")
+    approver = _principal("bob")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    proposal = _proposal()
+
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    assert grant.proposal.approval.requested_by == requester
+    assert grant.proposal.approval.approved_by == approver
+    assert grant.proposal.approval.approval_id != "template-approval"
+    assert grant.proposal.approval.expires_at == "2026-11-18T10:05:00Z"
+    assert authority._authenticator.challenges[0].purpose == "requester"
+    assert authority._authenticator.challenges[1].purpose == "approver"
+    assert authority._authenticator.challenges[0].scope_digest == grant.proposal_digest
+    assert authority._authenticator.challenges[1].scope_digest == grant.proposal_digest
+    assert authority._authenticator.challenges[1].requester_subject == "alice"
+
+
+def test_dual_approval_is_durable_and_consumed_once(tmp_path):
+    requester, approver = _principal("alice"), _principal("bob")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    proposal = _proposal()
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    approved = authority.consume(
+        grant,
+        current_record=proposal.record,
+        current_evidence=proposal.evidence,
+    )
+    assert approved.approval.requested_by == requester
+    assert approved.approval.approved_by == approver
+
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumed",
+    ]
+    assert [event.actor.subject for event in events] == ["alice", "bob", "bob"]
+    with pytest.raises(ReconciliationAuthorizationError, match="already consumed"):
+        authority.consume(
+            grant,
+            current_record=proposal.record,
+            current_evidence=proposal.evidence,
+        )
+
+
+def test_same_principal_cannot_request_and_approve(tmp_path):
+    alice = _principal("alice")
+    authority = _authority(
+        tmp_path, {"requester-proof": alice, "approver-proof": alice}
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="distinct"):
+        authority.authorize_proposal(
+            _proposal(),
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+    events = authority._audit.events(operation_id="replace-001")
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_rejected",
+    ]
+
+
+def test_untrusted_issuer_or_authentication_method_is_rejected(tmp_path):
+    bad_issuer = _principal("alice", issuer="https://untrusted.example.test")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": bad_issuer, "approver-proof": _principal("bob")},
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="issuer"):
+        authority.authorize_proposal(
+            _proposal(),
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+    bad_method = _principal("alice", method="password-only")
+    authority = _authority(
+        tmp_path / "method",
+        {"requester-proof": bad_method, "approver-proof": _principal("bob")},
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="method"):
+        authority.authorize_proposal(
+            _proposal(),
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+
+def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
+    requester, approver = _principal("alice"), _principal("bob")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    proposal = _proposal()
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    changed_record = replace(proposal.record, updated_at="2026-11-18T09:12:00Z")
+    with pytest.raises(ReconciliationAuthorizationError, match="journal revision"):
+        authority.consume(
+            grant,
+            current_record=changed_record,
+            current_evidence=proposal.evidence,
+        )
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(
+            grant,
+            current_record=proposal.record,
+            current_evidence=proposal.evidence,
+        )
+
+    grant2 = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    changed_evidence = (
+        replace(proposal.evidence[0], digest_sha256="f" * 64),
+        *proposal.evidence[1:],
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="evidence changed"):
+        authority.consume(
+            grant2,
+            current_record=proposal.record,
+            current_evidence=changed_evidence,
+        )
+
+
+def test_expired_grant_is_burned_and_never_consumed(tmp_path):
+    clock = _Clock()
+    requester, approver = _principal("alice"), _principal("bob")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+        clock=clock,
+        approval_ttl_seconds=30,
+    )
+    proposal = _proposal()
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    clock.value += timedelta(seconds=30)
+    with pytest.raises(ReconciliationAuthorizationError, match="expired"):
+        authority.consume(
+            grant,
+            current_record=proposal.record,
+            current_evidence=proposal.evidence,
+        )
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(
+            grant,
+            current_record=proposal.record,
+            current_evidence=proposal.evidence,
+        )
+
+
+def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
+    clock = _Clock()
+    challenge_ttl = 15
+
+    class _SlowAuthenticator(_Authenticator):
+        def authenticate(self, challenge, response):
+            self.challenges.append(challenge)
+            clock.value += timedelta(seconds=challenge_ttl + 1)
+            return self.principals[response]
+
+    authenticator = _SlowAuthenticator(
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")}
+    )
+    authority = ReconciliationApprovalAuthority(
+        authenticator=authenticator,
+        trusted_issuers=frozenset({"https://id.example.test"}),
+        trusted_authentication_methods=frozenset({"webauthn"}),
+        audit_store=DurableReconciliationAuditStore(tmp_path),
+        challenge_ttl_seconds=challenge_ttl,
+        clock=clock,
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="challenge expired"):
+        authority.authorize_proposal(
+            _proposal(),
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+
+def test_authority_has_no_deployment_mutation_surface(tmp_path):
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+    )
+    for name in (
+        "replace", "rollback", "stop", "cleanup", "switch_traffic", "update_journal"
+    ):
+        assert not hasattr(authority, name)
+    grant = ReconciliationApprovalGrant(
+        proposal=_proposal(),
+        proposal_digest="a" * 64,
+        evidence_digest="b" * 64,
+        token="forged",
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(
+            grant,
+            current_record=grant.proposal.record,
+            current_evidence=grant.proposal.evidence,
+        )
