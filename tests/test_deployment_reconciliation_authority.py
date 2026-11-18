@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from threading import Event
 
 import pytest
 
@@ -611,6 +613,50 @@ def test_consume_does_not_accept_caller_supplied_current_snapshot(tmp_path):
         )
     # A rejected API call does not consume the grant; the trusted reader still can.
     assert authority.consume(grant).record == proposal.record
+
+
+def test_concurrent_consumption_of_one_grant_succeeds_exactly_once(tmp_path):
+    proposal = _proposal()
+    reader_entered = Event()
+    release_reader = Event()
+
+    class _BlockingSnapshotReader(_SnapshotReader):
+        def read_current_snapshot(self, operation_id):
+            self.calls.append(operation_id)
+            reader_entered.set()
+            if not release_reader.wait(timeout=5):
+                raise TimeoutError("test snapshot reader release timed out")
+            return self.snapshot
+
+    reader = _BlockingSnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(authority.consume, grant)
+        assert reader_entered.wait(timeout=5)
+        try:
+            with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+                authority.consume(grant)
+        finally:
+            release_reader.set()
+        assert first.result(timeout=5).record == proposal.record
+
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events].count(
+        "reconciliation_approval_consumed"
+    ) == 1
+    assert reader.calls == ["replace-001"]
 
 
 def test_authority_has_no_deployment_mutation_surface(tmp_path):
