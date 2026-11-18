@@ -1,10 +1,10 @@
 """Host-injected two-person approval authority for reconciliation proposals.
 
 No default identity provider exists. A production caller must inject trusted
-HostAuthenticator and ReconciliationSnapshotReader implementations, and applies
-an evidence freshness limit both when issuing and consuming approvals. This module
-issues only an in-process, one-use approval capability; it has no deployment-
-provider or journal-mutation interface.
+HostAuthenticator and ReconciliationSnapshotReader implementations. Approval
+and consumption claims are fenced by the durable append-only audit ledger; the
+bearer capability is returned to the caller and is never persisted in plaintext
+by this module. This module has no deployment-provider or journal-mutation API.
 """
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ class ReconciliationSnapshotReader(Protocol):
 
 @dataclass(frozen=True)
 class ReconciliationApprovalGrant:
-    """Opaque in-process one-use capability; the token is never logged."""
+    """Opaque one-use bearer capability; only its digest is stored in the audit ledger."""
 
     proposal: ReconciliationProposal
     proposal_digest: str
@@ -172,10 +172,11 @@ class ReconciliationApprovalAuthority:
     The authenticator, current-snapshot reader, trusted issuer/method allowlists,
     evidence freshness limit and durable audit store are mandatory security
     controls. There is intentionally no username/password or CLI-string fallback.
-    Grants are held only in this process; after restart they cannot be
-    reconstructed and therefore fail closed. Consumption records an audit event
-    before returning the approved proposal. This class never executes or
-    schedules a reconciliation action.
+    The audit ledger stores only a token digest and fences grant claims across
+    processes. The caller must protect and durably retain the bearer capability
+    if it needs to restore that grant after restart. A started-but-unfinished
+    claim is terminal and requires a fresh dual approval. This class never
+    executes or schedules a reconciliation action.
     """
 
     def __init__(
