@@ -36,36 +36,45 @@ class _ManualReconciliationReadOnlyProvider:
         self.route_adapters = route_adapters
         self.route_failures = route_failures
 
-    def inspect_reconciliation_runtime(self, deployment_id: str, runtime_id: str) -> DeploymentRuntimeInspection:
-        record = self.history.get(deployment_id)
-        if (
-            not isinstance(record, DeploymentRecord)
-            or record.provider != self.name
-            or record.deployment_id != deployment_id
-            or record.container_id != runtime_id
-        ):
-            return DeploymentRuntimeInspection(
-                provider=self.name, deployment_id=deployment_id,
-                expected_runtime_id=runtime_id, observed_runtime_id=None,
-                identity_match=False, status="invalid_response",
-                runtime_state="unknown", health_status="unknown",
-                checked_at=_utc_now(),
-                probe="manual reconciliation durable deployment lookup",
-                detail="No durable deployment record matches the exact journal runtime identity",
-            )
+    def inspect_reconciliation_runtime(
+        self, deployment_id: str, runtime_id: str
+    ) -> DeploymentRuntimeInspection:
+        identity_inspector = getattr(self.provider, "inspect_runtime_identity", None)
         inspector = getattr(self.provider, "inspect_runtime", None)
-        if not callable(inspector):
-            return DeploymentRuntimeInspection(
-                provider=self.name, deployment_id=deployment_id,
-                expected_runtime_id=runtime_id, observed_runtime_id=None,
-                identity_match=False, status="unavailable",
-                runtime_state="unknown", health_status="unavailable",
-                checked_at=_utc_now(),
-                probe="manual reconciliation immutable runtime read-back",
-                detail="Underlying provider does not expose immutable runtime inspection",
-            )
+        record = None
         try:
-            observation = inspector(record)
+            if callable(identity_inspector):
+                # The journal may contain the immutable runtime ID before its
+                # DeploymentRecord is committed. Inspect that exact ID directly.
+                observation = identity_inspector(deployment_id, runtime_id)
+            else:
+                record = self.history.get(deployment_id)
+                if (
+                    not isinstance(record, DeploymentRecord)
+                    or record.provider != self.name
+                    or record.deployment_id != deployment_id
+                    or record.container_id != runtime_id
+                ):
+                    return DeploymentRuntimeInspection(
+                        provider=self.name, deployment_id=deployment_id,
+                        expected_runtime_id=runtime_id, observed_runtime_id=None,
+                        identity_match=False, status="invalid_response",
+                        runtime_state="unknown", health_status="unknown",
+                        checked_at=_utc_now(),
+                        probe="manual reconciliation durable deployment lookup",
+                        detail="No durable deployment record matches the exact journal runtime identity",
+                    )
+                if not callable(inspector):
+                    return DeploymentRuntimeInspection(
+                        provider=self.name, deployment_id=deployment_id,
+                        expected_runtime_id=runtime_id, observed_runtime_id=None,
+                        identity_match=False, status="unavailable",
+                        runtime_state="unknown", health_status="unavailable",
+                        checked_at=_utc_now(),
+                        probe="manual reconciliation immutable runtime read-back",
+                        detail="Underlying provider does not expose immutable runtime inspection",
+                    )
+                observation = inspector(record)
         except Exception as exc:
             return DeploymentRuntimeInspection(
                 provider=self.name, deployment_id=deployment_id,
