@@ -256,12 +256,49 @@ class FakeRuntimeAPI:
                 detail="",
             )
         if command.operation == "get_map":
-            record = self.history.get_traffic_router(self.scope)
             return SimpleNamespace(
                 status="succeeded",
                 response=f"type=ip,type=string,found=yes,key=active,value={self.runtime_state['selector']}\n",
                 detail="",
             )
+        if command.operation in {"show_servers_state", "show_stat_servers"}:
+            record = self.history.get_traffic_router(self.scope)
+            backend = command.line.split()[-1]
+            binding = next(
+                item for item in record.port_bindings
+                if f"be_p{item.host_port}" == backend
+            )
+            slot_targets = dict(record.slot_targets)
+            if command.operation == "show_servers_state":
+                header = _snapshot().splitlines()[1]
+                rows = []
+                for server_id, slot in enumerate(("slot_a", "slot_b"), start=1):
+                    target = slot_targets.get(slot)
+                    if target is None:
+                        address, port = "-", 1
+                        op_state, admin_state, check_result, check_state = 0, 0, 0, 0
+                    else:
+                        target_binding = next(
+                            item for item in target.port_bindings
+                            if item.host_port == binding.host_port
+                            and item.protocol == binding.protocol
+                        )
+                        address, port = target.address, target_binding.container_port
+                        op_state, admin_state, check_result, check_state = 2, 0, 3, 0x06
+                    rows.append(
+                        f"1 {backend} {server_id} {slot} {address} {op_state} {admin_state} "
+                        f"0 0 0 6 {check_result} 0 {check_state} 0 0 0 - {port} - 0 "
+                        f"{port} {address} - 0"
+                    )
+                response = "1\n" + header + "\n" + "\n".join(rows) + "\n"
+            else:
+                header = "# pxname,svname,status,scur"
+                rows = [
+                    f"{backend},{slot},{'UP' if slot in slot_targets else 'DOWN'},0"
+                    for slot in ("slot_a", "slot_b")
+                ]
+                response = header + "\n" + "\n".join(rows) + "\n"
+            return SimpleNamespace(status="succeeded", response=response, detail="")
         return SimpleNamespace(status="failed", response="", detail="unexpected Runtime API operation")
 
 
@@ -494,6 +531,16 @@ def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
     assert report.route_readback.live_active_slot == "slot_b"
     assert report.route_readback.registry_active_runtime_id == CANDIDATE_ID
     assert report.route_readback.effective_runtime_id == CANDIDATE_ID
+    assert len(report.route_readback.backend_readbacks) == 1
+    backend = report.route_readback.backend_readbacks[0]
+    assert backend.backend == "be_p42699"
+    assert backend.slot == "slot_b"
+    assert backend.expected_address == "172.18.0.3"
+    assert backend.observed_address == "172.18.0.3"
+    assert backend.expected_port == 18080
+    assert backend.observed_port == 18080
+    assert backend.status == "UP"
+    assert backend.current_sessions == 0
     assert report.automatic_action == "none"
     assert report.automatic_recovery_allowed is False
 
