@@ -17,6 +17,7 @@ from runtime.deployment_reconciliation_contract import AuthenticatedPrincipal
 
 AuditAction = Literal[
     "reconciliation_proposed",
+    "reconciliation_approved",
     "reconciliation_applied",
     "reconciliation_rejected",
 ]
@@ -24,6 +25,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ZERO_DIGEST = "0" * 64
 _ACTIONS = {
     "reconciliation_proposed",
+    "reconciliation_approved",
     "reconciliation_applied",
     "reconciliation_rejected",
 }

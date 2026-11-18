@@ -638,6 +638,15 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 
 ### T21.6.3.5.11 Operator-facing manual reconciliation read-back（2026-11-18，CI #961 全部通过）
 
+### T21.6.3.5.12 Trusted approval and durable audit gate（进行中）
+
+- 现有 `deployment_reconciliation_contract.py` 与 `deployment_reconciliation_audit.py` 仅是数据契约：构造 `AuthenticatedPrincipal` 不等于身份认证，构造 proposal 不等于授权；hash chain 只有在 head 由可写 audit store 之外的可信位置锚定时，才能检测账本被回滚或替换。
+- 当前子步实现 `DurableReconciliationAuditStore`：跨进程文件锁、append-only JSONL、canonical event digest + previous-digest chain、每次 append/read 全链校验、可对账外部 trusted head、POSIX 0700/0600 权限与 fsync；不提供 update/delete/truncate，不负责认证 actor，也不调用 deployment provider。
+- 增加 `reconciliation_approved` 审计事件类型，供后续批准事件留痕；这不代表审批签发或消费接口已经开放。
+- 后续子步才接入 Host-owned authenticator 和双人独立 principal approval：requester/approver 必须来自可信认证适配器，绑定 exact operation/scope/journal immutable IDs/evidence digest、短 TTL、一次性消费，并分别记录 proposed/approved/rejected/applied 审计事件。当前未配置可信 authenticator，必须 fail closed。
+- 明确禁止本节点执行任何 selector、active deployment pointer、journal phase 或 runtime lifecycle mutation；本节点验收只覆盖 audit persistence/integrity 与后续授权基础，不开放 reconciliation executor。Hash chain 不声称能够抵御可写该目录的恶意管理员；外部可信 head anchoring/远端 retention 仍是生产信任边界。
+
+
 - 已有底层 report 汇总 durable journal/active pointer、previous/candidate immutable runtime identity 与 health、Router registry、HAProxy live selector/effective runtime，以及所选 backend 的真实 endpoint/UP 状态；评估结果只提供人工判断依据，`automatic_action=none`、`automatic_recovery_allowed=false`。
 - 已补齐 Host 聚合入口与独立 CLI `--deployment-reconciliation-readback`：只读取已有 SQLite 数据库，只对已有 Router registry + digest-bound Host state 执行 inspect-only Docker/HAProxy read-back；缺失 registry/state、provider 不支持或读回异常均明确报告 not-found/unsupported/unavailable/invalid-response，不创建、接管或修复资源。
 - 新增 Host 缺失 Router 的 fail-closed/SQLite read-only 测试、journal 已有 immutable candidate ID 但 DeploymentRecord 尚未提交时直接按 immutable ID inspect 的测试，以及 CLI 独立 JSON 输出测试。对账命令为 `python main.py --deployment-reconciliation-readback --output json`；仅打开已有 SQLite 数据库，只对已有 Router registry + digest-bound Host state 进行 inspect-only Docker/HAProxy 查询；没有 registry/state 时明确返回 not-found/unsupported/unavailable/invalid-response，不创建、接管或修复资源。
