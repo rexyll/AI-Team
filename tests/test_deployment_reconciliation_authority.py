@@ -330,7 +330,13 @@ def test_dual_approval_is_durable_and_consumed_once(tmp_path):
         "reconciliation_approval_consumption_started",
         "reconciliation_approval_consumed",
     ]
-    assert [event.actor.subject for event in events] == ["alice", "bob", "bob"]
+    assert [event.actor.subject for event in events] == ["alice", "bob", "bob", "bob"]
+    ledger_bytes = authority._audit.path.read_bytes()
+    assert grant.token.encode("utf-8") not in ledger_bytes
+    assert events[1].approval_token_digest == hashlib.sha256(
+        grant.token.encode("utf-8")
+    ).hexdigest()
+    assert events[1].approval_expires_at == grant.proposal.approval.expires_at
     with pytest.raises(ReconciliationAuthorizationError, match="already consumed"):
         authority.consume(grant)
 
@@ -376,6 +382,50 @@ def test_grant_can_be_consumed_by_restarted_authority_from_durable_audit(tmp_pat
         "reconciliation_approved",
         "reconciliation_approval_consumption_started",
         "reconciliation_approval_consumed",
+    ]
+
+
+
+def test_crash_after_durable_claim_requires_fresh_dual_approval(tmp_path):
+    requester, approver = _principal("alice"), _principal("bob")
+    first_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    proposal = _proposal()
+    grant = first_authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    # Model a process death after the atomic claim but before the snapshot
+    # reader or terminal audit event can run.
+    first_authority._audit.begin_approval_consumption(
+        approval_id=grant.proposal.approval.approval_id,
+        token_digest=hashlib.sha256(grant.token.encode("utf-8")).hexdigest(),
+        proposal_digest=grant.proposal_digest,
+        evidence_digest=grant.evidence_digest,
+        approval_expires_at=grant.proposal.approval.expires_at,
+        requester=requester,
+        approver=approver,
+    )
+
+    restarted_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="already claimed"
+    ):
+        restarted_authority.consume(grant)
+
+    events = DurableReconciliationAuditStore(tmp_path).events(
+        operation_id=proposal.record.operation_id
+    )
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
     ]
 
 
