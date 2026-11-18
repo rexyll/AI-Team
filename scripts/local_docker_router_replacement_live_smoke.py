@@ -314,7 +314,7 @@ def _kill_replacement_child_after_switch(
                     "switch_calls": switch_calls,
                     "stop_attempts": stop_attempts,
                 }
-                os.write(write_fd, (json.dumps(message) + "\\n").encode("utf-8"))
+                os.write(write_fd, (json.dumps(message) + "\n").encode("utf-8"))
                 while True:
                     signal.pause()
 
@@ -336,7 +336,7 @@ def _kill_replacement_child_after_switch(
                     "stop_attempts": stop_attempts,
                 }
             try:
-                os.write(write_fd, (json.dumps(payload) + "\\n").encode("utf-8"))
+                os.write(write_fd, (json.dumps(payload) + "\n").encode("utf-8"))
             except OSError:
                 pass
             os._exit(73)
@@ -347,7 +347,7 @@ def _kill_replacement_child_after_switch(
                     "exception": type(exc).__name__,
                     "detail": str(exc)[:500],
                 }
-                os.write(write_fd, (json.dumps(payload) + "\\n").encode("utf-8"))
+                os.write(write_fd, (json.dumps(payload) + "\n").encode("utf-8"))
             except BaseException:
                 pass
             os._exit(74)
