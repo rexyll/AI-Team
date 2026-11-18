@@ -18,6 +18,8 @@ from runtime.deployment_reconciliation_contract import AuthenticatedPrincipal
 AuditAction = Literal[
     "reconciliation_proposed",
     "reconciliation_approved",
+    "reconciliation_approval_consumption_started",
+    "reconciliation_approval_consumption_started",
     "reconciliation_approval_consumed",
     "reconciliation_applied",
     "reconciliation_rejected",
@@ -69,6 +71,8 @@ def _canonical_payload(
     proposal_digest: str,
     evidence_digest: str,
     recorded_at: str,
+    approval_token_digest: str | None = None,
+    approval_expires_at: str | None = None,
 ) -> bytes:
     payload = {
         "event_id": event_id,
@@ -90,6 +94,12 @@ def _canonical_payload(
         "evidence_digest": evidence_digest,
         "recorded_at": recorded_at,
     }
+    # Omit absent extension fields so pre-extension v1 events retain their
+    # original canonical bytes and remain verifiable without migration.
+    if approval_token_digest is not None:
+        payload["approval_token_digest"] = approval_token_digest
+    if approval_expires_at is not None:
+        payload["approval_expires_at"] = approval_expires_at
     return json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
@@ -118,6 +128,8 @@ class ReconciliationAuditEnvelope:
     evidence_digest: str
     recorded_at: str
     event_digest: str
+    approval_token_digest: str | None = None
+    approval_expires_at: str | None = None
 
     def __post_init__(self) -> None:
         for field in (
@@ -143,6 +155,13 @@ class ReconciliationAuditEnvelope:
         _digest(self.proposal_digest, "proposal_digest")
         _digest(self.evidence_digest, "evidence_digest")
         _aware(self.recorded_at)
+        if (self.approval_token_digest is None) != (self.approval_expires_at is None):
+            raise ValueError("approval token digest and expiry must be recorded together")
+        if self.approval_token_digest is not None:
+            if self.action != "reconciliation_approved":
+                raise ValueError("approval token metadata is only valid on approval events")
+            _digest(self.approval_token_digest, "approval_token_digest")
+            _aware(self.approval_expires_at)
         _digest(self.event_digest, "event_digest")
         expected = hashlib.sha256(self.canonical_payload()).hexdigest()
         if self.event_digest != expected:
@@ -172,6 +191,8 @@ class ReconciliationAuditEnvelope:
             proposal_digest=self.proposal_digest,
             evidence_digest=self.evidence_digest,
             recorded_at=self.recorded_at,
+            approval_token_digest=self.approval_token_digest,
+            approval_expires_at=self.approval_expires_at,
         )
 
     def verify_successor_of(self, previous: ReconciliationAuditEnvelope) -> None:
