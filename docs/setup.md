@@ -276,3 +276,23 @@ immutable container IDs, but does not change traffic, abort or resume a
 replacement, update a journal, or release a scope reservation.
 `needs_reconciliation` remains locked. It is a startup detection hook, not an
 automatic recovery or safe Docker rollback implementation.
+
+For the combined operator evidence (both immutable runtime inspections and
+live Router/HAProxy route read-back), run the standalone command:
+
+```powershell
+python main.py --deployment-reconciliation-readback --output json
+# or select the Host database explicitly
+python main.py --deployment-history C:\\AI-Team-Host\\deployments.sqlite3 --deployment-reconciliation-readback
+```
+
+This report reads the existing deployment journal, both immutable Docker
+container IDs, the durable Router registry and digest-bound Host state, then
+queries the live HAProxy selector and selected backend endpoint/state. It
+never creates or adopts a Router scope. Missing registry/state or unavailable
+Docker/HAProxy observations are reported as not-found, unsupported,
+unavailable, or mismatch; they do not become inferred route success. The
+command never changes the selector, active deployment pointer, journal phase,
+Host state, container lifecycle, or scope reservation. It performs no retry,
+rollback, stop, cleanup, or automatic reconciliation; every report records
+`automatic_action: none`.
