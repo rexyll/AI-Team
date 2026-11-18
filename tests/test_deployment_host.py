@@ -275,3 +275,46 @@ def test_manual_reconciliation_readback_is_read_only_and_fails_closed_without_ro
     readonly = DeploymentHistoryStore(path, read_only=True)
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         readonly.append(_record("manual-readback-must-not-write"))
+
+
+def test_manual_reconciliation_readback_inspects_journal_id_without_deployment_record(tmp_path):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    history = _seed_pending_replacement(path)
+    prepared = history.get_replacement("startup-operation-001")
+    started = ReplacementJournalRecord(
+        operation_id=prepared.operation_id,
+        provider=prepared.provider,
+        project=prepared.project,
+        environment=prepared.environment,
+        target_deployment_id=prepared.target_deployment_id,
+        previous_deployment_id=prepared.previous_deployment_id,
+        phase="candidate_started",
+        created_at=prepared.created_at,
+        updated_at="2026-11-18T07:30:00Z",
+        previous_runtime_id=prepared.previous_runtime_id,
+        candidate_runtime_id="b" * 64,
+    )
+    history.update_replacement(started, expected_phase="prepared")
+
+    class InspectRunner:
+        def __init__(self):
+            self.ids = []
+
+        def execute(self, args, *, cwd, timeout):
+            runtime_id = args[-1]
+            self.ids.append(runtime_id)
+            return DockerCommandResult(0, runtime_id + "|running|healthy", "")
+
+    runner = InspectRunner()
+    report = DeploymentHostRuntime(
+        path, provider=LocalDockerProvider(runner=runner)
+    ).inspect_manual_reconciliation_readback()
+
+    candidate = report["readbacks"][0]["candidate_runtime"]
+    assert candidate["status"] == "verified"
+    assert candidate["expected_runtime_id"] == "b" * 64
+    assert candidate["observed_runtime_id"] == "b" * 64
+    assert candidate["health_status"] == "healthy"
+    assert runner.ids == ["a" * 64, "b" * 64]
+    assert report["readbacks"][0]["automatic_action"] == "none"
+    assert report["automatic_recovery_allowed"] is False
