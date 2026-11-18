@@ -98,6 +98,58 @@ TrafficReadbackStatus = Literal[
 
 
 @dataclass(frozen=True)
+class DeploymentTrafficBackendReadback:
+    """One selected HAProxy backend endpoint verified against a slot target."""
+
+    backend: str
+    slot: Literal["slot_a", "slot_b"]
+    expected_address: str
+    expected_port: int
+    observed_address: str
+    observed_port: int
+    operational_state: int
+    administrative_state: int
+    check_result: int
+    check_state: int
+    status: str
+    current_sessions: int
+
+    def __post_init__(self) -> None:
+        for name in ("backend", "expected_address", "observed_address", "status"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.slot not in {"slot_a", "slot_b"}:
+            raise ValueError("invalid HAProxy server slot")
+        for name in ("expected_address", "observed_address"):
+            try:
+                parsed = ipaddress.ip_address(getattr(self, name))
+            except ValueError as exc:
+                raise ValueError(f"{name} must be a literal IP address") from exc
+            if str(parsed) != getattr(self, name):
+                raise ValueError(f"{name} must use canonical IP notation")
+        for name in ("expected_port", "observed_port"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+                raise ValueError(f"{name} must be a port in the range 1..65535")
+        for name, maximum in (
+            ("operational_state", 3),
+            ("administrative_state", 0x7F),
+            ("check_result", 4),
+            ("check_state", 0x1F),
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= maximum:
+                raise ValueError(f"{name} is outside its allowed range")
+        if (
+            not isinstance(self.current_sessions, int)
+            or isinstance(self.current_sessions, bool)
+            or self.current_sessions < 0
+        ):
+            raise ValueError("current_sessions must be a non-negative integer")
+
+
+@dataclass(frozen=True)
 class DeploymentTrafficReadback:
     """Read-only comparison of the durable Router registry and live selector."""
 
@@ -111,6 +163,7 @@ class DeploymentTrafficReadback:
     effective_runtime_id: str | None
     route_generation: str | None
     detail: str = ""
+    backend_readbacks: tuple[DeploymentTrafficBackendReadback, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("provider", "checked_at"):
@@ -138,6 +191,11 @@ class DeploymentTrafficReadback:
             raise ValueError("route_generation must be a non-empty string when provided")
         if not isinstance(self.detail, str):
             raise TypeError("detail must be a string")
+        if not isinstance(self.backend_readbacks, tuple) or any(
+            not isinstance(item, DeploymentTrafficBackendReadback)
+            for item in self.backend_readbacks
+        ):
+            raise TypeError("backend_readbacks must contain DeploymentTrafficBackendReadback values")
         if self.status == "verified":
             if (
                 self.router_runtime_id is None
@@ -147,6 +205,21 @@ class DeploymentTrafficReadback:
                 or self.effective_runtime_id != self.registry_active_runtime_id
             ):
                 raise ValueError("verified traffic read-back must match live selector to durable Router registry")
+            if self.live_active_slot in {"slot_a", "slot_b"} and (
+                not self.backend_readbacks
+                or any(
+                    item.slot != self.live_active_slot
+                    or item.expected_address != item.observed_address
+                    or item.expected_port != item.observed_port
+                    or item.status != "UP"
+                    or item.operational_state != 2
+                    or item.administrative_state != 0
+                    or item.check_result != 3
+                    or item.check_state != 0x06
+                    for item in self.backend_readbacks
+                )
+            ):
+                raise ValueError("verified active traffic read-back must confirm every selected backend endpoint is UP")
 
 
 class DeploymentReplacementProvider(Protocol):
