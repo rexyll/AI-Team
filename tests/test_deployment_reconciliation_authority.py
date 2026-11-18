@@ -167,7 +167,14 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
 
 @pytest.mark.parametrize(
     "field",
-    ("challenge_id", "nonce_sha256", "audience", "purpose", "operation", "scope_digest"),
+    (
+        "challenge_id",
+        "nonce_sha256",
+        "audience",
+        "purpose",
+        "operation",
+        "scope_digest",
+    ),
 )
 def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
     class _MismatchedAuthenticator(_Authenticator):
@@ -184,7 +191,10 @@ def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
     )
     authority = ReconciliationApprovalAuthority(
         authenticator=_MismatchedAuthenticator(
-            {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")}
+            {
+                "requester-proof": _principal("alice"),
+                "approver-proof": _principal("bob"),
+            }
         ),
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
@@ -252,7 +262,10 @@ def test_authentication_audience_is_required(tmp_path):
     with pytest.raises(ValueError, match="authentication_audience"):
         _authority(
             tmp_path,
-            {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+            {
+                "requester-proof": _principal("alice"),
+                "approver-proof": _principal("bob"),
+            },
             authentication_audience=" ",
         )
 
@@ -278,8 +291,14 @@ def test_authorize_uses_authenticated_principals_not_template_identity(tmp_path)
     assert grant.proposal.approval.expires_at == "2026-11-18T10:05:00Z"
     assert authority._authenticator.challenges[0].purpose == "requester"
     assert authority._authenticator.challenges[1].purpose == "approver"
-    assert authority._authenticator.challenges[0].audience == "urn:ai-team:deployment-reconciliation"
-    assert authority._authenticator.challenges[1].audience == "urn:ai-team:deployment-reconciliation"
+    assert (
+        authority._authenticator.challenges[0].audience
+        == "urn:ai-team:deployment-reconciliation"
+    )
+    assert (
+        authority._authenticator.challenges[1].audience
+        == "urn:ai-team:deployment-reconciliation"
+    )
     assert authority._authenticator.challenges[0].scope_digest == grant.proposal_digest
     assert authority._authenticator.challenges[1].scope_digest == grant.proposal_digest
     assert authority._authenticator.challenges[1].requester_subject == "alice"
