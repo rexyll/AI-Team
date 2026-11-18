@@ -444,7 +444,51 @@ class LocalDockerRouterReplacementProvider:
 
     def inspect_reconciliation_runtime(self, deployment_id: str, runtime_id: str):
         """Inspect one immutable runtime ID for an operator read-back only."""
-        return self.provider.inspect_runtime_identity(deployment_id, runtime_id)
+        identity_inspector = getattr(self.provider, "inspect_runtime_identity", None)
+        if callable(identity_inspector):
+            return identity_inspector(deployment_id, runtime_id)
+
+        record = self.history.get(deployment_id)
+        if (
+            record is None
+            or record.provider != self.name
+            or record.project != self.scope.project
+            or record.environment != self.scope.environment
+            or record.container_id != runtime_id
+        ):
+            from runtime.deployment_provider import DeploymentRuntimeInspection
+
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=deployment_id,
+                expected_runtime_id=runtime_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status="invalid_response",
+                runtime_state="unknown",
+                health_status="unknown",
+                checked_at=_now(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail="No matching durable record exists for the requested immutable runtime ID",
+            )
+        inspector = getattr(self.provider, "inspect_runtime", None)
+        if not callable(inspector):
+            from runtime.deployment_provider import DeploymentRuntimeInspection
+
+            return DeploymentRuntimeInspection(
+                provider=self.name,
+                deployment_id=deployment_id,
+                expected_runtime_id=runtime_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status="unavailable",
+                runtime_state="unknown",
+                health_status="unavailable",
+                checked_at=_now(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail="Underlying provider does not expose immutable runtime inspection",
+            )
+        return inspector(record)
 
     def inspect_reconciliation_route(
         self,
