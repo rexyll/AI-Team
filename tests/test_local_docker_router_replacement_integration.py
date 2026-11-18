@@ -263,7 +263,14 @@ class FakeRuntimeAPI:
             )
         if command.operation in {"show_servers_state", "show_stat_servers"}:
             record = self.history.get_traffic_router(self.scope)
-            backend = command.line.split()[-1]
+            # "show stat <backend> 4 -1" ends in the max-row selector,
+            # whereas "show servers state <backend>" ends in the backend.
+            command_parts = command.line.split()
+            backend = (
+                command_parts[2]
+                if command.operation == "show_stat_servers"
+                else command_parts[-1]
+            )
             binding = next(
                 item for item in record.port_bindings
                 if f"be_p{item.host_port}" == backend
