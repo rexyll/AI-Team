@@ -38,6 +38,7 @@ class HostAuthenticationChallenge:
 
     challenge_id: str
     nonce: str = field(repr=False)
+    audience: str
     purpose: AuthenticationPurpose
     operation: str
     scope_digest: str
@@ -47,7 +48,7 @@ class HostAuthenticationChallenge:
     requester_issuer: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("challenge_id", "nonce", "operation", "scope_digest"):
+        for name in ("challenge_id", "nonce", "audience", "operation", "scope_digest"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a non-empty string")
@@ -66,8 +67,9 @@ class HostAuthenticationChallenge:
 class HostAuthenticator(Protocol):
     """Trusted Host adapter for challenge-bound authentication.
 
-    Implementations must validate the challenge nonce, audience/purpose,
-    operation scope, expiry, proof signature/credential and issuer. Returning
+    Implementations must validate the challenge nonce against the IdP nonce,
+    the exact challenge audience and purpose, operation scope, expiry, proof
+    signature/credential and issuer. Returning
     AuthenticatedPrincipal is an assertion by this injected trusted component;
     constructing that data class directly is not authentication.
     """
@@ -146,6 +148,7 @@ class ReconciliationApprovalAuthority:
         snapshot_reader: ReconciliationSnapshotReader,
         trusted_issuers: frozenset[str],
         trusted_authentication_methods: frozenset[str],
+        authentication_audience: str,
         audit_store: DurableReconciliationAuditStore,
         approval_ttl_seconds: int = 300,
         challenge_ttl_seconds: int = 120,
@@ -176,6 +179,11 @@ class ReconciliationApprovalAuthority:
             raise ValueError(
                 "trusted_authentication_methods must be a non-empty frozenset"
             )
+        if (
+            not isinstance(authentication_audience, str)
+            or not authentication_audience.strip()
+        ):
+            raise ValueError("authentication_audience must be a non-empty string")
         if not isinstance(audit_store, DurableReconciliationAuditStore):
             raise TypeError("a DurableReconciliationAuditStore is required")
         if (
@@ -200,6 +208,7 @@ class ReconciliationApprovalAuthority:
         self._snapshot_reader = snapshot_reader
         self._trusted_issuers = trusted_issuers
         self._trusted_methods = trusted_authentication_methods
+        self._authentication_audience = authentication_audience
         self._audit = audit_store
         self._approval_ttl = approval_ttl_seconds
         self._challenge_ttl = challenge_ttl_seconds
@@ -283,6 +292,7 @@ class ReconciliationApprovalAuthority:
         return HostAuthenticationChallenge(
             challenge_id=secrets.token_urlsafe(24),
             nonce=secrets.token_urlsafe(32),
+            audience=self._authentication_audience,
             purpose=purpose,
             operation=operation,
             scope_digest=scope_digest,

@@ -145,6 +145,7 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        authentication_audience="urn:ai-team:deployment-reconciliation",
         audit_store=DurableReconciliationAuditStore(tmp_path),
         clock=clock or _Clock(),
         **kwargs,
@@ -161,6 +162,15 @@ def test_authority_requires_explicit_trusted_dependencies(tmp_path):
             trusted_issuers=frozenset({"issuer"}),
             trusted_authentication_methods=frozenset({"webauthn"}),
             audit_store=DurableReconciliationAuditStore(tmp_path),
+        )
+
+
+def test_authentication_audience_is_required(tmp_path):
+    with pytest.raises(ValueError, match="authentication_audience"):
+        _authority(
+            tmp_path,
+            {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+            authentication_audience=" ",
         )
 
 
@@ -185,6 +195,8 @@ def test_authorize_uses_authenticated_principals_not_template_identity(tmp_path)
     assert grant.proposal.approval.expires_at == "2026-11-18T10:05:00Z"
     assert authority._authenticator.challenges[0].purpose == "requester"
     assert authority._authenticator.challenges[1].purpose == "approver"
+    assert authority._authenticator.challenges[0].audience == "urn:ai-team:deployment-reconciliation"
+    assert authority._authenticator.challenges[1].audience == "urn:ai-team:deployment-reconciliation"
     assert authority._authenticator.challenges[0].scope_digest == grant.proposal_digest
     assert authority._authenticator.challenges[1].scope_digest == grant.proposal_digest
     assert authority._authenticator.challenges[1].requester_subject == "alice"
@@ -342,6 +354,7 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
         ),
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        authentication_audience="urn:ai-team:deployment-reconciliation",
         audit_store=DurableReconciliationAuditStore(tmp_path),
         challenge_ttl_seconds=challenge_ttl,
         clock=clock,
