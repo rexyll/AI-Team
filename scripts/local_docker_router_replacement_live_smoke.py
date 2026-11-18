@@ -814,27 +814,35 @@ def run_live_smoke() -> dict[str, Any]:
                 and runtime_item is not None
                 and runtime_item.route_readback_status == "not_available"
                 and runtime_item.automatic_recovery_allowed is False
-                and manual_report is not None
-                and manual_report.phase == "traffic_switch_pending"
-                and manual_report.inventory_classification == "switch_intent_requires_inspection"
-                and manual_report.durable_active_deployment_id == previous_id
-                and manual_report.assessment == "switch_applied_before_journal_commit"
-                and manual_report.previous_runtime.status == "verified"
-                and manual_report.previous_runtime.observed_runtime_id == app_a_id
-                and manual_report.previous_runtime.runtime_state == "running"
-                and manual_report.previous_runtime.health_status == "healthy"
-                and manual_report.candidate_runtime.status == "verified"
-                and manual_report.candidate_runtime.observed_runtime_id == candidate_record.container_id
-                and manual_report.candidate_runtime.runtime_state == "running"
-                and manual_report.candidate_runtime.health_status == "healthy"
-                and manual_report.route_readback is not None
-                and manual_report.route_readback.status == "verified"
-                and manual_report.route_readback.registry_active_slot == "slot_b"
-                and manual_report.route_readback.live_active_slot == "slot_b"
-                and manual_report.route_readback.registry_active_runtime_id == candidate_record.container_id
-                and manual_report.route_readback.effective_runtime_id == candidate_record.container_id
-                and manual_report.automatic_action == "none"
-                and manual_report.automatic_recovery_allowed is False
+                and manual_report["phase"] == "traffic_switch_pending"
+                and manual_report["inventory_classification"] == "switch_intent_requires_inspection"
+                and manual_report["durable_active_deployment_id"] == previous_id
+                and manual_report["assessment"] == "switch_applied_before_journal_commit"
+                and manual_report["previous_runtime"]["status"] == "verified"
+                and manual_report["previous_runtime"]["observed_runtime_id"] == app_a_id
+                and manual_report["previous_runtime"]["runtime_state"] == "running"
+                and manual_report["previous_runtime"]["health_status"] == "healthy"
+                and manual_report["candidate_runtime"]["status"] == "verified"
+                and manual_report["candidate_runtime"]["observed_runtime_id"] == candidate_record.container_id
+                and manual_report["candidate_runtime"]["runtime_state"] == "running"
+                and manual_report["candidate_runtime"]["health_status"] == "healthy"
+                and manual_report["route_readback"] is not None
+                and manual_report["route_readback"]["status"] == "verified"
+                and manual_report["route_readback"]["registry_active_slot"] == "slot_b"
+                and manual_report["route_readback"]["live_active_slot"] == "slot_b"
+                and manual_report["route_readback"]["registry_active_runtime_id"] == candidate_record.container_id
+                and manual_report["route_readback"]["effective_runtime_id"] == candidate_record.container_id
+                and len(manual_report["route_readback"]["backend_readbacks"]) == 1
+                and manual_report["route_readback"]["backend_readbacks"][0]["backend"] == f"be_p{host_port}"
+                and manual_report["route_readback"]["backend_readbacks"][0]["slot"] == "slot_b"
+                and manual_report["route_readback"]["backend_readbacks"][0]["expected_address"] == manual_report["route_readback"]["backend_readbacks"][0]["observed_address"]
+                and manual_report["route_readback"]["backend_readbacks"][0]["expected_port"] == manual_report["route_readback"]["backend_readbacks"][0]["observed_port"]
+                and manual_report["route_readback"]["backend_readbacks"][0]["status"] == "UP"
+                and manual_report["automatic_action"] == "none"
+                and manual_report["automatic_recovery_allowed"] is False
+                and manual_reconciliation_report["read_only"] is True
+                and manual_reconciliation_report["automatic_action"] == "none"
+                and manual_reconciliation_report["automatic_recovery_allowed"] is False
                 and previous_inspection is not None
                 and previous_inspection.status == "verified"
                 and previous_inspection.observed_runtime_id == app_a_id
