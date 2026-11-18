@@ -201,6 +201,36 @@ def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
     assert not authority._audit.events(operation_id=proposal.record.operation_id)
 
 
+def test_host_authenticator_must_return_challenge_bound_receipt(tmp_path):
+    class _LegacyAuthenticator:
+        def authenticate(self, challenge, response):
+            return _principal("alice")
+
+    proposal = _proposal()
+    reader = _SnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = ReconciliationApprovalAuthority(
+        authenticator=_LegacyAuthenticator(),
+        snapshot_reader=reader,
+        trusted_issuers=frozenset({"https://id.example.test"}),
+        trusted_authentication_methods=frozenset({"webauthn"}),
+        authentication_audience="urn:ai-team:deployment-reconciliation",
+        audit_store=DurableReconciliationAuditStore(tmp_path),
+        clock=_Clock(),
+    )
+
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="challenge-binding receipt"
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="principal-only",
+            approver_response="approver-proof",
+        )
+    assert not authority._audit.events(operation_id=proposal.record.operation_id)
+
+
 def test_authority_requires_explicit_trusted_dependencies(tmp_path):
     with pytest.raises(TypeError, match="HostAuthenticator"):
         ReconciliationApprovalAuthority(
