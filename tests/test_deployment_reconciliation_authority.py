@@ -327,11 +327,111 @@ def test_dual_approval_is_durable_and_consumed_once(tmp_path):
     assert [event.action for event in events] == [
         "reconciliation_proposed",
         "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
         "reconciliation_approval_consumed",
     ]
     assert [event.actor.subject for event in events] == ["alice", "bob", "bob"]
     with pytest.raises(ReconciliationAuthorizationError, match="already consumed"):
         authority.consume(grant)
+
+
+
+def test_grant_can_be_consumed_by_restarted_authority_from_durable_audit(tmp_path):
+    requester, approver = _principal("alice"), _principal("bob")
+    first_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+    )
+    proposal = _proposal()
+    grant = first_authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    # Simulate handing a securely persisted grant capability to a new Host
+    # process. The audit ledger, not an in-memory authority dictionary,
+    # determines whether the bearer token is still valid and unused.
+    restored_grant = ReconciliationApprovalGrant(
+        proposal=grant.proposal,
+        proposal_digest=grant.proposal_digest,
+        evidence_digest=grant.evidence_digest,
+        token=grant.token,
+    )
+    restarted_reader = _SnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    restarted_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+        snapshot_reader=restarted_reader,
+    )
+
+    assert restarted_authority.consume(restored_grant).record == proposal.record
+    events = DurableReconciliationAuditStore(tmp_path).events(
+        operation_id=proposal.record.operation_id
+    )
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+        "reconciliation_approval_consumed",
+    ]
+
+
+def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
+    proposal = _proposal()
+    reader_entered = Event()
+    release_reader = Event()
+
+    class _BlockingSnapshotReader(_SnapshotReader):
+        def read_current_snapshot(self, operation_id):
+            self.calls.append(operation_id)
+            reader_entered.set()
+            if not release_reader.wait(timeout=5):
+                raise TimeoutError("test snapshot reader release timed out")
+            return self.snapshot
+
+    reader = _BlockingSnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    requester, approver = _principal("alice"), _principal("bob")
+    first_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+        snapshot_reader=reader,
+    )
+    grant = first_authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    second_authority = _authority(
+        tmp_path,
+        {"requester-proof": requester, "approver-proof": approver},
+        snapshot_reader=reader,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(first_authority.consume, grant)
+        assert reader_entered.wait(timeout=5)
+        try:
+            with pytest.raises(ReconciliationAuthorizationError, match="already claimed"):
+                second_authority.consume(grant)
+        finally:
+            release_reader.set()
+        assert first.result(timeout=5).record == proposal.record
+
+    events = DurableReconciliationAuditStore(tmp_path).events(
+        operation_id=proposal.record.operation_id
+    )
+    assert [event.action for event in events].count(
+        "reconciliation_approval_consumption_started"
+    ) == 1
+    assert [event.action for event in events].count(
+        "reconciliation_approval_consumed"
+    ) == 1
+    assert reader.calls == ["replace-001"]
 
 
 def test_same_principal_cannot_request_and_approve(tmp_path):
@@ -527,6 +627,8 @@ def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
     assert [event.action for event in events] == [
         "reconciliation_proposed",
         "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+        "reconciliation_rejected",
     ]
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
         authority.consume(grant)
@@ -564,6 +666,8 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
     assert [event.action for event in events] == [
         "reconciliation_proposed",
         "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+        "reconciliation_rejected",
     ]
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
         authority.consume(grant)
