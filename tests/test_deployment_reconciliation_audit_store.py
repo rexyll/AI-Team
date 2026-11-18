@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+from hashlib import sha256
 
 import pytest
 
@@ -41,6 +42,26 @@ def _record(root: str, index: int) -> None:
         proposal_digest=f"{index:064x}",
         evidence_digest=f"{index + 1:064x}",
     )
+
+
+
+def _claim_reconciliation_approval(root: str, queue) -> None:
+    store = DurableReconciliationAuditStore(root)
+    try:
+        event = store.begin_approval_consumption(
+            approval_id="approval-multiprocess",
+            token_digest=sha256(b"shared-one-use-token").hexdigest(),
+            proposal_digest="c" * 64,
+            evidence_digest="d" * 64,
+            approval_expires_at="2030-01-01T00:00:00Z",
+            requester=_principal("requester"),
+            approver=_principal("approver"),
+        )
+        queue.put(("claimed", event.sequence))
+    except ReconciliationAuditIntegrityError as exc:
+        queue.put(("rejected", str(exc)))
+    except Exception as exc:
+        queue.put(("error", type(exc).__name__, str(exc)))
 
 
 def test_audit_store_appends_and_reloads_a_verified_hash_chain(tmp_path):
@@ -196,6 +217,60 @@ def test_audit_store_serializes_concurrent_process_appends(tmp_path):
     events = DurableReconciliationAuditStore(tmp_path).events()
     assert len(events) == 4
     assert [event.sequence for event in events] == [1, 2, 3, 4]
+
+
+
+def test_approval_claim_is_atomic_across_os_processes(tmp_path):
+    store = DurableReconciliationAuditStore(tmp_path)
+    token_digest = sha256(b"shared-one-use-token").hexdigest()
+    common = dict(
+        actor=_principal("requester"),
+        approval_id="approval-multiprocess",
+        operation_id="operation-multiprocess",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        candidate_runtime_id="b" * 64,
+        previous_runtime_id="a" * 64,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+    )
+    store.record(action="reconciliation_proposed", **common)
+    store.record(
+        action="reconciliation_approved",
+        **{**common, "actor": _principal("approver")},
+        approval_token_digest=token_digest,
+        approval_expires_at="2030-01-01T00:00:00Z",
+    )
+
+    context = multiprocessing.get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_claim_reconciliation_approval,
+            args=(str(tmp_path), queue),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    outcomes = [queue.get(timeout=20) for _ in processes]
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    assert sorted(item[0] for item in outcomes) == ["claimed", "rejected"]
+    events = DurableReconciliationAuditStore(tmp_path).events(
+        operation_id="operation-multiprocess"
+    )
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+    ]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission assertion")
