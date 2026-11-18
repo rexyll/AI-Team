@@ -13,7 +13,6 @@ import json
 import secrets
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from threading import RLock
 from typing import Literal, Protocol
 
 from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
@@ -252,8 +251,6 @@ class ReconciliationApprovalAuthority:
         self._challenge_ttl = challenge_ttl_seconds
         self._evidence_max_age = timedelta(seconds=evidence_max_age_seconds)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._grants: dict[str, ReconciliationApprovalGrant] = {}
-        self._lock = RLock()
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -413,6 +410,8 @@ class ReconciliationApprovalAuthority:
         proposal: ReconciliationProposal,
         proposal_digest: str,
         evidence_digest: str,
+        approval_token_digest: str | None = None,
+        approval_expires_at: str | None = None,
     ) -> None:
         record = proposal.record
         if record.candidate_runtime_id is None or record.previous_runtime_id is None:
@@ -435,6 +434,8 @@ class ReconciliationApprovalAuthority:
             proposal_digest=proposal_digest,
             evidence_digest=evidence_digest,
             recorded_at=self._iso(self._now()),
+            approval_token_digest=approval_token_digest,
+            approval_expires_at=approval_expires_at,
         )
 
     def authorize_proposal(
@@ -533,6 +534,8 @@ class ReconciliationApprovalAuthority:
             ),
         )
         approved_proposal = replace(proposal, approval=approval)
+        token = secrets.token_urlsafe(32)
+        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         self._record(
             action="reconciliation_approved",
             actor=approver,
@@ -540,80 +543,148 @@ class ReconciliationApprovalAuthority:
             proposal=approved_proposal,
             proposal_digest=proposal_digest,
             evidence_digest=evidence_digest,
+            approval_token_digest=token_digest,
+            approval_expires_at=approval.expires_at,
         )
-        grant = ReconciliationApprovalGrant(
+        return ReconciliationApprovalGrant(
             proposal=approved_proposal,
             proposal_digest=proposal_digest,
             evidence_digest=evidence_digest,
-            token=secrets.token_urlsafe(32),
+            token=token,
         )
-        with self._lock:
-            self._grants[grant.token] = grant
-        return grant
 
     def consume(
         self,
         grant: ReconciliationApprovalGrant,
     ) -> ReconciliationProposal:
-        """Consume once after reading the exact current Host journal/evidence snapshot.
+        """Consume a durable one-use grant after a fresh Host snapshot read.
 
-        The caller cannot supply the "current" record or evidence. The injected
-        trusted reader must return one consistent, fresh snapshot; read failures
-        fail closed and burn this in-process grant. Consuming the grant does not
-        execute a provider action or mutate deployment state.
+        The bearer token is represented in the audit chain only by its SHA-256
+        digest. A caller may restore a grant object after a Host restart; the
+        append-only audit ledger, not process memory, is the source of truth.
+        A durable consumption-start event fences every later attempt. If the
+        process crashes while checking the read-only snapshot, the grant remains
+        claimed and must be re-approved rather than replayed.
         """
         if not isinstance(grant, ReconciliationApprovalGrant):
             raise TypeError("grant must be a ReconciliationApprovalGrant")
-        with self._lock:
-            stored = self._grants.pop(grant.token, None)
-        if stored is None or stored != grant:
+        if not isinstance(grant.token, str) or not grant.token:
             raise ReconciliationAuthorizationError(
-                "approval grant is unknown, forged, or already consumed"
+                "approval grant is unknown or forged"
             )
-        now = self._now()
-        expires = datetime.fromisoformat(
-            grant.proposal.approval.expires_at.replace("Z", "+00:00")
-        ).astimezone(timezone.utc)
-        if now >= expires:
-            raise ReconciliationAuthorizationError("reconciliation approval expired")
+        proposal = grant.proposal
+        if not isinstance(proposal, ReconciliationProposal):
+            raise ReconciliationAuthorizationError(
+                "approval grant is unknown or forged"
+            )
+        calculated_evidence_digest = self._evidence_digest(proposal)
+        calculated_proposal_digest = self._proposal_digest(
+            proposal, calculated_evidence_digest
+        )
+        if (
+            not secrets.compare_digest(
+                calculated_evidence_digest, grant.evidence_digest
+            )
+            or not secrets.compare_digest(
+                calculated_proposal_digest, grant.proposal_digest
+            )
+        ):
+            raise ReconciliationAuthorizationError(
+                "approval grant is unknown or does not match its approved proposal"
+            )
+
+        approval = proposal.approval
+        token_digest = hashlib.sha256(grant.token.encode("utf-8")).hexdigest()
         try:
-            current = self._snapshot_reader.read_current_snapshot(
-                grant.proposal.record.operation_id
+            self._audit.begin_approval_consumption(
+                approval_id=approval.approval_id,
+                token_digest=token_digest,
+                proposal_digest=grant.proposal_digest,
+                evidence_digest=grant.evidence_digest,
+                approval_expires_at=approval.expires_at,
+                requester=approval.requested_by,
+                approver=approval.approved_by,
+                recorded_at=self._iso(self._now()),
             )
         except Exception as exc:
             raise ReconciliationAuthorizationError(
-                "trusted current journal/evidence snapshot read failed"
+                "approval grant is unknown, forged, already claimed, or already consumed"
             ) from exc
-        if not isinstance(current, ReconciliationCurrentSnapshot):
-            raise ReconciliationAuthorizationError(
-                "trusted snapshot reader returned an invalid snapshot"
+
+        def reject_claim() -> None:
+            self._audit.finish_approval_consumption(
+                approval_id=approval.approval_id,
+                proposal_digest=grant.proposal_digest,
+                evidence_digest=grant.evidence_digest,
+                action="reconciliation_rejected",
+                recorded_at=self._iso(self._now()),
             )
-        if current.record != grant.proposal.record:
-            raise ReconciliationAuthorizationError(
-                "journal revision or immutable runtime identity changed after approval"
+
+        try:
+            expires = datetime.fromisoformat(
+                approval.expires_at.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            if self._now() >= expires:
+                raise ReconciliationAuthorizationError(
+                    "reconciliation approval expired"
+                )
+            try:
+                current = self._snapshot_reader.read_current_snapshot(
+                    proposal.record.operation_id
+                )
+            except Exception as exc:
+                raise ReconciliationAuthorizationError(
+                    "trusted current journal/evidence snapshot read failed"
+                ) from exc
+            if not isinstance(current, ReconciliationCurrentSnapshot):
+                raise ReconciliationAuthorizationError(
+                    "trusted snapshot reader returned an invalid snapshot"
+                )
+            if current.record != proposal.record:
+                raise ReconciliationAuthorizationError(
+                    "journal revision or immutable runtime identity changed after approval"
+                )
+            evidence_payload = [asdict(item) for item in current.evidence]
+            current_evidence_digest = hashlib.sha256(
+                self._canonical(evidence_payload)
+            ).hexdigest()
+            if current_evidence_digest != grant.evidence_digest:
+                raise ReconciliationAuthorizationError(
+                    "reconciliation evidence changed after approval"
+                )
+            now_after_snapshot = self._now()
+            self._validate_evidence_freshness(
+                current.evidence, now=now_after_snapshot
             )
-        evidence_payload = [asdict(item) for item in current.evidence]
-        current_evidence_digest = hashlib.sha256(
-            self._canonical(evidence_payload)
-        ).hexdigest()
-        if current_evidence_digest != grant.evidence_digest:
-            raise ReconciliationAuthorizationError(
-                "reconciliation evidence changed after approval"
+            if now_after_snapshot >= expires:
+                raise ReconciliationAuthorizationError(
+                    "reconciliation approval expired"
+                )
+            self._audit.finish_approval_consumption(
+                approval_id=approval.approval_id,
+                proposal_digest=grant.proposal_digest,
+                evidence_digest=grant.evidence_digest,
+                action="reconciliation_approval_consumed",
+                recorded_at=self._iso(self._now()),
             )
-        # Verify that the exact observations are not only unchanged but still
-        # within the configured freshness window after a potentially slow read.
-        now_after_snapshot = self._now()
-        self._validate_evidence_freshness(current.evidence, now=now_after_snapshot)
-        # Provider/Router reads can be slow. Recheck expiry after all snapshot
-        # work and immediately before persisting the consumed audit event.
-        if now_after_snapshot >= expires:
-            raise ReconciliationAuthorizationError("reconciliation approval expired")
-        self._record(
-            action="reconciliation_approval_consumed",
-            actor=grant.proposal.approval.approved_by,
-            approval_id=grant.proposal.approval.approval_id,
-            proposal=grant.proposal,
-            proposal_digest=grant.proposal_digest,
-            evidence_digest=grant.evidence_digest,
-        )
-        return grant.proposal
+            return proposal
+        except ReconciliationAuthorizationError:
+            try:
+                reject_claim()
+            except Exception as audit_exc:
+                raise ReconciliationAuthorizationError(
+                    "approval validation failed and its rejection could not be finalized; "
+                    "the durable consumption claim remains fail-closed"
+                ) from audit_exc
+            raise
+        except Exception as exc:
+            try:
+                reject_claim()
+            except Exception as audit_exc:
+                raise ReconciliationAuthorizationError(
+                    "approval consumption failed and its rejection could not be finalized; "
+                    "the durable consumption claim remains fail-closed"
+                ) from audit_exc
+            raise ReconciliationAuthorizationError(
+                "approval consumption failed closed"
+            ) from exc
