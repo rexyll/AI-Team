@@ -506,6 +506,7 @@ class DurableReconciliationAuditStore:
                 or approved[0].proposal_digest != proposal_digest
                 or approved[0].evidence_digest != evidence_digest
                 or not self._approval_scope_matches(approved[0], started[0])
+                or approved[0].actor != started[0].actor
             ):
                 raise ReconciliationAuditIntegrityError(
                     "approval consumption claim is missing, mismatched, or already finalized"
