@@ -150,12 +150,15 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
     reader = snapshot_reader or _SnapshotReader(
         ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
     )
+    authentication_audience = kwargs.pop(
+        "authentication_audience", "urn:ai-team:deployment-reconciliation"
+    )
     return ReconciliationApprovalAuthority(
         authenticator=_Authenticator(principals),
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
-        authentication_audience="urn:ai-team:deployment-reconciliation",
+        authentication_audience=authentication_audience,
         audit_store=DurableReconciliationAuditStore(tmp_path),
         clock=clock or _Clock(),
         **kwargs,
@@ -240,6 +243,7 @@ def test_authority_requires_explicit_trusted_dependencies(tmp_path):
             ),
             trusted_issuers=frozenset({"issuer"}),
             trusted_authentication_methods=frozenset({"webauthn"}),
+            authentication_audience="urn:ai-team:deployment-reconciliation",
             audit_store=DurableReconciliationAuditStore(tmp_path),
         )
 
