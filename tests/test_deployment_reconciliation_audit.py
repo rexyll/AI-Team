@@ -46,6 +46,8 @@ def _event(
         "proposal_digest": "a" * 64,
         "evidence_digest": "b" * 64,
         "recorded_at": "2026-11-15T10:01:00+00:00",
+        "approval_token_digest": None,
+        "approval_expires_at": None,
     }
     provisional = ReconciliationAuditEnvelope.__new__(ReconciliationAuditEnvelope)
     for name, value in values.items():
