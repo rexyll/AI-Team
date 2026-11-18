@@ -599,3 +599,65 @@ def test_main_deployment_recovery_inspect_is_explicit_and_json(tmp_path, monkeyp
     assert payload["route_readback_available"] is False
     assert payload["automatic_recovery_allowed"] is False
     assert payload["observations"][0]["previous_runtime"]["status"] == "verified"
+
+
+def test_build_parser_accepts_deployment_reconciliation_readback():
+    args = main.build_parser().parse_args([
+        "--deployment-history", "C:/host/deployments.sqlite3",
+        "--deployment-reconciliation-readback",
+        "--output", "json",
+    ])
+    assert args.deployment_history == "C:/host/deployments.sqlite3"
+    assert args.deployment_reconciliation_readback is True
+    assert args.output == "json"
+
+
+def test_main_deployment_reconciliation_readback_is_standalone_json(tmp_path, monkeypatch, capsys):
+    report = {
+        "status": "ok",
+        "history_path": str(tmp_path / "deployments.sqlite3"),
+        "provider": "docker-local",
+        "unfinished_replacements": 1,
+        "readbacks": [{
+            "operation_id": "operation-readback",
+            "phase": "traffic_switch_pending",
+            "assessment": "switch_applied_before_journal_commit",
+            "previous_runtime": {"status": "verified", "runtime_state": "running", "health_status": "healthy"},
+            "candidate_runtime": {"status": "verified", "runtime_state": "running", "health_status": "healthy"},
+            "route_readback": {
+                "status": "verified", "live_active_slot": "slot_b",
+                "effective_runtime_id": "b" * 64,
+                "backend_readbacks": [{
+                    "backend": "be_p42699", "slot": "slot_b",
+                    "observed_address": "172.18.0.3", "observed_port": 18080,
+                    "status": "UP", "current_sessions": 0,
+                }],
+            },
+            "automatic_action": "none",
+            "automatic_recovery_allowed": False,
+        }],
+        "read_only": True,
+        "automatic_action": "none",
+        "automatic_recovery_allowed": False,
+    }
+
+    class FakeHostRuntime:
+        def __init__(self, history_path, *, create_if_missing=True):
+            assert create_if_missing is False
+
+        def inspect_manual_reconciliation_readback(self):
+            return report
+
+    monkeypatch.setattr(main, "DeploymentHostRuntime", FakeHostRuntime)
+    monkeypatch.delenv("AI_TEAM_DEPLOYMENT_HISTORY", raising=False)
+    monkeypatch.setattr(main.sys, "argv", [
+        "main.py", "--deployment-history", str(tmp_path / "deployments.sqlite3"),
+        "--deployment-reconciliation-readback", "--output", "json",
+    ])
+
+    assert main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["read_only"] is True
+    assert payload["automatic_action"] == "none"
+    assert payload["readbacks"][0]["assessment"] == "switch_applied_before_journal_commit"
+    assert payload["readbacks"][0]["route_readback"]["backend_readbacks"][0]["status"] == "UP"
