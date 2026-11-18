@@ -517,7 +517,11 @@ def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
     assert report.phase == "traffic_switch_pending"
     assert report.inventory_classification == "switch_intent_requires_inspection"
     assert report.durable_active_deployment_id == "previous"
-    assert report.assessment == "switch_applied_before_journal_commit"
+    assert report.assessment == "switch_applied_before_journal_commit", (
+        f"route_readback={report.route_readback!r}; "
+        f"previous_runtime={report.previous_runtime!r}; "
+        f"candidate_runtime={report.candidate_runtime!r}"
+    )
     assert report.previous_runtime.status == "verified"
     assert report.previous_runtime.observed_runtime_id == PREVIOUS_ID
     assert report.previous_runtime.runtime_state == "running"
