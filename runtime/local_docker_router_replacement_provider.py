@@ -546,7 +546,9 @@ class LocalDockerRouterReplacementProvider:
             return result("not_found", "No existing durable Router registry; read-back will not create one")
 
         try:
-            host = self.router_host.ensure_router(self.scope, self.port_bindings)
+            host = self.router_host.inspect_existing_scope_readonly(
+                self.scope, self.port_bindings
+            )
         except Exception as exc:
             return result(
                 "unavailable",

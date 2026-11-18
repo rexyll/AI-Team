@@ -214,6 +214,39 @@ class LocalDockerRouterHostManager:
             return self._create_new_scope(scope, bindings, network_spec)
         return self._verify_existing_scope(scope, bindings, network_spec, existing)
 
+    def inspect_existing_scope_readonly(
+        self,
+        scope: TrafficRouterScope,
+        port_bindings: tuple[TrafficPortBinding, ...],
+    ) -> LocalDockerRouterHostResult:
+        """Verify an already-registered Router scope without Docker mutations.
+
+        Unlike ensure_router(), this API never creates a missing scope and
+        skips the temporary-container HAProxy syntax check. It verifies the
+        digest-bound Host files, immutable network/image/container identities
+        using inspect-only Docker commands, then returns the trusted records.
+        """
+        if not isinstance(scope, TrafficRouterScope):
+            raise TypeError("scope must be a TrafficRouterScope")
+        bindings = self._validate_bindings(port_bindings)
+        network_spec = build_router_network_spec(scope)
+        try:
+            self.state_store._check_no_symlink_components(self.state_root)
+            existing = self.history.get_traffic_router(scope)
+        except Exception as exc:
+            return LocalDockerRouterHostResult(
+                "failed",
+                detail=f"Read-only Router registry preflight failed: {type(exc).__name__}: {str(exc)[:700]}",
+            )
+        if existing is None:
+            return LocalDockerRouterHostResult(
+                "manual_reconciliation_required",
+                detail="No durable Router registry exists; read-only inspection will not create or adopt one",
+            )
+        return self._verify_existing_scope(
+            scope, bindings, network_spec, existing, validate_config=False
+        )
+
     def _create_new_scope(
         self,
         scope: TrafficRouterScope,
@@ -373,6 +406,8 @@ class LocalDockerRouterHostManager:
         bindings: tuple[TrafficPortBinding, ...],
         network_spec: DockerRouterNetworkSpec,
         record: TrafficRouterRecord,
+        *,
+        validate_config: bool = True,
     ) -> LocalDockerRouterHostResult:
         if (
             record.port_bindings != bindings
@@ -434,16 +469,18 @@ class LocalDockerRouterHostManager:
                 status, detail=image_result.detail or "Registered immutable Router image failed pinned contract verification"
             )
 
-        validation = self.config_validator.validate(
-            image_result.identity,
-            state_record,
-            expected_active_slot=record.active_slot,
-        )
-        if validation.status != "valid":
-            status = validation.status if validation.status in {"unavailable", "unsupported"} else "mismatch"
-            return LocalDockerRouterHostResult(
-                status, detail=validation.detail or "Persisted active-slot map/config failed HAProxy validation"
+        if validate_config:
+            validation = self.config_validator.validate(
+                image_result.identity,
+                state_record,
+                expected_active_slot=record.active_slot,
             )
+            if validation.status != "valid":
+                status = validation.status if validation.status in {"unavailable", "unsupported"} else "mismatch"
+                return LocalDockerRouterHostResult(
+                    status, detail=validation.detail or "Persisted active-slot map/config failed HAProxy validation"
+                )
+    
 
         try:
             spec = build_router_container_spec(
