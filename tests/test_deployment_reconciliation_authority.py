@@ -334,8 +334,12 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
     authenticator = _SlowAuthenticator(
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")}
     )
+    proposal = _proposal()
     authority = ReconciliationApprovalAuthority(
         authenticator=authenticator,
+        snapshot_reader=_SnapshotReader(
+            ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        ),
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
         audit_store=DurableReconciliationAuditStore(tmp_path),
