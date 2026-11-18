@@ -1,7 +1,8 @@
 """Host-injected two-person approval authority for reconciliation proposals.
 
 No default identity provider exists. A production caller must inject trusted
-HostAuthenticator and ReconciliationSnapshotReader implementations. This module
+HostAuthenticator and ReconciliationSnapshotReader implementations, and applies
+an evidence freshness limit both when issuing and consuming approvals. This module
 issues only an in-process, one-use approval capability; it has no deployment-
 provider or journal-mutation interface.
 """
@@ -129,13 +130,13 @@ class ReconciliationApprovalGrant:
 class ReconciliationApprovalAuthority:
     """Issue and consume exact-scope two-person approvals through a Host IdP.
 
-    The authenticator, current-snapshot reader, trusted issuer/method allowlists
-    and durable audit store are mandatory constructor dependencies. There is
-    intentionally
-    no username/password or CLI-string fallback. Grants are held only in this
-    process; after restart they cannot be reconstructed and therefore fail
-    closed. Consumption records an audit event before returning the approved
-    proposal. This class never executes or schedules a reconciliation action.
+    The authenticator, current-snapshot reader, trusted issuer/method allowlists,
+    evidence freshness limit and durable audit store are mandatory security
+    controls. There is intentionally no username/password or CLI-string fallback.
+    Grants are held only in this process; after restart they cannot be
+    reconstructed and therefore fail closed. Consumption records an audit event
+    before returning the approved proposal. This class never executes or
+    schedules a reconciliation action.
     """
 
     def __init__(
@@ -148,6 +149,7 @@ class ReconciliationApprovalAuthority:
         audit_store: DurableReconciliationAuditStore,
         approval_ttl_seconds: int = 300,
         challenge_ttl_seconds: int = 120,
+        evidence_max_age_seconds: int = 300,
         clock=None,
     ) -> None:
         if authenticator is None or not callable(
@@ -188,6 +190,12 @@ class ReconciliationApprovalAuthority:
             or not 15 <= challenge_ttl_seconds <= 300
         ):
             raise ValueError("challenge_ttl_seconds must be between 15 and 300")
+        if (
+            not isinstance(evidence_max_age_seconds, int)
+            or isinstance(evidence_max_age_seconds, bool)
+            or not 1 <= evidence_max_age_seconds <= 3600
+        ):
+            raise ValueError("evidence_max_age_seconds must be between 1 and 3600")
         self._authenticator = authenticator
         self._snapshot_reader = snapshot_reader
         self._trusted_issuers = trusted_issuers
@@ -195,6 +203,7 @@ class ReconciliationApprovalAuthority:
         self._audit = audit_store
         self._approval_ttl = approval_ttl_seconds
         self._challenge_ttl = challenge_ttl_seconds
+        self._evidence_max_age = timedelta(seconds=evidence_max_age_seconds)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._grants: dict[str, ReconciliationApprovalGrant] = {}
         self._lock = RLock()
@@ -204,6 +213,34 @@ class ReconciliationApprovalAuthority:
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise RuntimeError("Host clock must return a timezone-aware datetime")
         return value.astimezone(timezone.utc)
+
+    def _validate_evidence_freshness(
+        self,
+        evidence: tuple[ReconciliationEvidence, ...],
+        *,
+        now: datetime,
+    ) -> None:
+        if not isinstance(evidence, tuple) or not evidence:
+            raise ReconciliationAuthorizationError(
+                "reconciliation evidence is missing"
+            )
+        for item in evidence:
+            if not isinstance(item, ReconciliationEvidence):
+                raise ReconciliationAuthorizationError(
+                    "reconciliation evidence contains an invalid item"
+                )
+            observed_at = datetime.fromisoformat(
+                item.observed_at.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            age = now - observed_at
+            if age < timedelta(0):
+                raise ReconciliationAuthorizationError(
+                    "reconciliation evidence is future-dated"
+                )
+            if age > self._evidence_max_age:
+                raise ReconciliationAuthorizationError(
+                    f"reconciliation evidence is stale: {item.kind}"
+                )
 
     @staticmethod
     def _iso(value: datetime) -> str:
@@ -350,6 +387,10 @@ class ReconciliationApprovalAuthority:
         """
         if not isinstance(proposal, ReconciliationProposal):
             raise TypeError("proposal must be a ReconciliationProposal")
+        self._validate_evidence_freshness(
+            proposal.evidence,
+            now=self._now(),
+        )
         record = proposal.record
         if record.phase != "needs_reconciliation":
             raise ReconciliationAuthorizationError(
@@ -404,6 +445,18 @@ class ReconciliationApprovalAuthority:
             )
 
         issued_at = self._now()
+        try:
+            self._validate_evidence_freshness(proposal.evidence, now=issued_at)
+        except ReconciliationAuthorizationError:
+            self._record(
+                action="reconciliation_rejected",
+                actor=approver,
+                approval_id=approval_id,
+                proposal=proposal,
+                proposal_digest=proposal_digest,
+                evidence_digest=evidence_digest,
+            )
+            raise
         approval = replace(
             proposal.approval,
             approval_id=approval_id,
@@ -482,9 +535,13 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "reconciliation evidence changed after approval"
             )
+        # Verify that the exact observations are not only unchanged but still
+        # within the configured freshness window after a potentially slow read.
+        now_after_snapshot = self._now()
+        self._validate_evidence_freshness(current.evidence, now=now_after_snapshot)
         # Provider/Router reads can be slow. Recheck expiry after all snapshot
         # work and immediately before persisting the consumed audit event.
-        if self._now() >= expires:
+        if now_after_snapshot >= expires:
             raise ReconciliationAuthorizationError("reconciliation approval expired")
         self._record(
             action="reconciliation_approval_consumed",

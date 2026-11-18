@@ -99,14 +99,14 @@ def _proposal():
             evidence_id="ev-1",
             kind="provider_operation_inspection",
             source="docker-inspect",
-            observed_at="2026-11-18T09:10:00Z",
+            observed_at="2026-11-18T09:59:30Z",
             digest_sha256="1" * 64,
         ),
         ReconciliationEvidence(
             evidence_id="ev-2",
             kind="candidate_absence",
             source="docker-inspect",
-            observed_at="2026-11-18T09:10:00Z",
+            observed_at="2026-11-18T09:59:30Z",
             digest_sha256="2" * 64,
             subject_runtime_id=record.candidate_runtime_id,
         ),
@@ -114,7 +114,7 @@ def _proposal():
             evidence_id="ev-3",
             kind="previous_runtime_inspection",
             source="docker-inspect",
-            observed_at="2026-11-18T09:10:00Z",
+            observed_at="2026-11-18T09:59:30Z",
             digest_sha256="3" * 64,
             subject_runtime_id=record.previous_runtime_id,
         ),
@@ -122,7 +122,7 @@ def _proposal():
             evidence_id="ev-4",
             kind="previous_route_readback",
             source="haproxy-runtime-api",
-            observed_at="2026-11-18T09:10:00Z",
+            observed_at="2026-11-18T09:59:30Z",
             digest_sha256="4" * 64,
             observed_runtime_id=record.previous_runtime_id,
         ),
@@ -131,7 +131,7 @@ def _proposal():
         record=record,
         approval=template,
         evidence=evidence,
-        proposed_at="2026-11-18T09:11:00Z",
+        proposed_at="2026-11-18T09:59:45Z",
     )
 
 
@@ -352,6 +352,68 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
             requester_response="requester-proof",
             approver_response="approver-proof",
         )
+
+
+def test_stale_evidence_is_rejected_before_requester_authentication(tmp_path):
+    proposal = _proposal()
+    stale_evidence = replace(
+        proposal.evidence[0],
+        observed_at="2026-11-18T09:54:59Z",
+    )
+    stale_proposal = replace(
+        proposal,
+        evidence=(stale_evidence, *proposal.evidence[1:]),
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+    )
+    with pytest.raises(ReconciliationAuthorizationError, match="evidence is stale"):
+        authority.authorize_proposal(
+            stale_proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+    assert authority._authenticator.challenges == []
+    assert authority._audit.events(operation_id=proposal.record.operation_id) == []
+
+
+def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
+    clock = _Clock()
+    proposal = _proposal()
+
+    class _AgingSnapshotReader(_SnapshotReader):
+        def read_current_snapshot(self, operation_id):
+            snapshot = super().read_current_snapshot(operation_id)
+            clock.value += timedelta(seconds=301)
+            return snapshot
+
+    reader = _AgingSnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        clock=clock,
+        snapshot_reader=reader,
+        approval_ttl_seconds=600,
+        evidence_max_age_seconds=300,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    with pytest.raises(ReconciliationAuthorizationError, match="evidence is stale"):
+        authority.consume(grant)
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+    ]
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(grant)
 
 
 def test_approval_expires_while_current_snapshot_is_read(tmp_path):
