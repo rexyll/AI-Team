@@ -18,9 +18,11 @@ from typing import Literal, Protocol
 from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
 from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
+    ReconciliationEvidence,
     ReconciliationProposal,
     _aware,
 )
+from runtime.deployment_replacement import ReplacementJournalRecord
 
 AuthenticationPurpose = Literal["requester", "approver"]
 
@@ -79,6 +81,42 @@ class HostAuthenticator(Protocol):
 
 
 @dataclass(frozen=True)
+class ReconciliationCurrentSnapshot:
+    """One consistent, freshly read Host snapshot used at approval consumption."""
+
+    record: ReplacementJournalRecord
+    evidence: tuple[ReconciliationEvidence, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.record, ReplacementJournalRecord):
+            raise TypeError("snapshot record must be a ReplacementJournalRecord")
+        if not isinstance(self.evidence, tuple) or any(
+            not isinstance(item, ReconciliationEvidence) for item in self.evidence
+        ):
+            raise TypeError(
+                "snapshot evidence must be a tuple of ReconciliationEvidence"
+            )
+
+
+class ReconciliationSnapshotReader(Protocol):
+    """Trusted Host read boundary for current journal and reconciliation evidence.
+
+    Implementations must read the journal and its evidence as one consistent
+    snapshot from trusted current sources. They must not accept caller-supplied
+    snapshots or silently fall back to stale caches; unavailable, stale, or
+    unauthenticated source data must raise an exception. This interface is a
+    trust boundary, not an implementation of the underlying storage/provider
+    readers.
+    """
+
+    def read_current_snapshot(
+        self, operation_id: str
+    ) -> ReconciliationCurrentSnapshot:
+        """Return current immutable journal/evidence state for this operation."""
+        ...
+
+
+@dataclass(frozen=True)
 class ReconciliationApprovalGrant:
     """Opaque in-process one-use capability; the token is never logged."""
 
@@ -103,6 +141,7 @@ class ReconciliationApprovalAuthority:
         self,
         *,
         authenticator: HostAuthenticator,
+        snapshot_reader: ReconciliationSnapshotReader,
         trusted_issuers: frozenset[str],
         trusted_authentication_methods: frozenset[str],
         audit_store: DurableReconciliationAuditStore,
@@ -114,6 +153,10 @@ class ReconciliationApprovalAuthority:
             getattr(authenticator, "authenticate", None)
         ):
             raise TypeError("a trusted HostAuthenticator is required")
+        if snapshot_reader is None or not callable(
+            getattr(snapshot_reader, "read_current_snapshot", None)
+        ):
+            raise TypeError("a trusted ReconciliationSnapshotReader is required")
         if not isinstance(trusted_issuers, frozenset) or not trusted_issuers or any(
             not isinstance(item, str) or not item.strip()
             for item in trusted_issuers
@@ -145,6 +188,7 @@ class ReconciliationApprovalAuthority:
         ):
             raise ValueError("challenge_ttl_seconds must be between 15 and 300")
         self._authenticator = authenticator
+        self._snapshot_reader = snapshot_reader
         self._trusted_issuers = trusted_issuers
         self._trusted_methods = trusted_authentication_methods
         self._audit = audit_store
@@ -391,14 +435,13 @@ class ReconciliationApprovalAuthority:
     def consume(
         self,
         grant: ReconciliationApprovalGrant,
-        *,
-        current_record,
-        current_evidence: tuple,
     ) -> ReconciliationProposal:
-        """Consume once after rechecking the exact journal and evidence snapshot.
+        """Consume once after reading the exact current Host journal/evidence snapshot.
 
-        Consuming this grant does not execute a provider action or mutate any
-        deployment state. A future executor must be a separate, reviewed gate.
+        The caller cannot supply the "current" record or evidence. The injected
+        trusted reader must return one consistent, fresh snapshot; read failures
+        fail closed and burn this in-process grant. Consuming the grant does not
+        execute a provider action or mutate deployment state.
         """
         if not isinstance(grant, ReconciliationApprovalGrant):
             raise TypeError("grant must be a ReconciliationApprovalGrant")
@@ -414,13 +457,23 @@ class ReconciliationApprovalAuthority:
         ).astimezone(timezone.utc)
         if now >= expires:
             raise ReconciliationAuthorizationError("reconciliation approval expired")
-        if current_record != grant.proposal.record:
+        try:
+            current = self._snapshot_reader.read_current_snapshot(
+                grant.proposal.record.operation_id
+            )
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "trusted current journal/evidence snapshot read failed"
+            ) from exc
+        if not isinstance(current, ReconciliationCurrentSnapshot):
+            raise ReconciliationAuthorizationError(
+                "trusted snapshot reader returned an invalid snapshot"
+            )
+        if current.record != grant.proposal.record:
             raise ReconciliationAuthorizationError(
                 "journal revision or immutable runtime identity changed after approval"
             )
-        if not isinstance(current_evidence, tuple):
-            raise TypeError("current_evidence must be a tuple")
-        evidence_payload = [asdict(item) for item in current_evidence]
+        evidence_payload = [asdict(item) for item in current.evidence]
         current_evidence_digest = hashlib.sha256(
             self._canonical(evidence_payload)
         ).hexdigest()

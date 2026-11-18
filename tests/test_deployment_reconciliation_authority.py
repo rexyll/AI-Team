@@ -10,6 +10,7 @@ from runtime.deployment_reconciliation_authority import (
     ReconciliationApprovalAuthority,
     ReconciliationApprovalGrant,
     ReconciliationAuthorizationError,
+    ReconciliationCurrentSnapshot,
 )
 from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
@@ -38,6 +39,19 @@ class _Authenticator:
         if response not in self.principals:
             raise PermissionError("invalid test proof")
         return self.principals[response]
+
+
+class _SnapshotReader:
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+        self.calls = []
+        self.error = None
+
+    def read_current_snapshot(self, operation_id):
+        self.calls.append(operation_id)
+        if self.error is not None:
+            raise self.error
+        return self.snapshot
 
 
 def _principal(subject, *, issuer="https://id.example.test", method="webauthn"):
@@ -121,9 +135,14 @@ def _proposal():
     )
 
 
-def _authority(tmp_path, principals, *, clock=None, **kwargs):
+def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwargs):
+    proposal = _proposal()
+    reader = snapshot_reader or _SnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
     return ReconciliationApprovalAuthority(
         authenticator=_Authenticator(principals),
+        snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
         audit_store=DurableReconciliationAuditStore(tmp_path),
@@ -136,6 +155,9 @@ def test_authority_requires_explicit_trusted_dependencies(tmp_path):
     with pytest.raises(TypeError, match="HostAuthenticator"):
         ReconciliationApprovalAuthority(
             authenticator=None,
+            snapshot_reader=_SnapshotReader(
+                ReconciliationCurrentSnapshot(_proposal().record, _proposal().evidence)
+            ),
             trusted_issuers=frozenset({"issuer"}),
             trusted_authentication_methods=frozenset({"webauthn"}),
             audit_store=DurableReconciliationAuditStore(tmp_path),
@@ -180,11 +202,8 @@ def test_dual_approval_is_durable_and_consumed_once(tmp_path):
         requester_response="requester-proof",
         approver_response="approver-proof",
     )
-    approved = authority.consume(
-        grant,
-        current_record=proposal.record,
-        current_evidence=proposal.evidence,
-    )
+    approved = authority.consume(grant)
+    assert authority._snapshot_reader.calls == ["replace-001"]
     assert approved.approval.requested_by == requester
     assert approved.approval.approved_by == approver
 
@@ -196,11 +215,7 @@ def test_dual_approval_is_durable_and_consumed_once(tmp_path):
     ]
     assert [event.actor.subject for event in events] == ["alice", "bob", "bob"]
     with pytest.raises(ReconciliationAuthorizationError, match="already consumed"):
-        authority.consume(
-            grant,
-            current_record=proposal.record,
-            current_evidence=proposal.evidence,
-        )
+        authority.consume(grant)
 
 
 def test_same_principal_cannot_request_and_approve(tmp_path):
@@ -260,18 +275,13 @@ def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
         approver_response="approver-proof",
     )
     changed_record = replace(proposal.record, updated_at="2026-11-18T09:12:00Z")
+    authority._snapshot_reader.snapshot = ReconciliationCurrentSnapshot(
+        changed_record, proposal.evidence
+    )
     with pytest.raises(ReconciliationAuthorizationError, match="journal revision"):
-        authority.consume(
-            grant,
-            current_record=changed_record,
-            current_evidence=proposal.evidence,
-        )
+        authority.consume(grant)
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
-        authority.consume(
-            grant,
-            current_record=proposal.record,
-            current_evidence=proposal.evidence,
-        )
+        authority.consume(grant)
 
     grant2 = authority.authorize_proposal(
         proposal,
@@ -282,12 +292,11 @@ def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
         replace(proposal.evidence[0], digest_sha256="f" * 64),
         *proposal.evidence[1:],
     )
+    authority._snapshot_reader.snapshot = ReconciliationCurrentSnapshot(
+        proposal.record, changed_evidence
+    )
     with pytest.raises(ReconciliationAuthorizationError, match="evidence changed"):
-        authority.consume(
-            grant2,
-            current_record=proposal.record,
-            current_evidence=changed_evidence,
-        )
+        authority.consume(grant2)
 
 
 def test_expired_grant_is_burned_and_never_consumed(tmp_path):
@@ -307,17 +316,9 @@ def test_expired_grant_is_burned_and_never_consumed(tmp_path):
     )
     clock.value += timedelta(seconds=30)
     with pytest.raises(ReconciliationAuthorizationError, match="expired"):
-        authority.consume(
-            grant,
-            current_record=proposal.record,
-            current_evidence=proposal.evidence,
-        )
+        authority.consume(grant)
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
-        authority.consume(
-            grant,
-            current_record=proposal.record,
-            current_evidence=proposal.evidence,
-        )
+        authority.consume(grant)
 
 
 def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
@@ -349,6 +350,52 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
         )
 
 
+def test_snapshot_read_failure_burns_approval_grant(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    reader.error = OSError("journal unavailable")
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="snapshot read failed"
+    ):
+        authority.consume(grant)
+    reader.error = None
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(grant)
+
+
+def test_consume_does_not_accept_caller_supplied_current_snapshot(tmp_path):
+    proposal = _proposal()
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    with pytest.raises(TypeError):
+        authority.consume(
+            grant,
+            current_record=proposal.record,
+            current_evidence=proposal.evidence,
+        )
+    # A rejected API call does not consume the grant; the trusted reader still can.
+    assert authority.consume(grant).record == proposal.record
+
+
 def test_authority_has_no_deployment_mutation_surface(tmp_path):
     authority = _authority(
         tmp_path,
@@ -365,8 +412,4 @@ def test_authority_has_no_deployment_mutation_surface(tmp_path):
         token="forged",
     )
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
-        authority.consume(
-            grant,
-            current_record=grant.proposal.record,
-            current_evidence=grant.proposal.evidence,
-        )
+        authority.consume(grant)
