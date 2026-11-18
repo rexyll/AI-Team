@@ -223,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicitly inspect recorded immutable Docker container IDs for unfinished replacements; does not inspect traffic routing or authorize recovery.",
     )
     parser.add_argument(
+        "--deployment-reconciliation-readback",
+        action="store_true",
+        help="Read-only operator report: inspect both immutable runtimes and compare the durable Router registry with the live HAProxy selector and backend endpoints; performs no reconciliation action.",
+    )
+    parser.add_argument(
         "--scm-poll-pr",
         metavar="NUMBER",
         type=int,
@@ -741,6 +746,7 @@ def main() -> int:
         or args.scm_merge_pr is not None
         or args.deployment_recovery_inventory
         or args.deployment_recovery_inspect
+        or args.deployment_reconciliation_readback
     ):
         parser.error("the following arguments are required: requirement")
 
@@ -748,12 +754,15 @@ def main() -> int:
         args.deployment_history or os.environ.get("AI_TEAM_DEPLOYMENT_HISTORY")
     )
 
-    if args.deployment_recovery_inventory and args.deployment_recovery_inspect:
-        parser.error(
-            "--deployment-recovery-inventory and --deployment-recovery-inspect are mutually exclusive"
-        )
+    recovery_modes = (
+        args.deployment_recovery_inventory,
+        args.deployment_recovery_inspect,
+        args.deployment_reconciliation_readback,
+    )
+    if sum(bool(item) for item in recovery_modes) > 1:
+        parser.error("deployment recovery and reconciliation read-back modes are mutually exclusive")
 
-    if args.deployment_recovery_inventory or args.deployment_recovery_inspect:
+    if any(recovery_modes):
         if any((
             args.requirement is not None,
             args.requirements_file is not None,
@@ -780,7 +789,7 @@ def main() -> int:
             args.hotfix_project is not None,
             args.defect_intake is not None,
         )):
-            parser.error("--deployment-recovery-* is standalone")
+            parser.error("--deployment-recovery-* and --deployment-reconciliation-readback are standalone")
         if not deployment_history_path:
             parser.error(
                 "--deployment-recovery-* requires --deployment-history "
@@ -791,16 +800,43 @@ def main() -> int:
                 deployment_history_path,
                 create_if_missing=False,
             )
-            report = (
-                host_runtime.inspect_recovery()
-                if args.deployment_recovery_inspect
-                else host_runtime.start().to_dict()
-            )
+            if args.deployment_reconciliation_readback:
+                report = host_runtime.inspect_manual_reconciliation_readback()
+            elif args.deployment_recovery_inspect:
+                report = host_runtime.inspect_recovery()
+            else:
+                report = host_runtime.start().to_dict()
         except Exception as exc:
             print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
         if args.output == "json":
             print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        elif args.deployment_reconciliation_readback:
+            print(
+                f"[Deployment-Reconciliation-Readback] provider={report['provider']} "
+                f"unfinished={report['unfinished_replacements']} "
+                "automatic_action=none recovery=disabled"
+            )
+            for item in report["readbacks"]:
+                previous = item["previous_runtime"]
+                candidate = item["candidate_runtime"]
+                route = item["route_readback"] or {}
+                previous_summary = f"{previous['status']}/{previous['runtime_state']}/{previous['health_status']}"
+                candidate_summary = f"{candidate['status']}/{candidate['runtime_state']}/{candidate['health_status']}"
+                print(
+                    f"  {item['operation_id']}: phase={item['phase']} "
+                    f"assessment={item['assessment']} previous={previous_summary} "
+                    f"candidate={candidate_summary} route={route.get('status', 'not_available')} "
+                    f"selector={route.get('live_active_slot') or 'unknown'} "
+                    f"effective_runtime={route.get('effective_runtime_id') or 'unknown'} "
+                    "automatic_action=none"
+                )
+                for backend in route.get("backend_readbacks", []):
+                    print(
+                        f"    backend={backend['backend']} slot={backend['slot']} "
+                        f"endpoint={backend['observed_address']}:{backend['observed_port']} "
+                        f"status={backend['status']} sessions={backend['current_sessions']}"
+                    )
         elif args.deployment_recovery_inspect:
             print(
                 f"[Deployment-Recovery-Inspect] provider={report['provider']} "
@@ -853,7 +889,7 @@ def main() -> int:
             )
             print(
                 f"[Deployment-Host] {len(startup.inventory)} unfinished replacement(s) "
-                f"remain reserved ({summaries}); inspect the journal with --deployment-recovery-inventory and request Docker observations with --deployment-recovery-inspect.",
+                f"remain reserved ({summaries}); use --deployment-recovery-inventory, --deployment-recovery-inspect, or --deployment-reconciliation-readback for read-only evidence.",
                 file=sys.stderr,
             )
 
