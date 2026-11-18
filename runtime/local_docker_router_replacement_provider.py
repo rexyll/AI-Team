@@ -13,7 +13,11 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from runtime.deployment_history import DeploymentHistoryStore
-from runtime.deployment_replacement import DeploymentTrafficReadback, ReplacementJournalRecord
+from runtime.deployment_replacement import (
+    DeploymentTrafficBackendReadback,
+    DeploymentTrafficReadback,
+    ReplacementJournalRecord,
+)
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentOperationResult,
@@ -30,8 +34,15 @@ from runtime.haproxy_runtime_api import (
     HAProxyRuntimeAPIClient,
     get_map_command,
     show_maps_command,
+    show_servers_state_command,
+    show_stat_servers_command,
 )
-from runtime.haproxy_runtime_readback import parse_get_map_value, parse_show_map_registry
+from runtime.haproxy_runtime_readback import (
+    ExpectedHAProxyServer,
+    parse_get_map_value,
+    parse_show_map_registry,
+    verify_inactive_slot_readback,
+)
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_routed_app import (
     DockerRoutedAppEnsureResult,
@@ -512,6 +523,7 @@ class LocalDockerRouterReplacementProvider:
             live_slot=None,
             effective_runtime_id: str | None = None,
             route_generation: str | None = None,
+            backend_readbacks: tuple[DeploymentTrafficBackendReadback, ...] = (),
         ) -> DeploymentTrafficReadback:
             return DeploymentTrafficReadback(
                 provider=self.name,
@@ -524,6 +536,7 @@ class LocalDockerRouterReplacementProvider:
                 effective_runtime_id=effective_runtime_id,
                 route_generation=route_generation,
                 detail=(detail or "")[:700],
+                backend_readbacks=backend_readbacks,
             )
 
         if not isinstance(journal, ReplacementJournalRecord):
@@ -669,15 +682,123 @@ class LocalDockerRouterReplacementProvider:
                 effective_runtime_id=effective_runtime_id,
                 route_generation=router.route_generation,
             )
+
+        backend_readbacks: list[DeploymentTrafficBackendReadback] = []
+        if live_slot in {"slot_a", "slot_b"}:
+            active_target = dict(router.slot_targets).get(live_slot)
+            if active_target is None:
+                return result(
+                    "mismatch",
+                    "Live active slot has no immutable target in the durable Router registry",
+                    router_runtime_id=router.router_runtime_id,
+                    registry_slot=registry_slot,
+                    registry_runtime_id=registry_runtime_id,
+                    live_slot=live_slot,
+                    effective_runtime_id=effective_runtime_id,
+                    route_generation=router.route_generation,
+                )
+            for binding in self.port_bindings:
+                backend = f"be_p{binding.host_port}"
+                target_binding = next(
+                    (
+                        item for item in active_target.port_bindings
+                        if item.host_port == binding.host_port
+                        and item.protocol == binding.protocol
+                    ),
+                    None,
+                )
+                if target_binding is None:
+                    return result(
+                        "mismatch",
+                        f"Active immutable target has no matching port binding for {backend}",
+                        router_runtime_id=router.router_runtime_id,
+                        registry_slot=registry_slot,
+                        registry_runtime_id=registry_runtime_id,
+                        live_slot=live_slot,
+                        effective_runtime_id=effective_runtime_id,
+                        route_generation=router.route_generation,
+                        backend_readbacks=tuple(backend_readbacks),
+                    )
+                state_result = client.execute(show_servers_state_command(backend))
+                stat_result = client.execute(show_stat_servers_command(backend))
+                if state_result.status != "succeeded" or stat_result.status != "succeeded":
+                    unavailable = "unavailable" in {
+                        state_result.status, stat_result.status,
+                    }
+                    status = "unavailable" if unavailable else "invalid_response"
+                    detail = (
+                        state_result.detail
+                        if state_result.status != "succeeded"
+                        else stat_result.detail
+                    )
+                    return result(
+                        status,
+                        detail or f"Active HAProxy backend read-back failed for {backend}",
+                        router_runtime_id=router.router_runtime_id,
+                        registry_slot=registry_slot,
+                        registry_runtime_id=registry_runtime_id,
+                        live_slot=live_slot,
+                        effective_runtime_id=effective_runtime_id,
+                        route_generation=router.route_generation,
+                        backend_readbacks=tuple(backend_readbacks),
+                    )
+                verified_backend = verify_inactive_slot_readback(
+                    (
+                        ExpectedHAProxyServer(
+                            backend,
+                            live_slot,
+                            active_target.address,
+                            target_binding.container_port,
+                        ),
+                    ),
+                    servers_state_response=state_result.response,
+                    stat_response=stat_result.response,
+                )
+                for observation in verified_backend.observations:
+                    backend_readbacks.append(
+                        DeploymentTrafficBackendReadback(
+                            backend=observation.backend,
+                            slot=observation.server,
+                            expected_address=active_target.address,
+                            expected_port=target_binding.container_port,
+                            observed_address=observation.address,
+                            observed_port=observation.port,
+                            operational_state=observation.operational_state,
+                            administrative_state=observation.administrative_state,
+                            check_result=observation.check_result,
+                            check_state=observation.check_state,
+                            status=observation.status,
+                            current_sessions=observation.current_sessions,
+                        )
+                    )
+                if verified_backend.status != "verified":
+                    status = (
+                        "invalid_response"
+                        if verified_backend.status == "invalid_response"
+                        else "mismatch"
+                    )
+                    return result(
+                        status,
+                        verified_backend.detail or f"Active HAProxy backend identity failed for {backend}",
+                        router_runtime_id=router.router_runtime_id,
+                        registry_slot=registry_slot,
+                        registry_runtime_id=registry_runtime_id,
+                        live_slot=live_slot,
+                        effective_runtime_id=effective_runtime_id,
+                        route_generation=router.route_generation,
+                        backend_readbacks=tuple(backend_readbacks),
+                    )
+
         return result(
             "verified",
-            "Live HAProxy selector and effective runtime match the verified Host Router registry",
+            "Live HAProxy selector, active backend endpoint/health, and effective runtime match the verified Host Router registry",
             router_runtime_id=router.router_runtime_id,
             registry_slot=registry_slot,
             registry_runtime_id=registry_runtime_id,
             live_slot=live_slot,
             effective_runtime_id=effective_runtime_id,
             route_generation=router.route_generation,
+            backend_readbacks=tuple(backend_readbacks),
         )
 
     def read_traffic_target(self, request: DeploymentRequest) -> str | None:
