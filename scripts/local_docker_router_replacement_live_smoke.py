@@ -711,7 +711,7 @@ def run_live_smoke() -> dict[str, Any]:
                 if crash_operation_id is not None else None
             )
             router_record = history.get_traffic_router(scope)
-            host_state_readback = router_host.ensure_router(scope, bindings)
+            host_state_readback = router_host.inspect_existing_scope_readonly(scope, bindings)
             active_deployment = history.active_deployment(
                 provider="docker-local",
                 project=scope.project,
@@ -720,6 +720,19 @@ def run_live_smoke() -> dict[str, Any]:
             runtime_inventory = replacement_manager.inspect_recovery_runtimes(
                 project=scope.project,
                 environment=scope.environment,
+            )
+            manual_reconciliation_readbacks = replacement_manager.manual_reconciliation_readback(
+                project=scope.project,
+                environment=scope.environment,
+            )
+            manual_report = next(
+                (
+                    item for item in manual_reconciliation_readbacks
+                    if item.operation_id == (
+                        journal.operation_id if journal is not None else ""
+                    )
+                ),
+                None,
             )
             inventory_item = next(
                 (item for item in inventory if item.operation_id == (
@@ -797,6 +810,27 @@ def run_live_smoke() -> dict[str, Any]:
                 and runtime_item is not None
                 and runtime_item.route_readback_status == "not_available"
                 and runtime_item.automatic_recovery_allowed is False
+                and manual_report is not None
+                and manual_report.phase == "traffic_switch_pending"
+                and manual_report.inventory_classification == "switch_intent_requires_inspection"
+                and manual_report.durable_active_deployment_id == previous_id
+                and manual_report.assessment == "switch_applied_before_journal_commit"
+                and manual_report.previous_runtime.status == "verified"
+                and manual_report.previous_runtime.observed_runtime_id == app_a_id
+                and manual_report.previous_runtime.runtime_state == "running"
+                and manual_report.previous_runtime.health_status == "healthy"
+                and manual_report.candidate_runtime.status == "verified"
+                and manual_report.candidate_runtime.observed_runtime_id == candidate_record.container_id
+                and manual_report.candidate_runtime.runtime_state == "running"
+                and manual_report.candidate_runtime.health_status == "healthy"
+                and manual_report.route_readback is not None
+                and manual_report.route_readback.status == "verified"
+                and manual_report.route_readback.registry_active_slot == "slot_b"
+                and manual_report.route_readback.live_active_slot == "slot_b"
+                and manual_report.route_readback.registry_active_runtime_id == candidate_record.container_id
+                and manual_report.route_readback.effective_runtime_id == candidate_record.container_id
+                and manual_report.automatic_action == "none"
+                and manual_report.automatic_recovery_allowed is False
                 and previous_inspection is not None
                 and previous_inspection.status == "verified"
                 and previous_inspection.observed_runtime_id == app_a_id
@@ -851,6 +885,26 @@ def run_live_smoke() -> dict[str, Any]:
                     "server_state_sha256": host_state_readback.state_record.server_state_sha256,
                 },
                 "route_readback_status": runtime_item.route_readback_status,
+                "manual_reconciliation_readback": {
+                    "assessment": manual_report.assessment,
+                    "durable_active_deployment_id": manual_report.durable_active_deployment_id,
+                    "previous_runtime": {
+                        "status": manual_report.previous_runtime.status,
+                        "runtime_state": manual_report.previous_runtime.runtime_state,
+                        "health_status": manual_report.previous_runtime.health_status,
+                    },
+                    "candidate_runtime": {
+                        "status": manual_report.candidate_runtime.status,
+                        "runtime_state": manual_report.candidate_runtime.runtime_state,
+                        "health_status": manual_report.candidate_runtime.health_status,
+                    },
+                    "route_status": manual_report.route_readback.status,
+                    "registry_active_slot": manual_report.route_readback.registry_active_slot,
+                    "live_active_slot": manual_report.route_readback.live_active_slot,
+                    "effective_runtime_id": manual_report.route_readback.effective_runtime_id,
+                    "automatic_action": manual_report.automatic_action,
+                    "automatic_recovery_allowed": manual_report.automatic_recovery_allowed,
+                },
                 "automatic_recovery_allowed": inventory_item.automatic_recovery_allowed,
                 "previous_backend_status": old_stat.status,
                 "candidate_backend_status": new_stat.status,
