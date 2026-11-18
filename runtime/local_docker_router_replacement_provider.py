@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from runtime.deployment_history import DeploymentHistoryStore
+from runtime.deployment_replacement import DeploymentTrafficReadback, ReplacementJournalRecord
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentOperationResult,
@@ -439,6 +440,198 @@ class LocalDockerRouterReplacementProvider:
         return DeploymentOperationResult(
             "switch_traffic", "succeeded", self.name,
             "Router selector and Host registry active target verified",
+        )
+
+    def inspect_reconciliation_runtime(self, deployment_id: str, runtime_id: str):
+        """Inspect one immutable runtime ID for an operator read-back only."""
+        return self.provider.inspect_runtime_identity(deployment_id, runtime_id)
+
+    def inspect_reconciliation_route(
+        self,
+        journal: ReplacementJournalRecord,
+    ) -> DeploymentTrafficReadback:
+        """Compare live HAProxy selector with Host registry without mutation.
+
+        This method refuses to initialize/adopt a Router scope. It first
+        requires an existing durable registry row, then uses the existing-scope
+        Host verification path and read-only HAProxy Runtime API commands.
+        """
+        checked_at = _now()
+
+        def result(
+            status: str,
+            detail: str,
+            *,
+            router_runtime_id: str | None = None,
+            registry_slot=None,
+            registry_runtime_id: str | None = None,
+            live_slot=None,
+            effective_runtime_id: str | None = None,
+            route_generation: str | None = None,
+        ) -> DeploymentTrafficReadback:
+            return DeploymentTrafficReadback(
+                provider=self.name,
+                status=status,
+                checked_at=checked_at,
+                router_runtime_id=router_runtime_id,
+                registry_active_slot=registry_slot,
+                registry_active_runtime_id=registry_runtime_id,
+                live_active_slot=live_slot,
+                effective_runtime_id=effective_runtime_id,
+                route_generation=route_generation,
+                detail=(detail or "")[:700],
+            )
+
+        if not isinstance(journal, ReplacementJournalRecord):
+            return result("invalid_response", "A durable replacement journal record is required")
+        if (
+            journal.provider != self.name
+            or journal.project != self.scope.project
+            or journal.environment != self.scope.environment
+        ):
+            return result("invalid_response", "Journal scope does not match this Router adapter")
+
+        try:
+            registered = self.history.get_traffic_router(self.scope)
+        except Exception as exc:
+            return result(
+                "invalid_response",
+                f"Durable Router registry read failed: {type(exc).__name__}",
+            )
+        if registered is None:
+            return result("not_found", "No existing durable Router registry; read-back will not create one")
+
+        try:
+            host = self.router_host.ensure_router(self.scope, self.port_bindings)
+        except Exception as exc:
+            return result(
+                "unavailable",
+                f"Read-only Host Router verification raised {type(exc).__name__}",
+                router_runtime_id=registered.router_runtime_id,
+                registry_slot=registered.active_slot,
+                registry_runtime_id=(
+                    registered.active_target.runtime_id if registered.active_target else None
+                ),
+                route_generation=registered.route_generation,
+            )
+        if host.status != "ready" or host.router_record is None:
+            status_map = {
+                "unavailable": "unavailable",
+                "unsupported": "unsupported",
+                "mismatch": "mismatch",
+                "manual_reconciliation_required": "mismatch",
+                "invalid_response": "invalid_response",
+                "failed": "invalid_response",
+            }
+            return result(
+                status_map.get(host.status, "invalid_response"),
+                host.detail or f"Router Host verification status: {host.status}",
+                router_runtime_id=registered.router_runtime_id,
+                registry_slot=registered.active_slot,
+                registry_runtime_id=(
+                    registered.active_target.runtime_id if registered.active_target else None
+                ),
+                route_generation=registered.route_generation,
+            )
+
+        router = host.router_record
+        if router != registered:
+            return result(
+                "mismatch",
+                "Router registry changed while the operator read-back was being assembled",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=router.active_slot,
+                registry_runtime_id=router.active_target.runtime_id if router.active_target else None,
+                route_generation=router.route_generation,
+            )
+
+        client = HAProxyRuntimeAPIClient(self.provider, router.router_runtime_id)
+        maps = client.execute(show_maps_command())
+        if maps.status != "succeeded":
+            status = "unavailable" if maps.status == "unavailable" else "invalid_response"
+            return result(
+                status,
+                maps.detail or "HAProxy show map did not succeed",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=router.active_slot,
+                registry_runtime_id=router.active_target.runtime_id if router.active_target else None,
+                route_generation=router.route_generation,
+            )
+        try:
+            map_id = parse_show_map_registry(
+                maps.response, expected_path=HAPROXY_ACTIVE_SLOT_MAP
+            )
+        except (TypeError, ValueError) as exc:
+            return result(
+                "invalid_response",
+                f"HAProxy map registry read-back is malformed: {type(exc).__name__}",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=router.active_slot,
+                registry_runtime_id=router.active_target.runtime_id if router.active_target else None,
+                route_generation=router.route_generation,
+            )
+
+        selector_result = client.execute(get_map_command(map_id, "active"))
+        if selector_result.status != "succeeded":
+            status = (
+                "unavailable" if selector_result.status == "unavailable"
+                else "invalid_response"
+            )
+            return result(
+                status,
+                selector_result.detail or "HAProxy get map did not succeed",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=router.active_slot,
+                registry_runtime_id=router.active_target.runtime_id if router.active_target else None,
+                route_generation=router.route_generation,
+            )
+        try:
+            live_slot = parse_get_map_value(
+                selector_result.response, expected_key="active"
+            )
+        except (TypeError, ValueError) as exc:
+            return result(
+                "invalid_response",
+                f"HAProxy active selector read-back is malformed: {type(exc).__name__}",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=router.active_slot,
+                registry_runtime_id=router.active_target.runtime_id if router.active_target else None,
+                route_generation=router.route_generation,
+            )
+
+        registry_slot = router.active_slot
+        registry_runtime_id = (
+            router.active_target.runtime_id if router.active_target is not None else None
+        )
+        effective_runtime_id = (
+            dict(router.slot_targets).get(live_slot).runtime_id
+            if live_slot in {"slot_a", "slot_b"}
+            and dict(router.slot_targets).get(live_slot) is not None
+            else None
+        )
+        if (
+            live_slot != (registry_slot or "none")
+            or effective_runtime_id != registry_runtime_id
+        ):
+            return result(
+                "mismatch",
+                "Live HAProxy selector/effective target differs from the durable Router registry",
+                router_runtime_id=router.router_runtime_id,
+                registry_slot=registry_slot,
+                registry_runtime_id=registry_runtime_id,
+                live_slot=live_slot,
+                effective_runtime_id=effective_runtime_id,
+                route_generation=router.route_generation,
+            )
+        return result(
+            "verified",
+            "Live HAProxy selector and effective runtime match the verified Host Router registry",
+            router_runtime_id=router.router_runtime_id,
+            registry_slot=registry_slot,
+            registry_runtime_id=registry_runtime_id,
+            live_slot=live_slot,
+            effective_runtime_id=effective_runtime_id,
+            route_generation=router.route_generation,
         )
 
     def read_traffic_target(self, request: DeploymentRequest) -> str | None:
