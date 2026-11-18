@@ -579,7 +579,10 @@ class HostDeploymentReplacementManager:
                     observed_route = route_inspector(journal)
                 except Exception as exc:
                     observed_route = None
-                    route_error = f"Traffic read-back raised {type(exc).__name__}"
+                    route_error = (
+                        f"Traffic read-back raised {type(exc).__name__}: "
+                        f"{str(exc)[:500]}"
+                    )
                 else:
                     route_error = "Provider returned no valid traffic read-back"
                 if (
