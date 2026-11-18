@@ -354,6 +354,43 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
         )
 
 
+def test_approval_expires_while_current_snapshot_is_read(tmp_path):
+    clock = _Clock()
+    proposal = _proposal()
+
+    class _SlowSnapshotReader(_SnapshotReader):
+        def read_current_snapshot(self, operation_id):
+            snapshot = super().read_current_snapshot(operation_id)
+            clock.value += timedelta(seconds=30)
+            return snapshot
+
+    reader = _SlowSnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        clock=clock,
+        snapshot_reader=reader,
+        approval_ttl_seconds=30,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    with pytest.raises(ReconciliationAuthorizationError, match="expired"):
+        authority.consume(grant)
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+    ]
+    with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
+        authority.consume(grant)
+
+
 def test_snapshot_read_failure_burns_approval_grant(tmp_path):
     proposal = _proposal()
     reader = _SnapshotReader(

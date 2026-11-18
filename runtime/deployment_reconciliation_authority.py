@@ -1,9 +1,9 @@
 """Host-injected two-person approval authority for reconciliation proposals.
 
-No default identity provider exists. A production caller must inject a trusted
-HostAuthenticator that verifies a fresh, challenge-bound authentication proof.
-This module issues only an in-process, one-use approval capability; it has no
-deployment-provider or journal-mutation interface.
+No default identity provider exists. A production caller must inject trusted
+HostAuthenticator and ReconciliationSnapshotReader implementations. This module
+issues only an in-process, one-use approval capability; it has no deployment-
+provider or journal-mutation interface.
 """
 from __future__ import annotations
 
@@ -129,8 +129,9 @@ class ReconciliationApprovalGrant:
 class ReconciliationApprovalAuthority:
     """Issue and consume exact-scope two-person approvals through a Host IdP.
 
-    The authenticator, trusted issuer allowlist, method allowlist and durable
-    audit store are mandatory constructor dependencies. There is intentionally
+    The authenticator, current-snapshot reader, trusted issuer/method allowlists
+    and durable audit store are mandatory constructor dependencies. There is
+    intentionally
     no username/password or CLI-string fallback. Grants are held only in this
     process; after restart they cannot be reconstructed and therefore fail
     closed. Consumption records an audit event before returning the approved
@@ -481,6 +482,10 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "reconciliation evidence changed after approval"
             )
+        # Provider/Router reads can be slow. Recheck expiry after all snapshot
+        # work and immediately before persisting the consumed audit event.
+        if self._now() >= expires:
+            raise ReconciliationAuthorizationError("reconciliation approval expired")
         self._record(
             action="reconciliation_approval_consumed",
             actor=grant.proposal.approval.approved_by,
