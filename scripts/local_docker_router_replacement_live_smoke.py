@@ -340,7 +340,16 @@ def _kill_replacement_child_after_switch(
             except OSError:
                 pass
             os._exit(73)
-        except BaseException:
+        except BaseException as exc:
+            try:
+                payload = {
+                    "event": "child_bootstrap_exception",
+                    "exception": type(exc).__name__,
+                    "detail": str(exc)[:500],
+                }
+                os.write(write_fd, (json.dumps(payload) + "\\n").encode("utf-8"))
+            except BaseException:
+                pass
             os._exit(74)
 
     os.close(write_fd)
