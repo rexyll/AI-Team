@@ -25,6 +25,7 @@ from runtime.deployment_recovery import (
 )
 from runtime.deployment_replacement import (
     DeploymentReplacementProvider,
+    DeploymentTrafficReadback,
     ReplacementJournalRecord,
 )
 
@@ -101,6 +102,61 @@ class DeploymentRecoveryRuntimeInspectionItem:
     automatic_recovery_allowed: Literal[False] = False
 
 
+ManualReconciliationAssessment = Literal[
+    "switch_applied_before_journal_commit",
+    "switch_not_observed_before_journal_commit",
+    "route_matches_journal_and_active_pointer",
+    "route_matches_active_pointer_journal_unresolved",
+    "route_active_pointer_mismatch",
+    "route_readback_unavailable",
+    "route_readback_mismatch",
+    "runtime_identity_unverified",
+    "runtime_not_running",
+    "runtime_health_unverified",
+    "durable_inventory_incomplete",
+]
+
+
+@dataclass(frozen=True)
+class DeploymentManualReconciliationReadbackItem:
+    """Operator-facing external read-back; it never authorizes a mutation."""
+
+    operation_id: str
+    provider: str
+    project: str
+    environment: str
+    phase: str
+    inventory_classification: RecoveryInventoryClassification
+    previous_deployment_id: str
+    target_deployment_id: str
+    durable_active_deployment_id: str | None
+    previous_runtime: DeploymentRuntimeInspection
+    candidate_runtime: DeploymentRuntimeInspection
+    route_readback: DeploymentTrafficReadback | None
+    assessment: ManualReconciliationAssessment
+    required_checks: tuple[str, ...]
+    detail: str
+    automatic_action: Literal["none"] = "none"
+    automatic_recovery_allowed: Literal[False] = False
+
+    def __post_init__(self) -> None:
+        for name in (
+            "operation_id", "provider", "project", "environment",
+            "phase", "previous_deployment_id", "target_deployment_id",
+            "detail",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if not isinstance(self.required_checks, tuple) or any(
+            not isinstance(item, str) or not item.strip()
+            for item in self.required_checks
+        ):
+            raise ValueError("required_checks must be a tuple of non-empty strings")
+        if self.automatic_action != "none" or self.automatic_recovery_allowed is not False:
+            raise ValueError("manual reconciliation read-back must never authorize automatic action")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -152,26 +208,7 @@ class HostDeploymentReplacementManager:
     def _supports_replacement(self) -> bool:
         return all(callable(getattr(self.provider, name, None)) for name in self._REQUIRED_METHODS)
 
-    def recovery_inventory(
-        self,
-        *,
-        project: str | None = None,
-        environment: str | None = None,
-    ) -> tuple[DeploymentRecoveryInventoryItem, ...]:
-        """Return a read-only inventory of unfinished host-owned replacements.
-
-        This method is safe to call during host startup. It reads only SQLite
-        journal/history/active-pointer state and never calls the provider. In
-        particular, it does not infer that an unrecorded candidate was never
-        started, does not resume/abort a transaction, and never releases the
-        scope reservation. Provider runtime and traffic read-back must happen
-        in a separate, explicitly authorized reconciliation operation.
-        """
-        snapshots = self.history.list_replacement_recovery_snapshots(
-            provider=self.provider.name,
-            project=project,
-            environment=environment,
-        )
+    def _recovery_inventory_for_snapshots(self, snapshots):
         inventory: list[DeploymentRecoveryInventoryItem] = []
         for snapshot in snapshots:
             journal = snapshot.journal
@@ -307,6 +344,20 @@ class HostDeploymentReplacementManager:
             )
         return tuple(inventory)
 
+    def recovery_inventory(
+        self,
+        *,
+        project: str | None = None,
+        environment: str | None = None,
+    ) -> tuple[DeploymentRecoveryInventoryItem, ...]:
+        """Return the durable, provider-independent inventory without mutation."""
+        snapshots = self.history.list_replacement_recovery_snapshots(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+        )
+        return self._recovery_inventory_for_snapshots(snapshots)
+
     def inspect_recovery_runtimes(
         self,
         *,
@@ -427,6 +478,242 @@ class HostDeploymentReplacementManager:
             )
             for snapshot in snapshots
         )
+
+    def manual_reconciliation_readback(
+        self,
+        *,
+        project: str | None = None,
+        environment: str | None = None,
+    ) -> tuple[DeploymentManualReconciliationReadbackItem, ...]:
+        """Build an operator read-back from one durable DB snapshot plus live probes.
+
+        This operation is deliberately read-only: it does not update journal
+        phases, active deployment pointers, Router selectors, runtime state or
+        scope reservations. An assessment is evidence for a human decision,
+        never permission for automatic reconciliation.
+        """
+        snapshots = self.history.list_replacement_recovery_snapshots(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+        )
+        inventory = self._recovery_inventory_for_snapshots(snapshots)
+        inventory_by_id = {item.operation_id: item for item in inventory}
+        runtime_inspector = getattr(
+            self.provider, "inspect_reconciliation_runtime", None
+        )
+        route_inspector = getattr(
+            self.provider, "inspect_reconciliation_route", None
+        )
+
+        def unavailable_runtime(
+            deployment_id: str,
+            runtime_id: str | None,
+            detail: str,
+            *,
+            status: str = "unavailable",
+        ) -> DeploymentRuntimeInspection:
+            return DeploymentRuntimeInspection(
+                provider=self.provider.name,
+                deployment_id=deployment_id,
+                expected_runtime_id=runtime_id,
+                observed_runtime_id=None,
+                identity_match=False,
+                status=status,
+                runtime_state="unknown",
+                health_status="unavailable" if status == "unavailable" else "unknown",
+                checked_at=self._clock(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail=detail[:700],
+            )
+
+        def inspect_runtime(deployment_id: str, runtime_id: str | None):
+            if runtime_id is None:
+                return unavailable_runtime(
+                    deployment_id,
+                    None,
+                    "Replacement journal has no immutable runtime ID; mutable-name inspection is forbidden",
+                    status="invalid_response",
+                )
+            if not callable(runtime_inspector):
+                return unavailable_runtime(
+                    deployment_id,
+                    runtime_id,
+                    "Provider does not expose an explicit read-only reconciliation runtime inspector",
+                )
+            try:
+                observation = runtime_inspector(deployment_id, runtime_id)
+            except Exception as exc:
+                return unavailable_runtime(
+                    deployment_id,
+                    runtime_id,
+                    f"Immutable runtime inspection raised {type(exc).__name__}",
+                )
+            if (
+                not isinstance(observation, DeploymentRuntimeInspection)
+                or observation.provider != self.provider.name
+                or observation.deployment_id != deployment_id
+                or observation.expected_runtime_id != runtime_id
+            ):
+                return unavailable_runtime(
+                    deployment_id,
+                    runtime_id,
+                    "Provider runtime inspection did not match the exact journal identity",
+                    status="invalid_response",
+                )
+            return observation
+
+        results: list[DeploymentManualReconciliationReadbackItem] = []
+        for snapshot in snapshots:
+            journal = snapshot.journal
+            item = inventory_by_id[journal.operation_id]
+            previous_runtime = inspect_runtime(
+                journal.previous_deployment_id, journal.previous_runtime_id
+            )
+            candidate_runtime = inspect_runtime(
+                journal.target_deployment_id, journal.candidate_runtime_id
+            )
+            route_readback = None
+            if callable(route_inspector):
+                try:
+                    observed_route = route_inspector(journal)
+                except Exception as exc:
+                    observed_route = None
+                    route_error = f"Traffic read-back raised {type(exc).__name__}"
+                else:
+                    route_error = "Provider returned no valid traffic read-back"
+                if (
+                    isinstance(observed_route, DeploymentTrafficReadback)
+                    and observed_route.provider == self.provider.name
+                ):
+                    route_readback = observed_route
+                elif observed_route is not None:
+                    route_error = "Provider traffic read-back did not match the replacement provider"
+            else:
+                route_error = "Provider does not expose a read-only reconciliation traffic inspector"
+
+            assessment: ManualReconciliationAssessment
+            detail: str
+            if item.classification in {
+                "journal_history_incomplete",
+                "active_pointer_missing",
+                "active_pointer_mismatch",
+                "candidate_record_missing",
+                "candidate_identity_not_committed",
+                "journal_route_evidence_incomplete",
+            }:
+                assessment = "durable_inventory_incomplete"
+                detail = (
+                    "Durable journal/history/active-pointer evidence is incomplete or inconsistent; "
+                    "do not infer a recovery action"
+                )
+            elif route_readback is None or route_readback.status in {
+                "unavailable", "unsupported", "not_found", "invalid_response",
+            }:
+                assessment = "route_readback_unavailable"
+                detail = (
+                    route_readback.detail if route_readback is not None
+                    else route_error
+                ) or "Live traffic target could not be established"
+            elif route_readback.status != "verified":
+                assessment = "route_readback_mismatch"
+                detail = route_readback.detail or "Live selector differs from the durable Router registry"
+            elif (
+                previous_runtime.status != "verified"
+                or candidate_runtime.status != "verified"
+                or not previous_runtime.identity_match
+                or not candidate_runtime.identity_match
+                or previous_runtime.observed_runtime_id != journal.previous_runtime_id
+                or candidate_runtime.observed_runtime_id != journal.candidate_runtime_id
+            ):
+                assessment = "runtime_identity_unverified"
+                detail = (
+                    "One or both runtime immutable identities could not be verified "
+                    "against the durable replacement journal"
+                )
+            elif (
+                previous_runtime.runtime_state != "running"
+                or candidate_runtime.runtime_state != "running"
+            ):
+                assessment = "runtime_not_running"
+                detail = "One or both immutable runtimes are not confirmed running"
+            elif (
+                previous_runtime.health_status != "healthy"
+                or candidate_runtime.health_status != "healthy"
+            ):
+                assessment = "runtime_health_unverified"
+                detail = "One or both immutable runtimes do not have a fresh healthy inspection"
+            elif journal.phase == "traffic_switch_pending":
+                if (
+                    item.active_deployment_id == journal.previous_deployment_id
+                    and route_readback.effective_runtime_id == journal.candidate_runtime_id
+                ):
+                    assessment = "switch_applied_before_journal_commit"
+                    detail = (
+                        "Live Router selector targets the candidate while the durable journal "
+                        "and active deployment pointer still describe the previous runtime"
+                    )
+                elif (
+                    item.active_deployment_id == journal.previous_deployment_id
+                    and route_readback.effective_runtime_id == journal.previous_runtime_id
+                ):
+                    assessment = "switch_not_observed_before_journal_commit"
+                    detail = (
+                        "Live Router still targets the previous runtime; the durable switch intent "
+                        "remains pending and requires an explicit human decision"
+                    )
+                else:
+                    assessment = "route_active_pointer_mismatch"
+                    detail = "Live traffic target cannot be reconciled with the pending switch intent and active pointer"
+            elif journal.phase == "traffic_switched":
+                if (
+                    item.active_deployment_id == journal.target_deployment_id
+                    and journal.effective_traffic_target == journal.candidate_runtime_id
+                    and route_readback.effective_runtime_id == journal.effective_traffic_target
+                ):
+                    assessment = "route_matches_journal_and_active_pointer"
+                    detail = "Live route, effective target, durable journal and active deployment pointer agree"
+                else:
+                    assessment = "route_active_pointer_mismatch"
+                    detail = "Live route, durable switch target and active deployment pointer do not all agree"
+            else:
+                pointer_runtime_id = (
+                    journal.previous_runtime_id
+                    if item.active_deployment_id == journal.previous_deployment_id
+                    else journal.candidate_runtime_id
+                    if item.active_deployment_id == journal.target_deployment_id
+                    else None
+                )
+                if pointer_runtime_id is not None and route_readback.effective_runtime_id == pointer_runtime_id:
+                    assessment = "route_matches_active_pointer_journal_unresolved"
+                    detail = (
+                        "Live route matches the active deployment pointer, but the replacement journal "
+                        "remains non-terminal and requires an explicit reconciliation decision"
+                    )
+                else:
+                    assessment = "route_active_pointer_mismatch"
+                    detail = "Live route does not match the durable active deployment pointer"
+
+            results.append(
+                DeploymentManualReconciliationReadbackItem(
+                    operation_id=journal.operation_id,
+                    provider=journal.provider,
+                    project=journal.project,
+                    environment=journal.environment,
+                    phase=journal.phase,
+                    inventory_classification=item.classification,
+                    previous_deployment_id=journal.previous_deployment_id,
+                    target_deployment_id=journal.target_deployment_id,
+                    durable_active_deployment_id=item.active_deployment_id,
+                    previous_runtime=previous_runtime,
+                    candidate_runtime=candidate_runtime,
+                    route_readback=route_readback,
+                    assessment=assessment,
+                    required_checks=item.recovery_assessment.required_checks,
+                    detail=detail[:700],
+                )
+            )
+        return tuple(results)
 
     def replace(
         self,
