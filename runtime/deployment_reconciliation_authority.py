@@ -64,22 +64,60 @@ class HostAuthenticationChallenge:
             raise ValueError("approver challenge must identify the requester")
 
 
+@dataclass(frozen=True)
+class VerifiedHostAuthentication:
+    """Trusted adapter receipt binding a verified principal to one exact challenge.
+
+    The nonce is represented only by its SHA-256 digest. This receipt is still
+    an assertion from the injected Host adapter; constructing it without
+    validating the IdP proof does not authenticate a user.
+    """
+
+    principal: AuthenticatedPrincipal
+    challenge_id: str
+    nonce_sha256: str
+    audience: str
+    purpose: AuthenticationPurpose
+    operation: str
+    scope_digest: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.principal, AuthenticatedPrincipal):
+            raise TypeError("verified authentication principal is invalid")
+        for name in (
+            "challenge_id",
+            "nonce_sha256",
+            "audience",
+            "purpose",
+            "operation",
+            "scope_digest",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"verified authentication {name} is required")
+        if len(self.nonce_sha256) != 64 or any(
+            char not in "0123456789abcdef" for char in self.nonce_sha256
+        ):
+            raise ValueError("verified authentication nonce_sha256 is invalid")
+        if self.purpose not in {"requester", "approver"}:
+            raise ValueError("verified authentication purpose is invalid")
+
+
 class HostAuthenticator(Protocol):
     """Trusted Host adapter for challenge-bound authentication.
 
-    Implementations must validate the challenge nonce against the IdP nonce,
-    the exact challenge audience and purpose, operation scope, expiry, proof
-    signature/credential and issuer. Returning
-    AuthenticatedPrincipal is an assertion by this injected trusted component;
-    constructing that data class directly is not authentication.
+    Implementations must validate the IdP proof, nonce, exact audience and
+    purpose, operation scope, expiry, signature/credential and issuer, then
+    return a receipt carrying those verified challenge bindings. The authority
+    independently compares that receipt with the challenge it issued.
     """
 
     def authenticate(
         self,
         challenge: HostAuthenticationChallenge,
         response: object,
-    ) -> AuthenticatedPrincipal:
-        """Verify a fresh proof and return its immutable principal snapshot."""
+    ) -> VerifiedHostAuthentication:
+        """Verify a fresh proof and return its challenge-bound receipt."""
         ...
 
 
@@ -312,15 +350,32 @@ class ReconciliationApprovalAuthority:
                 f"{challenge.purpose} authentication proof is required"
             )
         try:
-            principal = self._authenticator.authenticate(challenge, response)
+            receipt = self._authenticator.authenticate(challenge, response)
         except Exception as exc:
             raise ReconciliationAuthorizationError(
                 f"{challenge.purpose} authentication failed"
             ) from exc
-        if not isinstance(principal, AuthenticatedPrincipal):
+        if not isinstance(receipt, VerifiedHostAuthentication):
             raise ReconciliationAuthorizationError(
-                "Host authenticator returned an invalid principal snapshot"
+                "Host authenticator returned an invalid challenge-binding receipt"
             )
+        expected_nonce_digest = hashlib.sha256(
+            challenge.nonce.encode("utf-8")
+        ).hexdigest()
+        if (
+            receipt.challenge_id != challenge.challenge_id
+            or not secrets.compare_digest(
+                receipt.nonce_sha256, expected_nonce_digest
+            )
+            or receipt.audience != challenge.audience
+            or receipt.purpose != challenge.purpose
+            or receipt.operation != challenge.operation
+            or receipt.scope_digest != challenge.scope_digest
+        ):
+            raise ReconciliationAuthorizationError(
+                "Host authentication receipt does not match the issued challenge"
+            )
+        principal = receipt.principal
         if principal.issuer not in self._trusted_issuers:
             raise ReconciliationAuthorizationError(
                 "authenticated principal issuer is not trusted"

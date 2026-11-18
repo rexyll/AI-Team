@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,7 @@ from runtime.deployment_reconciliation_authority import (
     ReconciliationApprovalGrant,
     ReconciliationAuthorizationError,
     ReconciliationCurrentSnapshot,
+    VerifiedHostAuthentication,
 )
 from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
@@ -38,7 +40,15 @@ class _Authenticator:
         self.challenges.append(challenge)
         if response not in self.principals:
             raise PermissionError("invalid test proof")
-        return self.principals[response]
+        return VerifiedHostAuthentication(
+            principal=self.principals[response],
+            challenge_id=challenge.challenge_id,
+            nonce_sha256=hashlib.sha256(challenge.nonce.encode("utf-8")).hexdigest(),
+            audience=challenge.audience,
+            purpose=challenge.purpose,
+            operation=challenge.operation,
+            scope_digest=challenge.scope_digest,
+        )
 
 
 class _SnapshotReader:
@@ -150,6 +160,45 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
         clock=clock or _Clock(),
         **kwargs,
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("challenge_id", "nonce_sha256", "audience", "purpose", "operation", "scope_digest"),
+)
+def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
+    class _MismatchedAuthenticator(_Authenticator):
+        def authenticate(self, challenge, response):
+            receipt = super().authenticate(challenge, response)
+            replacement = "approver" if field == "purpose" else "mismatched-value"
+            if field == "nonce_sha256":
+                replacement = "0" * 64
+            return replace(receipt, **{field: replacement})
+
+    proposal = _proposal()
+    reader = _SnapshotReader(
+        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+    )
+    authority = ReconciliationApprovalAuthority(
+        authenticator=_MismatchedAuthenticator(
+            {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")}
+        ),
+        snapshot_reader=reader,
+        trusted_issuers=frozenset({"https://id.example.test"}),
+        trusted_authentication_methods=frozenset({"webauthn"}),
+        authentication_audience="urn:ai-team:deployment-reconciliation",
+        audit_store=DurableReconciliationAuditStore(tmp_path),
+        clock=_Clock(),
+    )
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="receipt does not match"
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+    assert not authority._audit.events(operation_id=proposal.record.operation_id)
 
 
 def test_authority_requires_explicit_trusted_dependencies(tmp_path):
@@ -339,9 +388,8 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
 
     class _SlowAuthenticator(_Authenticator):
         def authenticate(self, challenge, response):
-            self.challenges.append(challenge)
             clock.value += timedelta(seconds=challenge_ttl + 1)
-            return self.principals[response]
+            return super().authenticate(challenge, response)
 
     authenticator = _SlowAuthenticator(
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")}
