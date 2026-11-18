@@ -52,6 +52,7 @@ python main.py "<project requirement>"
   for recorded immutable container IDs of unfinished operations. It does not
   inspect traffic routing or authorize any recovery action; requires an
   existing history database.
+- `--deployment-reconciliation-readback` — standalone operator report combining both immutable runtime/health inspections with read-only durable Router and live HAProxy selector/backend endpoint read-back. It performs no retry, rollback, stop, cleanup, selector update, journal update, or active-pointer change.
 - `--hotfix-project <path>` — existing released deliverable to hotfix. Requires
   `--defect-intake`; runs hotfix tasks through integration regression, QA, the
   security audit, the release gate, a patch release and repackaging on the same
@@ -85,6 +86,9 @@ python main.py --deployment-recovery-inventory --output json
 
 # Explicit immutable-ID container inspection (read-only; no route proof)
 python main.py --deployment-recovery-inspect --output json
+
+# Combined immutable-runtime and live Router/HAProxy read-back (read-only)
+python main.py --deployment-reconciliation-readback --output json
 ```
 
 ## Milestone release plans
