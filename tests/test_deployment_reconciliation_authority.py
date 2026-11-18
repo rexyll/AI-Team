@@ -375,7 +375,7 @@ def test_stale_evidence_is_rejected_before_requester_authentication(tmp_path):
             approver_response="approver-proof",
         )
     assert authority._authenticator.challenges == []
-    assert authority._audit.events(operation_id=proposal.record.operation_id) == []
+    assert not authority._audit.events(operation_id=proposal.record.operation_id)
 
 
 def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
