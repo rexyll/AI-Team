@@ -695,18 +695,25 @@ def run_live_smoke() -> dict[str, Any]:
 
             previous_record = history.get(previous_id)
             candidate_record = history.get(candidate_id)
+            inventory = replacement_manager.recovery_inventory(
+                project=scope.project,
+                environment=scope.environment,
+            )
+            crash_operation_id = next(
+                (
+                    item.operation_id for item in inventory
+                    if item.target_deployment_id == candidate_id
+                ),
+                None,
+            )
             journal = (
-                history.get_replacement(replacement.operation_id)
-                if replacement.operation_id else None
+                history.get_replacement(crash_operation_id)
+                if crash_operation_id is not None else None
             )
             router_record = history.get_traffic_router(scope)
             host_state_readback = router_host.ensure_router(scope, bindings)
             active_deployment = history.active_deployment(
                 provider="docker-local",
-                project=scope.project,
-                environment=scope.environment,
-            )
-            inventory = replacement_manager.recovery_inventory(
                 project=scope.project,
                 environment=scope.environment,
             )
