@@ -238,6 +238,9 @@ class FakeRouterHost:
             container_spec=spec,
         )
 
+    def inspect_existing_scope_readonly(self, scope, port_bindings):
+        return self.ensure_router(scope, port_bindings)
+
 
 class FakeRuntimeAPI:
     def __init__(self, history, scope, runtime_state):
@@ -467,6 +470,42 @@ def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
     assert candidate_inspection.status == "verified"
     assert candidate_inspection.observed_runtime_id == CANDIDATE_ID
     assert candidate_inspection.runtime_state == "running"
+
+    readbacks = manager.manual_reconciliation_readback(
+        project="demo", environment="staging"
+    )
+    assert len(readbacks) == 1
+    report = readbacks[0]
+    assert report.operation_id == journal.operation_id
+    assert report.phase == "traffic_switch_pending"
+    assert report.inventory_classification == "switch_intent_requires_inspection"
+    assert report.durable_active_deployment_id == "previous"
+    assert report.assessment == "switch_applied_before_journal_commit"
+    assert report.previous_runtime.status == "verified"
+    assert report.previous_runtime.observed_runtime_id == PREVIOUS_ID
+    assert report.previous_runtime.runtime_state == "running"
+    assert report.previous_runtime.health_status == "healthy"
+    assert report.candidate_runtime.status == "verified"
+    assert report.candidate_runtime.observed_runtime_id == CANDIDATE_ID
+    assert report.candidate_runtime.runtime_state == "running"
+    assert report.candidate_runtime.health_status == "healthy"
+    assert report.route_readback.status == "verified"
+    assert report.route_readback.registry_active_slot == "slot_b"
+    assert report.route_readback.live_active_slot == "slot_b"
+    assert report.route_readback.registry_active_runtime_id == CANDIDATE_ID
+    assert report.route_readback.effective_runtime_id == CANDIDATE_ID
+    assert report.automatic_action == "none"
+    assert report.automatic_recovery_allowed is False
+
+    # A report is observational only: journal, active pointer, selector and
+    # runtime inventory remain exactly as they were before the read-back.
+    assert history.get_replacement(journal.operation_id) == journal
+    assert history.active_deployment(
+        provider="docker-local", project="demo", environment="staging"
+    ).deployment_id == "previous"
+    assert history.get_traffic_router(SCOPE).active_slot == "slot_b"
+    assert docker.stopped == set()
+    assert slots.calls == ["prepare", "switch"]
 
 
 def test_previous_identity_mismatch_keeps_digest_consistent_router_and_both_runtimes(
