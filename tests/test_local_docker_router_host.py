@@ -292,6 +292,71 @@ def test_existing_scope_missing_router_is_manual_reconciliation_not_recreation(t
     assert "automatic recreation" in result.detail
 
 
+def test_readonly_existing_scope_inspection_never_runs_validation_container(tmp_path, monkeypatch):
+    manager, history, runner = _manager(tmp_path)
+    scope = _scope()
+    record, state, network = _register_existing(
+        tmp_path, history, scope, _bindings(), active_slot="slot_b"
+    )
+    image = _image()
+    monkeypatch.setattr(
+        manager.network_manager,
+        "_inspect",
+        lambda spec: ("verified", network, ""),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_inspect_router_image_id",
+        lambda runtime_id: ("verified", image.image_id, ""),
+    )
+    monkeypatch.setattr(
+        manager.image_manager,
+        "inspect_image",
+        lambda image_id: SimpleNamespace(status="verified", identity=image, detail=""),
+    )
+    monkeypatch.setattr(
+        manager.config_validator,
+        "validate",
+        lambda *args, **kwargs: pytest.fail(
+            "read-only operator inspection must not start a temporary validation container"
+        ),
+    )
+    monkeypatch.setattr(
+        manager.container_manager,
+        "_inspect",
+        lambda spec: ("verified", record.router_runtime_id, ""),
+    )
+    monkeypatch.setattr(
+        manager.container_manager,
+        "ensure_router",
+        lambda spec: pytest.fail("read-only operator inspection must not ensure/create a Router"),
+    )
+
+    before_map = Path(state.active_slot_map_path).read_bytes()
+    before_state = Path(state.server_state_path).read_bytes()
+    result = manager.inspect_existing_scope_readonly(scope, _bindings())
+
+    assert result.status == "ready"
+    assert result.router_record == record
+    assert result.state_record == state
+    assert Path(state.active_slot_map_path).read_bytes() == before_map
+    assert Path(state.server_state_path).read_bytes() == before_state
+    assert runner.calls == []
+
+
+def test_readonly_existing_scope_inspection_does_not_create_missing_registry(tmp_path, monkeypatch):
+    manager, _, runner = _manager(tmp_path)
+    monkeypatch.setattr(
+        manager.network_manager,
+        "_inspect",
+        lambda spec: pytest.fail("missing registry must be detected before external inspection"),
+    )
+    result = manager.inspect_existing_scope_readonly(_scope(), _bindings())
+    assert result.status == "manual_reconciliation_required"
+    assert "will not create or adopt" in result.detail
+    assert runner.calls == []
+
+
 def test_unregistered_existing_state_directory_is_never_overwritten(tmp_path, monkeypatch):
     manager, _, _ = _manager(tmp_path)
     scope = _scope()
