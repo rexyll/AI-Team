@@ -293,7 +293,8 @@ def _kill_replacement_child_after_switch(
         try:
             os.close(read_fd)
             real_switch = provider.switch_traffic
-            real_execute = provider._execute
+            docker_provider = provider.provider
+            real_execute = docker_provider._execute
             switch_calls = 0
             stop_attempts = 0
 
@@ -318,7 +319,7 @@ def _kill_replacement_child_after_switch(
                 while True:
                     signal.pause()
 
-            provider._execute = count_stop_attempts
+            docker_provider._execute = count_stop_attempts
             provider.switch_traffic = switch_then_pause
             try:
                 manager.replace(request, candidate)
