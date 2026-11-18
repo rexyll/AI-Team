@@ -29,6 +29,7 @@ from typing import Any
 from unittest.mock import patch
 
 from runtime.deployment_history import DeploymentHistoryStore
+from runtime.deployment_host import DeploymentHostRuntime
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentRecord,
@@ -721,19 +722,22 @@ def run_live_smoke() -> dict[str, Any]:
                 project=scope.project,
                 environment=scope.environment,
             )
-            manual_reconciliation_readbacks = replacement_manager.manual_reconciliation_readback(
-                project=scope.project,
-                environment=scope.environment,
-            )
+            manual_reconciliation_report = DeploymentHostRuntime(
+                history.path,
+                provider=provider,
+                create_if_missing=False,
+            ).inspect_manual_reconciliation_readback()
             manual_report = next(
                 (
-                    item for item in manual_reconciliation_readbacks
-                    if item.operation_id == (
+                    item for item in manual_reconciliation_report["readbacks"]
+                    if item["operation_id"] == (
                         journal.operation_id if journal is not None else ""
                     )
                 ),
                 None,
             )
+            if manual_report is None:
+                raise RuntimeError("Host operator read-back omitted the interrupted replacement journal")
             inventory_item = next(
                 (item for item in inventory if item.operation_id == (
                     journal.operation_id if journal is not None else ""
@@ -886,24 +890,31 @@ def run_live_smoke() -> dict[str, Any]:
                 },
                 "route_readback_status": runtime_item.route_readback_status,
                 "manual_reconciliation_readback": {
-                    "assessment": manual_report.assessment,
-                    "durable_active_deployment_id": manual_report.durable_active_deployment_id,
+                    "assessment": manual_report["assessment"],
+                    "durable_active_deployment_id": manual_report["durable_active_deployment_id"],
                     "previous_runtime": {
-                        "status": manual_report.previous_runtime.status,
-                        "runtime_state": manual_report.previous_runtime.runtime_state,
-                        "health_status": manual_report.previous_runtime.health_status,
+                        "status": manual_report["previous_runtime"]["status"],
+                        "runtime_state": manual_report["previous_runtime"]["runtime_state"],
+                        "health_status": manual_report["previous_runtime"]["health_status"],
                     },
                     "candidate_runtime": {
-                        "status": manual_report.candidate_runtime.status,
-                        "runtime_state": manual_report.candidate_runtime.runtime_state,
-                        "health_status": manual_report.candidate_runtime.health_status,
+                        "status": manual_report["candidate_runtime"]["status"],
+                        "runtime_state": manual_report["candidate_runtime"]["runtime_state"],
+                        "health_status": manual_report["candidate_runtime"]["health_status"],
                     },
-                    "route_status": manual_report.route_readback.status,
-                    "registry_active_slot": manual_report.route_readback.registry_active_slot,
-                    "live_active_slot": manual_report.route_readback.live_active_slot,
-                    "effective_runtime_id": manual_report.route_readback.effective_runtime_id,
-                    "automatic_action": manual_report.automatic_action,
-                    "automatic_recovery_allowed": manual_report.automatic_recovery_allowed,
+                    "route_status": manual_report["route_readback"]["status"],
+                    "registry_active_slot": manual_report["route_readback"]["registry_active_slot"],
+                    "live_active_slot": manual_report["route_readback"]["live_active_slot"],
+                    "effective_runtime_id": manual_report["route_readback"]["effective_runtime_id"],
+                    "backend_readbacks": manual_report["route_readback"]["backend_readbacks"],
+                    "automatic_action": manual_report["automatic_action"],
+                    "automatic_recovery_allowed": manual_report["automatic_recovery_allowed"],
+                },
+                "host_manual_reconciliation_readback": {
+                    "read_only": manual_reconciliation_report["read_only"],
+                    "unfinished_replacements": manual_reconciliation_report["unfinished_replacements"],
+                    "automatic_action": manual_reconciliation_report["automatic_action"],
+                    "automatic_recovery_allowed": manual_reconciliation_report["automatic_recovery_allowed"],
                 },
                 "automatic_recovery_allowed": inventory_item.automatic_recovery_allowed,
                 "previous_backend_status": old_stat.status,
