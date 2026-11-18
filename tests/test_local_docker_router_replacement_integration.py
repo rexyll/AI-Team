@@ -520,7 +520,8 @@ def test_crash_after_provider_switch_requires_read_only_manual_reconciliation(
     assert report.assessment == "switch_applied_before_journal_commit", (
         f"route_readback={report.route_readback!r}; "
         f"previous_runtime={report.previous_runtime!r}; "
-        f"candidate_runtime={report.candidate_runtime!r}"
+        f"candidate_runtime={report.candidate_runtime!r}; "
+        f"detail={report.detail!r}"
     )
     assert report.previous_runtime.status == "verified"
     assert report.previous_runtime.observed_runtime_id == PREVIOUS_ID
