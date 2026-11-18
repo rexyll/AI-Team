@@ -7,16 +7,107 @@ changes traffic, resumes a replacement, or releases a reservation.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
 from runtime.deployment_history import DeploymentHistoryStore
-from runtime.deployment_replacement import DeploymentReplacementProvider
+from runtime.deployment_provider import DeploymentRecord, DeploymentRuntimeInspection
+from runtime.deployment_replacement import DeploymentReplacementProvider, DeploymentTrafficReadback
+from runtime.deployment_traffic_router import TrafficRouterScope
 from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
     HostDeploymentReplacementManager,
 )
 from runtime.local_docker_provider import LocalDockerProvider
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class _ManualReconciliationReadOnlyProvider:
+    """Narrow provider facade for the operator report; it exposes no mutations."""
+
+    def __init__(self, provider, history, route_adapters, route_failures) -> None:
+        self.provider = provider
+        self.history = history
+        self.name = provider.name
+        self.route_adapters = route_adapters
+        self.route_failures = route_failures
+
+    def inspect_reconciliation_runtime(self, deployment_id: str, runtime_id: str) -> DeploymentRuntimeInspection:
+        record = self.history.get(deployment_id)
+        if (
+            not isinstance(record, DeploymentRecord)
+            or record.provider != self.name
+            or record.deployment_id != deployment_id
+            or record.container_id != runtime_id
+        ):
+            return DeploymentRuntimeInspection(
+                provider=self.name, deployment_id=deployment_id,
+                expected_runtime_id=runtime_id, observed_runtime_id=None,
+                identity_match=False, status="invalid_response",
+                runtime_state="unknown", health_status="unknown",
+                checked_at=_utc_now(),
+                probe="manual reconciliation durable deployment lookup",
+                detail="No durable deployment record matches the exact journal runtime identity",
+            )
+        inspector = getattr(self.provider, "inspect_runtime", None)
+        if not callable(inspector):
+            return DeploymentRuntimeInspection(
+                provider=self.name, deployment_id=deployment_id,
+                expected_runtime_id=runtime_id, observed_runtime_id=None,
+                identity_match=False, status="unavailable",
+                runtime_state="unknown", health_status="unavailable",
+                checked_at=_utc_now(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail="Underlying provider does not expose immutable runtime inspection",
+            )
+        try:
+            observation = inspector(record)
+        except Exception as exc:
+            return DeploymentRuntimeInspection(
+                provider=self.name, deployment_id=deployment_id,
+                expected_runtime_id=runtime_id, observed_runtime_id=None,
+                identity_match=False, status="unavailable",
+                runtime_state="unknown", health_status="unavailable",
+                checked_at=_utc_now(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail=f"Immutable runtime inspection raised {type(exc).__name__}",
+            )
+        if (
+            not isinstance(observation, DeploymentRuntimeInspection)
+            or observation.provider != self.name
+            or observation.deployment_id != deployment_id
+            or observation.expected_runtime_id != runtime_id
+        ):
+            return DeploymentRuntimeInspection(
+                provider=self.name, deployment_id=deployment_id,
+                expected_runtime_id=runtime_id, observed_runtime_id=None,
+                identity_match=False, status="invalid_response",
+                runtime_state="unknown", health_status="unknown",
+                checked_at=_utc_now(),
+                probe="manual reconciliation immutable runtime read-back",
+                detail="Provider inspection did not match the exact journal runtime identity",
+            )
+        return observation
+
+    def inspect_reconciliation_route(self, journal) -> DeploymentTrafficReadback:
+        key = (journal.provider, journal.project, journal.environment)
+        adapter = self.route_adapters.get(key)
+        if adapter is not None:
+            return adapter.inspect_reconciliation_route(journal)
+        status, detail = self.route_failures.get(
+            key,
+            ("not_found", "No existing durable Router scope is available for read-only inspection"),
+        )
+        return DeploymentTrafficReadback(
+            provider=self.name, status=status, checked_at=_utc_now(),
+            router_runtime_id=None, registry_active_slot=None,
+            registry_active_runtime_id=None, live_active_slot=None,
+            effective_runtime_id=None, route_generation=None, detail=detail,
+        )
 
 
 @dataclass(frozen=True)
@@ -83,6 +174,91 @@ class DeploymentHostRuntime:
             "unfinished_replacements": len(observations),
             "observations": [asdict(item) for item in observations],
             "route_readback_available": False,
+            "automatic_recovery_allowed": False,
+        }
+
+
+    def inspect_manual_reconciliation_readback(self) -> dict:
+        """Return operator evidence for runtimes and live traffic, without mutation."""
+        if not self.history_path.is_file():
+            raise FileNotFoundError(
+                f"deployment history database does not exist: {self.history_path}"
+            )
+        history = DeploymentHistoryStore(self.history_path, read_only=True)
+        journals = history.list_active_replacements(provider=self.provider.name)
+        route_adapters = {}
+        route_failures = {}
+
+        if journals:
+            from runtime.local_docker_router_host import LocalDockerRouterHostManager
+            from runtime.local_docker_routed_app import LocalDockerRoutedAppManager
+            from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
+            from runtime.local_docker_router_replacement_provider import LocalDockerRouterReplacementProvider
+
+            scopes = sorted({
+                (item.provider, item.project, item.environment) for item in journals
+            })
+            for key in scopes:
+                scope = TrafficRouterScope(*key)
+                try:
+                    router = history.get_traffic_router(scope)
+                    if router is None:
+                        route_failures[key] = (
+                            "not_found",
+                            "No durable Router registry exists; read-back will not create or adopt a scope",
+                        )
+                        continue
+                    state_record = history.get_traffic_router_state_record(scope)
+                    if state_record is None:
+                        route_failures[key] = (
+                            "not_found",
+                            "Durable Router Host state record is missing; read-back is unavailable",
+                        )
+                        continue
+                    if not isinstance(self.provider, LocalDockerProvider):
+                        route_failures[key] = (
+                            "unsupported",
+                            "The configured provider does not support the Local Docker Router read-only adapter",
+                        )
+                        continue
+                    router_host = LocalDockerRouterHostManager(
+                        self.provider, history, Path(__file__).resolve().parents[1],
+                        Path(state_record.directory).parent,
+                    )
+                    route_adapters[key] = LocalDockerRouterReplacementProvider(
+                        self.provider, history, router_host,
+                        LocalDockerRoutedAppManager(self.provider),
+                        LocalDockerRouterSlotManager(self.provider),
+                        scope, router.port_bindings,
+                    )
+                except Exception as exc:
+                    route_failures[key] = (
+                        "invalid_response",
+                        f"Durable Router read-back setup failed: {type(exc).__name__}",
+                    )
+
+        facade = _ManualReconciliationReadOnlyProvider(
+            self.provider, history, route_adapters, route_failures
+        )
+        manager = HostDeploymentReplacementManager(
+            cast(DeploymentReplacementProvider, facade), history
+        )
+        readbacks = []
+        for project, environment in sorted({
+            (item.project, item.environment) for item in journals
+        }):
+            readbacks.extend(manager.manual_reconciliation_readback(
+                project=project, environment=environment
+            ))
+        readbacks.sort(key=lambda item: item.operation_id)
+        return {
+            "status": "ok",
+            "history_path": str(history.path),
+            "provider": self.provider.name,
+            "unfinished_replacements": len(readbacks),
+            "readbacks": [asdict(item) for item in readbacks],
+            "read_only": True,
+            "automatic_action": "none",
             "automatic_recovery_allowed": False,
         }
 
