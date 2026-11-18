@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -138,6 +139,8 @@ class DurableReconciliationAuditStore:
         proposal_digest: str,
         evidence_digest: str,
         recorded_at: str,
+        approval_token_digest: str | None = None,
+        approval_expires_at: str | None = None,
     ) -> ReconciliationAuditEnvelope:
         values = {
             "event_id": uuid4().hex,
@@ -158,6 +161,8 @@ class DurableReconciliationAuditStore:
             "proposal_digest": proposal_digest,
             "evidence_digest": evidence_digest,
             "recorded_at": recorded_at,
+            "approval_token_digest": approval_token_digest,
+            "approval_expires_at": approval_expires_at,
         }
         provisional = ReconciliationAuditEnvelope.__new__(
             ReconciliationAuditEnvelope
@@ -303,6 +308,8 @@ class DurableReconciliationAuditStore:
         proposal_digest: str,
         evidence_digest: str,
         recorded_at: str | None = None,
+        approval_token_digest: str | None = None,
+        approval_expires_at: str | None = None,
     ) -> ReconciliationAuditEnvelope:
         """Create and append an event using the current trusted local chain head.
 
@@ -332,6 +339,195 @@ class DurableReconciliationAuditStore:
                 previous_runtime_id=previous_runtime_id,
                 proposal_digest=proposal_digest,
                 evidence_digest=evidence_digest,
+                recorded_at=recorded_at or self._now(),
+                approval_token_digest=approval_token_digest,
+                approval_expires_at=approval_expires_at,
+            )
+            self._append_unlocked(event, events)
+            return event
+
+
+    @staticmethod
+    def _approval_scope_matches(
+        left: ReconciliationAuditEnvelope,
+        right: ReconciliationAuditEnvelope,
+    ) -> bool:
+        fields = (
+            "approval_id",
+            "operation_id",
+            "provider",
+            "project",
+            "environment",
+            "journal_phase",
+            "target_deployment_id",
+            "previous_deployment_id",
+            "candidate_runtime_id",
+            "previous_runtime_id",
+            "proposal_digest",
+            "evidence_digest",
+        )
+        return all(getattr(left, name) == getattr(right, name) for name in fields)
+
+    def begin_approval_consumption(
+        self,
+        *,
+        approval_id: str,
+        token_digest: str,
+        proposal_digest: str,
+        evidence_digest: str,
+        approval_expires_at: str,
+        requester: AuthenticatedPrincipal,
+        approver: AuthenticatedPrincipal,
+        recorded_at: str | None = None,
+    ) -> ReconciliationAuditEnvelope:
+        """Atomically claim a durable one-use grant across threads/processes.
+
+        The bearer token is never persisted: only its SHA-256 digest is checked
+        against the approval event. A started claim is terminal for reuse even
+        if the process crashes before snapshot verification completes.
+        """
+        if not isinstance(token_digest, str) or not _SHA256.fullmatch(token_digest):
+            raise ValueError("token_digest must be a lowercase SHA-256 digest")
+        if not isinstance(requester, AuthenticatedPrincipal):
+            raise TypeError("requester must be an AuthenticatedPrincipal")
+        if not isinstance(approver, AuthenticatedPrincipal):
+            raise TypeError("approver must be an AuthenticatedPrincipal")
+        with exclusive_process_lock(self.lock_path), self._lock:
+            if os.name == "posix" and self.lock_path.exists():
+                os.chmod(self.lock_path, 0o600)
+            events = self._read_unlocked()
+            approvals = [
+                item for item in events
+                if item.action == "reconciliation_approved"
+                and item.approval_id == approval_id
+            ]
+            proposals = [
+                item for item in events
+                if item.action == "reconciliation_proposed"
+                and item.approval_id == approval_id
+            ]
+            if len(approvals) != 1 or len(proposals) != 1:
+                raise ReconciliationAuditIntegrityError(
+                    "approval grant is unknown or has an invalid audit history"
+                )
+            approved, proposed = approvals[0], proposals[0]
+            if (
+                approved.approval_token_digest is None
+                or approved.approval_expires_at is None
+                or not secrets.compare_digest(
+                    approved.approval_token_digest, token_digest
+                )
+                or approved.approval_expires_at != approval_expires_at
+                or approved.proposal_digest != proposal_digest
+                or approved.evidence_digest != evidence_digest
+                or approved.actor != approver
+                or proposed.actor != requester
+                or not self._approval_scope_matches(approved, proposed)
+            ):
+                raise ReconciliationAuditIntegrityError(
+                    "approval grant is forged or does not match its durable approval"
+                )
+            attempts = [
+                item for item in events
+                if item.approval_id == approval_id
+                and item.action in {
+                    "reconciliation_approval_consumption_started",
+                    "reconciliation_approval_consumed",
+                    "reconciliation_rejected",
+                }
+            ]
+            if attempts:
+                raise ReconciliationAuditIntegrityError(
+                    "approval grant is unknown, already claimed, or already consumed"
+                )
+            event = self._build_event(
+                sequence=len(events) + 1,
+                previous_digest=events[-1].event_digest if events else _ZERO_DIGEST,
+                action="reconciliation_approval_consumption_started",
+                actor=approved.actor,
+                approval_id=approved.approval_id,
+                operation_id=approved.operation_id,
+                provider=approved.provider,
+                project=approved.project,
+                environment=approved.environment,
+                journal_phase=approved.journal_phase,
+                target_deployment_id=approved.target_deployment_id,
+                previous_deployment_id=approved.previous_deployment_id,
+                candidate_runtime_id=approved.candidate_runtime_id,
+                previous_runtime_id=approved.previous_runtime_id,
+                proposal_digest=approved.proposal_digest,
+                evidence_digest=approved.evidence_digest,
+                recorded_at=recorded_at or self._now(),
+            )
+            self._append_unlocked(event, events)
+            return event
+
+    def finish_approval_consumption(
+        self,
+        *,
+        approval_id: str,
+        proposal_digest: str,
+        evidence_digest: str,
+        action: AuditAction,
+        recorded_at: str | None = None,
+    ) -> ReconciliationAuditEnvelope:
+        """Record the terminal result of a previously claimed grant."""
+        if action not in {"reconciliation_approval_consumed", "reconciliation_rejected"}:
+            raise ValueError("invalid approval consumption result action")
+        with exclusive_process_lock(self.lock_path), self._lock:
+            if os.name == "posix" and self.lock_path.exists():
+                os.chmod(self.lock_path, 0o600)
+            events = self._read_unlocked()
+            approved = [
+                item for item in events
+                if item.action == "reconciliation_approved"
+                and item.approval_id == approval_id
+            ]
+            started = [
+                item for item in events
+                if item.action == "reconciliation_approval_consumption_started"
+                and item.approval_id == approval_id
+            ]
+            terminal = [
+                item for item in events
+                if item.approval_id == approval_id
+                and item.action in {
+                    "reconciliation_approval_consumed",
+                    "reconciliation_rejected",
+                }
+                and any(
+                    prior.sequence < item.sequence for prior in started
+                )
+            ]
+            if (
+                len(approved) != 1
+                or len(started) != 1
+                or terminal
+                or approved[0].proposal_digest != proposal_digest
+                or approved[0].evidence_digest != evidence_digest
+                or not self._approval_scope_matches(approved[0], started[0])
+            ):
+                raise ReconciliationAuditIntegrityError(
+                    "approval consumption claim is missing, mismatched, or already finalized"
+                )
+            source = started[0]
+            event = self._build_event(
+                sequence=len(events) + 1,
+                previous_digest=events[-1].event_digest if events else _ZERO_DIGEST,
+                action=action,
+                actor=source.actor,
+                approval_id=source.approval_id,
+                operation_id=source.operation_id,
+                provider=source.provider,
+                project=source.project,
+                environment=source.environment,
+                journal_phase=source.journal_phase,
+                target_deployment_id=source.target_deployment_id,
+                previous_deployment_id=source.previous_deployment_id,
+                candidate_runtime_id=source.candidate_runtime_id,
+                previous_runtime_id=source.previous_runtime_id,
+                proposal_digest=source.proposal_digest,
+                evidence_digest=source.evidence_digest,
                 recorded_at=recorded_at or self._now(),
             )
             self._append_unlocked(event, events)
