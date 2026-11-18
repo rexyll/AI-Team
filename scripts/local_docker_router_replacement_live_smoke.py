@@ -856,6 +856,12 @@ def run_live_smoke() -> dict[str, Any]:
                 and new_stat.status == "UP"
                 and marker.get("status") == "passed"
             )
+            manual_route_debug = (
+                manual_report.get("route_readback")
+                if isinstance(manual_report, dict) else None
+            )
+            if not isinstance(manual_route_debug, dict):
+                manual_route_debug = {}
             if not verified:
                 raise RuntimeError(
                     "post-switch process crash did not leave a read-only reconcilable state: "
@@ -865,11 +871,12 @@ def run_live_smoke() -> dict[str, Any]:
                     f"active_deployment={active_deployment.deployment_id if active_deployment else 'missing'}, "
                     f"selector={selector}, target={effective_target}, "
                     f"host_readback={host_state_readback.status}, "
-                    f"manual_assessment={manual_report.get('assessment') if manual_report else 'missing'}, "
-                    f"manual_route_status={manual_report.get('route_readback', {}).get('status') if manual_report else 'missing'}, "
-                    f"manual_route_detail={manual_report.get('route_readback', {}).get('detail') if manual_report else 'missing'}, "
-                    f"manual_previous={manual_report.get('previous_runtime', {}).get('status') if manual_report else 'missing'}, "
-                    f"manual_candidate={manual_report.get('candidate_runtime', {}).get('status') if manual_report else 'missing'}, "
+                    f"manual_assessment={manual_report.get('assessment') if isinstance(manual_report, dict) else 'missing'}, "
+                    f"manual_route_status={manual_route_debug.get('status', 'missing')}, "
+                    f"manual_route_detail={manual_route_debug.get('detail', 'missing')}, "
+                    f"manual_report_detail={manual_report.get('detail') if isinstance(manual_report, dict) else 'missing'}, "
+                    f"manual_previous={(manual_report.get('previous_runtime') or {}).get('status') if isinstance(manual_report, dict) else 'missing'}, "
+                    f"manual_candidate={(manual_report.get('candidate_runtime') or {}).get('status') if isinstance(manual_report, dict) else 'missing'}, "
                     f"old_state={previous_inspection.runtime_state if previous_inspection else 'missing'}, "
                     f"candidate_state={candidate_inspection.runtime_state if candidate_inspection else 'missing'}, "
                     f"marker={marker.get('status')}"
