@@ -209,6 +209,14 @@ class HostDeploymentReplacementManager:
             operation_receipt_store, DurableProviderOperationReceiptStore
         ):
             raise TypeError("operation_receipt_store must be a DurableProviderOperationReceiptStore")
+        if operation_receipt_store is None and not history.read_only:
+            # Writable Host managers always persist provider call boundaries.
+            # The sidecar is deterministic and independent of the replacement
+            # journal so a journal rollback/corruption cannot erase call receipts.
+            receipt_path = history.path.with_name(
+                f"{history.path.stem}.provider-operations.sqlite3"
+            )
+            operation_receipt_store = DurableProviderOperationReceiptStore(receipt_path)
         self.provider = provider
         self.history = history
         self._clock = clock
