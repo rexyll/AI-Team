@@ -20,6 +20,7 @@ from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
     ReconciliationEvidence,
     ReconciliationProposal,
+    ReconciliationSnapshotReadReceipt,
     _aware,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
@@ -126,6 +127,7 @@ class ReconciliationCurrentSnapshot:
 
     record: ReplacementJournalRecord
     evidence: tuple[ReconciliationEvidence, ...]
+    receipt: ReconciliationSnapshotReadReceipt
 
     def __post_init__(self) -> None:
         if not isinstance(self.record, ReplacementJournalRecord):
@@ -136,17 +138,24 @@ class ReconciliationCurrentSnapshot:
             raise TypeError(
                 "snapshot evidence must be a tuple of ReconciliationEvidence"
             )
+        if not isinstance(self.receipt, ReconciliationSnapshotReadReceipt):
+            raise TypeError("snapshot receipt must be a ReconciliationSnapshotReadReceipt")
+        self.receipt.verify_snapshot(self.record, self.evidence)
 
 
 class ReconciliationSnapshotReader(Protocol):
     """Trusted Host read boundary for current journal and reconciliation evidence.
 
-    Implementations must read the journal and its evidence as one consistent
-    snapshot from trusted current sources. They must not accept caller-supplied
-    snapshots or silently fall back to stale caches; unavailable, stale, or
-    unauthenticated source data must raise an exception. This interface is a
-    trust boundary, not an implementation of the underlying storage/provider
-    readers.
+    Implementations must read journal revision R1, collect authenticated
+    provider/router observations, then reread the journal and require revision
+    R2 == R1. They return a receipt binding reader identity, operation, journal
+    revision, record/evidence digests, the exact evidence source set and read
+    start/completion times. This is a journal-revision fence, not a claim that
+    independent provider and router APIs share one distributed transaction.
+    Implementations must not accept caller-supplied snapshots or fall back to
+    stale caches; source authentication failures, revision changes, unavailable
+    data and stale observations must raise. The receipt is an assertion from
+    the injected trusted reader, not a digital signature.
     """
 
     def read_current_snapshot(
@@ -186,11 +195,14 @@ class ReconciliationApprovalAuthority:
         snapshot_reader: ReconciliationSnapshotReader,
         trusted_issuers: frozenset[str],
         trusted_authentication_methods: frozenset[str],
+        trusted_snapshot_readers: frozenset[str],
+        trusted_evidence_sources: frozenset[str],
         authentication_audience: str,
         audit_store: DurableReconciliationAuditStore,
         approval_ttl_seconds: int = 300,
         challenge_ttl_seconds: int = 120,
         evidence_max_age_seconds: int = 300,
+        snapshot_read_max_duration_seconds: int = 60,
         clock=None,
     ) -> None:
         if authenticator is None or not callable(
@@ -217,6 +229,14 @@ class ReconciliationApprovalAuthority:
             raise ValueError(
                 "trusted_authentication_methods must be a non-empty frozenset"
             )
+        for name, values in (
+            ("trusted_snapshot_readers", trusted_snapshot_readers),
+            ("trusted_evidence_sources", trusted_evidence_sources),
+        ):
+            if not isinstance(values, frozenset) or not values or any(
+                not isinstance(item, str) or not item.strip() for item in values
+            ):
+                raise ValueError(f"{name} must be a non-empty frozenset")
         if (
             not isinstance(authentication_audience, str)
             or not authentication_audience.strip()
@@ -242,15 +262,26 @@ class ReconciliationApprovalAuthority:
             or not 1 <= evidence_max_age_seconds <= 3600
         ):
             raise ValueError("evidence_max_age_seconds must be between 1 and 3600")
+        if (
+            not isinstance(snapshot_read_max_duration_seconds, int)
+            or isinstance(snapshot_read_max_duration_seconds, bool)
+            or not 1 <= snapshot_read_max_duration_seconds <= 300
+        ):
+            raise ValueError("snapshot_read_max_duration_seconds must be between 1 and 300")
         self._authenticator = authenticator
         self._snapshot_reader = snapshot_reader
         self._trusted_issuers = trusted_issuers
         self._trusted_methods = trusted_authentication_methods
+        self._trusted_snapshot_readers = trusted_snapshot_readers
+        self._trusted_evidence_sources = trusted_evidence_sources
         self._authentication_audience = authentication_audience
         self._audit = audit_store
         self._approval_ttl = approval_ttl_seconds
         self._challenge_ttl = challenge_ttl_seconds
         self._evidence_max_age = timedelta(seconds=evidence_max_age_seconds)
+        self._snapshot_read_max_duration = timedelta(
+            seconds=snapshot_read_max_duration_seconds
+        )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def _now(self) -> datetime:
