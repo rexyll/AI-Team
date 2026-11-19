@@ -178,9 +178,12 @@ class ReconciliationApprovalAuthority:
     """Issue and consume exact-scope two-person approvals through a Host IdP.
 
     The authenticator, current-snapshot reader, trusted issuer/method allowlists,
-    evidence freshness limit and durable audit store are mandatory security
-    controls. There is intentionally no username/password or CLI-string fallback.
-    The audit ledger stores only a token digest and fences grant claims across
+    trusted snapshot-reader/evidence-source allowlists, evidence freshness limit
+    and durable audit store are mandatory security controls. Approval and
+    consumption both obtain current snapshots from the injected reader; a
+    receipt supplied by the caller is never treated as source proof. There is
+    intentionally no username/password or CLI-string fallback. The audit ledger
+    stores only a token digest and fences grant claims across
     processes. The caller must protect and durably retain the bearer capability
     if it needs to restore that grant after restart. A started-but-unfinished
     claim is terminal and requires a fresh dual approval. This class never
