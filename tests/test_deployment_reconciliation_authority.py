@@ -560,6 +560,59 @@ def test_authority_replaces_caller_snapshot_receipt_with_trusted_reader_receipt(
     assert grant.proposal.snapshot_receipt.reader_id == "test-snapshot-reader"
 
 
+def test_trusted_snapshot_read_failure_prevents_any_approval_challenge(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(
+        _current_snapshot(proposal.record, proposal.evidence)
+    )
+    reader.error = OSError("journal store unavailable")
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
+    )
+
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="snapshot read failed before approval",
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+    assert authority._authenticator.challenges == []
+    assert not authority._audit.events(operation_id=proposal.record.operation_id)
+
+
+def test_proposed_evidence_must_match_trusted_current_snapshot(tmp_path):
+    proposal = _proposal()
+    changed_evidence = (
+        replace(proposal.evidence[0], digest_sha256="f" * 64),
+        *proposal.evidence[1:],
+    )
+    reader = _SnapshotReader(
+        _current_snapshot(proposal.record, changed_evidence)
+    )
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
+    )
+
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="proposal evidence does not match the trusted current snapshot",
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+    assert authority._authenticator.challenges == []
+    assert not authority._audit.events(operation_id=proposal.record.operation_id)
+
+
 def test_untrusted_snapshot_reader_is_rejected_before_authentication(tmp_path):
     proposal = _proposal()
     reader = _SnapshotReader(
