@@ -717,3 +717,61 @@ def test_abort_path_also_records_provider_call_receipt(tmp_path):
     assert by_name["abort_candidate"].state == "returned"
     assert by_name["abort_candidate"].provider_result_status == "succeeded"
     assert history.get_replacement("operation-001").phase == "aborted"
+
+
+
+def test_writable_host_manager_defaults_to_separate_durable_provider_receipt_store(tmp_path):
+    history, provider, manager, previous, target = _setup(tmp_path)
+
+    assert isinstance(manager.operation_receipt_store, DurableProviderOperationReceiptStore)
+    assert manager.operation_receipt_store.path != history.path
+    assert manager.operation_receipt_store.path.name == "deployments.provider-operations.sqlite3"
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "replaced"
+    receipts = manager.operation_receipt_store.list_operation_receipts(
+        provider="test-provider",
+        project="demo",
+        environment="staging",
+        operation_id="operation-001",
+    )
+    assert [item.operation_name for item in receipts] == [
+        "prepare_candidate",
+        "retire_previous",
+        "start_candidate",
+        "switch_traffic",
+    ]
+    assert all(item.state == "returned" for item in receipts)
+    assert all(item.provider_result_status == "succeeded" for item in receipts)
+
+
+def test_read_only_host_manager_does_not_create_or_write_receipt_store(tmp_path):
+    db = tmp_path / "history.sqlite3"
+    writer = DeploymentHistoryStore(db)
+    previous = _record("previous")
+    writer.append(previous)
+    writer.begin_replacement(
+        ReplacementJournalRecord(
+            operation_id="read-only-op",
+            provider="test-provider",
+            project="demo",
+            environment="staging",
+            target_deployment_id="candidate",
+            previous_deployment_id="previous",
+            phase="needs_reconciliation",
+            created_at="2026-11-15T12:00:00Z",
+            updated_at="2026-11-15T12:00:00Z",
+            candidate_runtime_id="a" * 64,
+            previous_runtime_id="b" * 64,
+        )
+    )
+    read_only = DeploymentHistoryStore(db, read_only=True)
+    manager = HostDeploymentReplacementManager(
+        FakeReplacementProvider(),
+        read_only,
+        clock=lambda: "2026-11-15T12:03:00Z",
+    )
+
+    assert manager.operation_receipt_store is None
+    assert not db.with_name("history.provider-operations.sqlite3").exists()
