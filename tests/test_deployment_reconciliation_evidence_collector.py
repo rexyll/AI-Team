@@ -352,7 +352,9 @@ def test_local_docker_unsupported_operation_inspection_blocks_before_runtime_or_
             "route": "router-haproxy-admin",
         },
         max_evidence_age_seconds=120,
-        clock=_Clock(),
+        # LocalDockerProvider stamps its explicit unsupported inspection with
+        # the real Host clock, so this integration boundary uses that same clock.
+        clock=lambda: datetime.now(timezone.utc),
     )
 
     with pytest.raises(ReconciliationEvidenceCollectionError, match="not conclusive"):
