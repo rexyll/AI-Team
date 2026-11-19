@@ -20,6 +20,13 @@ from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
     HostDeploymentReplacementManager,
 )
+from runtime.deployment_reconciliation_evidence_collector import (
+    DecisionSpecificReconciliationEvidenceCollector,
+    ReconciliationEvidenceCollectionError,
+)
+from runtime.deployment_reconciliation_snapshot_reader import (
+    DeploymentHistoryReconciliationSnapshotReader,
+)
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_reconciliation_source_authenticator import (
     LocalDockerReconciliationEvidenceSourceAuthenticator,
@@ -123,6 +130,31 @@ class _ManualReconciliationReadOnlyProvider:
         )
 
 
+class _MissingReconciliationRouteInspector:
+    """Read-only route source that records an absent durable Router scope."""
+
+    def __init__(self, scope: TrafficRouterScope, detail: str) -> None:
+        self.name = scope.provider
+        self.scope = scope
+        self.detail = detail
+
+    def inspect_reconciliation_route(
+        self, journal
+    ) -> DeploymentTrafficReadback:
+        return DeploymentTrafficReadback(
+            provider=self.name,
+            status="not_found",
+            checked_at=_utc_now(),
+            router_runtime_id=None,
+            registry_active_slot=None,
+            registry_active_runtime_id=None,
+            live_active_slot=None,
+            effective_runtime_id=None,
+            route_generation=None,
+            detail=self.detail,
+        )
+
+
 @dataclass(frozen=True)
 class DeploymentHostStartupResult:
     history_path: str
@@ -197,6 +229,91 @@ class DeploymentHostRuntime:
                 "runtime": "docker-local-daemon-runtime",
                 "route": "docker-local-daemon-router",
             },
+        )
+
+    def build_reconciliation_snapshot_reader(
+        self,
+        operation_id: str,
+        *,
+        max_evidence_age_seconds: float = 120.0,
+    ) -> DeploymentHistoryReconciliationSnapshotReader:
+        """Compose the read-only Local Docker snapshot path for one journal scope.
+
+        The builder reads only existing Host journal/Router registry state. It
+        never creates/adopts a Router scope and performs no Docker commands.
+        LocalDockerProvider currently returns 'unsupported' for provider
+        operation inspection, so an actual snapshot read deliberately fails
+        closed before runtime or route probes. This path is diagnostic plumbing,
+        not a production approval/decision handler.
+        """
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be a non-empty string")
+        if not self.history_path.is_file():
+            raise FileNotFoundError(
+                f"deployment history database does not exist: {self.history_path}"
+            )
+        if not isinstance(self.provider, LocalDockerProvider):
+            raise RuntimeError(
+                "Local Docker reconciliation snapshot composition requires LocalDockerProvider"
+            )
+        history = DeploymentHistoryStore(self.history_path, read_only=True)
+        journal = history.get_replacement(operation_id)
+        if journal is None:
+            raise KeyError("replacement operation does not exist in Host history")
+        if journal.provider != self.provider.name:
+            raise ValueError("replacement journal provider does not match the Host provider")
+        scope = TrafficRouterScope(
+            journal.provider, journal.project, journal.environment
+        )
+
+        router = history.get_traffic_router(scope)
+        state_record = history.get_traffic_router_state_record(scope)
+        if router is None or state_record is None:
+            missing = (
+                "Durable Router registry or Host Router state record is missing; "
+                "read-only reconciliation route evidence is unavailable"
+            )
+            route_inspector = _MissingReconciliationRouteInspector(scope, missing)
+        else:
+            from runtime.local_docker_router_host import LocalDockerRouterHostManager
+            from runtime.local_docker_routed_app import LocalDockerRoutedAppManager
+            from runtime.local_docker_router_slot_manager import LocalDockerRouterSlotManager
+            from runtime.local_docker_router_replacement_provider import (
+                LocalDockerRouterReplacementProvider,
+            )
+
+            router_host = LocalDockerRouterHostManager(
+                self.provider,
+                history,
+                Path(__file__).resolve().parents[1],
+                Path(state_record.directory).parent,
+            )
+            route_inspector = LocalDockerRouterReplacementProvider(
+                self.provider,
+                history,
+                router_host,
+                LocalDockerRoutedAppManager(self.provider),
+                LocalDockerRouterSlotManager(self.provider),
+                scope,
+                router.port_bindings,
+            )
+
+        collector = DecisionSpecificReconciliationEvidenceCollector(
+            provider_operation_inspector=self.provider,
+            runtime_inspector=self.provider,
+            route_inspector=route_inspector,
+            source_authenticator=self.build_reconciliation_source_authenticator(),
+            source_ids={
+                "provider_operation": "docker-local-operation-inspection-capability",
+                "runtime": "docker-local-daemon-runtime",
+                "route": "docker-local-daemon-router",
+            },
+            max_evidence_age_seconds=max_evidence_age_seconds,
+        )
+        return DeploymentHistoryReconciliationSnapshotReader(
+            history,
+            collector,
+            reader_id="docker-local-deployment-host-snapshot-reader",
         )
 
     def inspect_recovery(self) -> dict:
