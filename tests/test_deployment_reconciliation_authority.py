@@ -145,7 +145,7 @@ def _proposal():
         snapshot_id="proposal-snapshot-001",
         record=record,
         evidence=evidence,
-        journal_revision="journal-revision-001",
+        journal_revision=f"revision:{record.updated_at}",
         read_started_at="2026-11-18T09:59:40Z",
         read_completed_at="2026-11-18T09:59:45Z",
     )
