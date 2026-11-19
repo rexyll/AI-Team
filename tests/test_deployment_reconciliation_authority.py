@@ -935,24 +935,28 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
         )
 
 
-def test_stale_evidence_is_rejected_before_requester_authentication(tmp_path):
+def test_stale_trusted_current_evidence_is_rejected_before_requester_authentication(tmp_path):
     proposal = _proposal()
-    stale_evidence = replace(
-        proposal.evidence[0],
-        observed_at="2026-11-18T09:54:59Z",
+    stale_evidence = (
+        replace(proposal.evidence[0], observed_at="2026-11-18T09:54:59Z"),
+        *proposal.evidence[1:],
     )
-    stale_proposal = replace(
-        proposal,
-        evidence=(stale_evidence, *proposal.evidence[1:]),
-        snapshot_receipt=None,
+    reader = _SnapshotReader(
+        _current_snapshot(
+            proposal.record,
+            stale_evidence,
+            read_started_at="2026-11-18T09:59:55Z",
+            read_completed_at="2026-11-18T09:59:56Z",
+        )
     )
     authority = _authority(
         tmp_path,
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
     )
     with pytest.raises(ReconciliationAuthorizationError, match="evidence is stale"):
         authority.authorize_proposal(
-            stale_proposal,
+            proposal,
             requester_response="requester-proof",
             approver_response="approver-proof",
         )
