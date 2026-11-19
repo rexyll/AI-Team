@@ -334,6 +334,10 @@ class ReconciliationProposal:
             not isinstance(item, ReconciliationEvidence) for item in self.evidence
         ):
             raise TypeError("evidence must be a tuple of ReconciliationEvidence")
+        if self.snapshot_receipt is not None:
+            if not isinstance(self.snapshot_receipt, ReconciliationSnapshotReadReceipt):
+                raise TypeError("snapshot_receipt must be a ReconciliationSnapshotReadReceipt")
+            self.snapshot_receipt.verify_snapshot(self.record, self.evidence)
         ids = [item.evidence_id for item in self.evidence]
         kinds = [item.kind for item in self.evidence]
         if len(ids) != len(set(ids)):
