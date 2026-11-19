@@ -23,6 +23,7 @@ from runtime.deployment_provider import (
     HealthCheckResult,
     DeploymentRuntimeInspection,
 )
+from runtime.deployment_provider_operation_ledger import ProviderOperationInspection
 
 DEFAULT_DOCKER_TIMEOUT = 600.0
 _OUTPUT_LIMIT = 4000
@@ -477,6 +478,41 @@ class LocalDockerProvider:
         if docker_status == "unhealthy":
             return HealthCheckResult("unhealthy", _now(), "docker healthcheck", "Docker healthcheck reports unhealthy")
         return HealthCheckResult("unknown", _now(), "docker healthcheck", f"Health state: {docker_status!r}")
+
+    def inspect_operation(
+        self,
+        *,
+        project: str,
+        environment: str,
+        operation_id: str,
+        operation_name: str,
+    ) -> ProviderOperationInspection:
+        """Explicitly report that Docker has no coordinator-operation resource.
+
+        Docker can inspect the current state of an immutable container ID, but
+        the Local Docker adapter does not create a provider-owned durable
+        operation resource keyed by AI-Team's operation_id/action. The Host
+        call-receipt sidecar is deliberately not consulted here: it proves only
+        that a synchronous Host method call returned, not provider-side
+        terminal state. Reconciliation requiring operation inspection must
+        therefore fail closed for this provider.
+        """
+        return ProviderOperationInspection(
+            provider=self.name,
+            project=project,
+            environment=environment,
+            operation_id=operation_id,
+            operation_name=operation_name,
+            source_id="docker-local-operation-inspection-capability",
+            status="unsupported",
+            inspected_at=_now(),
+            detail=(
+                "Docker Local has no provider-owned operation resource keyed by "
+                "the coordinator operation ID/action. Immutable container "
+                "inspection and Host call receipts are not substitutes for "
+                "provider-operation terminal inspection."
+            ),
+        )
 
     def inspect_runtime(self, record: DeploymentRecord) -> DeploymentRuntimeInspection:
         """Inspect the immutable runtime ID persisted in a host deployment record."""
