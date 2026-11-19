@@ -318,6 +318,53 @@ class ReconciliationApprovalAuthority:
                     f"reconciliation evidence is stale: {item.kind}"
                 )
 
+    def _validate_snapshot_receipt(
+        self,
+        receipt: ReconciliationSnapshotReadReceipt,
+        record: ReplacementJournalRecord,
+        evidence: tuple[ReconciliationEvidence, ...],
+        *,
+        now: datetime,
+    ) -> str:
+        if not isinstance(receipt, ReconciliationSnapshotReadReceipt):
+            raise ReconciliationAuthorizationError(
+                "trusted snapshot reader did not provide a provenance receipt"
+            )
+        if receipt.reader_id not in self._trusted_snapshot_readers:
+            raise ReconciliationAuthorizationError(
+                "snapshot reader identity is not trusted"
+            )
+        unexpected_sources = set(receipt.evidence_sources) - self._trusted_evidence_sources
+        if unexpected_sources:
+            raise ReconciliationAuthorizationError(
+                "snapshot contains evidence from an untrusted source"
+            )
+        try:
+            receipt.verify_snapshot(record, evidence)
+        except (TypeError, ValueError) as exc:
+            raise ReconciliationAuthorizationError(
+                "snapshot provenance receipt does not bind the supplied journal/evidence"
+            ) from exc
+        started = datetime.fromisoformat(
+            receipt.read_started_at.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        completed = datetime.fromisoformat(
+            receipt.read_completed_at.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        if completed > now:
+            raise ReconciliationAuthorizationError(
+                "snapshot read receipt is future-dated"
+            )
+        if now - completed > self._evidence_max_age:
+            raise ReconciliationAuthorizationError(
+                "snapshot read receipt is stale"
+            )
+        if completed - started > self._snapshot_read_max_duration:
+            raise ReconciliationAuthorizationError(
+                "snapshot read exceeded the configured consistency window"
+            )
+        return receipt.approval_binding_digest()
+
     @staticmethod
     def _iso(value: datetime) -> str:
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -340,10 +387,15 @@ class ReconciliationApprovalAuthority:
     def _proposal_digest(
         cls, proposal: ReconciliationProposal, evidence_digest: str
     ) -> str:
+        if proposal.snapshot_receipt is None:
+            raise ReconciliationAuthorizationError(
+                "proposal has no trusted snapshot provenance receipt"
+            )
         payload = {
             "operation": proposal.approval.operation,
             "record": asdict(proposal.record),
             "evidence_digest": evidence_digest,
+            "snapshot_provenance_digest": proposal.snapshot_receipt.approval_binding_digest(),
         }
         return hashlib.sha256(cls._canonical(payload)).hexdigest()
 
@@ -485,9 +537,20 @@ class ReconciliationApprovalAuthority:
         """
         if not isinstance(proposal, ReconciliationProposal):
             raise TypeError("proposal must be a ReconciliationProposal")
+        proposal_now = self._now()
         self._validate_evidence_freshness(
             proposal.evidence,
-            now=self._now(),
+            now=proposal_now,
+        )
+        if proposal.snapshot_receipt is None:
+            raise ReconciliationAuthorizationError(
+                "proposal has no trusted snapshot provenance receipt"
+            )
+        self._validate_snapshot_receipt(
+            proposal.snapshot_receipt,
+            proposal.record,
+            proposal.evidence,
+            now=proposal_now,
         )
         record = proposal.record
         if record.phase != "needs_reconciliation":
@@ -688,6 +751,17 @@ class ReconciliationApprovalAuthority:
             self._validate_evidence_freshness(
                 current.evidence, now=now_after_snapshot
             )
+            current_binding = self._validate_snapshot_receipt(
+                current.receipt,
+                current.record,
+                current.evidence,
+                now=now_after_snapshot,
+            )
+            approved_receipt = proposal.snapshot_receipt
+            if approved_receipt is None or current_binding != approved_receipt.approval_binding_digest():
+                raise ReconciliationAuthorizationError(
+                    "snapshot reader, journal revision, or evidence provenance changed after approval"
+                )
             if now_after_snapshot >= expires:
                 raise ReconciliationAuthorizationError(
                     "reconciliation approval expired"
