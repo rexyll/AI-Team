@@ -171,18 +171,37 @@ def reconciliation_record_digest(
 def reconciliation_evidence_digest(
     evidence: tuple[ReconciliationEvidence, ...],
 ) -> str:
-    """Return the canonical digest for an ordered evidence snapshot."""
+    """Digest semantic evidence while leaving freshness timestamps out of the binding.
+
+    Evidence observation timestamps and generated evidence IDs are deliberately
+    validated separately: timestamps must be fresh and covered by the snapshot
+    receipt, but repeated reads of an unchanged provider/runtime/route state
+    should retain the same approval binding. The digest still binds each exact
+    evidence kind, source ID, canonical response digest and immutable runtime
+    identity claim.
+    """
     if not isinstance(evidence, tuple) or any(
         not isinstance(item, ReconciliationEvidence) for item in evidence
     ):
         raise TypeError("evidence must be a tuple of ReconciliationEvidence")
-    payload = json.dumps(
-        [asdict(item) for item in evidence],
+    payload = [
+        {
+            "kind": item.kind,
+            "source": item.source,
+            "digest_sha256": item.digest_sha256,
+            "subject_runtime_id": item.subject_runtime_id,
+            "observed_runtime_id": item.observed_runtime_id,
+        }
+        for item in evidence
+    ]
+    payload.sort(key=lambda item: item["kind"])
+    canonical = json.dumps(
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return hashlib.sha256(canonical).hexdigest()
 
 
 @dataclass(frozen=True)
