@@ -25,6 +25,7 @@ from runtime.deployment_provider import (
     is_rollback_candidate,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
+from runtime.deployment_operation_receipt import DeploymentProviderOperationActionReceipt
 from runtime.deployment_traffic_router import (
     RouterSlot,
     TrafficPortBinding,
@@ -241,6 +242,27 @@ class DeploymentHistoryStore:
                 )"""
             )
             db.execute(
+                """CREATE TABLE IF NOT EXISTS deployment_provider_operation_receipts (
+                    provider TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    result_digest TEXT,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    PRIMARY KEY (provider, project, environment, operation_id, action)
+                )"""
+            )
+            db.execute(
+                """CREATE INDEX IF NOT EXISTS idx_provider_operation_receipts_scope
+                ON deployment_provider_operation_receipts(
+                    provider, project, environment, operation_id
+                )"""
+            )
+            db.execute(
                 """CREATE TABLE IF NOT EXISTS traffic_routers (
                     provider TEXT NOT NULL,
                     project TEXT NOT NULL,
@@ -265,6 +287,154 @@ class DeploymentHistoryStore:
             result = db.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
                 raise RuntimeError("deployment history database integrity check failed")
+
+    def begin_provider_operation(
+        self,
+        *,
+        provider: str,
+        project: str,
+        environment: str,
+        operation_id: str,
+        action: str,
+        request_digest: str,
+        started_at: str,
+    ) -> bool:
+        """Durably claim one provider method call before entering the provider.
+
+        A duplicate action is never reset or re-executed. The caller receives
+        False for an identical existing binding and must not invoke the provider.
+        """
+        if self.read_only:
+            raise RuntimeError("read-only deployment history cannot record provider operations")
+        receipt = DeploymentProviderOperationActionReceipt(
+            provider=provider,
+            project=project,
+            environment=environment,
+            operation_id=operation_id,
+            action=action,
+            status="in_progress",
+            request_digest=request_digest,
+            result_digest=None,
+            started_at=started_at,
+            completed_at=None,
+        )
+        with self._connect() as db:
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO deployment_provider_operation_receipts
+                (provider, project, environment, operation_id, action, status,
+                 request_digest, result_digest, started_at, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)""",
+                (
+                    receipt.provider, receipt.project, receipt.environment,
+                    receipt.operation_id, receipt.action, receipt.status,
+                    receipt.request_digest, receipt.started_at,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return True
+            row = db.execute(
+                """SELECT request_digest FROM deployment_provider_operation_receipts
+                WHERE provider = ? AND project = ? AND environment = ?
+                  AND operation_id = ? AND action = ?""",
+                (
+                    provider, project, environment, operation_id, action,
+                ),
+            ).fetchone()
+            if row is None or row["request_digest"] != request_digest:
+                raise ValueError(
+                    "provider operation action already exists with a different request digest"
+                )
+            return False
+
+    def complete_provider_operation(
+        self,
+        *,
+        provider: str,
+        project: str,
+        environment: str,
+        operation_id: str,
+        action: str,
+        request_digest: str,
+        status: str,
+        result_digest: str,
+        completed_at: str,
+    ) -> DeploymentProviderOperationActionReceipt:
+        """Commit a returned provider call; ambiguous results remain unknown."""
+        if self.read_only:
+            raise RuntimeError("read-only deployment history cannot complete provider operations")
+        if status not in {"succeeded", "failed", "unknown"}:
+            raise ValueError("provider operation completion must be succeeded, failed or unknown")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT * FROM deployment_provider_operation_receipts
+                WHERE provider = ? AND project = ? AND environment = ?
+                  AND operation_id = ? AND action = ?""",
+                (provider, project, environment, operation_id, action),
+            ).fetchone()
+            if row is None:
+                raise KeyError("provider operation start receipt is missing")
+            if row["request_digest"] != request_digest:
+                raise ValueError("provider operation completion request digest does not match")
+            if row["status"] != "in_progress":
+                if row["status"] == status and row["result_digest"] == result_digest:
+                    return DeploymentProviderOperationActionReceipt(
+                        provider=row["provider"], project=row["project"],
+                        environment=row["environment"], operation_id=row["operation_id"],
+                        action=row["action"], status=row["status"],
+                        request_digest=row["request_digest"], result_digest=row["result_digest"],
+                        started_at=row["started_at"], completed_at=row["completed_at"],
+                    )
+                raise RuntimeError("provider operation receipt is already terminal or unknown")
+            receipt = DeploymentProviderOperationActionReceipt(
+                provider=provider, project=project, environment=environment,
+                operation_id=operation_id, action=action, status=status,
+                request_digest=request_digest, result_digest=result_digest,
+                started_at=row["started_at"], completed_at=completed_at,
+            )
+            db.execute(
+                """UPDATE deployment_provider_operation_receipts
+                SET status = ?, result_digest = ?, completed_at = ?
+                WHERE provider = ? AND project = ? AND environment = ?
+                  AND operation_id = ? AND action = ? AND status = 'in_progress'""",
+                (
+                    receipt.status, receipt.result_digest, receipt.completed_at,
+                    provider, project, environment, operation_id, action,
+                ),
+            )
+            return receipt
+
+    def list_provider_operation_receipts(
+        self,
+        *,
+        provider: str,
+        project: str,
+        environment: str,
+        operation_id: str,
+    ) -> tuple[DeploymentProviderOperationActionReceipt, ...]:
+        """Read all action receipts for the exact provider replacement scope."""
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT * FROM deployment_provider_operation_receipts
+                WHERE provider = ? AND project = ? AND environment = ?
+                  AND operation_id = ?
+                ORDER BY action ASC""",
+                (provider, project, environment, operation_id),
+            ).fetchall()
+        return tuple(
+            DeploymentProviderOperationActionReceipt(
+                provider=row["provider"],
+                project=row["project"],
+                environment=row["environment"],
+                operation_id=row["operation_id"],
+                action=row["action"],
+                status=row["status"],
+                request_digest=row["request_digest"],
+                result_digest=row["result_digest"],
+                started_at=row["started_at"],
+                completed_at=row["completed_at"],
+            )
+            for row in rows
+        )
 
     def append(self, record: DeploymentRecord) -> None:
         if record.status != "running":
