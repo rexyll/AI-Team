@@ -900,7 +900,11 @@ class LocalDockerRouterReplacementProvider:
         # exact previous immutable container ID has been verified.
         stopped = self._stop_by_immutable_id(previous)
         if stopped.status != "succeeded" or stopped.record is None:
-            return stopped
+            return DeploymentOperationResult(
+                "retire_previous", stopped.status, self.name, stopped.message,
+                artifact=stopped.artifact, record=stopped.record,
+                health=stopped.health, details=stopped.details,
+            )
 
         # Remove the retired slot only after Docker confirms the exact runtime
         # stopped. The checkpoint above deliberately retains both slot targets.
@@ -925,7 +929,11 @@ class LocalDockerRouterReplacementProvider:
             "router": updated_router, "state": drained.state_record,
             "router_spec": drained_router_spec,
         })
-        return stopped
+        return DeploymentOperationResult(
+            "retire_previous", stopped.status, self.name, stopped.message,
+            artifact=stopped.artifact, record=stopped.record,
+            health=stopped.health, details=stopped.details,
+        )
 
     def abort_candidate(
         self,
@@ -950,7 +958,11 @@ class LocalDockerRouterReplacementProvider:
             return DeploymentOperationResult("abort_candidate", "failed", self.name, drained.detail or "Candidate slot is not safely drained")
         stopped = self._stop_by_immutable_id(candidate)
         if stopped.status != "succeeded":
-            return stopped
+            return DeploymentOperationResult(
+                "abort_candidate", stopped.status, self.name, stopped.message,
+                artifact=stopped.artifact, record=stopped.record,
+                health=stopped.health, details=stopped.details,
+            )
         try:
             drained_router_spec = build_router_container_spec(
                 self.scope,
@@ -986,7 +998,11 @@ class LocalDockerRouterReplacementProvider:
             "router": updated_router, "state": drained.state_record,
             "router_spec": drained_router_spec,
         })
-        return stopped
+        return DeploymentOperationResult(
+            "abort_candidate", stopped.status, self.name, stopped.message,
+            artifact=stopped.artifact, record=stopped.record,
+            health=stopped.health, details=stopped.details,
+        )
 
     def _stop_by_immutable_id(self, record: DeploymentRecord) -> DeploymentOperationResult:
         if record.provider != self.name or record.container_id is None:
