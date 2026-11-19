@@ -565,3 +565,27 @@ def test_host_input_execution_rejects_unfiltered_or_unsafe_stats_queries():
     ):
         with pytest.raises(ValueError, match="allowlisted HAProxy"):
             provider.execute_host_input(router_exec_args(), input_text=command)
+
+
+def test_local_docker_operation_inspection_is_explicitly_unsupported_without_docker_io():
+    runner = FakeRunner()
+    provider = LocalDockerProvider(runner)
+
+    inspection = provider.inspect_operation(
+        project="demo",
+        environment="staging",
+        operation_id="replace-001",
+        operation_name="retire_previous",
+    )
+
+    assert inspection.provider == provider.name
+    assert inspection.project == "demo"
+    assert inspection.environment == "staging"
+    assert inspection.operation_id == "replace-001"
+    assert inspection.operation_name == "retire_previous"
+    assert inspection.source_id == "docker-local-operation-inspection-capability"
+    assert inspection.status == "unsupported"
+    assert inspection.provider_operation_id is None
+    assert inspection.response_digest_sha256 is None
+    assert "Host call receipts are not substitutes" in inspection.detail
+    assert runner.calls == []
