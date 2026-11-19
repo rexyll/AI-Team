@@ -948,7 +948,7 @@ def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
 
     class _AgingSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id, operation):
-            snapshot = super().read_current_snapshot(operation_id)
+            snapshot = super().read_current_snapshot(operation_id, operation)
             if len(self.calls) > 1:
                 clock.value += timedelta(seconds=301)
             return snapshot
@@ -989,7 +989,7 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
 
     class _SlowSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id, operation):
-            snapshot = super().read_current_snapshot(operation_id)
+            snapshot = super().read_current_snapshot(operation_id, operation)
             if len(self.calls) > 1:
                 clock.value += timedelta(seconds=30)
             return snapshot
