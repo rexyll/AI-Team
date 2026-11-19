@@ -209,18 +209,12 @@ class HostDeploymentReplacementManager:
             operation_receipt_store, DurableProviderOperationReceiptStore
         ):
             raise TypeError("operation_receipt_store must be a DurableProviderOperationReceiptStore")
-        if operation_receipt_store is None and not history.read_only:
-            # Writable Host managers always persist provider call boundaries.
-            # The sidecar is deterministic and independent of the replacement
-            # journal so a journal rollback/corruption cannot erase call receipts.
-            receipt_path = history.path.with_name(
-                f"{history.path.stem}.provider-operations.sqlite3"
-            )
-            operation_receipt_store = DurableProviderOperationReceiptStore(receipt_path)
         self.provider = provider
         self.history = history
         self._clock = clock
         self._operation_id_factory = operation_id_factory or (lambda: uuid4().hex)
+        # Delay sidecar creation until the first provider mutation. Read-only
+        # inventory/read-back calls on a writable history must remain read-only.
         self.operation_receipt_store = operation_receipt_store
 
     def _invoke_provider_operation(
@@ -241,7 +235,15 @@ class HostDeploymentReplacementManager:
         """
         store = self.operation_receipt_store
         if store is None:
-            return invoke()
+            if self.history.read_only:
+                raise PermissionError(
+                    "read-only deployment history cannot begin provider operations"
+                )
+            receipt_path = self.history.path.with_name(
+                f"{self.history.path.stem}.provider-operations.sqlite3"
+            )
+            store = DurableProviderOperationReceiptStore(receipt_path)
+            self.operation_receipt_store = store
         request_digest = provider_operation_request_digest(
             provider=self.provider.name,
             project=project,
