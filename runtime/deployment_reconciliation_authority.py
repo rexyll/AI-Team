@@ -21,6 +21,7 @@ from runtime.deployment_reconciliation_contract import (
     ReconciliationEvidence,
     ReconciliationProposal,
     ReconciliationSnapshotReadReceipt,
+    reconciliation_evidence_digest,
     _aware,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
@@ -392,8 +393,7 @@ class ReconciliationApprovalAuthority:
 
     @classmethod
     def _evidence_digest(cls, proposal: ReconciliationProposal) -> str:
-        payload = [asdict(item) for item in proposal.evidence]
-        return hashlib.sha256(cls._canonical(payload)).hexdigest()
+        return reconciliation_evidence_digest(proposal.evidence)
 
     @classmethod
     def _proposal_digest(
@@ -583,14 +583,11 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "proposal journal revision or immutable runtime identity is not current"
             )
-        proposed_evidence_digest = self._evidence_digest(proposal)
-        current_evidence_digest = hashlib.sha256(
-            self._canonical([asdict(item) for item in current.evidence])
-        ).hexdigest()
-        if current_evidence_digest != proposed_evidence_digest:
-            raise ReconciliationAuthorizationError(
-                "proposal evidence does not match the trusted current snapshot"
-            )
+        # The caller's evidence is only a proposal-time hint. Repeated live
+        # reads naturally have different observation timestamps and generated
+        # evidence IDs, so bind the approval to the fresh Host-reader result.
+        # The proposal's operation/journal scope remains exact, and the
+        # trusted reader must provide the complete operation-specific evidence.
         trusted_read_at = self._now()
         self._validate_evidence_freshness(
             current.evidence,
@@ -602,7 +599,11 @@ class ReconciliationApprovalAuthority:
             current.evidence,
             now=trusted_read_at,
         )
-        proposal = replace(proposal, snapshot_receipt=current.receipt)
+        proposal = replace(
+            proposal,
+            evidence=current.evidence,
+            snapshot_receipt=current.receipt,
+        )
         evidence_digest = self._evidence_digest(proposal)
         proposal_digest = self._proposal_digest(proposal, evidence_digest)
         approval_id = secrets.token_urlsafe(24)
@@ -781,10 +782,9 @@ class ReconciliationApprovalAuthority:
                 raise ReconciliationAuthorizationError(
                     "journal revision or immutable runtime identity changed after approval"
                 )
-            evidence_payload = [asdict(item) for item in current.evidence]
-            current_evidence_digest = hashlib.sha256(
-                self._canonical(evidence_payload)
-            ).hexdigest()
+            current_evidence_digest = reconciliation_evidence_digest(
+                current.evidence
+            )
             if current_evidence_digest != grant.evidence_digest:
                 raise ReconciliationAuthorizationError(
                     "reconciliation evidence changed after approval"
