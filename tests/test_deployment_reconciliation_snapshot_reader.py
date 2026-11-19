@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
 
+from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_reconciliation_contract import (
     ReconciliationEvidence,
     reconciliation_record_digest,
@@ -166,6 +168,46 @@ def test_snapshot_reader_binds_operation_specific_evidence_to_one_journal_revisi
     assert snapshot.receipt.read_started_at == "2026-11-18T10:00:00Z"
     assert snapshot.receipt.read_completed_at == "2026-11-18T10:00:00Z"
     assert history.calls == ["replace-001", "replace-001"]
+    assert collector.calls == [("replace-001", "abort_candidate")]
+
+
+
+def test_snapshot_reader_reads_the_real_sqlite_replacement_journal(tmp_path):
+    history = DeploymentHistoryStore(tmp_path / "deployment-history.db")
+    prepared = _record(
+        phase="prepared",
+        candidate_runtime_id=None,
+        previous_runtime_id=None,
+    )
+    history.begin_replacement(prepared)
+    started = replace(
+        prepared,
+        phase="candidate_started",
+        updated_at="2026-11-18T09:11:00Z",
+        candidate_runtime_id="runtime-candidate-immutable",
+        previous_runtime_id="runtime-previous-immutable",
+    )
+    history.update_replacement(started, expected_phase="prepared")
+    needs_reconciliation = replace(
+        started,
+        phase="needs_reconciliation",
+        updated_at="2026-11-18T09:12:00Z",
+    )
+    history.update_replacement(
+        needs_reconciliation,
+        expected_phase="candidate_started",
+    )
+
+    collector = _Collector(_evidence("abort_candidate"))
+    snapshot = _reader(history, collector).read_current_snapshot(
+        "replace-001", "abort_candidate"
+    )
+
+    assert snapshot.record == needs_reconciliation
+    assert snapshot.receipt.record_digest == reconciliation_record_digest(
+        needs_reconciliation
+    )
+    assert history.get_replacement("replace-001") == needs_reconciliation
     assert collector.calls == [("replace-001", "abort_candidate")]
 
 
