@@ -1145,3 +1145,65 @@ def test_authority_has_no_deployment_mutation_surface(tmp_path):
     )
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
         authority.consume(grant)
+
+
+def test_approval_consumption_allows_fresh_timestamps_when_semantic_evidence_is_unchanged(tmp_path):
+    proposal = _proposal()
+    first_evidence = tuple(
+        replace(
+            item,
+            evidence_id=f"first-{index}",
+            observed_at="2026-11-18T09:59:50Z",
+        )
+        for index, item in enumerate(proposal.evidence)
+    )
+    second_evidence = tuple(
+        replace(
+            item,
+            evidence_id=f"second-{index}",
+            observed_at="2026-11-18T09:59:58Z",
+        )
+        for index, item in enumerate(proposal.evidence)
+    )
+
+    class _SequencedSnapshotReader:
+        def __init__(self):
+            self.calls = []
+            self.snapshots = [
+                _current_snapshot(
+                    proposal.record, first_evidence,
+                    snapshot_id="initial-read",
+                    read_started_at="2026-11-18T09:59:49Z",
+                    read_completed_at="2026-11-18T09:59:52Z",
+                ),
+                _current_snapshot(
+                    proposal.record, second_evidence,
+                    snapshot_id="consume-read",
+                    read_started_at="2026-11-18T09:59:57Z",
+                    read_completed_at="2026-11-18T09:59:59Z",
+                ),
+            ]
+
+        def read_current_snapshot(self, operation_id, operation):
+            self.calls.append((operation_id, operation))
+            return self.snapshots.pop(0)
+
+    reader = _SequencedSnapshotReader()
+    authority = _authority(
+        tmp_path,
+        {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
+    )
+
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    consumed = authority.consume(grant)
+
+    assert consumed.evidence == first_evidence
+    assert reader.calls == [
+        ("replace-001", "abort_candidate"),
+        ("replace-001", "abort_candidate"),
+    ]
