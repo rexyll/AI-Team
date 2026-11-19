@@ -130,16 +130,16 @@ def _record():
 
 def _runtime(record, deployment_id, runtime_id, *, status="verified",
              state="running", health="healthy", checked_at="2026-11-19T09:59:55Z"):
-    not_found = status == "not_found"
+    verified = status == "verified"
     return DeploymentRuntimeInspection(
         provider=record.provider,
         deployment_id=deployment_id,
         expected_runtime_id=runtime_id,
-        observed_runtime_id=None if not_found else runtime_id,
-        identity_match=not not_found,
+        observed_runtime_id=runtime_id if verified else None,
+        identity_match=verified,
         status=status,
-        runtime_state="unknown" if not_found else state,
-        health_status="unavailable" if not_found else health,
+        runtime_state=state if verified else "unknown",
+        health_status=health if verified else "unavailable",
         checked_at=checked_at,
         probe="docker inspect by immutable container ID",
         detail="",
