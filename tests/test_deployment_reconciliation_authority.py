@@ -299,6 +299,8 @@ def test_authority_requires_explicit_trusted_dependencies(tmp_path):
             ),
             trusted_issuers=frozenset({"issuer"}),
             trusted_authentication_methods=frozenset({"webauthn"}),
+            trusted_snapshot_readers=frozenset({"test-snapshot-reader"}),
+            trusted_evidence_sources=frozenset({"docker-inspect", "haproxy-runtime-api"}),
             authentication_audience="urn:ai-team:deployment-reconciliation",
             audit_store=DurableReconciliationAuditStore(tmp_path),
         )
