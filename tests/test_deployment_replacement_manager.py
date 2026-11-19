@@ -727,13 +727,16 @@ def test_abort_path_also_records_provider_call_receipt(tmp_path):
 def test_writable_host_manager_defaults_to_separate_durable_provider_receipt_store(tmp_path):
     history, provider, manager, previous, target = _setup(tmp_path)
 
-    assert isinstance(manager.operation_receipt_store, DurableProviderOperationReceiptStore)
-    assert manager.operation_receipt_store.path != history.path
-    assert manager.operation_receipt_store.path.name == "deployments.provider-operations.sqlite3"
+    assert manager.operation_receipt_store is None
+    receipt_path = history.path.with_name("deployments.provider-operations.sqlite3")
+    assert not receipt_path.exists()
 
     result = manager.replace(_request(), target)
 
     assert result.status == "replaced"
+    assert isinstance(manager.operation_receipt_store, DurableProviderOperationReceiptStore)
+    assert manager.operation_receipt_store.path == receipt_path
+    assert receipt_path.is_file()
     receipts = manager.operation_receipt_store.list_operation_receipts(
         provider="test-provider",
         project="demo",
