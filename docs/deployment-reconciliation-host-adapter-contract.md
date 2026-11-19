@@ -62,6 +62,14 @@ The source allowlist identifies configured Host sources; it does not, by itself,
 
 ## 4. Snapshot receipt validation
 
+At approval time, `authorize_proposal()` performs a fresh read through the injected
+trusted reader before creating either authentication challenge. It compares the
+reader's exact journal record and evidence digest with the proposed values, validates
+the reader/source allowlists and timestamps, then replaces any proposal-supplied
+receipt with the receipt returned by that trusted read. At consumption time it
+performs another fresh read and requires the same stable provenance binding. A
+caller-created receipt is never accepted as a substitute for the reader call.
+
 The current contract verifies:
 
 - The reader ID is in `trusted_snapshot_readers`.
