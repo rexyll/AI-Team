@@ -132,7 +132,7 @@ def test_snapshot_receipt_binds_operation_journal_evidence_and_sources():
 
     receipt.verify_snapshot(bound.record, bound.evidence)
     assert receipt.operation_id == valid.record.operation_id
-    assert receipt.evidence_sources == ("haproxy-runtime-api", "provider-observation")
+    assert receipt.evidence_sources == ("provider-observation",)
     assert receipt.approval_binding_digest()
 
     changed_record = replace(valid.record, updated_at="2026-11-15T09:11:00Z")
