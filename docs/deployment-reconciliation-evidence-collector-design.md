@@ -1,8 +1,20 @@
 # Reconciliation evidence collector: decision-specific design
 
-Status: implementation design and acceptance contract; no production collector is claimed by this document.
+Status: decision-specific production collector remains design-only; the Host-side operation call receipt ledger is implemented, but no production reconciliation collector is enabled.
 
 This design is the next provider-integration step after the journal-fenced snapshot reader. It deliberately does not implement or simulate a provider operation API. The first concrete target is the repository's existing `docker-local` + Local Docker Router/HAProxy stack, but the collector must not be enabled until each required live source has an authenticated, read-only adapter.
+
+
+## Implementation update: Host-side provider-call receipt ledger
+
+The repository now implements `runtime/deployment_provider_operation_ledger.py` and wires it into `HostDeploymentReplacementManager`:
+
+- Writable managers create a deterministic sidecar database next to the deployment history file: `<history-stem>.provider-operations.sqlite3`. Read-only managers do not create or write this database.
+- `prepare_candidate`, `start_candidate`, `switch_traffic`, `retire_previous` and `abort_candidate` each write a durable `started` receipt before entering the provider method.
+- A structured `DeploymentOperationResult` is recorded as `returned`, together with its result status and a digest of a bounded, secret-free response projection. Exceptions and malformed returns become `indeterminate`; duplicate action calls are rejected rather than replayed.
+- This sidecar is independent of the replacement journal. A receipt proves only that the Host method call started or returned. It is not a provider-issued operation ID, a provider-side operation inspection, or evidence that an asynchronous external operation is terminal. A crash-left `started` receipt remains ambiguous; `indeterminate` is never promoted.
+
+Acceptance tests cover persistence across reopening, crash ambiguity, duplicate-call rejection, wrong action/provider result binding, private file mode, and manager integration. The ledger is audit/recovery metadata only; the decision-specific evidence collector remains blocked until every required live source has a trusted read-only adapter.
 
 ## 1. Existing primitives and their limits
 
