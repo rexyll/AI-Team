@@ -587,6 +587,11 @@ def test_trusted_snapshot_read_failure_prevents_any_approval_challenge(tmp_path)
 
 def test_authority_replaces_caller_evidence_with_fresh_trusted_snapshot(tmp_path):
     proposal = _proposal()
+    stale_caller_evidence = tuple(
+        replace(item, observed_at="2026-11-18T09:00:00Z")
+        for item in proposal.evidence
+    )
+    proposal = replace(proposal, evidence=stale_caller_evidence)
     changed_evidence = (
         replace(
             proposal.evidence[0],
