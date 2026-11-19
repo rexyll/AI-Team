@@ -678,8 +678,8 @@ def test_snapshot_receipt_must_cover_all_evidence_observation_times(tmp_path):
         _current_snapshot(
             proposal.record,
             proposal.evidence,
-            read_started_at="2026-11-18T09:40:00Z",
-            read_completed_at="2026-11-18T09:40:05Z",
+            read_started_at="2026-11-18T09:59:10Z",
+            read_completed_at="2026-11-18T09:59:20Z",
         )
     )
     authority = _authority(
