@@ -282,6 +282,18 @@ class HostDeploymentReplacementManager:
                 failure_kind="invalid_provider_result",
             )
             return result
+        if result.provider != self.provider.name or result.operation != operation_name:
+            store.mark_indeterminate(
+                provider=self.provider.name,
+                project=project,
+                environment=environment,
+                operation_id=operation_id,
+                operation_name=operation_name,
+                failure_kind="provider_result_identity_mismatch",
+            )
+            raise ValueError(
+                "provider operation result identity does not match the invoked provider/action"
+            )
         store.record_result(
             provider=self.provider.name,
             project=project,
