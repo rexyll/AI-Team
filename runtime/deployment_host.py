@@ -6,6 +6,7 @@ changes traffic, resumes a replacement, or releases a reservation.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,9 @@ from runtime.deployment_replacement_manager import (
     HostDeploymentReplacementManager,
 )
 from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_reconciliation_source_authenticator import (
+    LocalDockerReconciliationEvidenceSourceAuthenticator,
+)
 
 
 def _utc_now() -> str:
@@ -163,6 +167,37 @@ class DeploymentHostRuntime:
         name = getattr(self.provider, "name", None)
         if not isinstance(name, str) or not name.strip():
             raise ValueError("deployment provider must expose a non-empty name")
+
+    def build_reconciliation_source_authenticator(
+        self,
+    ) -> LocalDockerReconciliationEvidenceSourceAuthenticator:
+        """Build the pinned Local Docker source authenticator from Host config.
+
+        The expected daemon identity is a mandatory operator-provisioned value.
+        This method performs no Docker I/O and does not enable a collector or
+        approval authority. Provider operation inspection remains unsupported
+        by LocalDockerProvider, so the Local Docker reconciliation gate stays
+        closed until that separate capability is provided.
+        """
+        if not isinstance(self.provider, LocalDockerProvider):
+            raise RuntimeError(
+                "pinned Local Docker source authentication requires LocalDockerProvider"
+            )
+        expected_daemon_id = os.environ.get(
+            "AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", ""
+        ).strip()
+        if not expected_daemon_id:
+            raise RuntimeError(
+                "AI_TEAM_DOCKER_EXPECTED_DAEMON_ID must be provisioned by the Host operator"
+            )
+        return LocalDockerReconciliationEvidenceSourceAuthenticator(
+            self.provider,
+            expected_daemon_id=expected_daemon_id,
+            source_ids={
+                "runtime": "docker-local-daemon-runtime",
+                "route": "docker-local-daemon-router",
+            },
+        )
 
     def inspect_recovery(self) -> dict:
         """Explicitly inspect recorded containers; never mutate host state."""
