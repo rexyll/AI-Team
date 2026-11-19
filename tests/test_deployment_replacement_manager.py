@@ -17,6 +17,7 @@ from runtime.deployment_provider import (
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
 from runtime.deployment_replacement_manager import HostDeploymentReplacementManager
+from runtime.deployment_provider_operation_ledger import DurableProviderOperationReceiptStore
 
 
 def _record(deployment_id, *, status="running", health="healthy", version="1.0"):
@@ -134,7 +135,7 @@ class FakeReplacementProvider:
         )
 
 
-def _setup(tmp_path: Path, provider=None):
+def _setup(tmp_path: Path, provider=None, operation_receipt_store=None):
     history = DeploymentHistoryStore(tmp_path / "deployments.sqlite3")
     previous = _record("previous")
     history.append(previous)
@@ -152,6 +153,7 @@ def _setup(tmp_path: Path, provider=None):
         history,
         clock=lambda: "2026-11-15T12:03:00Z",
         operation_id_factory=lambda: "operation-001",
+        operation_receipt_store=operation_receipt_store,
     )
     return history, provider, manager, previous, target
 
@@ -624,3 +626,34 @@ def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_pa
     assert inventory[0].classification == "prepared_candidate_not_persisted"
     assert len(connections) == 1
     assert provider.calls == []
+
+
+
+def test_replacement_persists_host_provider_call_receipts_before_and_after_each_mutation(tmp_path):
+    receipt_store = DurableProviderOperationReceiptStore(
+        tmp_path / "provider-operation-receipts.sqlite3"
+    )
+    history, provider, manager, previous, target = _setup(
+        tmp_path, operation_receipt_store=receipt_store
+    )
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "replaced"
+    receipts = receipt_store.list_operation_receipts(
+        provider="test-provider",
+        project="demo",
+        environment="staging",
+        operation_id="operation-001",
+    )
+    assert [item.operation_name for item in receipts] == [
+        "prepare_candidate",
+        "retire_previous",
+        "start_candidate",
+        "switch_traffic",
+    ]
+    assert all(item.state == "returned" for item in receipts)
+    assert all(item.provider_result_status == "succeeded" for item in receipts)
+    assert all(item.response_digest_sha256 for item in receipts)
+    assert all(item.request_digest_sha256 for item in receipts)
+    assert history.get_replacement("operation-001").phase == "previous_retired"
