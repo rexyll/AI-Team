@@ -6,8 +6,10 @@ remain with a future trusted host boundary.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -154,6 +156,150 @@ class ReconciliationEvidence:
                 _non_empty(value, field)
 
 
+def reconciliation_record_digest(
+    record: ReplacementJournalRecord,
+) -> str:
+    """Return the canonical digest for one immutable journal record snapshot."""
+    if not isinstance(record, ReplacementJournalRecord):
+        raise TypeError("record must be a ReplacementJournalRecord")
+    payload = json.dumps(
+        asdict(record), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def reconciliation_evidence_digest(
+    evidence: tuple[ReconciliationEvidence, ...],
+) -> str:
+    """Return the canonical digest for an ordered evidence snapshot."""
+    if not isinstance(evidence, tuple) or any(
+        not isinstance(item, ReconciliationEvidence) for item in evidence
+    ):
+        raise TypeError("evidence must be a tuple of ReconciliationEvidence")
+    payload = json.dumps(
+        [asdict(item) for item in evidence],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+@dataclass(frozen=True)
+class ReconciliationSnapshotReadReceipt:
+    """Provider-neutral receipt for a journal-revision-fenced Host read.
+
+    The receipt is an assertion from the injected trusted reader, not a digital
+    signature. The Host must authenticate each underlying source and protect
+    the reader implementation/configuration as part of its trust boundary.
+    """
+
+    reader_id: str
+    snapshot_id: str
+    operation_id: str
+    journal_revision_before: str
+    journal_revision_after: str
+    record_digest: str
+    evidence_digest: str
+    evidence_sources: tuple[str, ...]
+    read_started_at: str
+    read_completed_at: str
+    consistency_model: Literal["journal_revision_fence"] = "journal_revision_fence"
+
+    def __post_init__(self) -> None:
+        for field in (
+            "reader_id",
+            "snapshot_id",
+            "operation_id",
+            "journal_revision_before",
+            "journal_revision_after",
+        ):
+            _non_empty(getattr(self, field), field)
+        if self.journal_revision_before != self.journal_revision_after:
+            raise ValueError("journal revision changed during snapshot read")
+        for field in ("record_digest", "evidence_digest"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not _SHA256.fullmatch(value):
+                raise ValueError(f"{field} must be a lowercase SHA-256 digest")
+        if (
+            not isinstance(self.evidence_sources, tuple)
+            or not self.evidence_sources
+            or any(not isinstance(item, str) or not item.strip() for item in self.evidence_sources)
+        ):
+            raise ValueError("evidence_sources must be a non-empty tuple of source identifiers")
+        if tuple(sorted(set(self.evidence_sources))) != self.evidence_sources:
+            raise ValueError("evidence_sources must be sorted and unique")
+        started = _aware(self.read_started_at, "read_started_at")
+        completed = _aware(self.read_completed_at, "read_completed_at")
+        if completed < started:
+            raise ValueError("read_completed_at must not precede read_started_at")
+        if self.consistency_model != "journal_revision_fence":
+            raise ValueError("unsupported snapshot consistency model")
+
+    @classmethod
+    def for_snapshot(
+        cls,
+        *,
+        reader_id: str,
+        snapshot_id: str,
+        record: ReplacementJournalRecord,
+        evidence: tuple[ReconciliationEvidence, ...],
+        journal_revision: str,
+        read_started_at: str,
+        read_completed_at: str,
+    ) -> "ReconciliationSnapshotReadReceipt":
+        """Build the receipt after a Host reader has completed its fenced read."""
+        return cls(
+            reader_id=reader_id,
+            snapshot_id=snapshot_id,
+            operation_id=record.operation_id,
+            journal_revision_before=journal_revision,
+            journal_revision_after=journal_revision,
+            record_digest=reconciliation_record_digest(record),
+            evidence_digest=reconciliation_evidence_digest(evidence),
+            evidence_sources=tuple(sorted({item.source for item in evidence})),
+            read_started_at=read_started_at,
+            read_completed_at=read_completed_at,
+        )
+
+    def verify_snapshot(
+        self,
+        record: ReplacementJournalRecord,
+        evidence: tuple[ReconciliationEvidence, ...],
+    ) -> None:
+        """Check that this receipt names and hashes the supplied exact snapshot."""
+        if self.operation_id != record.operation_id:
+            raise ValueError("snapshot receipt operation_id does not match the journal")
+        if self.record_digest != reconciliation_record_digest(record):
+            raise ValueError("snapshot receipt journal digest does not match the record")
+        if self.evidence_digest != reconciliation_evidence_digest(evidence):
+            raise ValueError("snapshot receipt evidence digest does not match the evidence")
+        sources = tuple(sorted({item.source for item in evidence}))
+        if self.evidence_sources != sources:
+            raise ValueError("snapshot receipt evidence sources do not match the evidence")
+
+    def approval_binding_digest(self) -> str:
+        """Stable provenance binding used by the proposal approval digest.
+
+        Snapshot IDs and read timestamps identify an individual read and change
+        on re-read. The stable binding covers reader, journal revision, source
+        set, operation and consistency model instead.
+        """
+        payload = {
+            "reader_id": self.reader_id,
+            "operation_id": self.operation_id,
+            "journal_revision": self.journal_revision_after,
+            "record_digest": self.record_digest,
+            "evidence_digest": self.evidence_digest,
+            "evidence_sources": list(self.evidence_sources),
+            "consistency_model": self.consistency_model,
+        }
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+
 @dataclass(frozen=True)
 class ReconciliationProposal:
     """Validated proposal only; it cannot commit a journal transition."""
@@ -162,6 +308,7 @@ class ReconciliationProposal:
     approval: ReconciliationApproval
     evidence: tuple[ReconciliationEvidence, ...]
     proposed_at: str
+    snapshot_receipt: ReconciliationSnapshotReadReceipt | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.record, ReplacementJournalRecord):
