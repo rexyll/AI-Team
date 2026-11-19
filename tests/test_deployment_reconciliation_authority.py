@@ -21,6 +21,7 @@ from runtime.deployment_reconciliation_contract import (
     ReconciliationApproval,
     ReconciliationEvidence,
     ReconciliationProposal,
+    ReconciliationSnapshotReadReceipt,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
 
@@ -139,18 +140,55 @@ def _proposal():
             observed_runtime_id=record.previous_runtime_id,
         ),
     )
+    receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
+        reader_id="test-snapshot-reader",
+        snapshot_id="proposal-snapshot-001",
+        record=record,
+        evidence=evidence,
+        journal_revision="journal-revision-001",
+        read_started_at="2026-11-18T09:59:40Z",
+        read_completed_at="2026-11-18T09:59:45Z",
+    )
     return ReconciliationProposal(
         record=record,
         approval=template,
         evidence=evidence,
         proposed_at="2026-11-18T09:59:45Z",
+        snapshot_receipt=receipt,
     )
+
+
+def _current_snapshot(
+    record,
+    evidence,
+    *,
+    reader_id="test-snapshot-reader",
+    journal_revision=None,
+    snapshot_id="current-snapshot-001",
+):
+    receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
+        reader_id=reader_id,
+        snapshot_id=snapshot_id,
+        record=record,
+        evidence=evidence,
+        journal_revision=journal_revision or f"revision:{record.updated_at}",
+        read_started_at="2026-11-18T09:59:55Z",
+        read_completed_at="2026-11-18T09:59:56Z",
+    )
+    return ReconciliationCurrentSnapshot(record, evidence, receipt)
 
 
 def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwargs):
     proposal = _proposal()
     reader = snapshot_reader or _SnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
+    )
+    trusted_snapshot_readers = kwargs.pop(
+        "trusted_snapshot_readers", frozenset({"test-snapshot-reader"})
+    )
+    trusted_evidence_sources = kwargs.pop(
+        "trusted_evidence_sources",
+        frozenset({"docker-inspect", "haproxy-runtime-api"}),
     )
     authentication_audience = kwargs.pop(
         "authentication_audience", "urn:ai-team:deployment-reconciliation"
@@ -160,6 +198,8 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        trusted_snapshot_readers=trusted_snapshot_readers,
+        trusted_evidence_sources=trusted_evidence_sources,
         authentication_audience=authentication_audience,
         audit_store=DurableReconciliationAuditStore(tmp_path),
         clock=clock or _Clock(),
@@ -189,7 +229,7 @@ def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
 
     proposal = _proposal()
     reader = _SnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = ReconciliationApprovalAuthority(
         authenticator=_MismatchedAuthenticator(
@@ -201,6 +241,8 @@ def test_authentication_receipt_must_match_issued_challenge(tmp_path, field):
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        trusted_snapshot_readers=frozenset({"test-snapshot-reader"}),
+        trusted_evidence_sources=frozenset({"docker-inspect", "haproxy-runtime-api"}),
         authentication_audience="urn:ai-team:deployment-reconciliation",
         audit_store=DurableReconciliationAuditStore(tmp_path),
         clock=_Clock(),
@@ -223,13 +265,15 @@ def test_host_authenticator_must_return_challenge_bound_receipt(tmp_path):
 
     proposal = _proposal()
     reader = _SnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = ReconciliationApprovalAuthority(
         authenticator=_LegacyAuthenticator(),
         snapshot_reader=reader,
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        trusted_snapshot_readers=frozenset({"test-snapshot-reader"}),
+        trusted_evidence_sources=frozenset({"docker-inspect", "haproxy-runtime-api"}),
         authentication_audience="urn:ai-team:deployment-reconciliation",
         audit_store=DurableReconciliationAuditStore(tmp_path),
         clock=_Clock(),
@@ -251,7 +295,7 @@ def test_authority_requires_explicit_trusted_dependencies(tmp_path):
         ReconciliationApprovalAuthority(
             authenticator=None,
             snapshot_reader=_SnapshotReader(
-                ReconciliationCurrentSnapshot(_proposal().record, _proposal().evidence)
+                _current_snapshot(_proposal().record, _proposal().evidence)
             ),
             trusted_issuers=frozenset({"issuer"}),
             trusted_authentication_methods=frozenset({"webauthn"}),
@@ -365,7 +409,7 @@ def test_grant_can_be_consumed_by_restarted_authority_from_durable_audit(tmp_pat
         token=grant.token,
     )
     restarted_reader = _SnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     restarted_authority = _authority(
         tmp_path,
@@ -443,7 +487,7 @@ def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
             return self.snapshot
 
     reader = _BlockingSnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     requester, approver = _principal("alice"), _principal("bob")
     first_authority = _authority(
@@ -541,9 +585,7 @@ def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
         approver_response="approver-proof",
     )
     changed_record = replace(proposal.record, updated_at="2026-11-18T09:12:00Z")
-    authority._snapshot_reader.snapshot = ReconciliationCurrentSnapshot(
-        changed_record, proposal.evidence
-    )
+    authority._snapshot_reader.snapshot = _current_snapshot(changed_record, proposal.evidence)
     with pytest.raises(ReconciliationAuthorizationError, match="journal revision"):
         authority.consume(grant)
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
@@ -558,9 +600,7 @@ def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
         replace(proposal.evidence[0], digest_sha256="f" * 64),
         *proposal.evidence[1:],
     )
-    authority._snapshot_reader.snapshot = ReconciliationCurrentSnapshot(
-        proposal.record, changed_evidence
-    )
+    authority._snapshot_reader.snapshot = _current_snapshot(proposal.record, changed_evidence)
     with pytest.raises(ReconciliationAuthorizationError, match="evidence changed"):
         authority.consume(grant2)
 
@@ -603,10 +643,12 @@ def test_authentication_challenge_must_not_be_replayed_after_expiry(tmp_path):
     authority = ReconciliationApprovalAuthority(
         authenticator=authenticator,
         snapshot_reader=_SnapshotReader(
-            ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+            _current_snapshot(proposal.record, proposal.evidence)
         ),
         trusted_issuers=frozenset({"https://id.example.test"}),
         trusted_authentication_methods=frozenset({"webauthn"}),
+        trusted_snapshot_readers=frozenset({"test-snapshot-reader"}),
+        trusted_evidence_sources=frozenset({"docker-inspect", "haproxy-runtime-api"}),
         authentication_audience="urn:ai-team:deployment-reconciliation",
         audit_store=DurableReconciliationAuditStore(tmp_path),
         challenge_ttl_seconds=challenge_ttl,
@@ -655,7 +697,7 @@ def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
             return snapshot
 
     reader = _AgingSnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = _authority(
         tmp_path,
@@ -695,7 +737,7 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
             return snapshot
 
     reader = _SlowSnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = _authority(
         tmp_path,
@@ -726,7 +768,7 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
 def test_snapshot_read_failure_burns_approval_grant(tmp_path):
     proposal = _proposal()
     reader = _SnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = _authority(
         tmp_path,
@@ -783,7 +825,7 @@ def test_concurrent_consumption_of_one_grant_succeeds_exactly_once(tmp_path):
             return self.snapshot
 
     reader = _BlockingSnapshotReader(
-        ReconciliationCurrentSnapshot(proposal.record, proposal.evidence)
+        _current_snapshot(proposal.record, proposal.evidence)
     )
     authority = _authority(
         tmp_path,
