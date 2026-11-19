@@ -541,16 +541,6 @@ class ReconciliationApprovalAuthority:
             proposal.evidence,
             now=proposal_now,
         )
-        if proposal.snapshot_receipt is None:
-            raise ReconciliationAuthorizationError(
-                "proposal has no trusted snapshot provenance receipt"
-            )
-        self._validate_snapshot_receipt(
-            proposal.snapshot_receipt,
-            proposal.record,
-            proposal.evidence,
-            now=proposal_now,
-        )
         record = proposal.record
         if record.phase != "needs_reconciliation":
             raise ReconciliationAuthorizationError(
@@ -560,6 +550,44 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "both immutable runtime identities are required"
             )
+
+        # Never trust a receipt supplied with the proposal. Obtain a fresh,
+        # authoritative snapshot from the injected Host reader before starting
+        # either authentication challenge.
+        try:
+            current = self._snapshot_reader.read_current_snapshot(record.operation_id)
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "trusted current journal/evidence snapshot read failed before approval"
+            ) from exc
+        if not isinstance(current, ReconciliationCurrentSnapshot):
+            raise ReconciliationAuthorizationError(
+                "trusted snapshot reader returned an invalid snapshot"
+            )
+        if current.record != record:
+            raise ReconciliationAuthorizationError(
+                "proposal journal revision or immutable runtime identity is not current"
+            )
+        proposed_evidence_digest = self._evidence_digest(proposal)
+        current_evidence_digest = hashlib.sha256(
+            self._canonical([asdict(item) for item in current.evidence])
+        ).hexdigest()
+        if current_evidence_digest != proposed_evidence_digest:
+            raise ReconciliationAuthorizationError(
+                "proposal evidence does not match the trusted current snapshot"
+            )
+        trusted_read_at = self._now()
+        self._validate_evidence_freshness(
+            current.evidence,
+            now=trusted_read_at,
+        )
+        self._validate_snapshot_receipt(
+            current.receipt,
+            current.record,
+            current.evidence,
+            now=trusted_read_at,
+        )
+        proposal = replace(proposal, snapshot_receipt=current.receipt)
         evidence_digest = self._evidence_digest(proposal)
         proposal_digest = self._proposal_digest(proposal, evidence_digest)
         approval_id = secrets.token_urlsafe(24)
