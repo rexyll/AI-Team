@@ -165,6 +165,8 @@ def _current_snapshot(
     reader_id="test-snapshot-reader",
     journal_revision=None,
     snapshot_id="current-snapshot-001",
+    read_started_at="2026-11-18T09:59:55Z",
+    read_completed_at="2026-11-18T09:59:56Z",
 ):
     receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
         reader_id=reader_id,
@@ -172,8 +174,8 @@ def _current_snapshot(
         record=record,
         evidence=evidence,
         journal_revision=journal_revision or f"revision:{record.updated_at}",
-        read_started_at="2026-11-18T09:59:55Z",
-        read_completed_at="2026-11-18T09:59:56Z",
+        read_started_at=read_started_at,
+        read_completed_at=read_completed_at,
     )
     return ReconciliationCurrentSnapshot(record, evidence, receipt)
 
@@ -365,7 +367,7 @@ def test_dual_approval_is_durable_and_consumed_once(tmp_path):
         approver_response="approver-proof",
     )
     approved = authority.consume(grant)
-    assert authority._snapshot_reader.calls == ["replace-001"]
+    assert authority._snapshot_reader.calls == ["replace-001", "replace-001"]
     assert approved.approval.requested_by == requester
     assert approved.approval.approved_by == approver
 
@@ -483,6 +485,8 @@ def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
     class _BlockingSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id):
             self.calls.append(operation_id)
+            if len(self.calls) == 1:
+                return self.snapshot
             reader_entered.set()
             if not release_reader.wait(timeout=5):
                 raise TimeoutError("test snapshot reader release timed out")
@@ -527,7 +531,7 @@ def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
     assert [event.action for event in events].count(
         "reconciliation_approval_consumed"
     ) == 1
-    assert reader.calls == ["replace-001"]
+    assert reader.calls == ["replace-001", "replace-001"]
 
 
 def test_proposal_without_snapshot_receipt_is_rejected_before_authentication(tmp_path):
@@ -872,7 +876,8 @@ def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
     class _AgingSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id):
             snapshot = super().read_current_snapshot(operation_id)
-            clock.value += timedelta(seconds=301)
+            if len(self.calls) > 1:
+                clock.value += timedelta(seconds=301)
             return snapshot
 
     reader = _AgingSnapshotReader(
@@ -912,7 +917,8 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
     class _SlowSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id):
             snapshot = super().read_current_snapshot(operation_id)
-            clock.value += timedelta(seconds=30)
+            if len(self.calls) > 1:
+                clock.value += timedelta(seconds=30)
             return snapshot
 
     reader = _SlowSnapshotReader(
@@ -998,6 +1004,8 @@ def test_concurrent_consumption_of_one_grant_succeeds_exactly_once(tmp_path):
     class _BlockingSnapshotReader(_SnapshotReader):
         def read_current_snapshot(self, operation_id):
             self.calls.append(operation_id)
+            if len(self.calls) == 1:
+                return self.snapshot
             reader_entered.set()
             if not release_reader.wait(timeout=5):
                 raise TimeoutError("test snapshot reader release timed out")
@@ -1031,7 +1039,7 @@ def test_concurrent_consumption_of_one_grant_succeeds_exactly_once(tmp_path):
     assert [event.action for event in events].count(
         "reconciliation_approval_consumed"
     ) == 1
-    assert reader.calls == ["replace-001"]
+    assert reader.calls == ["replace-001", "replace-001"]
 
 
 def test_authority_has_no_deployment_mutation_surface(tmp_path):
