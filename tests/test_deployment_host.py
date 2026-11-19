@@ -360,3 +360,75 @@ def test_host_rejects_invalid_pinned_docker_daemon_id_without_docker_io(
 
     assert runner.calls == []
 
+def _seed_needs_reconciliation(path):
+    history = _seed_pending_replacement(path)
+    prepared = history.get_replacement("startup-operation-001")
+    history.update_replacement(
+        ReplacementJournalRecord(
+            operation_id=prepared.operation_id,
+            provider=prepared.provider,
+            project=prepared.project,
+            environment=prepared.environment,
+            target_deployment_id=prepared.target_deployment_id,
+            previous_deployment_id=prepared.previous_deployment_id,
+            phase="needs_reconciliation",
+            created_at=prepared.created_at,
+            updated_at="2026-11-19T09:30:00Z",
+            candidate_runtime_id="b" * 64,
+            previous_runtime_id=prepared.previous_runtime_id,
+            detail="test reconciliation state",
+        ),
+        expected_phase="prepared",
+    )
+    return history
+
+
+def test_host_builds_read_only_snapshot_reader_and_stops_on_unsupported_operation(
+    tmp_path, monkeypatch
+):
+    from runtime.deployment_reconciliation_snapshot_reader import (
+        ReconciliationSnapshotReadError,
+    )
+
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_needs_reconciliation(path)
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=runner),
+    )
+    monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "a" * 64)
+
+    reader = host.build_reconciliation_snapshot_reader("startup-operation-001")
+
+    with pytest.raises(
+        ReconciliationSnapshotReadError,
+        match="trusted provider/runtime/route evidence collection failed",
+    ):
+        reader.read_current_snapshot(
+            "startup-operation-001",
+            "abort_candidate",
+        )
+
+    # LocalDockerProvider's operation inspector returns unsupported without
+    # contacting Docker, and the collector must stop before runtime/route reads.
+    assert runner.calls == []
+
+
+def test_host_snapshot_reader_requires_operator_pinned_daemon_identity(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_needs_reconciliation(path)
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=runner),
+    )
+    monkeypatch.delenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", raising=False)
+
+    with pytest.raises(RuntimeError, match="must be provisioned"):
+        host.build_reconciliation_snapshot_reader("startup-operation-001")
+
+    assert runner.calls == []
+
