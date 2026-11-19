@@ -868,6 +868,7 @@ def test_stale_evidence_is_rejected_before_requester_authentication(tmp_path):
     stale_proposal = replace(
         proposal,
         evidence=(stale_evidence, *proposal.evidence[1:]),
+        snapshot_receipt=None,
     )
     authority = _authority(
         tmp_path,
