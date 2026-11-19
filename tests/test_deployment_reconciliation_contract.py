@@ -10,6 +10,7 @@ from runtime.deployment_reconciliation_contract import (
     ReconciliationEvidence,
     ReconciliationProposal,
     ReconciliationSnapshotReadReceipt,
+    reconciliation_evidence_digest,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
 
@@ -254,3 +255,27 @@ def test_evidence_requires_sha256_and_timezone_aware_observation():
         evidence("candidate_health", 1, digest_sha256="not-a-digest")
     with pytest.raises(ValueError, match="timezone-aware"):
         evidence("candidate_health", 1, observed_at="2026-11-15T10:00:00")
+
+def test_evidence_digest_is_stable_across_fresh_reads_but_binds_semantic_changes():
+    valid = proposal()
+    refreshed = tuple(
+        replace(
+            item,
+            evidence_id=f"fresh-{index}",
+            observed_at="2026-11-15T10:00:30Z",
+        )
+        for index, item in enumerate(valid.evidence)
+    )
+
+    assert reconciliation_evidence_digest(valid.evidence) == reconciliation_evidence_digest(
+        refreshed
+    )
+
+    changed = (
+        replace(refreshed[0], digest_sha256="f" * 64),
+        *refreshed[1:],
+    )
+    assert reconciliation_evidence_digest(valid.evidence) != reconciliation_evidence_digest(
+        changed
+    )
+
