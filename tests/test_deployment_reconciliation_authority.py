@@ -672,24 +672,26 @@ def test_snapshot_provenance_change_after_approval_is_rejected(
     ]
 
 
-def test_stale_snapshot_receipt_is_rejected_before_authentication(tmp_path):
+def test_snapshot_receipt_must_cover_all_evidence_observation_times(tmp_path):
     proposal = _proposal()
-    receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
-        reader_id="test-snapshot-reader",
-        snapshot_id="stale-proposal-snapshot",
-        record=proposal.record,
-        evidence=proposal.evidence,
-        journal_revision=f"revision:{proposal.record.updated_at}",
-        read_started_at="2026-11-18T09:40:00Z",
-        read_completed_at="2026-11-18T09:40:05Z",
+    reader = _SnapshotReader(
+        _current_snapshot(
+            proposal.record,
+            proposal.evidence,
+            read_started_at="2026-11-18T09:40:00Z",
+            read_completed_at="2026-11-18T09:40:05Z",
+        )
     )
-    proposal = replace(proposal, snapshot_receipt=receipt)
     authority = _authority(
         tmp_path,
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
     )
 
-    with pytest.raises(ReconciliationAuthorizationError, match="snapshot read receipt is stale"):
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="completed before an evidence observation",
+    ):
         authority.authorize_proposal(
             proposal,
             requester_response="requester-proof",
@@ -700,19 +702,18 @@ def test_stale_snapshot_receipt_is_rejected_before_authentication(tmp_path):
 
 def test_snapshot_read_duration_must_fit_consistency_window(tmp_path):
     proposal = _proposal()
-    receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
-        reader_id="test-snapshot-reader",
-        snapshot_id="slow-proposal-snapshot",
-        record=proposal.record,
-        evidence=proposal.evidence,
-        journal_revision=f"revision:{proposal.record.updated_at}",
-        read_started_at="2026-11-18T09:58:00Z",
-        read_completed_at="2026-11-18T09:59:30Z",
+    reader = _SnapshotReader(
+        _current_snapshot(
+            proposal.record,
+            proposal.evidence,
+            read_started_at="2026-11-18T09:58:00Z",
+            read_completed_at="2026-11-18T09:59:30Z",
+        )
     )
-    proposal = replace(proposal, snapshot_receipt=receipt)
     authority = _authority(
         tmp_path,
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
     )
 
     with pytest.raises(ReconciliationAuthorizationError, match="consistency window"):
