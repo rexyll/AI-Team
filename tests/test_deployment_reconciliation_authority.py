@@ -534,21 +534,30 @@ def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
     assert reader.calls == ["replace-001", "replace-001"]
 
 
-def test_proposal_without_snapshot_receipt_is_rejected_before_authentication(tmp_path):
-    proposal = replace(_proposal(), snapshot_receipt=None)
+def test_authority_replaces_caller_snapshot_receipt_with_trusted_reader_receipt(tmp_path):
+    proposal = _proposal()
+    caller_receipt = ReconciliationSnapshotReadReceipt.for_snapshot(
+        reader_id="caller-supplied-reader",
+        snapshot_id="caller-snapshot",
+        record=proposal.record,
+        evidence=proposal.evidence,
+        journal_revision=f"revision:{proposal.record.updated_at}",
+        read_started_at="2026-11-18T09:59:40Z",
+        read_completed_at="2026-11-18T09:59:45Z",
+    )
+    proposal = replace(proposal, snapshot_receipt=caller_receipt)
     authority = _authority(
         tmp_path,
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
     )
 
-    with pytest.raises(ReconciliationAuthorizationError, match="provenance receipt"):
-        authority.authorize_proposal(
-            proposal,
-            requester_response="requester-proof",
-            approver_response="approver-proof",
-        )
-    assert authority._authenticator.challenges == []
-    assert not authority._audit.events(operation_id=proposal.record.operation_id)
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    assert grant.proposal.snapshot_receipt is not None
+    assert grant.proposal.snapshot_receipt.reader_id == "test-snapshot-reader"
 
 
 def test_untrusted_snapshot_reader_is_rejected_before_authentication(tmp_path):
@@ -596,9 +605,13 @@ def test_untrusted_evidence_source_is_rejected_before_authentication(tmp_path):
         evidence=changed_evidence,
         snapshot_receipt=receipt,
     )
+    reader = _SnapshotReader(
+        _current_snapshot(proposal.record, changed_evidence)
+    )
     authority = _authority(
         tmp_path,
         {"requester-proof": _principal("alice"), "approver-proof": _principal("bob")},
+        snapshot_reader=reader,
     )
 
     with pytest.raises(ReconciliationAuthorizationError, match="untrusted source"):
