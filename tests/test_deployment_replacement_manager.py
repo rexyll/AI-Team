@@ -657,3 +657,63 @@ def test_replacement_persists_host_provider_call_receipts_before_and_after_each_
     assert all(item.response_digest_sha256 for item in receipts)
     assert all(item.request_digest_sha256 for item in receipts)
     assert history.get_replacement("operation-001").phase == "previous_retired"
+
+
+
+def test_provider_call_exception_is_persisted_as_indeterminate(tmp_path):
+    receipt_store = DurableProviderOperationReceiptStore(
+        tmp_path / "provider-operation-receipts.sqlite3"
+    )
+    provider = FakeReplacementProvider()
+
+    def ambiguous_start(request, target, operation_id):
+        provider.calls.append(("start_raises", target.deployment_id, operation_id))
+        raise TimeoutError("provider call outcome cannot be established")
+
+    provider.start_candidate = ambiguous_start
+    history, provider, manager, previous, target = _setup(
+        tmp_path, provider=provider, operation_receipt_store=receipt_store
+    )
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    receipts = receipt_store.list_operation_receipts(
+        provider="test-provider",
+        project="demo",
+        environment="staging",
+        operation_id="operation-001",
+    )
+    by_name = {item.operation_name: item for item in receipts}
+    assert by_name["prepare_candidate"].state == "returned"
+    assert by_name["start_candidate"].state == "indeterminate"
+    assert by_name["start_candidate"].failure_kind == "TimeoutError"
+    assert by_name["start_candidate"].provider_result_status is None
+    assert "switch_traffic" not in by_name
+    assert history.get_replacement("operation-001").phase == "needs_reconciliation"
+
+
+def test_abort_path_also_records_provider_call_receipt(tmp_path):
+    receipt_store = DurableProviderOperationReceiptStore(
+        tmp_path / "provider-operation-receipts.sqlite3"
+    )
+    provider = FakeReplacementProvider(candidate_health="unhealthy")
+    history, provider, manager, previous, target = _setup(
+        tmp_path, provider=provider, operation_receipt_store=receipt_store
+    )
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "failed"
+    receipts = receipt_store.list_operation_receipts(
+        provider="test-provider",
+        project="demo",
+        environment="staging",
+        operation_id="operation-001",
+    )
+    by_name = {item.operation_name: item for item in receipts}
+    assert by_name["prepare_candidate"].state == "returned"
+    assert by_name["start_candidate"].state == "returned"
+    assert by_name["abort_candidate"].state == "returned"
+    assert by_name["abort_candidate"].provider_result_status == "succeeded"
+    assert history.get_replacement("operation-001").phase == "aborted"
