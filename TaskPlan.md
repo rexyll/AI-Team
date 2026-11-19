@@ -737,7 +737,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Added stale/future timestamp checks, exact operation/runtime/route scope checks, complete-evidence-set checks, digest-only evidence IDs, and read-only behavior. Tests cover both positive policy paths with fake inspectors plus unsupported operation inspection, wrong source/scope, malformed states, stale/future data, unavailable candidate, unhealthy candidate/previous, route mismatch and retirement semantics.
 - Corrected repeated-read approval binding: canonical evidence digest excludes generated evidence IDs and volatile observation timestamps but includes semantic evidence kind/source/response digest/runtime claims. The authority substitutes fresh trusted-reader evidence for proposal-time evidence before authentication and rechecks semantic evidence, provenance and freshness at consumption.
 - Tests cover evidence digest stability across refreshed timestamps, fresh evidence replacement, stale caller evidence refresh, and approval consumption after unchanged semantic evidence is reread.
-- Current limitation: T21.6.3.5.20 exposes the pinned runtime/route authenticator through `DeploymentHostRuntime.build_reconciliation_source_authenticator()` using the required operator-provisioned `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID`. The Host runtime still does not automatically build a collector or approval authority; Local Docker's provider operation inspector remains explicitly `unsupported`. Positive collector-policy tests use injected fakes, and daemon-identity tests use an injected Docker runner. Production reconciliation approvals remain disabled for Local Docker.
+- Current limitation: T21.6.3.5.20 exposes the pinned runtime/route authenticator through `DeploymentHostRuntime.build_reconciliation_source_authenticator()` using `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID`; T21.6.3.5.21 composes it into a Host read-only snapshot reader. That reader is deliberately fail-closed at Local Docker's `unsupported` provider-operation inspection gate and is not an approval authority. Positive collector-policy tests use injected fakes, and daemon-identity tests use an injected Docker runner. Production reconciliation approvals remain disabled for Local Docker.
 - No live deployment/provider mutation, runtime stop, traffic switch, journal phase change, active-pointer update or reconciliation approval was performed.
 
 
@@ -760,4 +760,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Added Host tests covering missing/invalid daemon pin and proving authenticator construction itself performs no Docker commands.
 - Updated the evidence collector design. This is configuration plumbing only: `DeploymentHostRuntime` still does not automatically construct a collector/authority, Local Docker operation inspection remains `unsupported`, and no production reconciliation approval can be issued for Local Docker.
 - No live deployment/provider mutation, runtime stop, traffic switch, journal phase change, active-pointer update or reconciliation approval was performed.
+
+
+
+### T21.6.3.5.21 — Host-composed Local Docker reconciliation snapshot reader
+
+- Added `DeploymentHostRuntime.build_reconciliation_snapshot_reader(operation_id)`. It opens Host history read-only, binds the requested replacement scope, composes the Local Docker operation/runtime inspectors, the operator-pinned daemon source authenticator, a read-only Router route adapter, the decision-specific evidence collector and `DeploymentHistoryReconciliationSnapshotReader`.
+- Existing Router registry/state is only read. If the durable Router registry or Host state record is missing, the composition uses an explicit route `not_found` inspector; it never creates/adopts a Router, network, container or HAProxy map.
+- The Local Docker provider-operation inspector is invoked first and returns `unsupported`; therefore the collector fails closed before Docker runtime/Router probes. Added tests that verify this path does not issue Docker commands, and that missing `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID` blocks reader construction.
+- Updated the design document. This is a diagnostic, read-only composition path only; it is not an approval authority and cannot emit positive Local Docker reconciliation evidence while provider operation inspection remains unsupported.
+- No live deployment/provider mutation, runtime stop, traffic switch, Router/HAProxy selector change, journal phase change, active-pointer update or reconciliation approval was performed.
 
