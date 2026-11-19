@@ -611,7 +611,10 @@ def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_pa
     journal = _replacement_journal(previous, target)
     history.begin_replacement(journal)
 
-    manager = HostDeploymentReplacementManager(provider, history)
+    # This is a read-only recovery inventory assertion. A read-only
+    # manager must not initialize the writable provider-call receipt sidecar.
+    read_only_history = DeploymentHistoryStore(history.path, read_only=True)
+    manager = HostDeploymentReplacementManager(provider, read_only_history)
     original_connect = sqlite3.connect
     connections = []
 
