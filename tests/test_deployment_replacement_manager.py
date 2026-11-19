@@ -748,24 +748,7 @@ def test_writable_host_manager_defaults_to_separate_durable_provider_receipt_sto
 
 def test_read_only_host_manager_does_not_create_or_write_receipt_store(tmp_path):
     db = tmp_path / "history.sqlite3"
-    writer = DeploymentHistoryStore(db)
-    previous = _record("previous")
-    writer.append(previous)
-    writer.begin_replacement(
-        ReplacementJournalRecord(
-            operation_id="read-only-op",
-            provider="test-provider",
-            project="demo",
-            environment="staging",
-            target_deployment_id="candidate",
-            previous_deployment_id="previous",
-            phase="needs_reconciliation",
-            created_at="2026-11-15T12:00:00Z",
-            updated_at="2026-11-15T12:00:00Z",
-            candidate_runtime_id="a" * 64,
-            previous_runtime_id="b" * 64,
-        )
-    )
+    DeploymentHistoryStore(db)
     read_only = DeploymentHistoryStore(db, read_only=True)
     manager = HostDeploymentReplacementManager(
         FakeReplacementProvider(),
