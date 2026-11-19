@@ -318,3 +318,45 @@ def test_manual_reconciliation_readback_inspects_journal_id_without_deployment_r
     assert runner.ids == ["a" * 64, "b" * 64]
     assert report["readbacks"][0]["automatic_action"] == "none"
     assert report["automatic_recovery_allowed"] is False
+
+def test_host_builds_pinned_source_authenticator_only_from_operator_configuration(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(path, provider=LocalDockerProvider(runner=runner))
+
+    monkeypatch.delenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", raising=False)
+    with pytest.raises(RuntimeError, match="must be provisioned"):
+        host.build_reconciliation_source_authenticator()
+    assert runner.calls == []
+
+    daemon_id = "a" * 64
+    monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", daemon_id)
+    authenticator = host.build_reconciliation_source_authenticator()
+
+    assert authenticator.expected_daemon_id == daemon_id
+    assert authenticator.source_ids == {
+        "runtime": "docker-local-daemon-runtime",
+        "route": "docker-local-daemon-router",
+    }
+    # Building the Host adapter only validates configuration; first source
+    # authentication performs the read-only Docker daemon identity query.
+    assert runner.calls == []
+
+
+def test_host_rejects_invalid_pinned_docker_daemon_id_without_docker_io(
+    tmp_path, monkeypatch
+):
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(
+        tmp_path / "deployments.sqlite3",
+        provider=LocalDockerProvider(runner=runner),
+    )
+    monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "mutable-docker-context")
+
+    with pytest.raises(ValueError, match="full lowercase Docker daemon ID"):
+        host.build_reconciliation_source_authenticator()
+
+    assert runner.calls == []
+
