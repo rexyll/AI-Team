@@ -841,6 +841,11 @@ def test_approval_is_bound_to_exact_journal_and_evidence_snapshot(tmp_path):
     with pytest.raises(ReconciliationAuthorizationError, match="unknown"):
         authority.consume(grant)
 
+    # The next approval must start from a newly observed current journal
+    # snapshot; the first failure intentionally left the test reader stale.
+    authority._snapshot_reader.snapshot = _current_snapshot(
+        proposal.record, proposal.evidence
+    )
     grant2 = authority.authorize_proposal(
         proposal,
         requester_response="requester-proof",
