@@ -132,7 +132,7 @@ def test_unavailable_or_malformed_daemon_identity_fails_closed(result):
 
 
 def test_docker_runner_exception_fails_closed_without_leaking_error_text():
-    authenticator, runner = _authenticator(TimeoutError("secret host details"))
+    authenticator, runner = _authenticator(RuntimeError("secret host details"))
 
     with pytest.raises(ReconciliationEvidenceCollectionError, match="raised an exception"):
         authenticator.authenticate_source(**_kwargs())
