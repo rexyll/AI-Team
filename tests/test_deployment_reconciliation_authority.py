@@ -585,14 +585,27 @@ def test_trusted_snapshot_read_failure_prevents_any_approval_challenge(tmp_path)
     assert not authority._audit.events(operation_id=proposal.record.operation_id)
 
 
-def test_proposed_evidence_must_match_trusted_current_snapshot(tmp_path):
+def test_authority_replaces_caller_evidence_with_fresh_trusted_snapshot(tmp_path):
     proposal = _proposal()
     changed_evidence = (
-        replace(proposal.evidence[0], digest_sha256="f" * 64),
-        *proposal.evidence[1:],
+        replace(
+            proposal.evidence[0],
+            evidence_id="fresh-provider-operation",
+            digest_sha256="f" * 64,
+            observed_at="2026-11-18T09:59:55Z",
+        ),
+        *(
+            replace(item, observed_at="2026-11-18T09:59:55Z")
+            for item in proposal.evidence[1:]
+        ),
     )
     reader = _SnapshotReader(
-        _current_snapshot(proposal.record, changed_evidence)
+        _current_snapshot(
+            proposal.record,
+            changed_evidence,
+            read_started_at="2026-11-18T09:59:50Z",
+            read_completed_at="2026-11-18T09:59:56Z",
+        )
     )
     authority = _authority(
         tmp_path,
@@ -600,17 +613,17 @@ def test_proposed_evidence_must_match_trusted_current_snapshot(tmp_path):
         snapshot_reader=reader,
     )
 
-    with pytest.raises(
-        ReconciliationAuthorizationError,
-        match="proposal evidence does not match the trusted current snapshot",
-    ):
-        authority.authorize_proposal(
-            proposal,
-            requester_response="requester-proof",
-            approver_response="approver-proof",
-        )
-    assert authority._authenticator.challenges == []
-    assert not authority._audit.events(operation_id=proposal.record.operation_id)
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    assert grant.proposal.evidence == changed_evidence
+    assert grant.proposal.snapshot_receipt.evidence_digest == (
+        reader.snapshot.receipt.evidence_digest
+    )
+    assert authority._authenticator.challenges[0].scope_digest == grant.proposal_digest
 
 
 def test_untrusted_snapshot_reader_is_rejected_before_authentication(tmp_path):
