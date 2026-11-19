@@ -9,6 +9,7 @@ from runtime.deployment_reconciliation_contract import (
     ReconciliationApproval,
     ReconciliationEvidence,
     ReconciliationProposal,
+    ReconciliationSnapshotReadReceipt,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
 
@@ -101,11 +102,93 @@ def proposal(operation="abort_candidate", **overrides):
     return ReconciliationProposal(**values)
 
 
+
+def snapshot_receipt(record, evidence, **overrides):
+    values = dict(
+        reader_id="host-journal-reader-v1",
+        snapshot_id="snapshot-001",
+        record=record,
+        evidence=evidence,
+        journal_revision="journal-revision-001",
+        read_started_at="2026-11-15T10:01:30Z",
+        read_completed_at="2026-11-15T10:01:35Z",
+    )
+    values.update(overrides)
+    return ReconciliationSnapshotReadReceipt.for_snapshot(**values)
+
+
 def test_principal_requires_identity_and_timezone_aware_authentication_time():
     with pytest.raises(ValueError, match="subject"):
         principal(" ")
     with pytest.raises(ValueError, match="timezone-aware"):
         AuthenticatedPrincipal("operator:a", "issuer", "webauthn", "2026-11-15T10:00:00")
+
+
+
+def test_snapshot_receipt_binds_operation_journal_evidence_and_sources():
+    valid = proposal()
+    receipt = snapshot_receipt(valid.record, valid.evidence)
+    bound = replace(valid, snapshot_receipt=receipt)
+
+    receipt.verify_snapshot(bound.record, bound.evidence)
+    assert receipt.operation_id == valid.record.operation_id
+    assert receipt.evidence_sources == ("haproxy-runtime-api", "provider-observation")
+    assert receipt.approval_binding_digest()
+
+    changed_record = replace(valid.record, updated_at="2026-11-15T09:11:00Z")
+    with pytest.raises(ValueError, match="journal digest"):
+        receipt.verify_snapshot(changed_record, valid.evidence)
+
+    changed_evidence = (
+        replace(valid.evidence[0], digest_sha256="f" * 64),
+        *valid.evidence[1:],
+    )
+    with pytest.raises(ValueError, match="evidence digest"):
+        receipt.verify_snapshot(valid.record, changed_evidence)
+
+
+def test_snapshot_receipt_uses_journal_revision_fence():
+    valid = proposal()
+    receipt = snapshot_receipt(valid.record, valid.evidence)
+    with pytest.raises(ValueError, match="journal revision changed"):
+        replace(receipt, journal_revision_after="journal-revision-002")
+
+
+def test_snapshot_approval_binding_is_stable_across_fresh_reads_but_not_revisions():
+    valid = proposal()
+    first = snapshot_receipt(
+        valid.record,
+        valid.evidence,
+        snapshot_id="snapshot-first",
+        read_started_at="2026-11-15T10:01:30Z",
+        read_completed_at="2026-11-15T10:01:35Z",
+    )
+    reread = snapshot_receipt(
+        valid.record,
+        valid.evidence,
+        snapshot_id="snapshot-second",
+        read_started_at="2026-11-15T10:02:00Z",
+        read_completed_at="2026-11-15T10:02:02Z",
+    )
+    different_revision = snapshot_receipt(
+        valid.record,
+        valid.evidence,
+        journal_revision="journal-revision-002",
+    )
+
+    assert first.approval_binding_digest() == reread.approval_binding_digest()
+    assert first.approval_binding_digest() != different_revision.approval_binding_digest()
+
+
+def test_proposal_rejects_snapshot_receipt_for_different_evidence():
+    valid = proposal()
+    receipt = snapshot_receipt(valid.record, valid.evidence)
+    changed_evidence = (
+        replace(valid.evidence[0], digest_sha256="e" * 64),
+        *valid.evidence[1:],
+    )
+    with pytest.raises(ValueError, match="snapshot receipt evidence digest"):
+        replace(valid, evidence=changed_evidence, snapshot_receipt=receipt)
 
 
 def test_approval_requires_distinct_requester_and_approver():
