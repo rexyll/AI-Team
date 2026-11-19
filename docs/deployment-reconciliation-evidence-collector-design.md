@@ -109,3 +109,9 @@ Production enablement requires all of:
 - Host-configured source identities and freshness limits.
 
 Until then, the existing reader remains a journal-fencing adapter around an injected collector, and the approval authority must remain unavailable to production callers. No IdP, KMS, distributed claim store or deployment mutation is selected by this design.
+
+## Local Docker operation-inspection capability
+
+`LocalDockerProvider.inspect_operation(...)` now implements the provider-operation inspector contract explicitly and returns `unsupported` for the requested scope/action without issuing Docker commands. This is intentional: Docker container inspection can establish current state for an exact immutable container ID, but the Local Docker integration does not own a durable provider operation resource keyed by the coordinator's application-level `operation_id` and action.
+
+The Host call-receipt sidecar is not consulted by this method. A `returned` Host receipt only establishes that the synchronous provider adapter method returned; it is not a Docker operation ID, an asynchronous operation terminal state, or proof that no delayed side effect remains. Consequently, Local Docker cannot currently satisfy the `provider_operation_inspection` evidence requirement for either reconciliation resolution, and the production collector remains unavailable for this provider. Tests assert the explicit `unsupported` response and verify that no Docker I/O occurs.
