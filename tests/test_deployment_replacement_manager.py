@@ -629,6 +629,9 @@ def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_pa
     assert len(inventory) == 1
     assert inventory[0].classification == "prepared_candidate_not_persisted"
     assert len(connections) == 1
+    assert not history.path.with_name(
+        f"{history.path.stem}.provider-operations.sqlite3"
+    ).exists()
     assert provider.calls == []
 
 
