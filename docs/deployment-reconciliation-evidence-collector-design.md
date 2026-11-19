@@ -9,7 +9,7 @@ This design is the next provider-integration step after the journal-fenced snaps
 
 The repository now implements `runtime/deployment_provider_operation_ledger.py` and wires it into `HostDeploymentReplacementManager`:
 
-- Writable managers create a deterministic sidecar database next to the deployment history file: `<history-stem>.provider-operations.sqlite3`. Read-only managers do not create or write this database.
+- Writable managers lazily create a deterministic sidecar database immediately before the first provider mutation: `<history-stem>.provider-operations.sqlite3`. Constructor, recovery-inventory and operator read-back paths remain read-only and do not create it; managers backed by read-only history never create or write this database.
 - `prepare_candidate`, `start_candidate`, `switch_traffic`, `retire_previous` and `abort_candidate` each write a durable `started` receipt before entering the provider method.
 - A structured `DeploymentOperationResult` is recorded as `returned`, together with its result status and a digest of a bounded, secret-free response projection. Exceptions and malformed returns become `indeterminate`; duplicate action calls are rejected rather than replayed.
 - This sidecar is independent of the replacement journal. A receipt proves only that the Host method call started or returned. It is not a provider-issued operation ID, a provider-side operation inspection, or evidence that an asynchronous external operation is terminal. A crash-left `started` receipt remains ambiguous; `indeterminate` is never promoted.
