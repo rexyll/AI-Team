@@ -281,6 +281,8 @@ class DurableProviderOperationReceiptStore:
             connection = sqlite3.connect(str(self.path), timeout=10.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 10000")
+        if not self.read_only:
+            connection.execute("PRAGMA synchronous = FULL")
         return connection
 
     def _initialize(self) -> None:
