@@ -737,7 +737,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Added stale/future timestamp checks, exact operation/runtime/route scope checks, complete-evidence-set checks, digest-only evidence IDs, and read-only behavior. Tests cover both positive policy paths with fake inspectors plus unsupported operation inspection, wrong source/scope, malformed states, stale/future data, unavailable candidate, unhealthy candidate/previous, route mismatch and retirement semantics.
 - Corrected repeated-read approval binding: canonical evidence digest excludes generated evidence IDs and volatile observation timestamps but includes semantic evidence kind/source/response digest/runtime claims. The authority substitutes fresh trusted-reader evidence for proposal-time evidence before authentication and rechecks semantic evidence, provenance and freshness at consumption.
 - Tests cover evidence digest stability across refreshed timestamps, fresh evidence replacement, stale caller evidence refresh, and approval consumption after unchanged semantic evidence is reread.
-- Current limitation: a pinned Local Docker runtime/route source authenticator is implemented in T21.6.3.5.19, but it is not yet wired/configured in `DeploymentHostRuntime`; Local Docker's provider operation inspector remains explicitly `unsupported`. Positive collector-policy tests use injected fakes, and daemon-identity tests use an injected Docker runner. Production reconciliation approvals remain disabled for Local Docker.
+- Current limitation: T21.6.3.5.20 exposes the pinned runtime/route authenticator through `DeploymentHostRuntime.build_reconciliation_source_authenticator()` using the required operator-provisioned `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID`. The Host runtime still does not automatically build a collector or approval authority; Local Docker's provider operation inspector remains explicitly `unsupported`. Positive collector-policy tests use injected fakes, and daemon-identity tests use an injected Docker runner. Production reconciliation approvals remain disabled for Local Docker.
 - No live deployment/provider mutation, runtime stop, traffic switch, journal phase change, active-pointer update or reconciliation approval was performed.
 
 
@@ -750,4 +750,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Added `tests/test_local_docker_reconciliation_source_authenticator.py` for runtime/route roles, pinned-ID mismatch, unavailable/malformed daemon identity, bad result type, wrong source/provider/scope and exception handling. The collector now also requires the source authentication timestamp to be at or after the observation timestamp.
 - Updated `docs/deployment-reconciliation-evidence-collector-design.md`. This adapter is not yet wired to `DeploymentHostRuntime`; a trusted Host configuration path for the expected daemon ID/source IDs remains required. Docker Unix socket permissions or configured TLS context remain part of the transport trust boundary; daemon-ID pinning is an additional identity check, not a replacement.
 - Tests use injected Docker runners and are not a real Docker Engine/TLS integration test. No live deployment/provider mutation, runtime stop, traffic switch, journal phase change, active-pointer update or reconciliation approval was performed.
+
+
+
+### T21.6.3.5.20 — Host configuration entry point for pinned Docker daemon identity
+
+- Added `DeploymentHostRuntime.build_reconciliation_source_authenticator()` as an explicit Host configuration entry point. It requires `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID`, validates the full immutable daemon ID through the source-authenticator constructor, and supplies fixed runtime/route source identifiers.
+- The method performs no Docker I/O; it does not bootstrap trust from the first daemon response. The source authenticator reads Docker Engine identity only when a runtime/route evidence source is actually authenticated.
+- Added Host tests covering missing/invalid daemon pin and proving authenticator construction itself performs no Docker commands.
+- Updated the evidence collector design. This is configuration plumbing only: `DeploymentHostRuntime` still does not automatically construct a collector/authority, Local Docker operation inspection remains `unsupported`, and no production reconciliation approval can be issued for Local Docker.
+- No live deployment/provider mutation, runtime stop, traffic switch, journal phase change, active-pointer update or reconciliation approval was performed.
 
