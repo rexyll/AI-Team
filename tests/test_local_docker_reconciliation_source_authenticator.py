@@ -120,6 +120,7 @@ def test_daemon_id_mismatch_is_rejected_even_when_docker_info_succeeds():
         DockerCommandResult(1, "", "daemon unavailable"),
         DockerCommandResult(0, "not-a-daemon-identity", ""),
         DockerCommandResult(0, "a" * 64 + "|host||/var/lib/docker", ""),
+        object(),
     ],
 )
 def test_unavailable_or_malformed_daemon_identity_fails_closed(result):
