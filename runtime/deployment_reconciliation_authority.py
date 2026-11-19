@@ -358,6 +358,14 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "snapshot read receipt is stale"
             )
+        for item in evidence:
+            observed_at = datetime.fromisoformat(
+                item.observed_at.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            if observed_at > completed:
+                raise ReconciliationAuthorizationError(
+                    "snapshot read receipt completed before an evidence observation"
+                )
         if completed - started > self._snapshot_read_max_duration:
             raise ReconciliationAuthorizationError(
                 "snapshot read exceeded the configured consistency window"
