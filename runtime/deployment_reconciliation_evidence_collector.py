@@ -260,6 +260,19 @@ class DecisionSpecificReconciliationEvidenceCollector:
                 f"{role} source authentication receipt does not match the exact response scope"
             )
         self._require_fresh(receipt.authenticated_at, f"{role} source authentication")
+        try:
+            observation_time = _parse_timestamp(observed_at, "evidence observation")
+            authentication_time = _parse_timestamp(
+                receipt.authenticated_at, "source authentication"
+            )
+        except ValueError as exc:
+            raise ReconciliationEvidenceCollectionError(
+                "source authentication/evidence timestamp is invalid"
+            ) from exc
+        if authentication_time < observation_time:
+            raise ReconciliationEvidenceCollectionError(
+                f"{role} source was authenticated before the response observation"
+            )
         return receipt
 
     def _make_evidence(
