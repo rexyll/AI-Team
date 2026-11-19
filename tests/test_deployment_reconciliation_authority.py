@@ -60,7 +60,7 @@ class _SnapshotReader:
         self.calls = []
         self.error = None
 
-    def read_current_snapshot(self, operation_id):
+    def read_current_snapshot(self, operation_id, operation):
         self.calls.append(operation_id)
         if self.error is not None:
             raise self.error
@@ -483,7 +483,7 @@ def test_durable_claim_fences_a_second_authority_during_snapshot_read(tmp_path):
     release_reader = Event()
 
     class _BlockingSnapshotReader(_SnapshotReader):
-        def read_current_snapshot(self, operation_id):
+        def read_current_snapshot(self, operation_id, operation):
             self.calls.append(operation_id)
             if len(self.calls) == 1:
                 return self.snapshot
@@ -947,7 +947,7 @@ def test_evidence_ages_out_during_current_snapshot_read(tmp_path):
     proposal = _proposal()
 
     class _AgingSnapshotReader(_SnapshotReader):
-        def read_current_snapshot(self, operation_id):
+        def read_current_snapshot(self, operation_id, operation):
             snapshot = super().read_current_snapshot(operation_id)
             if len(self.calls) > 1:
                 clock.value += timedelta(seconds=301)
@@ -988,7 +988,7 @@ def test_approval_expires_while_current_snapshot_is_read(tmp_path):
     proposal = _proposal()
 
     class _SlowSnapshotReader(_SnapshotReader):
-        def read_current_snapshot(self, operation_id):
+        def read_current_snapshot(self, operation_id, operation):
             snapshot = super().read_current_snapshot(operation_id)
             if len(self.calls) > 1:
                 clock.value += timedelta(seconds=30)
@@ -1075,7 +1075,7 @@ def test_concurrent_consumption_of_one_grant_succeeds_exactly_once(tmp_path):
     release_reader = Event()
 
     class _BlockingSnapshotReader(_SnapshotReader):
-        def read_current_snapshot(self, operation_id):
+        def read_current_snapshot(self, operation_id, operation):
             self.calls.append(operation_id)
             if len(self.calls) == 1:
                 return self.snapshot
