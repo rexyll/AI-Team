@@ -140,7 +140,6 @@ class ReconciliationCurrentSnapshot:
             )
         if not isinstance(self.receipt, ReconciliationSnapshotReadReceipt):
             raise TypeError("snapshot receipt must be a ReconciliationSnapshotReadReceipt")
-        self.receipt.verify_snapshot(self.record, self.evidence)
 
 
 class ReconciliationSnapshotReader(Protocol):
