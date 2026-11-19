@@ -549,11 +549,9 @@ class ReconciliationApprovalAuthority:
         """
         if not isinstance(proposal, ReconciliationProposal):
             raise TypeError("proposal must be a ReconciliationProposal")
-        proposal_now = self._now()
-        self._validate_evidence_freshness(
-            proposal.evidence,
-            now=proposal_now,
-        )
+        # Caller evidence is proposal-time context only. Freshness is checked
+        # against the trusted reader's current evidence below, not against
+        # potentially stale caller-supplied observations.
         record = proposal.record
         if record.phase != "needs_reconciliation":
             raise ReconciliationAuthorizationError(
