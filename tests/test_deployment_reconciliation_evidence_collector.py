@@ -586,3 +586,19 @@ def test_malformed_inspector_payloads_fail_closed():
     )
     with pytest.raises(ReconciliationEvidenceCollectionError, match="invalid response"):
         collector.collect_current_evidence(record, "abort_candidate")
+
+def test_source_authentication_must_postdate_the_observation_it_authenticates():
+    record = _record()
+    auth = _SourceAuthenticator()
+    auth.authenticated_at = "2026-11-19T09:59:54Z"
+    collector, runtime, route, _ = _collector(record, authenticator=auth)
+
+    with pytest.raises(
+        ReconciliationEvidenceCollectionError,
+        match="authenticated before the response observation",
+    ):
+        collector.collect_current_evidence(record, "abort_candidate")
+
+    assert runtime.calls == []
+    assert route.calls == []
+
