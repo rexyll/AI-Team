@@ -115,3 +115,26 @@ Until then, the existing reader remains a journal-fencing adapter around an inje
 `LocalDockerProvider.inspect_operation(...)` now implements the provider-operation inspector contract explicitly and returns `unsupported` for the requested scope/action without issuing Docker commands. This is intentional: Docker container inspection can establish current state for an exact immutable container ID, but the Local Docker integration does not own a durable provider operation resource keyed by the coordinator's application-level `operation_id` and action.
 
 The Host call-receipt sidecar is not consulted by this method. A `returned` Host receipt only establishes that the synchronous provider adapter method returned; it is not a Docker operation ID, an asynchronous operation terminal state, or proof that no delayed side effect remains. Consequently, Local Docker cannot currently satisfy the `provider_operation_inspection` evidence requirement for either reconciliation resolution, and the production collector remains unavailable for this provider. Tests assert the explicit `unsupported` response and verify that no Docker I/O occurs.
+
+## Implementation update: decision-specific evidence collector
+
+The repository now contains `runtime/deployment_reconciliation_evidence_collector.py` with `DecisionSpecificReconciliationEvidenceCollector`. It is a read-only policy adapter over three separately injected capabilities: provider operation inspection, immutable runtime inspection, and Router/HAProxy route read-back.
+
+- The provider operation check runs first and must match the exact provider/project/environment/operation ID and the configured operation source. `abort_candidate` accepts only a terminal `succeeded` or `failed` result; `confirm_previous_retired` requires terminal `succeeded`. `in_progress`, `unknown`, `not_found`, `unavailable`, and `unsupported` all fail closed before runtime or route reads.
+- `abort_candidate` requires the exact candidate immutable ID to return `not_found`, the exact previous ID to be verified running+healthy, and the verified live route to resolve to the previous ID.
+- `confirm_previous_retired` requires the verified route and candidate to resolve to the exact candidate ID, the candidate to be running+healthy, and the exact previous runtime to remain identity-verifiable in `exited`/`dead` state. An unqualified `not_found` does not count as retirement evidence.
+- Every response is normalized and hashed; a Host-injected `ReconciliationEvidenceSourceAuthenticator` must authenticate the source endpoint identity and bind the exact response digest, role, and provider/project/environment scope. A source ID string by itself is not authentication.
+- The collector emits only the exact four evidence kinds for the selected resolution. It performs no deployment, selector, journal, active-pointer, or reservation mutation.
+
+The collector tests include positive paths using injected test inspectors, wrong-scope/source rejection, stale/future observations, candidate absence vs unavailable, unhealthy runtime, route mismatch, previous-runtime retirement semantics, and explicit Local Docker `unsupported`. These are policy/unit tests, not a real-Docker proof of the source-authentication adapters.
+
+## Approval binding and repeated reads
+
+The authority previously compared the complete evidence object including generated evidence IDs and read timestamps. That made a real reader's second observation differ even when the normalized source response was unchanged. The canonical evidence digest now binds semantic content — evidence kind, source ID, normalized response digest, and immutable runtime claim — while generated IDs and observation timestamps remain independently validated. Observation freshness and the snapshot read window are still checked on every approval and consumption read.
+
+At approval time the authority replaces caller-supplied evidence with the current trusted reader evidence before computing the challenge/audit binding. At consumption it compares the fresh semantic evidence digest and provenance binding, then rechecks freshness and source trust. This permits unchanged state to survive a timestamp refresh; any change to the response digest, source identity, runtime claim, reader identity, or journal revision still fails closed.
+
+### Current enablement status
+
+This is an implemented generic collector contract, not production Local Docker enablement. `LocalDockerProvider.inspect_operation()` deliberately returns `unsupported`, so the collector stops before Docker runtime and Router reads for that provider. A concrete Host source authenticator and a provider with a real operation-status resource remain necessary before positive production evidence can be issued. The existing production approval authority must remain disabled for Local Docker until those gates are met.
+
