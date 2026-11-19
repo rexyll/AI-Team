@@ -19,7 +19,7 @@ from runtime.deployment_reconciliation_evidence_collector import (
     ReconciliationEvidenceCollectionError,
     ReconciliationEvidenceSourceAuthentication,
 )
-from runtime.local_docker_provider import LocalDockerProvider
+from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 
 _DAEMON_ID = re.compile(r"^[0-9a-f]{64}$")
 _INFO_FORMAT = "{{.ID}}|{{.Name}}|{{.ServerVersion}}|{{.DockerRootDir}}"
@@ -78,6 +78,14 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
         if error is not None or result is None:
             raise ReconciliationEvidenceCollectionError(
                 "Docker daemon identity is unavailable"
+            )
+        if not isinstance(result, DockerCommandResult):
+            raise ReconciliationEvidenceCollectionError(
+                "Docker daemon identity command returned an invalid result type"
+            )
+        if not isinstance(result.stdout, str) or not isinstance(result.stderr, str):
+            raise ReconciliationEvidenceCollectionError(
+                "Docker daemon identity command returned invalid output fields"
             )
         if result.returncode != 0:
             raise ReconciliationEvidenceCollectionError(
