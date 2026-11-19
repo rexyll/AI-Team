@@ -138,3 +138,15 @@ At approval time the authority replaces caller-supplied evidence with the curren
 
 This is an implemented generic collector contract, not production Local Docker enablement. `LocalDockerProvider.inspect_operation()` deliberately returns `unsupported`, so the collector stops before Docker runtime and Router reads for that provider. A concrete Host source authenticator and a provider with a real operation-status resource remain necessary before positive production evidence can be issued. The existing production approval authority must remain disabled for Local Docker until those gates are met.
 
+## Local Docker runtime/route source authenticator
+
+The repository now includes `runtime/local_docker_reconciliation_source_authenticator.py` with `LocalDockerReconciliationEvidenceSourceAuthenticator`.
+
+- The Host must pin a full Docker daemon ID in trusted configuration. The authenticator never learns its expected ID from the response being checked.
+- Each runtime/route source authentication performs a bounded, fixed-argv, read-only `docker info --format` query through the existing `LocalDockerProvider` command runner. It validates the returned daemon ID, daemon name, server version and Docker root directory; a daemon ID mismatch, malformed result, unavailable CLI/daemon or wrong source ID fails closed.
+- The endpoint identity digest binds the pinned daemon ID and the returned daemon metadata. The returned source receipt also binds the exact normalized response digest and provider/project/environment scope supplied by the evidence collector.
+- This adapter does not authenticate `provider_operation`; that role is explicitly unsupported for Local Docker. It also does not replace the Host's transport security requirements: access to the Docker Unix socket must be protected by Host OS permissions, or a configured Docker TLS context must authenticate the remote endpoint. The pinned daemon ID is an additional identity check, not a substitute for TLS or local socket ACLs.
+- Tests exercise runtime/route role binding, pinned-daemon mismatch, malformed/unavailable Docker info, invalid response types, wrong source/scope, and the exception path without exposing raw daemon errors.
+
+The adapter is not yet wired into `DeploymentHostRuntime` or a production collector factory. An operator-provisioned pinned daemon ID and source IDs still need a Host configuration path; this change does not silently trust the first daemon it sees. Unit tests use an injected Docker runner and do not constitute a real Docker daemon/TLS integration test. Local Docker still returns `unsupported` for provider operation inspection, so this authenticator alone cannot enable either reconciliation decision.
+
