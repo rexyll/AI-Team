@@ -35,6 +35,8 @@ For an OIDC adapter, the implementation must additionally define discovery/JWKS 
 
 ## 3. ReconciliationSnapshotReader requirements
 
+The repository now includes `DeploymentHistoryReconciliationSnapshotReader`. It reads the exact replacement journal using `DeploymentHistoryStore.get_replacement()`, asks an injected `ReconciliationEvidenceCollector` for operation-specific observations, then rereads the same journal. It returns a receipt only when both complete journal records and their canonical digests match. It is a concrete journal-fencing adapter, not a provider evidence implementation: production must inject a collector that talks to the real authenticated provider/runtime/route APIs. The interface includes the requested resolution operation so the collector can produce the correct evidence set.
+
 The current-snapshot reader must obtain the journal and all required observations from trusted live sources. It must not accept a snapshot supplied by the caller, use stale caches, infer runtime identity from mutable names, or convert an unavailable/unknown read into positive evidence.
 
 The provider-neutral consistency strategy is a journal-revision fence:
