@@ -611,6 +611,7 @@ def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_pa
     journal = _replacement_journal(previous, target)
     history.begin_replacement(journal)
 
+    manager = HostDeploymentReplacementManager(provider, history)
     original_connect = sqlite3.connect
     connections = []
 
@@ -620,7 +621,7 @@ def test_recovery_inventory_reads_all_host_state_in_one_sqlite_connection(tmp_pa
         return connection
 
     monkeypatch.setattr("runtime.deployment_history.sqlite3.connect", tracked_connect)
-    inventory = HostDeploymentReplacementManager(provider, history).recovery_inventory()
+    inventory = manager.recovery_inventory()
 
     assert len(inventory) == 1
     assert inventory[0].classification == "prepared_candidate_not_persisted"
