@@ -768,3 +768,39 @@ def test_read_only_host_manager_does_not_create_or_write_receipt_store(tmp_path)
 
     assert manager.operation_receipt_store is None
     assert not db.with_name("history.provider-operations.sqlite3").exists()
+
+
+def test_provider_result_action_mismatch_is_indeterminate(tmp_path):
+    receipt_store = DurableProviderOperationReceiptStore(
+        tmp_path / "provider-operation-receipts.sqlite3"
+    )
+    provider = FakeReplacementProvider()
+
+    def wrong_action_start(request, target, operation_id):
+        provider.calls.append(("start_wrong_action", target.deployment_id, operation_id))
+        return DeploymentOperationResult(
+            "prepare_candidate", "succeeded", provider.name,
+            "wrong action identity",
+        )
+
+    provider.start_candidate = wrong_action_start
+    history, provider, manager, previous, target = _setup(
+        tmp_path, provider=provider, operation_receipt_store=receipt_store
+    )
+
+    result = manager.replace(_request(), target)
+
+    assert result.status == "needs_reconciliation"
+    receipts = receipt_store.list_operation_receipts(
+        provider="test-provider",
+        project="demo",
+        environment="staging",
+        operation_id="operation-001",
+    )
+    by_name = {item.operation_name: item for item in receipts}
+    assert by_name["prepare_candidate"].state == "returned"
+    assert by_name["start_candidate"].state == "indeterminate"
+    assert by_name["start_candidate"].failure_kind == "provider_result_identity_mismatch"
+    assert by_name["start_candidate"].provider_result_status is None
+    assert "switch_traffic" not in by_name
+    assert history.get_replacement("operation-001").phase == "needs_reconciliation"
