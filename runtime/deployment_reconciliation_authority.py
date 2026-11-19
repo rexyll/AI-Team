@@ -158,9 +158,11 @@ class ReconciliationSnapshotReader(Protocol):
     """
 
     def read_current_snapshot(
-        self, operation_id: str
+        self,
+        operation_id: str,
+        operation: str,
     ) -> ReconciliationCurrentSnapshot:
-        """Return current immutable journal/evidence state for this operation."""
+        """Return current immutable journal/evidence for this exact resolution."""
         ...
 
 
@@ -566,7 +568,9 @@ class ReconciliationApprovalAuthority:
         # authoritative snapshot from the injected Host reader before starting
         # either authentication challenge.
         try:
-            current = self._snapshot_reader.read_current_snapshot(record.operation_id)
+            current = self._snapshot_reader.read_current_snapshot(
+                record.operation_id, proposal.approval.operation
+            )
         except Exception as exc:
             raise ReconciliationAuthorizationError(
                 "trusted current journal/evidence snapshot read failed before approval"
@@ -763,7 +767,7 @@ class ReconciliationApprovalAuthority:
                 )
             try:
                 current = self._snapshot_reader.read_current_snapshot(
-                    proposal.record.operation_id
+                    proposal.record.operation_id, approval.operation
                 )
             except Exception as exc:
                 raise ReconciliationAuthorizationError(
