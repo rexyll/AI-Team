@@ -28,6 +28,10 @@ from runtime.deployment_replacement import (
     DeploymentTrafficReadback,
     ReplacementJournalRecord,
 )
+from runtime.deployment_provider_operation_ledger import (
+    DurableProviderOperationReceiptStore,
+    provider_operation_request_digest,
+)
 
 
 ReplacementStatus = Literal["replaced", "failed", "needs_reconciliation", "unsupported"]
@@ -190,6 +194,7 @@ class HostDeploymentReplacementManager:
         *,
         clock: Callable[[], str] = _now,
         operation_id_factory: Callable[[], str] | None = None,
+        operation_receipt_store: DurableProviderOperationReceiptStore | None = None,
     ) -> None:
         name = getattr(provider, "name", None)
         if not isinstance(name, str) or not name.strip():
@@ -200,10 +205,82 @@ class HostDeploymentReplacementManager:
             raise TypeError("clock must be callable")
         if operation_id_factory is not None and not callable(operation_id_factory):
             raise TypeError("operation_id_factory must be callable")
+        if operation_receipt_store is not None and not isinstance(
+            operation_receipt_store, DurableProviderOperationReceiptStore
+        ):
+            raise TypeError("operation_receipt_store must be a DurableProviderOperationReceiptStore")
         self.provider = provider
         self.history = history
         self._clock = clock
         self._operation_id_factory = operation_id_factory or (lambda: uuid4().hex)
+        self.operation_receipt_store = operation_receipt_store
+
+    def _invoke_provider_operation(
+        self,
+        operation_name: str,
+        operation_id: str,
+        *,
+        project: str,
+        environment: str,
+        binding: dict[str, str],
+        invoke: Callable[[], object],
+    ) -> object:
+        """Persist a Host call-start before invocation and its exact return after it.
+
+        An exception or malformed return is indeterminate, never a terminal
+        provider success. If the process dies after begin_operation(), the
+        durable row remains "started" and reconciliation must fail closed.
+        """
+        store = self.operation_receipt_store
+        if store is None:
+            return invoke()
+        request_digest = provider_operation_request_digest(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+            operation_id=operation_id,
+            operation_name=operation_name,
+            binding=binding,
+        )
+        store.begin_operation(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+            operation_id=operation_id,
+            operation_name=operation_name,
+            request_digest_sha256=request_digest,
+        )
+        try:
+            result = invoke()
+        except BaseException as exc:
+            store.mark_indeterminate(
+                provider=self.provider.name,
+                project=project,
+                environment=environment,
+                operation_id=operation_id,
+                operation_name=operation_name,
+                failure_kind=type(exc).__name__,
+            )
+            raise
+        if not isinstance(result, DeploymentOperationResult):
+            store.mark_indeterminate(
+                provider=self.provider.name,
+                project=project,
+                environment=environment,
+                operation_id=operation_id,
+                operation_name=operation_name,
+                failure_kind="invalid_provider_result",
+            )
+            return result
+        store.record_result(
+            provider=self.provider.name,
+            project=project,
+            environment=environment,
+            operation_id=operation_id,
+            operation_name=operation_name,
+            result=result,
+        )
+        return result
 
     def _supports_replacement(self) -> bool:
         return all(callable(getattr(self.provider, name, None)) for name in self._REQUIRED_METHODS)
@@ -822,14 +899,40 @@ class HostDeploymentReplacementManager:
             )
 
         try:
-            prepared = self.provider.prepare_candidate(request, target, previous, operation_id)
+            prepared = self._invoke_provider_operation(
+                "prepare_candidate",
+                operation_id,
+                project=request.project,
+                environment=request.environment,
+                binding={
+                    "target_deployment_id": target.deployment_id,
+                    "previous_deployment_id": previous.deployment_id,
+                    "target_artifact_digest": target.artifact.digest,
+                    "previous_runtime_id": previous_runtime_id,
+                },
+                invoke=lambda: self.provider.prepare_candidate(
+                    request, target, previous, operation_id
+                ),
+            )
             if not isinstance(prepared, DeploymentOperationResult) or prepared.status != "succeeded":
                 return self._needs_reconciliation(
                     journal,
                     "candidate preparation did not report success",
                 )
 
-            started = self.provider.start_candidate(request, target, operation_id)
+            started = self._invoke_provider_operation(
+                "start_candidate",
+                operation_id,
+                project=request.project,
+                environment=request.environment,
+                binding={
+                    "target_deployment_id": target.deployment_id,
+                    "target_artifact_digest": target.artifact.digest,
+                },
+                invoke=lambda: self.provider.start_candidate(
+                    request, target, operation_id
+                ),
+            )
             candidate = started.record if isinstance(started, DeploymentOperationResult) else None
             if (
                 not isinstance(started, DeploymentOperationResult)
@@ -904,7 +1007,21 @@ class HostDeploymentReplacementManager:
             )
 
             try:
-                switch_result = self.provider.switch_traffic(candidate, previous, operation_id)
+                switch_result = self._invoke_provider_operation(
+                    "switch_traffic",
+                    operation_id,
+                    project=request.project,
+                    environment=request.environment,
+                    binding={
+                        "candidate_deployment_id": candidate.deployment_id,
+                        "previous_deployment_id": previous.deployment_id,
+                        "candidate_runtime_id": candidate_runtime_id,
+                        "previous_runtime_id": previous_runtime_id,
+                    },
+                    invoke=lambda: self.provider.switch_traffic(
+                        candidate, previous, operation_id
+                    ),
+                )
             except Exception as exc:
                 switch_error = type(exc).__name__
             else:
@@ -961,7 +1078,17 @@ class HostDeploymentReplacementManager:
                 )
 
             try:
-                retired = self.provider.retire_previous(previous, operation_id)
+                retired = self._invoke_provider_operation(
+                    "retire_previous",
+                    operation_id,
+                    project=request.project,
+                    environment=request.environment,
+                    binding={
+                        "previous_deployment_id": previous.deployment_id,
+                        "previous_runtime_id": previous_runtime_id,
+                    },
+                    invoke=lambda: self.provider.retire_previous(previous, operation_id),
+                )
             except Exception as exc:
                 return self._needs_reconciliation(
                     journal,
@@ -1066,7 +1193,20 @@ class HostDeploymentReplacementManager:
                 journal, f"{reason}; pre-abort route does not prove previous runtime is active"
             )
         try:
-            aborted = self.provider.abort_candidate(candidate, journal.operation_id)
+            aborted = self._invoke_provider_operation(
+                "abort_candidate",
+                journal.operation_id,
+                project=request.project,
+                environment=request.environment,
+                binding={
+                    "candidate_deployment_id": candidate.deployment_id,
+                    "candidate_runtime_id": journal.candidate_runtime_id or "",
+                    "previous_runtime_id": previous_runtime_id,
+                },
+                invoke=lambda: self.provider.abort_candidate(
+                    candidate, journal.operation_id
+                ),
+            )
             route_after = self.provider.read_traffic_target(request)
         except Exception as exc:
             return self._needs_reconciliation(
