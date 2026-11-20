@@ -194,10 +194,18 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
                 raise ReconciliationEvidenceCollectionError(
                     "Host provider-call receipt source is not a regular file"
                 )
-            if os.name == "posix" and stat_module.S_IMODE(metadata.st_mode) & 0o077:
-                raise ReconciliationEvidenceCollectionError(
-                    "Host provider-call receipt store permissions are too broad"
-                )
+            parent_metadata = receipt_path.parent.stat()
+            if os.name == "posix":
+                current_uid = os.getuid()
+                if (
+                    metadata.st_uid != current_uid
+                    or stat_module.S_IMODE(metadata.st_mode) & 0o077
+                    or parent_metadata.st_uid != current_uid
+                    or stat_module.S_IMODE(parent_metadata.st_mode) & 0o022
+                ):
+                    raise ReconciliationEvidenceCollectionError(
+                        "Host provider-call receipt store ownership or permissions are unsafe"
+                    )
             endpoint_identity = hashlib.sha256(
                 json.dumps(
                     {
@@ -207,6 +215,12 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
                         "device": metadata.st_dev,
                         "inode": metadata.st_ino,
                         "mode": stat_module.S_IMODE(metadata.st_mode),
+                        "uid": getattr(metadata, "st_uid", None),
+                        "gid": getattr(metadata, "st_gid", None),
+                        "parent_device": parent_metadata.st_dev,
+                        "parent_inode": parent_metadata.st_ino,
+                        "parent_mode": stat_module.S_IMODE(parent_metadata.st_mode),
+                        "parent_uid": getattr(parent_metadata, "st_uid", None),
                     },
                     ensure_ascii=False,
                     sort_keys=True,

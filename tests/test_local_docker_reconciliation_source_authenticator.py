@@ -265,3 +265,37 @@ def test_host_receipt_source_requires_matching_config_and_existing_file(tmp_path
             response_digest_sha256="b" * 64,
             observed_at="2026-11-19T09:59:55Z",
         )
+
+
+def test_host_receipt_source_rejects_group_or_other_writable_parent(tmp_path):
+    import os
+
+    if os.name != "posix":
+        pytest.skip("POSIX directory permission contract")
+    parent = tmp_path / "writable-receipt-parent"
+    parent.mkdir()
+    path = parent / "provider-operations.sqlite3"
+    path.write_bytes(b"existing sqlite bytes")
+    path.chmod(0o600)
+    parent.chmod(0o777)
+    authenticator = LocalDockerReconciliationEvidenceSourceAuthenticator(
+        LocalDockerProvider(_Runner(DockerCommandResult(0, _identity(), ""))),
+        expected_daemon_id="a" * 64,
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-local-daemon-runtime",
+            "route": "docker-local-daemon-router",
+        },
+        operation_receipt_store_path=path,
+        clock=_Clock(),
+    )
+    with pytest.raises(ReconciliationEvidenceCollectionError, match="ownership or permissions"):
+        authenticator.authenticate_source(
+            role="provider_operation",
+            source_id="docker-local-host-call-receipts",
+            provider="docker-local",
+            project="demo",
+            environment="staging",
+            response_digest_sha256="b" * 64,
+            observed_at="2026-11-19T09:59:55Z",
+        )
