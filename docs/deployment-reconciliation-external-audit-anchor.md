@@ -9,6 +9,7 @@ The implementation is provider-neutral:
 - runtime/deployment_reconciliation_anchored_audit_store.py defines ReconciliationAuditHeadAnchor and ExternallyAnchoredReconciliationAuditStore.
 - The production anchor service is deliberately not selected or implemented in this repository.
 - The wrapped store remains a DurableReconciliationAuditStore subclass, so it can be injected into the existing ReconciliationApprovalAuthority without changing its audit API.
+The wrapper covers the authority's full audit write path: proposal, approval, consumption-start and terminal consumption/rejection events each advance the remote checkpoint. A regression test injects the anchored subclass into ReconciliationApprovalAuthority and verifies all four events are checkpointed in sequence.
 
 ## External anchor contract
 
