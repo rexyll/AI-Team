@@ -23,6 +23,7 @@ class _MemoryHeadAnchor:
     """Test-only atomic anchor; production must use an external durable service."""
 
     def __init__(self, head=None):
+        self.ledger_id = "test-audit-ledger"
         self.head = head or ReconciliationAuditHead(0, _ZERO_DIGEST)
         self.fail_next_cas = False
         self.raise_after_commit = False
@@ -74,7 +75,8 @@ def _record(store, index):
 def test_anchored_store_advances_external_head_after_each_durable_append(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
 
     first = _record(store, 1)
@@ -91,7 +93,8 @@ def test_anchored_store_advances_external_head_after_each_durable_append(tmp_pat
 def test_anchored_store_fails_closed_when_local_chain_is_tampered(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     _record(store, 1)
 
@@ -108,7 +111,8 @@ def test_anchored_store_fails_closed_when_local_chain_is_tampered(tmp_path):
 def test_anchored_store_rejects_preexisting_unanchored_local_events(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
 
     # Simulate a writer that bypasses the anchored wrapper.
@@ -134,7 +138,8 @@ def test_anchored_store_rejects_preexisting_unanchored_local_events(tmp_path):
     assert anchor.head == ReconciliationAuditHead(0, _ZERO_DIGEST)
 
     second = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     # A different external genesis checkpoint must not silently adopt the local chain.
     with pytest.raises(ReconciliationAuditAnchorError):
@@ -148,7 +153,8 @@ def test_anchor_cas_conflict_leaves_local_ledger_ahead_and_blocks_future_writes(
 ):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     anchor.fail_next_cas = True
 
@@ -166,7 +172,8 @@ def test_anchor_cas_conflict_leaves_local_ledger_ahead_and_blocks_future_writes(
 def test_lost_cas_acknowledgement_is_resolved_by_rereading_external_head(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     anchor.raise_after_commit = True
 
@@ -181,7 +188,8 @@ def test_anchored_store_requires_the_external_genesis_checkpoint(tmp_path):
     wrong = ReconciliationAuditHead(1, "f" * 64)
     anchor = _MemoryHeadAnchor(wrong)
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
 
     with pytest.raises(ReconciliationAuditAnchorError):
@@ -192,7 +200,8 @@ def test_anchored_store_requires_the_external_genesis_checkpoint(tmp_path):
 def test_anchored_store_covers_approval_claim_and_terminal_events(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     requester = _principal("requester")
     approver = _principal("approver")
@@ -248,7 +257,9 @@ def test_anchored_store_serializes_concurrent_writers_across_instances(tmp_path)
     anchor = _MemoryHeadAnchor()
     root = tmp_path / "audit"
     stores = [
-        ExternallyAnchoredReconciliationAuditStore(root, anchor=anchor)
+        ExternallyAnchoredReconciliationAuditStore(
+            root, anchor=anchor, expected_ledger_id="test-audit-ledger"
+        )
         for _ in range(4)
     ]
 
@@ -269,7 +280,8 @@ def test_anchored_store_serializes_concurrent_writers_across_instances(tmp_path)
 def test_anchored_events_reject_a_local_append_that_bypasses_the_wrapper(tmp_path):
     anchor = _MemoryHeadAnchor()
     store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
     )
     first = _record(store, 1)
     assert store.events() == (first,)
@@ -298,3 +310,25 @@ def test_anchored_events_reject_a_local_append_that_bypasses_the_wrapper(tmp_pat
 
     with pytest.raises(ReconciliationAuditAnchorError):
         store.events()
+
+
+def test_external_anchor_requires_exact_stable_ledger_identity(tmp_path):
+    anchor = _MemoryHeadAnchor()
+
+    with pytest.raises(
+        ReconciliationAuditAnchorError, match="identity does not match"
+    ):
+        ExternallyAnchoredReconciliationAuditStore(
+            tmp_path / "wrong",
+            anchor=anchor,
+            expected_ledger_id="production/ledger-a",
+        )
+
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "correct",
+        anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
+    )
+    anchor.ledger_id = "test-audit-ledger-other"
+    with pytest.raises(ReconciliationAuditAnchorError, match="identity changed"):
+        store.verify()
