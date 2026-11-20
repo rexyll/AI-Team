@@ -868,7 +868,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 修正 ambiguous audit append 行为：若 audit append 调用报错，不再删除可能已经对应 durable approved event 的 ciphertext。重启后以 audit ledger 为最终依据；若 approval event 没有 commit，密文 orphan 不会被 restore，且只能在 expiry 后由后续受控清理处理。
 - 新增测试：模拟 audit approved event 已 durable append、调用方却丢失确认；通过新 Host authority/vault 实例恢复 grant 并成功走原 audit one-use consumption。另验证 consumed grant 无法恢复。
 - 中间 run 44740304375 曾因 failing fake vault 未实现新加入的 reference_for protocol method 导致一项 regression 测试失败；fake adapter 已补齐。修正后的完整 run 44740311121 在 f54a303 上通过（Regression、Security、Windows、Coverage、Docker Engine 全部 success）。此 run 尚早于本节 restore_grant 崩溃恢复新增代码。
-- 本节最终代码与测试提交 d3cd142、a44fa91；随后加入 vault protocol 的 recovery lookup 声明与文档，当前 main CI run 44758798553 及其相邻 run 仍在执行，不能提前将本节记作最终验收通过。
+- 本节实现提交 d3cd142，崩溃恢复测试提交 a44fa91；后续 protocol/documentation 收口提交 8992b95、bdea26a、f54a303，restore crash-window hardening 为 6d2402b，global approval-ID uniqueness regression 为 25c39e7。restore_grant 现在扫描完整审计链，拒绝跨 operation 重复 approval ID，避免向调用方释放最终会被 consume 拒绝的 grant。最新 HEAD CI run 44759256777 正在执行，不能提前将本节记作最终验收通过。
 
 ### T21.6.3.5.27 — 真实 Host completion snapshot + vault integration regression baseline（已由前置版本通过；最新 HEAD 复验中）
 
