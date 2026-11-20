@@ -20,14 +20,27 @@ from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
     HostDeploymentReplacementManager,
 )
+from runtime.deployment_reconciliation_authority import (
+    HostAuthenticator,
+    ReconciliationApprovalAuthority,
+)
+from runtime.deployment_reconciliation_anchored_audit_store import (
+    ExternallyAnchoredReconciliationAuditStore,
+    ReconciliationAuditHeadAnchor,
+)
 from runtime.deployment_reconciliation_completion import (
     LocalDockerSynchronousOperationCompletionInspector,
 )
 from runtime.deployment_reconciliation_evidence_collector import (
     DecisionSpecificReconciliationEvidenceCollector,
 )
+from runtime.deployment_reconciliation_grant_vault import (
+    ReconciliationApprovalGrantVault,
+    ReconciliationGrantProtector,
+)
 from runtime.deployment_reconciliation_snapshot_reader import (
     DeploymentHistoryReconciliationSnapshotReader,
+    ReconciliationSnapshotReadError,
 )
 from runtime.local_docker_provider import LocalDockerProvider
 from runtime.local_docker_reconciliation_source_authenticator import (
@@ -172,6 +185,30 @@ class DeploymentHostStartupResult:
             "unfinished_replacements": len(self.inventory),
             "inventory": [asdict(item) for item in self.inventory],
         }
+
+
+class _OperationScopedReconciliationSnapshotReader:
+    """Bind one authority instance to the operation scope used by its Host reader."""
+
+    def __init__(
+        self,
+        operation_id: str,
+        delegate: DeploymentHistoryReconciliationSnapshotReader,
+    ) -> None:
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be a non-empty string")
+        if not isinstance(delegate.reader_id, str) or not delegate.reader_id.strip():
+            raise TypeError("snapshot delegate must expose a stable reader_id")
+        self._operation_id = operation_id
+        self._delegate = delegate
+        self.reader_id = delegate.reader_id
+
+    def read_current_snapshot(self, operation_id: str, operation: str):
+        if operation_id != self._operation_id:
+            raise ReconciliationSnapshotReadError(
+                "Host approval authority is scoped to a different replacement operation"
+            )
+        return self._delegate.read_current_snapshot(operation_id, operation)
 
 
 class DeploymentHostRuntime:
@@ -333,6 +370,92 @@ class DeploymentHostRuntime:
             history,
             collector,
             reader_id="docker-local-deployment-host-snapshot-reader",
+        )
+
+    def build_reconciliation_approval_authority(
+        self,
+        operation_id: str,
+        *,
+        authenticator: HostAuthenticator,
+        audit_anchor: ReconciliationAuditHeadAnchor,
+        expected_ledger_id: str,
+        grant_protector: ReconciliationGrantProtector,
+        trusted_issuers: frozenset[str],
+        trusted_authentication_methods: frozenset[str],
+        authentication_audience: str,
+        approval_ttl_seconds: int = 300,
+        challenge_ttl_seconds: int = 120,
+        evidence_max_age_seconds: int = 120,
+        snapshot_read_max_duration_seconds: int = 60,
+    ) -> ReconciliationApprovalAuthority:
+        """Compose an operation-scoped approval authority from explicit trust roots.
+
+        This factory has no identity-provider, KMS, or audit-anchor defaults.
+        The caller must inject the real deployment adapters and exact ledger
+        namespace. It verifies the configured external checkpoint against the
+        local audit genesis/current head before returning the authority. It
+        never initializes or advances the remote anchor and never executes a
+        reconciliation action.
+        """
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be a non-empty string")
+        if authenticator is None or not callable(
+            getattr(authenticator, "authenticate", None)
+        ):
+            raise TypeError("an explicit trusted HostAuthenticator is required")
+        if audit_anchor is None:
+            raise TypeError("an explicit external audit-head anchor is required")
+        if grant_protector is None or not callable(
+            getattr(grant_protector, "seal", None)
+        ) or not callable(getattr(grant_protector, "unseal", None)):
+            raise TypeError("an explicit external KMS/SecretStore grant protector is required")
+
+        reader = self.build_reconciliation_snapshot_reader(
+            operation_id,
+            max_evidence_age_seconds=evidence_max_age_seconds,
+        )
+        scoped_reader = _OperationScopedReconciliationSnapshotReader(
+            operation_id, reader
+        )
+        audit_root = self.history_path.with_name(
+            f"{self.history_path.stem}.reconciliation-audit"
+        )
+        audit_store = ExternallyAnchoredReconciliationAuditStore(
+            audit_root,
+            anchor=audit_anchor,
+            expected_ledger_id=expected_ledger_id,
+        )
+        # Require an operator-provisioned genesis or matching existing head.
+        # This is read-only: it must not create or advance the remote checkpoint.
+        audit_store.verify()
+
+        grant_root = self.history_path.with_name(
+            f"{self.history_path.stem}.reconciliation-grants"
+        )
+        grant_vault = ReconciliationApprovalGrantVault(
+            grant_root,
+            protector=grant_protector,
+        )
+        return ReconciliationApprovalAuthority(
+            authenticator=authenticator,
+            snapshot_reader=scoped_reader,
+            trusted_issuers=trusted_issuers,
+            trusted_authentication_methods=trusted_authentication_methods,
+            trusted_snapshot_readers=frozenset({reader.reader_id}),
+            trusted_evidence_sources=frozenset(
+                {
+                    "docker-local-host-call-receipts",
+                    "docker-local-daemon-runtime",
+                    "docker-local-daemon-router",
+                }
+            ),
+            authentication_audience=authentication_audience,
+            audit_store=audit_store,
+            approval_ttl_seconds=approval_ttl_seconds,
+            challenge_ttl_seconds=challenge_ttl_seconds,
+            evidence_max_age_seconds=evidence_max_age_seconds,
+            snapshot_read_max_duration_seconds=snapshot_read_max_duration_seconds,
+            grant_vault=grant_vault,
         )
 
     def inspect_recovery(self) -> dict:
