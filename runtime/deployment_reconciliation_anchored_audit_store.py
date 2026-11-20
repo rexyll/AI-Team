@@ -29,8 +29,13 @@ class ReconciliationAuditHeadAnchor(Protocol):
     genesis head before any audit event is accepted.
     """
 
+    @property
+    def ledger_id(self) -> str:
+        """Return the immutable external namespace for this exact audit ledger."""
+        ...
+
     def read_head(self) -> ReconciliationAuditHead:
-        """Read the current durable checkpoint."""
+        """Read the current durable checkpoint for ledger_id."""
         ...
 
     def compare_and_set(
@@ -74,13 +79,29 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
         root: str | Path,
         *,
         anchor: ReconciliationAuditHeadAnchor,
+        expected_ledger_id: str,
     ) -> None:
         if anchor is None or not callable(
             getattr(anchor, "read_head", None)
         ) or not callable(getattr(anchor, "compare_and_set", None)):
             raise TypeError("a trusted external ReconciliationAuditHeadAnchor is required")
+        if (
+            not isinstance(expected_ledger_id, str)
+            or not expected_ledger_id.strip()
+        ):
+            raise ValueError("expected_ledger_id must be a non-empty string")
+        anchor_ledger_id = getattr(anchor, "ledger_id", None)
+        if (
+            not isinstance(anchor_ledger_id, str)
+            or not anchor_ledger_id.strip()
+            or anchor_ledger_id != expected_ledger_id
+        ):
+            raise ReconciliationAuditAnchorError(
+                "external audit anchor ledger identity does not match expected_ledger_id"
+            )
         super().__init__(root)
         self._anchor = anchor
+        self._expected_ledger_id = expected_ledger_id
         self.anchor_lock_path = self.root / self.ANCHOR_LOCK_NAME
         if self.anchor_lock_path.is_symlink():
             raise ReconciliationAuditAnchorError(
@@ -91,6 +112,11 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
         return exclusive_process_lock(self.anchor_lock_path)
 
     def _read_external_head(self) -> ReconciliationAuditHead:
+        current_ledger_id = getattr(self._anchor, "ledger_id", None)
+        if current_ledger_id != self._expected_ledger_id:
+            raise ReconciliationAuditAnchorError(
+                "external audit anchor ledger identity changed after configuration"
+            )
         try:
             head = self._anchor.read_head()
         except Exception as exc:
