@@ -10,6 +10,7 @@ from runtime.deployment_reconciliation_anchored_audit_store import (
     ReconciliationAuditAnchorError,
 )
 from runtime.deployment_reconciliation_audit_store import (
+    DurableReconciliationAuditStore,
     ReconciliationAuditHead,
     _ZERO_DIGEST,
 )
@@ -109,11 +110,28 @@ def test_anchored_store_rejects_preexisting_unanchored_local_events(tmp_path):
     )
 
     # Simulate a writer that bypasses the anchored wrapper.
-    first = _record(store, 1)
-    assert anchor.head == ReconciliationAuditHead(1, first.event_digest)
+    common = dict(
+        actor=_principal("operator-bypass"),
+        approval_id="approval-bypass",
+        operation_id="operation-bypass",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        candidate_runtime_id="b" * 64,
+        previous_runtime_id="a" * 64,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+    )
+    unanchored = DurableReconciliationAuditStore.record(
+        store, action="reconciliation_proposed", **common
+    )
+    assert anchor.head == ReconciliationAuditHead(0, _ZERO_DIGEST)
 
     second = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=_MemoryHeadAnchor()
+        tmp_path / "audit", anchor=anchor
     )
     # A different external genesis checkpoint must not silently adopt the local chain.
     with pytest.raises(ReconciliationAuditAnchorError):
@@ -166,3 +184,58 @@ def test_anchored_store_requires_the_external_genesis_checkpoint(tmp_path):
     with pytest.raises(ReconciliationAuditAnchorError):
         _record(store, 1)
     assert store.path.exists() is False
+
+
+def test_anchored_store_covers_approval_claim_and_terminal_events(tmp_path):
+    anchor = _MemoryHeadAnchor()
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit", anchor=anchor
+    )
+    requester = _principal("requester")
+    approver = _principal("approver")
+    common = dict(
+        approval_id="approval-anchored",
+        operation_id="operation-anchored",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        candidate_runtime_id="b" * 64,
+        previous_runtime_id="a" * 64,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+    )
+    token_digest = sha256(b"anchored-one-use-token").hexdigest()
+    store.record(
+        action="reconciliation_proposed", actor=requester, **common
+    )
+    approved = store.record(
+        action="reconciliation_approved",
+        actor=approver,
+        **common,
+        approval_token_digest=token_digest,
+        approval_expires_at="2030-01-01T00:00:00Z",
+    )
+    assert anchor.head == ReconciliationAuditHead(2, approved.event_digest)
+
+    started = store.begin_approval_consumption(
+        approval_id="approval-anchored",
+        token_digest=token_digest,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+        approval_expires_at="2030-01-01T00:00:00Z",
+        requester=requester,
+        approver=approver,
+    )
+    assert anchor.head == ReconciliationAuditHead(3, started.event_digest)
+
+    finished = store.finish_approval_consumption(
+        approval_id="approval-anchored",
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+        action="reconciliation_approval_consumed",
+    )
+    assert anchor.head == ReconciliationAuditHead(4, finished.event_digest)
+    assert [item.sequence for item in store.events()] == [1, 2, 3, 4]
