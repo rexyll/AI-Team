@@ -218,6 +218,12 @@ class ReconciliationApprovalGrantVault(Protocol):
         """Restore a protected grant without bypassing audit-ledger one-use checks."""
         ...
 
+    def reference_for(
+        self, approval_id: str
+    ) -> ReconciliationApprovalGrantReference:
+        """Recover a reference after a crash between audit append and API return."""
+        ...
+
     def delete(self, reference: ReconciliationApprovalGrantReference) -> None:
         """Delete a grant envelope after terminal handling or failed issuance."""
         ...
