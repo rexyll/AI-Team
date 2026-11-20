@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from runtime.deployment_reconciliation_anchored_audit_store import (
@@ -240,3 +242,20 @@ def test_anchored_store_covers_approval_claim_and_terminal_events(tmp_path):
     )
     assert anchor.head == ReconciliationAuditHead(4, finished.event_digest)
     assert [item.sequence for item in store.events()] == [1, 2, 3, 4]
+
+
+def test_anchored_store_serializes_concurrent_writers_across_instances(tmp_path):
+    anchor = _MemoryHeadAnchor()
+    root = tmp_path / "audit"
+    stores = [
+        ExternallyAnchoredReconciliationAuditStore(root, anchor=anchor)
+        for _ in range(4)
+    ]
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        events = list(executor.map(lambda item: _record(stores[item], item), range(1, 5)))
+
+    assert sorted(event.sequence for event in events) == [1, 2, 3, 4]
+    assert anchor.head.sequence == 4
+    assert stores[0].verify() == anchor.head
+    assert len(stores[0].events()) == 4
