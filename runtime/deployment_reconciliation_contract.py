@@ -18,6 +18,7 @@ from runtime.deployment_replacement import ReplacementJournalRecord
 ReconciliationOperation = Literal["abort_candidate", "confirm_previous_retired"]
 EvidenceKind = Literal[
     "provider_operation_inspection",
+    "host_synchronous_operation_completion",
     "candidate_absence",
     "previous_runtime_inspection",
     "previous_route_readback",
@@ -143,7 +144,10 @@ class ReconciliationEvidence:
     def __post_init__(self) -> None:
         for field in ("evidence_id", "source"):
             _non_empty(getattr(self, field), field)
-        if self.kind not in set().union(*_REQUIRED_EVIDENCE.values()):
+        if self.kind not in (
+            set().union(*_REQUIRED_EVIDENCE.values())
+            | {"host_synchronous_operation_completion"}
+        ):
             raise ValueError("unsupported reconciliation evidence kind")
         _aware(self.observed_at, "observed_at")
         if not isinstance(self.digest_sha256, str) or not _SHA256.fullmatch(
@@ -364,7 +368,10 @@ class ReconciliationProposal:
         if len(kinds) != len(set(kinds)):
             raise ValueError("evidence kinds must be unique")
         required = _REQUIRED_EVIDENCE[approval.operation]
-        if set(kinds) != required:
+        host_completion_required = (
+            required - {"provider_operation_inspection"}
+        ) | {"host_synchronous_operation_completion"}
+        if set(kinds) not in (required, host_completion_required):
             raise ValueError("evidence kinds do not satisfy the resolution policy")
         by_kind = {item.kind: item for item in self.evidence}
         candidate = self.record.candidate_runtime_id

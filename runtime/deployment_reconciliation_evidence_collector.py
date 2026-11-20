@@ -20,6 +20,10 @@ from runtime.deployment_provider_operation_ledger import (
     DeploymentProviderOperationInspector,
     ProviderOperationInspection,
 )
+from runtime.deployment_reconciliation_completion import (
+    HostSynchronousOperationCompletion,
+    LocalDockerSynchronousOperationCompletionInspector,
+)
 from runtime.deployment_reconciliation_contract import (
     ReconciliationEvidence,
     ReconciliationOperation,
@@ -152,7 +156,8 @@ class DecisionSpecificReconciliationEvidenceCollector:
     def __init__(
         self,
         *,
-        provider_operation_inspector: DeploymentProviderOperationInspector,
+        provider_operation_inspector: DeploymentProviderOperationInspector | None = None,
+        host_synchronous_completion_inspector: LocalDockerSynchronousOperationCompletionInspector | None = None,
         runtime_inspector: ReconciliationRuntimeInspector,
         route_inspector: ReconciliationRouteInspector,
         source_authenticator: ReconciliationEvidenceSourceAuthenticator,
@@ -160,14 +165,28 @@ class DecisionSpecificReconciliationEvidenceCollector:
         max_evidence_age_seconds: float,
         clock=None,
     ) -> None:
-        for value, name in (
-            (provider_operation_inspector, "provider_operation_inspector"),
-            (runtime_inspector, "runtime_inspector"),
-            (route_inspector, "route_inspector"),
+        if (provider_operation_inspector is None) == (
+            host_synchronous_completion_inspector is None
         ):
-            if not callable(getattr(value, "inspect_operation" if name == "provider_operation_inspector" else (
-                "inspect_runtime_identity" if name == "runtime_inspector" else "inspect_reconciliation_route"
-            ), None)):
+            raise ValueError(
+                "exactly one provider-native or Host-synchronous operation inspector is required"
+            )
+        operation_inspector = (
+            provider_operation_inspector
+            if provider_operation_inspector is not None
+            else host_synchronous_completion_inspector
+        )
+        operation_method = (
+            "inspect_operation"
+            if provider_operation_inspector is not None
+            else "inspect_completion"
+        )
+        for component, method, name in (
+            (operation_inspector, operation_method, "operation completion inspector"),
+            (runtime_inspector, "inspect_runtime_identity", "runtime inspector"),
+            (route_inspector, "inspect_reconciliation_route", "route inspector"),
+        ):
+            if not callable(getattr(component, method, None)):
                 raise TypeError(f"{name} does not expose its required read-only inspection method")
         if not callable(getattr(source_authenticator, "authenticate_source", None)):
             raise TypeError("source_authenticator must expose authenticate_source")
@@ -176,16 +195,16 @@ class DecisionSpecificReconciliationEvidenceCollector:
         if any(not isinstance(v, str) or not v.strip() for v in source_ids.values()):
             raise ValueError("every configured source ID must be non-empty")
         for name, component in (
-            ("provider operation inspector", provider_operation_inspector),
+            ("operation completion inspector", operation_inspector),
             ("runtime inspector", runtime_inspector),
             ("route inspector", route_inspector),
         ):
             if not isinstance(getattr(component, "name", None), str) or not component.name.strip():
-                raise TypeError(f"{name} must expose a non-empty name")
-        if provider_operation_inspector.name != runtime_inspector.name:
-            raise ValueError("provider operation and runtime inspectors must name the same provider")
-        if provider_operation_inspector.name != route_inspector.name:
-            raise ValueError("provider operation and route inspectors must name the same provider")
+                raise TypeError(f"{name} must expose a non-empty provider name")
+        if operation_inspector.name != runtime_inspector.name:
+            raise ValueError("operation and runtime inspectors must name the same provider")
+        if operation_inspector.name != route_inspector.name:
+            raise ValueError("operation and route inspectors must name the same provider")
         if (
             isinstance(max_evidence_age_seconds, bool)
             or not isinstance(max_evidence_age_seconds, (int, float))
@@ -194,7 +213,10 @@ class DecisionSpecificReconciliationEvidenceCollector:
             raise ValueError("max_evidence_age_seconds must be positive")
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
-        self._operation_inspector = provider_operation_inspector
+        self._provider_operation_inspector = provider_operation_inspector
+        self._host_synchronous_completion_inspector = host_synchronous_completion_inspector
+        self._operation_inspector = operation_inspector
+        self._provider_name = operation_inspector.name
         self._runtime_inspector = runtime_inspector
         self._route_inspector = route_inspector
         self._source_authenticator = source_authenticator
@@ -331,7 +353,9 @@ class DecisionSpecificReconciliationEvidenceCollector:
         operation: ReconciliationOperation,
     ) -> ProviderOperationInspection:
         try:
-            observation = self._operation_inspector.inspect_operation(
+            if self._provider_operation_inspector is None:
+                raise RuntimeError("provider-native operation inspector is not configured")
+            observation = self._provider_operation_inspector.inspect_operation(
                 project=record.project,
                 environment=record.environment,
                 operation_id=record.operation_id,
@@ -373,6 +397,49 @@ class DecisionSpecificReconciliationEvidenceCollector:
         return observation
 
     @staticmethod
+    def _validate_host_synchronous_completion(
+        self,
+        record: ReplacementJournalRecord,
+        operation: ReconciliationOperation,
+        snapshot_started_at: str | None,
+    ) -> HostSynchronousOperationCompletion:
+        inspector = self._host_synchronous_completion_inspector
+        if inspector is None:
+            raise ReconciliationEvidenceCollectionError(
+                "Host synchronous completion inspector is not configured"
+            )
+        try:
+            observation = inspector.inspect_completion(
+                record, operation, not_after=snapshot_started_at
+            )
+        except Exception as exc:
+            raise ReconciliationEvidenceCollectionError(
+                "Host synchronous operation completion inspection failed"
+            ) from exc
+        if not isinstance(observation, HostSynchronousOperationCompletion):
+            raise ReconciliationEvidenceCollectionError(
+                "Host synchronous completion inspector returned an invalid response"
+            )
+        expected_action = (
+            "abort_candidate" if operation == "abort_candidate" else "retire_previous"
+        )
+        if (
+            observation.provider != record.provider
+            or observation.project != record.project
+            or observation.environment != record.environment
+            or observation.operation_id != record.operation_id
+            or observation.decision != operation
+            or observation.action != expected_action
+            or observation.source_id != self._source_ids["provider_operation"]
+        ):
+            raise ReconciliationEvidenceCollectionError(
+                "Host synchronous completion scope/source does not match the journal"
+            )
+        self._require_fresh(
+            observation.completed_at, "Host synchronous operation completion"
+        )
+        return observation
+
     def _validate_runtime_scope(
         observation: DeploymentRuntimeInspection,
         *,
@@ -465,6 +532,8 @@ class DecisionSpecificReconciliationEvidenceCollector:
         self,
         record: ReplacementJournalRecord,
         operation: ReconciliationOperation,
+        *,
+        snapshot_started_at: str | None = None,
     ) -> tuple[ReconciliationEvidence, ...]:
         """Collect the exact positive evidence set for one reconciliation decision."""
         if not isinstance(record, ReplacementJournalRecord):
@@ -479,22 +548,44 @@ class DecisionSpecificReconciliationEvidenceCollector:
             raise ReconciliationEvidenceCollectionError(
                 "journal does not contain both immutable runtime identities"
             )
-        if record.provider != self._operation_inspector.name:
+        if record.provider != self._provider_name:
             raise ReconciliationEvidenceCollectionError(
                 "operation inspector provider does not match the journal"
             )
 
-        # Provider operation terminal state is mandatory and is checked first.
-        operation_observation = self._validate_provider_operation(record, operation)
-        operation_item = self._make_evidence(
-            kind="provider_operation_inspection",
-            role="provider_operation",
-            record=record,
-            observation=operation_observation,
-            timestamp_field="inspected_at",
-            observed_at=operation_observation.inspected_at,
-            provider_response_digest=operation_observation.response_digest_sha256,
-        )
+        # One of two distinct completion proof types is mandatory.
+        # A Host method receipt never masquerades as a provider-native operation ID.
+        if self._host_synchronous_completion_inspector is not None:
+            operation_observation = self._validate_host_synchronous_completion(
+                record, operation, snapshot_started_at
+            )
+            operation_item = self._make_evidence(
+                kind="host_synchronous_operation_completion",
+                role="provider_operation",
+                record=record,
+                observation=operation_observation,
+                timestamp_field="completed_at",
+                observed_at=operation_observation.completed_at,
+                provider_response_digest=operation_observation.response_digest_sha256,
+            )
+        else:
+            operation_observation = self._validate_provider_operation(record, operation)
+            if snapshot_started_at is not None and (
+                _parse_timestamp(operation_observation.inspected_at, "provider operation observation")
+                > _parse_timestamp(snapshot_started_at, "snapshot read start")
+            ):
+                raise ReconciliationEvidenceCollectionError(
+                    "provider operation observation occurred after the snapshot read started"
+                )
+            operation_item = self._make_evidence(
+                kind="provider_operation_inspection",
+                role="provider_operation",
+                record=record,
+                observation=operation_observation,
+                timestamp_field="inspected_at",
+                observed_at=operation_observation.inspected_at,
+                provider_response_digest=operation_observation.response_digest_sha256,
+            )
 
         if operation == "abort_candidate":
             candidate = self._inspect_runtime(
@@ -647,7 +738,11 @@ class DecisionSpecificReconciliationEvidenceCollector:
                 "previous_runtime_retirement",
             },
         }[operation]
-        if len(evidence) != 4 or {item.kind for item in evidence} != required:
+        host_completion_required = (
+            required - {"provider_operation_inspection"}
+        ) | {"host_synchronous_operation_completion"}
+        actual = {item.kind for item in evidence}
+        if len(evidence) != 4 or actual not in (required, host_completion_required):
             raise ReconciliationEvidenceCollectionError(
                 "collector did not produce the exact decision-specific evidence set"
             )

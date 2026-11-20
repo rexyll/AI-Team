@@ -167,6 +167,8 @@ class LocalDockerSynchronousOperationCompletionInspector:
         self,
         record: ReplacementJournalRecord,
         decision: ReconciliationDecision,
+        *,
+        not_after: str | None = None,
     ) -> HostSynchronousOperationCompletion:
         """Read and validate the exact action receipt for one journal decision."""
         if not isinstance(record, ReplacementJournalRecord):
@@ -258,6 +260,12 @@ class LocalDockerSynchronousOperationCompletionInspector:
             raise HostSynchronousOperationCompletionError(
                 "receipt completion timestamp is future-dated"
             )
+        if not_after is not None:
+            boundary = _timestamp(not_after, "snapshot read start")
+            if completed > boundary:
+                raise HostSynchronousOperationCompletionError(
+                    "receipt completed after the snapshot read started"
+                )
         if now - completed > self.max_age:
             raise HostSynchronousOperationCompletionError(
                 "Host provider-call receipt is stale"
