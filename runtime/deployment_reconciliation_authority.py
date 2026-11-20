@@ -1001,7 +1001,8 @@ class ReconciliationApprovalAuthority:
                 raise ValueError("restored grant digest does not match its proposal")
 
             token_digest = hashlib.sha256(grant.token.encode("utf-8")).hexdigest()
-            events = self._audit.events(operation_id=record.operation_id)
+            # Approval IDs are globally unique across the whole audit ledger.
+            events = self._audit.events()
             proposed = [
                 item for item in events
                 if item.approval_id == approval_id
