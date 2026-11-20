@@ -117,6 +117,20 @@ def test_native_docker_engine_daemon_id_format_is_accepted_and_pinned_exactly():
     assert len(runner.calls) == 1
 
 
+def test_uuid_form_docker_engine_daemon_id_is_accepted_and_pinned_exactly():
+    daemon_id = "2e9a7954-494c-4cfc-bff9-50a0425c70dc"
+    authenticator, runner = _authenticator(
+        DockerCommandResult(0, _identity(daemon_id), ""),
+        expected_daemon_id=daemon_id,
+    )
+
+    receipt = authenticator.authenticate_source(**_kwargs())
+
+    assert receipt.provider == "docker-local"
+    assert len(receipt.endpoint_identity_digest_sha256) == 64
+    assert len(runner.calls) == 1
+
+
 def test_daemon_id_mismatch_is_rejected_even_when_docker_info_succeeds():
     authenticator, runner = _authenticator(
         DockerCommandResult(0, _identity("c" * 64), "")
