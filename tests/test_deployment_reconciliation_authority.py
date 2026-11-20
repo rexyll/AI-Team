@@ -1410,11 +1410,14 @@ def test_authority_persists_grant_before_approved_audit_and_restores_after_resta
         grant.proposal.approval.approval_id
     )
     assert recovered_reference == grant.storage_reference
-    restored_grant = reopened_vault.load(recovered_reference)
     restored_authority = _authority(
         tmp_path / "audit",
         principals,
         snapshot_reader=reader,
+        grant_vault=reopened_vault,
+    )
+    restored_grant = restored_authority.restore_grant(
+        grant.proposal.approval.approval_id
     )
 
     assert restored_grant.storage_reference == recovered_reference
@@ -1466,3 +1469,101 @@ def test_authority_does_not_append_approved_event_when_grant_vault_fails(tmp_pat
         "reconciliation_rejected",
     ]
     assert all(event.approval_token_digest is None for event in events)
+
+
+def test_authority_restores_after_ambiguous_approval_audit_append(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+    record = authority._record
+
+    def _append_then_lose_confirmation(**kwargs):
+        result = record(**kwargs)
+        if kwargs["action"] == "reconciliation_approved":
+            raise OSError("simulated lost confirmation after durable append")
+        return result
+
+    authority._record = _append_then_lose_confirmation
+
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be durably recorded"
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+    audit_events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in audit_events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+    ]
+
+    restored_vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    restored_authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=restored_vault,
+    )
+    approval_id = audit_events[-1].approval_id
+    restored = restored_authority.restore_grant(approval_id)
+
+    assert restored.storage_reference is not None
+    assert restored_authority.consume(restored).record == proposal.record
+
+
+def test_authority_refuses_to_restore_a_claimed_or_consumed_grant(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants", protector=protector, clock=_Clock()
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    assert authority.consume(grant).record == proposal.record
+
+    restarted_vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants", protector=protector, clock=_Clock()
+    )
+    restarted_authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=restarted_vault,
+    )
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be restored"
+    ):
+        restarted_authority.restore_grant(grant.proposal.approval.approval_id)
