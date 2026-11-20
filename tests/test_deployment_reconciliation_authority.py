@@ -1634,6 +1634,7 @@ def test_authority_restore_rejects_approval_id_reused_in_another_operation(tmp_p
 
 class _MemoryHeadAnchorForAuthority:
     def __init__(self):
+        self.ledger_id = "authority-test-audit-ledger"
         from runtime.deployment_reconciliation_audit_store import (
             ReconciliationAuditHead,
             _ZERO_DIGEST,
@@ -1658,7 +1659,8 @@ def test_approval_authority_anchors_proposal_approval_and_consumption_events(
     reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
     anchor = _MemoryHeadAnchorForAuthority()
     audit_store = ExternallyAnchoredReconciliationAuditStore(
-        tmp_path / "audit", anchor=anchor
+        tmp_path / "audit", anchor=anchor,
+        expected_ledger_id="authority-test-audit-ledger",
     )
     vault = ReconciliationApprovalGrantVault(
         tmp_path / "protected-grants",
@@ -1714,7 +1716,8 @@ def test_anchored_authority_restores_grant_after_ambiguous_approved_event(tmp_pa
         vault_root, protector=protector, clock=_Clock()
     )
     audit = ExternallyAnchoredReconciliationAuditStore(
-        audit_root, anchor=anchor
+        audit_root, anchor=anchor,
+        expected_ledger_id="authority-test-audit-ledger",
     )
     authority = _authority(
         audit_root,
@@ -1751,7 +1754,8 @@ def test_anchored_authority_restores_grant_after_ambiguous_approved_event(tmp_pa
         vault_root, protector=protector, clock=_Clock()
     )
     restarted_audit = ExternallyAnchoredReconciliationAuditStore(
-        audit_root, anchor=anchor
+        audit_root, anchor=anchor,
+        expected_ledger_id="authority-test-audit-ledger",
     )
     restarted_authority = _authority(
         audit_root,
