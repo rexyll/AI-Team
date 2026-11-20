@@ -253,7 +253,12 @@ def test_anchored_store_serializes_concurrent_writers_across_instances(tmp_path)
     ]
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        events = list(executor.map(lambda item: _record(stores[item], item), range(1, 5)))
+        events = list(
+            executor.map(
+                lambda index: _record(stores[index], index + 1),
+                range(4),
+            )
+        )
 
     assert sorted(event.sequence for event in events) == [1, 2, 3, 4]
     assert anchor.head.sequence == 4
