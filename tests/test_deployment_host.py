@@ -383,7 +383,7 @@ def _seed_needs_reconciliation(path):
     return history
 
 
-def test_host_builds_read_only_snapshot_reader_and_stops_on_unsupported_operation(
+def test_host_builds_read_only_snapshot_reader_and_stops_on_missing_host_receipt(
     tmp_path, monkeypatch
 ):
     from runtime.deployment_reconciliation_snapshot_reader import (
@@ -400,6 +400,7 @@ def test_host_builds_read_only_snapshot_reader_and_stops_on_unsupported_operatio
     monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "a" * 64)
 
     reader = host.build_reconciliation_snapshot_reader("startup-operation-001")
+    receipt_path = path.with_name("host.provider-operations.sqlite3")
 
     with pytest.raises(
         ReconciliationSnapshotReadError,
@@ -413,6 +414,7 @@ def test_host_builds_read_only_snapshot_reader_and_stops_on_unsupported_operatio
     # The Host completion inspector sees no existing receipt sidecar and fails
     # closed before runtime/route reads; it must not create the sidecar.
     assert runner.calls == []
+    assert not receipt_path.exists()
 
 
 def test_host_snapshot_reader_requires_operator_pinned_daemon_identity(

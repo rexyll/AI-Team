@@ -108,3 +108,10 @@ receipt 中的响应摘要来自 `DeploymentOperationResult` 的有界、脱敏�
 - 不把本机 Host receipt sidecar描述成 provider-owned durable operation API。
 
 **下一实施节点**为 T21.6.3.5.23：实现独立 Host synchronous completion contract/inspector、source binding、evidence 类型与 Host 只读组合接线；先通过 fake-store/fake-inspector 的完整拒绝矩阵，再由 Linux/Windows CI 验收。只有该节点通过后，才评估是否进行 disposable Docker Engine 的正向 reconciliation evidence 验收。真实 IdP、双人审批和任何 reconciliation mutation 仍保持关闭。
+
+
+## Implementation status (2026-11-20)
+
+The first implementation slice now exists in `runtime/deployment_reconciliation_completion.py`. The decision-specific collector can be configured with exactly one of a provider-native inspector or a Host synchronous completion inspector. The evidence contract keeps the two source kinds distinct, and proposal validation accepts either complete set without allowing a mixed set. The Local Docker Host builder reads the existing receipt sidecar in read-only mode and passes the snapshot read-start timestamp as a fence. The provider-native `LocalDockerProvider.inspect_operation()` implementation remains unchanged and returns `unsupported`.
+
+The Local Docker source authenticator can authenticate the Host receipt store as a local Host source, while runtime and route sources continue to require the pinned Docker daemon identity. This does not claim remote or cryptographic protection against a Host administrator. Current verification remains CI-driven; a successful CI run does not by itself constitute real production reconciliation validation. The real Docker positive-evidence read is still a separate next step after CI is green.

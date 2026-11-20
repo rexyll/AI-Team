@@ -210,10 +210,10 @@ class DeploymentHostRuntime:
         """Build the pinned Local Docker source authenticator from Host config.
 
         The expected daemon identity is a mandatory operator-provisioned value.
-        This method performs no Docker I/O and does not enable a collector or
-        approval authority. Provider operation inspection remains unsupported
-        by LocalDockerProvider, so the Local Docker reconciliation gate stays
-        closed until that separate capability is provided.
+        This method performs no Docker I/O and does not enable an approval
+        authority. Provider-native operation inspection remains unsupported;
+        the snapshot builder may separately authenticate the Host-owned call
+        receipt sidecar as a synchronous completion witness.
         """
         if not isinstance(self.provider, LocalDockerProvider):
             raise RuntimeError(
