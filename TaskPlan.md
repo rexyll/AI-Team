@@ -850,3 +850,28 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 当前生产阻塞不是缺少更多 Docker smoke：仓库没有配置真实 IdP/production `HostAuthenticator`；没有确认生产 KMS/SecretStore 以安全恢复 bearer grant；没有外部 trusted audit-head anchor/remote retention 服务；生产 daemon pin 与 Docker socket ACL/TLS、Router/HAProxy read-source 配置仍需 operator provisioning。若 Host 未来为多机部署，还需把 same-host file-lock claim 替换为共享数据库唯一约束/事务或集中审批服务。
 - 不得自行选择 Keycloak、Microsoft Entra ID、Okta 或任意用户身份服务；provider-specific proof validation 必须绑定实际部署 IdP 的 issuer、签名/credential、audience、nonce/replay、purpose、operation scope 与 expiry。下一段 provider-specific 实现需要部署负责人明确 IdP 与 KMS/SecretStore/audit-anchor 目标后再开展。
 - 在生产信任根完整接入前，`ReconciliationApprovalAuthority` 仅保留 contract/test 层；不能从 CI fake authentication 推导真实身份，也不能启用 selector、active pointer、journal phase 或 runtime lifecycle mutation。后续先做只读 production-authenticated proposal/dual-approval dry-run；任何 mutation executor 另开独立设计/审批节点，并要求明确的审计持久化顺序与故障恢复策略。
+
+
+### T21.6.3.5.25 — KMS-backed approval grant custody contract（接口与 POSIX 文件托管完成；生产 KMS 仍待接入）
+
+- 新增 runtime/deployment_reconciliation_grant_vault.py，定义 ReconciliationGrantProtector.seal/unseal 外部密钥保护接口及 ReconciliationApprovalGrantVault。加密上下文绑定 purpose/schema、approval ID、operation ID、provider/project/environment、expiry、proposal digest 和 evidence digest。
+- Vault 文件只保存密文和非秘密 scope 元数据；拒绝覆盖相同 approval ID；POSIX root/file ownership、权限、symlink、hard-link 和 regular-file 检查已实现；写入/删除执行 fsync。无软件密钥回退，也不在本地保存 KMS key material。
+- ReconciliationApprovalAuthority 支持可选注入 grant vault。签发顺序为：双人认证与 snapshot validation → vault encrypted save → append reconciliation_approved token-digest event → 返回 grant/reference。Vault/KMS 失败时记录 rejected，不签发可消费 approval。
+- 测试 fake protector 仅用于验证序列化、AAD context 绑定、文件保护与失败语义；它不是密码学实现，也不是生产 KMS 验收。Windows NTFS ACL 尚由 operator/Host service 负责，不由当前模块检查。
+- 架构文档：docs/deployment-reconciliation-grant-vault.md；Host adapter contract 同步更新。
+- 生产阻塞仍包括真实 IdP/HostAuthenticator、具体 KMS/SecretStore adapter 与 key lifecycle、外部 trusted audit-head anchor、生产 Docker daemon pin/socket ACL 或 TLS，以及可能的多机共享事务服务。
+
+### T21.6.3.5.26 — Grant restore / ambiguous audit-append recovery（实现与测试完成，最新 CI 待最终验收）
+
+- 新增 restore_grant(approval_id)：从 vault 恢复 reference/ciphertext，并要求 append-only audit ledger 中恰好存在一条 proposed 与一条 approved 事件且顺序正确；验证 requester/approver actors、完整 provider/project/environment/journal/deployment/runtime scope、proposal/evidence/token digests 与 expiry。
+- 若存在 reconciliation_approval_consumption_started、consumed 或 rejected 事件，则 grant 已 claim/terminal，restore fail-closed；之后 consume() 仍执行原子 one-use claim 和 fresh snapshot read。
+- 修正 ambiguous audit append 行为：若 audit append 调用报错，不再删除可能已经对应 durable approved event 的 ciphertext。重启后以 audit ledger 为最终依据；若 approval event 没有 commit，密文 orphan 不会被 restore，且只能在 expiry 后由后续受控清理处理。
+- 新增测试：模拟 audit approved event 已 durable append、调用方却丢失确认；通过新 Host authority/vault 实例恢复 grant 并成功走原 audit one-use consumption。另验证 consumed grant 无法恢复。
+- 中间 run 44740304375 曾因 failing fake vault 未实现新加入的 reference_for protocol method 导致一项 regression 测试失败；fake adapter 已补齐。修正后的完整 run 44740311121 在 f54a303 上通过（Regression、Security、Windows、Coverage、Docker Engine 全部 success）。此 run 尚早于本节 restore_grant 崩溃恢复新增代码。
+- 本节最终代码与测试提交 d3cd142、a44fa91；随后加入 vault protocol 的 recovery lookup 声明与文档，当前 main CI run 44758798553 及其相邻 run 仍在执行，不能提前将本节记作最终验收通过。
+
+### T21.6.3.5.27 — 真实 Host completion snapshot + vault integration regression baseline（已由前置版本通过；最新 HEAD 复验中）
+
+- 上一已完整通过 run 44739304119（HEAD a72a7ace）证明 authority→vault 接线未破坏真实 Docker Host snapshot：Regression 3,282 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,262 passed / 14 skipped、82% coverage、所有模块 floor 通过；Docker Engine job success。
+- 该 run 的 router-host-synchronous-completion-snapshot-evidence artifact ID 14629289438 已下载核验：retire_previous completion succeeded，source docker-local-host-call-receipts；receipt 在 snapshot read start 前完成；四种 evidence 均存在；candidate running/healthy 且 Router effective target 匹配；previous immutable runtime exited；journal 保持 needs_reconciliation；automatic_reconciliation_executed=false；smoke 资源全部清理。
+- 此正向证据只覆盖 disposable Docker Engine 与 Host read-only diagnostic snapshot，不代表真实 IdP/KMS/SecretStore 已接入，也不授予 production approval 或 reconciliation mutation。
