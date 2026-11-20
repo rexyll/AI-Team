@@ -792,3 +792,12 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 缺失/损坏 sidecar、missing row、started、indeterminate、failed、scope/action/digest 不匹配、缺失 immutable ID、过期/future 时间全部 fail-closed；不会初始化/修复数据库，不调用 Docker 或改变部署状态。
 - 新增 `tests/test_deployment_reconciliation_completion.py` 覆盖两种正向 action receipt 与拒绝矩阵。该子步尚未接入 evidence collector / source authenticator / Host snapshot reader；未启用任何 reconciliation authority。待本地/CI 验收后再记录通过情况。
 
+
+
+### T21.6.3.5.23.3 — Local Docker Host snapshot wiring（实现已接线，CI 待验收）
+
+- Source authenticator 现在可配置 Host provider-call sidecar source，验证真实存在的 regular file、POSIX 私有权限、source path/device/inode/mode 摘要；此 source 不触发 Docker I/O。runtime/route source 仍必须逐次验证 pinned daemon ID。
+- `DeploymentHostRuntime.build_reconciliation_snapshot_reader()` 现在组合 Host synchronous completion inspector，路径从 history stem 派生，仅以只读方式打开现有 sidecar；缺失 sidecar 会在 runtime/route Docker I/O 前 fail-closed，不创建 sidecar。
+- Snapshot reader 将开始读取的时间传入 evidence collector；completion receipt 必须不晚于 snapshot read start，避免在一次 snapshot 中接受读取开始之后才写入的 completion record。
+- Snapshot reader fake collector、Host 边界注释与 TaskPlan 已同步。当前仅接线只读 snapshot；未执行真实 Docker positive evidence read、未引入 mutation/approval/IdP。
+- 待 CI 验收 collector alternative tests、source authenticator、Host wiring 与 Linux/Windows behavior；若失败先修复并重新跑 CI。

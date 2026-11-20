@@ -43,7 +43,7 @@ class _Collector:
         self.evidence = evidence
         self.calls = []
 
-    def collect_current_evidence(self, record, operation):
+    def collect_current_evidence(self, record, operation, *, snapshot_started_at=None):
         self.calls.append((record.operation_id, operation))
         return self.evidence
 
@@ -269,7 +269,7 @@ def test_snapshot_reader_rejects_evidence_collector_failures_and_invalid_payload
     record = _record()
 
     class _FailingCollector:
-        def collect_current_evidence(self, record, operation):
+        def collect_current_evidence(self, record, operation, *, snapshot_started_at=None):
             raise OSError("provider API unavailable")
 
     with pytest.raises(ReconciliationSnapshotReadError, match="evidence collection failed"):
@@ -278,7 +278,7 @@ def test_snapshot_reader_rejects_evidence_collector_failures_and_invalid_payload
         )
 
     class _InvalidCollector:
-        def collect_current_evidence(self, record, operation):
+        def collect_current_evidence(self, record, operation, *, snapshot_started_at=None):
             return [*_evidence(operation)]
 
     with pytest.raises(ReconciliationSnapshotReadError, match="invalid evidence tuple"):

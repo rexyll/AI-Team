@@ -47,6 +47,8 @@ class ReconciliationEvidenceCollector(Protocol):
         self,
         record: ReplacementJournalRecord,
         operation: ReconciliationOperation,
+        *,
+        snapshot_started_at: str | None = None,
     ) -> tuple[ReconciliationEvidence, ...]:
         """Collect the exact evidence kinds required by the resolution policy."""
         ...
@@ -138,7 +140,7 @@ class DeploymentHistoryReconciliationSnapshotReader:
 
         try:
             evidence = self._evidence_collector.collect_current_evidence(
-                before, operation
+                before, operation, snapshot_started_at=self._iso(read_started)
             )
         except Exception as exc:
             raise ReconciliationSnapshotReadError(

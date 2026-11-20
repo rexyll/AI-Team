@@ -410,8 +410,8 @@ def test_host_builds_read_only_snapshot_reader_and_stops_on_unsupported_operatio
             "abort_candidate",
         )
 
-    # LocalDockerProvider's operation inspector returns unsupported without
-    # contacting Docker, and the collector must stop before runtime/route reads.
+    # The Host completion inspector sees no existing receipt sidecar and fails
+    # closed before runtime/route reads; it must not create the sidecar.
     assert runner.calls == []
 
 

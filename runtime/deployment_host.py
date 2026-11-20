@@ -20,6 +20,9 @@ from runtime.deployment_replacement_manager import (
     DeploymentRecoveryInventoryItem,
     HostDeploymentReplacementManager,
 )
+from runtime.deployment_reconciliation_completion import (
+    LocalDockerSynchronousOperationCompletionInspector,
+)
 from runtime.deployment_reconciliation_evidence_collector import (
     DecisionSpecificReconciliationEvidenceCollector,
 )
@@ -201,6 +204,8 @@ class DeploymentHostRuntime:
 
     def build_reconciliation_source_authenticator(
         self,
+        *,
+        operation_receipt_store_path: str | Path | None = None,
     ) -> LocalDockerReconciliationEvidenceSourceAuthenticator:
         """Build the pinned Local Docker source authenticator from Host config.
 
@@ -221,13 +226,17 @@ class DeploymentHostRuntime:
             raise RuntimeError(
                 "AI_TEAM_DOCKER_EXPECTED_DAEMON_ID must be provisioned by the Host operator"
             )
+        source_ids = {
+            "runtime": "docker-local-daemon-runtime",
+            "route": "docker-local-daemon-router",
+        }
+        if operation_receipt_store_path is not None:
+            source_ids["provider_operation"] = "docker-local-host-call-receipts"
         return LocalDockerReconciliationEvidenceSourceAuthenticator(
             self.provider,
             expected_daemon_id=expected_daemon_id,
-            source_ids={
-                "runtime": "docker-local-daemon-runtime",
-                "route": "docker-local-daemon-router",
-            },
+            source_ids=source_ids,
+            operation_receipt_store_path=operation_receipt_store_path,
         )
 
     def build_reconciliation_snapshot_reader(
@@ -240,10 +249,11 @@ class DeploymentHostRuntime:
 
         The builder reads only existing Host journal/Router registry state. It
         never creates/adopts a Router scope and performs no Docker commands.
-        LocalDockerProvider currently returns 'unsupported' for provider
-        operation inspection, so an actual snapshot read deliberately fails
-        closed before runtime or route probes. This path is diagnostic plumbing,
-        not a production approval/decision handler.
+        This composes a distinct Host-synchronous completion witness from the
+        existing read-only receipt sidecar. It does not change the provider's
+        native inspect_operation capability. Runtime and route evidence still
+        require a pinned Docker daemon identity and independent live read-back.
+        This path is read-only, not an approval/decision handler.
         """
         if not isinstance(operation_id, str) or not operation_id.strip():
             raise ValueError("operation_id must be a non-empty string")
@@ -297,13 +307,23 @@ class DeploymentHostRuntime:
                 router.port_bindings,
             )
 
+        receipt_store_path = self.history_path.with_name(
+            f"{self.history_path.stem}.provider-operations.sqlite3"
+        )
+        completion_inspector = LocalDockerSynchronousOperationCompletionInspector(
+            receipt_store_path,
+            max_evidence_age_seconds=max_evidence_age_seconds,
+        )
         collector = DecisionSpecificReconciliationEvidenceCollector(
-            provider_operation_inspector=self.provider,
+            provider_operation_inspector=None,
+            host_synchronous_completion_inspector=completion_inspector,
             runtime_inspector=self.provider,
             route_inspector=route_inspector,
-            source_authenticator=self.build_reconciliation_source_authenticator(),
+            source_authenticator=self.build_reconciliation_source_authenticator(
+                operation_receipt_store_path=receipt_store_path
+            ),
             source_ids={
-                "provider_operation": "docker-local-operation-inspection-capability",
+                "provider_operation": "docker-local-host-call-receipts",
                 "runtime": "docker-local-daemon-runtime",
                 "route": "docker-local-daemon-router",
             },
