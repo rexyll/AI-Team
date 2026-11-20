@@ -136,18 +136,28 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
     def _anchor_lock(self):
         return exclusive_process_lock(self.anchor_lock_path)
 
-    def _read_external_head(self) -> ReconciliationAuditHead:
-        current_ledger_id = getattr(self._anchor, "ledger_id", None)
+    def _assert_anchor_identity(self) -> None:
+        try:
+            current_ledger_id = getattr(self._anchor, "ledger_id", None)
+        except Exception as exc:
+            raise ReconciliationAuditAnchorIdentityError(
+                "external audit anchor ledger identity could not be verified"
+            ) from exc
         if current_ledger_id != self._expected_ledger_id:
             raise ReconciliationAuditAnchorIdentityError(
                 "external audit anchor ledger identity changed after configuration"
             )
+
+    def _read_external_head(self) -> ReconciliationAuditHead:
+        self._assert_anchor_identity()
         try:
             head = self._anchor.read_head()
         except Exception as exc:
             raise ReconciliationAuditAnchorError(
                 "external audit-head anchor is unavailable"
             ) from exc
+        # The namespace must remain the same across the remote read itself.
+        self._assert_anchor_identity()
         if not isinstance(head, ReconciliationAuditHead):
             raise ReconciliationAuditAnchorError(
                 "external audit-head anchor returned an invalid checkpoint"
@@ -319,13 +329,20 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
                     "one anchored write must append exactly one audit event"
                 )
 
+            self._assert_anchor_identity()
             try:
                 advanced = self._anchor.compare_and_set(expected, replacement)
+                # The adapter must keep one immutable namespace throughout CAS.
+                self._assert_anchor_identity()
+            except ReconciliationAuditAnchorIdentityError:
+                raise
             except Exception as exc:
                 # A remote CAS may commit before a client loses its response.
                 try:
                     if self._read_external_head() == replacement:
                         return result
+                except ReconciliationAuditAnchorIdentityError:
+                    raise
                 except Exception:
                     pass
                 raise ReconciliationAuditAnchorError(
