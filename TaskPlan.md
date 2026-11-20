@@ -900,3 +900,11 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 新增两项测试：read_head 在返回过程中改变 ledger_id；CAS 已执行后改变 ledger_id。分别验证 verify/append 拒绝及 inspect_anchor_state 分类为 identity_mismatch。
 - 同步更新 docs/deployment-reconciliation-external-audit-anchor.md，明确身份检查在远端 I/O 两侧执行。
 - 实现提交 8fde6e1，测试提交 df30555，文档提交 82063c1。前置 HEAD a079b630（run 44767875515）整体 CI 已全部 success；本节变更尚待最新 HEAD 完整 CI 验收。未接入真实外部 anchor 服务，未选择任何云供应商，不允许自动 re-anchor、truncate 或 reconciliation mutation。
+
+
+### T21.6.3.5.30 — External anchor adapter contract conformance and namespace isolation（实现与测试已提交，CI 待验收）
+
+- 将 tests/test_deployment_reconciliation_anchored_audit_store.py 中的 SQLite test-only anchor 改为按 ledger_id 分区；独立 adapter instance 可针对同一外部 checkpoint 重建客户端，且不同 namespace 的 head 不互相影响。
+- 新增契约测试：CAS 更新在新客户端实例中仍可读取；旧 expected head 的 stale CAS 必须失败且不覆盖新 head；不同 ledger_id 的更新隔离；两个独立客户端并发竞争同一 expected head 时恰好一个 CAS 返回成功。
+- 保留原有 4-process spawn 并发测试，继续验证 same-host lock + remote CAS 组合能保持 audit sequence 连续。SQLite fixture 明确仅是测试后端，不是生产外部 trust root，不代表跨组织权限隔离、服务端 SLA 或异地灾备。
+- 文档 docs/deployment-reconciliation-external-audit-anchor.md 已同步说明 conformance coverage 和测试 fixture 的限制。测试提交 801c92d，文档提交 085e095；最新 HEAD 的完整 CI 待验收。
