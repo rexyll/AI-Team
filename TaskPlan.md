@@ -811,28 +811,33 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 待 CI 验收 collector alternative tests、source authenticator、Host wiring 与 Linux/Windows behavior；若失败先修复并重新跑 CI。
 
 
-### T21.6.3.5.23.4 — Disposable Docker Engine positive Host-completion snapshot smoke（实现已接入 CI，待验收）
+### T21.6.3.5.23.4 — Disposable Docker Engine positive Host-completion snapshot smoke（验收通过，2026-11-20）
 
 - 扩展 `scripts/local_docker_router_replacement_live_smoke.py` 新故障模式 `retire_history_commit_failure`：执行真实 blue/green replacement；真实 Docker/HAProxy `retire_previous` 必须返回 succeeded，并由 Host sidecar 持久化 exact `returned/succeeded` receipt；之后只注入 `history.mark_stopped()` 持久化失败，令 journal 进入 `needs_reconciliation`。
 - 正向快照使用 Host 正式入口 `DeploymentHostRuntime.build_reconciliation_snapshot_reader()` 和 `read_current_snapshot(..., "confirm_previous_retired")`，而非 fake collector；校验四类 evidence：Host synchronous completion、candidate live route、candidate healthy runtime、previous exact immutable runtime exited/dead。
 - 验证 snapshot journal revision fence、receipt completed_at 不晚于 snapshot read start、candidate active pointer/HAProxy selector/effective runtime ID 保持不变；不执行自动 reconciliation、rollback、selector/pointer/journal mutation。
 - CI 在 disposable Docker Engine job 内显式把该 job 的 daemon ID provision 为本次测试 Host pin，并上传 artifact `router-host-synchronous-completion-snapshot-evidence`。真实生产 Host 仍必须通过独立 operator 配置 pin；本测试不改变其默认配置。
-- 仅在全部证据通过后，smoke cleanup 才清除自己创建的临时 containers/network/images；若证据失败则保留资源供诊断。跨平台 Python regression 和 Docker Engine live test 待 CI 运行验收。
+- 2026-11-20 最新集成 CI `44734988946` 全部通过：Windows toolchain/adapter E2E、Python 3.14 regression、Security regression、Coverage baseline 和 Docker Engine Host job 均为 success。回归 3,276 passed / 14 skipped；安全回归 275 passed / 9 skipped；覆盖率基线 3,256 passed / 14 skipped，总覆盖率 83%，全部模块门槛通过。
+- 真实 snapshot JSON `status=fault_injection_verified`，`checks.host_synchronous_completion_snapshot.status=verified`；receipt 为 `retire_previous / succeeded`，source `docker-local-host-call-receipts`。`completed_at=2026-11-20T12:26:37.420090Z`，早于 `snapshot_started_at=2026-11-20T12:26:37.461653Z`；四类 evidence `host_synchronous_operation_completion`、`candidate_route_readback`、`candidate_health`、`previous_runtime_retirement` 全部存在且各自 source role 正确。
+- Candidate runtime `bfef8161...` 处于 running/healthy，且与 Router effective runtime ID 一致；Router live selector 与 registry active slot 均为 `slot_b`；previous immutable runtime `01fb7711...` 为 exited。journal 保持 `needs_reconciliation`，revision fence=`b65fd45b...`；`automatic_reconciliation_executed=false`。
+- Artifact `router-host-synchronous-completion-snapshot-evidence`（ID `14628606633`）已上传并下载核验；smoke 自有 candidate/previous/Router containers、network 与两份 images 均 `removed`。生产 Host pin 仍须 operator 配置；未启用自动 reconciliation、rollback 或 selector/pointer/journal mutation。
 
 
-### T21.6.3.5.23.5 — Native Docker Engine daemon identity format correction
+### T21.6.3.5.23.5 — Native Docker Engine daemon identity format correction（初次修正不完整，已由 23.6 补正）
 
 - 新增 live Host completion snapshot 首轮失败已定位：Docker CLI `docker info --format '{{.ID}}'` 返回 Docker Engine 原生 daemon ID（可为字母数字形式），但 Host authenticator 错误地要求 64 位小写十六进制；失败发生在 evidence collection 前，故不能视为 snapshot 逻辑失败或成功。
 - 修正 `LocalDockerReconciliationEvidenceSourceAuthenticator`：接受 12–128 位完整字母数字 Docker daemon ID，仍对 Host pin 与每次实时读取的 daemon ID 做精确、区分大小写匹配；不使用响应自证，不放宽 provider/project/environment/source role 绑定。
 - 增加原生 Docker ID 格式正向测试；原有非法格式、daemon mismatch 与异常输出测试保留。
-- 代码已提交 `main`；等待 Regression、Security、Coverage、Windows 与 Docker Engine live smoke 全套 CI 验收。此前 live smoke 的真实 Docker 容器已因前置身份格式拒绝而保留在 disposable runner；GitHub runner 生命周期结束后自动销毁，不涉及用户主机。
+- 首次只增加 alphanumeric 格式支持仍不完整：后续 CI 实际返回 UUID 格式，见 23.6。首次失败发生在 evidence collection 前；这些失败 run 的 runner 在任务结束后销毁，不涉及用户主机。
 
 
-### T21.6.3.5.23.6 — UUID-form Docker Engine daemon identity support
+### T21.6.3.5.23.6 — UUID-form Docker Engine daemon identity support（实现与真实 Docker 正向验收通过，2026-11-20）
 
 - The next disposable Docker Engine run exposed the actual CI daemon ID shape: a canonical UUID (`2e9a7954-494c-4cfc-bff9-50a0425c70dc`), not the alphanumeric-only form accepted by the initial 23.5 correction.
 - Updated the Host authenticator to accept either 12–128 character alphanumeric IDs or canonical 8-4-4-4-12 hexadecimal UUIDs. Host pin comparison remains exact and case-sensitive; provider/project/environment/source-role binding is unchanged.
 - Added a regression test for the observed UUID form, retaining the native alphanumeric ID test and malformed/mismatch fail-closed tests.
 - Removed temporary CI diagnostics that printed the ephemeral daemon ID. The disposable live smoke still provisions the exact ID returned by `docker info` as its Host pin; production pin configuration remains operator-managed.
-- The preceding CI run verified Windows smoke, Python regression (3,274 passed, 14 skipped), security regression (275 passed, 9 skipped), and coverage; only the live snapshot step failed at Host authenticator construction. The new UUID path awaits full CI and live positive-snapshot acceptance.
-- No production Host pin, reconciliation authority, rollback capability, traffic selector, deployment pointer, or journal mutation policy was changed.
+- Final CI run `44734988946` completed with overall `success`; regression=`3,276 passed, 14 skipped`; security=`275 passed, 9 skipped`; coverage suite=`3,256 passed, 14 skipped`, total coverage 83%, all configured module floors passed; Windows toolchain/adapter E2E passed; complete Docker Engine job passed.
+- Verified downloaded artifact `router-host-synchronous-completion-snapshot-evidence` (ID `14628606633`): top-level status `fault_injection_verified`, no failure field; completion action `retire_previous`, result `succeeded`, source `docker-local-host-call-receipts`; completion timestamp precedes snapshot start by approximately 41.6 ms; all four required evidence kinds are present.
+- The candidate runtime is running/healthy and is the Router effective runtime; previous immutable runtime is exited; live selector and registry active slot remain on the candidate. Journal stays `needs_reconciliation` with a non-empty revision fence. `automatic_reconciliation_executed=false`.
+- Artifact JSON independently confirms the smoke removed its own candidate/previous/Router containers, network, and both images. No automated reconciliation, rollback, selector/pointer/journal mutation, or production pin change was performed.
