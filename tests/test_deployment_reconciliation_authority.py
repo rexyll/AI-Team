@@ -1433,6 +1433,9 @@ def test_authority_does_not_append_approved_event_when_grant_vault_fails(tmp_pat
         def load(self, reference):
             raise AssertionError("load must not be called")
 
+        def reference_for(self, approval_id):
+            raise AssertionError("reference_for must not be called")
+
         def delete(self, reference):
             raise AssertionError("delete must not be called")
 
