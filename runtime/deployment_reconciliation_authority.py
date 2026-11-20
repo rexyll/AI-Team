@@ -307,7 +307,7 @@ class ReconciliationApprovalAuthority:
             raise TypeError("a DurableReconciliationAuditStore is required")
         if grant_vault is not None and any(
             not callable(getattr(grant_vault, method, None))
-            for method in ("save", "load", "delete")
+            for method in ("save", "load", "reference_for", "delete")
         ):
             raise TypeError(
                 "grant_vault must provide durable save, load and delete methods"
