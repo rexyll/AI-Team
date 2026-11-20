@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -167,6 +168,28 @@ class ReconciliationSnapshotReader(Protocol):
         ...
 
 
+_GRANT_APPROVAL_ID = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+_GRANT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class ReconciliationApprovalGrantReference:
+    """Non-secret reference to an externally protected grant envelope."""
+
+    approval_id: str
+    envelope_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.approval_id, str) or not _GRANT_APPROVAL_ID.fullmatch(
+            self.approval_id
+        ):
+            raise ValueError("approval_id is malformed")
+        if not isinstance(self.envelope_sha256, str) or not _GRANT_SHA256.fullmatch(
+            self.envelope_sha256
+        ):
+            raise ValueError("envelope_sha256 must be a lowercase SHA-256 digest")
+
+
 @dataclass(frozen=True)
 class ReconciliationApprovalGrant:
     """Opaque one-use bearer capability; only its digest is stored in the audit ledger."""
@@ -175,6 +198,29 @@ class ReconciliationApprovalGrant:
     proposal_digest: str
     evidence_digest: str
     token: str = field(repr=False)
+    storage_reference: ReconciliationApprovalGrantReference | None = field(
+        default=None, repr=False, compare=False
+    )
+
+
+class ReconciliationApprovalGrantVault(Protocol):
+    """External KMS-backed custody adapter; no software-key fallback is allowed."""
+
+    def save(
+        self, grant: ReconciliationApprovalGrant
+    ) -> ReconciliationApprovalGrantReference:
+        """Durably protect a newly issued grant and return its non-secret reference."""
+        ...
+
+    def load(
+        self, reference: ReconciliationApprovalGrantReference
+    ) -> ReconciliationApprovalGrant:
+        """Restore a protected grant without bypassing audit-ledger one-use checks."""
+        ...
+
+    def delete(self, reference: ReconciliationApprovalGrantReference) -> None:
+        """Delete a grant envelope after terminal handling or failed issuance."""
+        ...
 
 
 class ReconciliationApprovalAuthority:
@@ -208,6 +254,7 @@ class ReconciliationApprovalAuthority:
         challenge_ttl_seconds: int = 120,
         evidence_max_age_seconds: int = 300,
         snapshot_read_max_duration_seconds: int = 60,
+        grant_vault: ReconciliationApprovalGrantVault | None = None,
         clock=None,
     ) -> None:
         if authenticator is None or not callable(
@@ -249,6 +296,13 @@ class ReconciliationApprovalAuthority:
             raise ValueError("authentication_audience must be a non-empty string")
         if not isinstance(audit_store, DurableReconciliationAuditStore):
             raise TypeError("a DurableReconciliationAuditStore is required")
+        if grant_vault is not None and any(
+            not callable(getattr(grant_vault, method, None))
+            for method in ("save", "load", "delete")
+        ):
+            raise TypeError(
+                "grant_vault must provide durable save, load and delete methods"
+            )
         if (
             not isinstance(approval_ttl_seconds, int)
             or isinstance(approval_ttl_seconds, bool)
@@ -281,6 +335,7 @@ class ReconciliationApprovalAuthority:
         self._trusted_evidence_sources = trusted_evidence_sources
         self._authentication_audience = authentication_audience
         self._audit = audit_store
+        self._grant_vault = grant_vault
         self._approval_ttl = approval_ttl_seconds
         self._challenge_ttl = challenge_ttl_seconds
         self._evidence_max_age = timedelta(seconds=evidence_max_age_seconds)
@@ -670,24 +725,66 @@ class ReconciliationApprovalAuthority:
             ),
         )
         approved_proposal = replace(proposal, approval=approval)
-        token = secrets.token_urlsafe(32)
-        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        self._record(
-            action="reconciliation_approved",
-            actor=approver,
-            approval_id=approval_id,
+        grant = ReconciliationApprovalGrant(
             proposal=approved_proposal,
             proposal_digest=proposal_digest,
             evidence_digest=evidence_digest,
-            approval_token_digest=token_digest,
-            approval_expires_at=approval.expires_at,
+            token=secrets.token_urlsafe(32),
         )
-        return ReconciliationApprovalGrant(
-            proposal=approved_proposal,
-            proposal_digest=proposal_digest,
-            evidence_digest=evidence_digest,
-            token=token,
-        )
+        storage_reference = None
+        if self._grant_vault is not None:
+            try:
+                storage_reference = self._grant_vault.save(grant)
+                if not isinstance(
+                    storage_reference, ReconciliationApprovalGrantReference
+                ):
+                    raise TypeError(
+                        "grant vault returned an invalid storage reference"
+                    )
+                expires = datetime.fromisoformat(
+                    approval.expires_at.replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+                if self._now() >= expires:
+                    raise ReconciliationAuthorizationError(
+                        "approval expired while the protected grant was being stored"
+                    )
+            except Exception as exc:
+                self._record(
+                    action="reconciliation_rejected",
+                    actor=approver,
+                    approval_id=approval_id,
+                    proposal=approved_proposal,
+                    proposal_digest=proposal_digest,
+                    evidence_digest=evidence_digest,
+                )
+                raise ReconciliationAuthorizationError(
+                    "approved grant could not be durably protected"
+                ) from exc
+
+        token_digest = hashlib.sha256(grant.token.encode("utf-8")).hexdigest()
+        try:
+            self._record(
+                action="reconciliation_approved",
+                actor=approver,
+                approval_id=approval_id,
+                proposal=approved_proposal,
+                proposal_digest=proposal_digest,
+                evidence_digest=evidence_digest,
+                approval_token_digest=token_digest,
+                approval_expires_at=approval.expires_at,
+            )
+        except Exception as exc:
+            if storage_reference is not None:
+                try:
+                    self._grant_vault.delete(storage_reference)
+                except Exception:
+                    # The orphaned ciphertext has no approved audit event and
+                    # cannot be consumed; it expires and can be swept later.
+                    pass
+            raise ReconciliationAuthorizationError(
+                "approval could not be durably recorded"
+            ) from exc
+        return replace(grant, storage_reference=storage_reference)
 
     def consume(
         self,
