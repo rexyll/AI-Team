@@ -128,6 +128,7 @@ def test_anchored_store_rejects_preexisting_unanchored_local_events(tmp_path):
     unanchored = DurableReconciliationAuditStore.record(
         store, action="reconciliation_proposed", **common
     )
+    assert unanchored.sequence == 1
     assert anchor.head == ReconciliationAuditHead(0, _ZERO_DIGEST)
 
     second = ExternallyAnchoredReconciliationAuditStore(
