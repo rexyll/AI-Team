@@ -62,7 +62,7 @@ If a process crashes after the encrypted envelope is saved but before an approva
 - Missing, duplicate, reordered or mismatched audit events: fail closed.
 - Ambiguous audit append: retain ciphertext for deterministic ledger-based recovery; do not delete a potentially approved grant.
 - Consumption started but not completed: terminal one-use claim; require fresh dual approval.
-- Audit ledger tampering: the local hash chain detects edits/reordering, but production still needs an external trusted audit-head anchor and remote retention.
+- Audit ledger tampering: the local hash chain detects edits/reordering; the provider-neutral external CAS checkpoint contract is documented in deployment-reconciliation-external-audit-anchor.md. A real external anchor adapter and remote retention are still required in production.
 - Multi-host authority: the current same-host file-lock store is not a distributed transaction. A multi-host deployment needs a shared database uniqueness/transaction boundary or centralized approval service.
 
 ## Verification status and production gate
