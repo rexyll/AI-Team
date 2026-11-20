@@ -767,8 +767,8 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 
 - Added `DeploymentHostRuntime.build_reconciliation_snapshot_reader(operation_id)`. It opens Host history read-only, binds the requested replacement scope, composes the Host synchronous call-receipt completion inspector, immutable runtime inspector, operator-pinned daemon source authenticator, read-only Router route adapter, decision-specific evidence collector and `DeploymentHistoryReconciliationSnapshotReader`. Provider-native Local Docker operation inspection remains unsupported and is not impersonated.
 - Existing Router registry/state is only read. If the durable Router registry or Host state record is missing, the composition uses an explicit route `not_found` inspector; it never creates/adopts a Router, network, container or HAProxy map.
-- The Local Docker provider-operation inspector is invoked first and returns `unsupported`; therefore the collector fails closed before Docker runtime/Router probes. Added tests that verify this path does not issue Docker commands, and that missing `AI_TEAM_DOCKER_EXPECTED_DAEMON_ID` blocks reader construction.
-- Updated the design document. This is a diagnostic, read-only composition path only; it is not an approval authority and cannot emit positive Local Docker reconciliation evidence while provider operation inspection remains unsupported.
+- At the original T21.6.3.5.21 checkpoint, the Local Docker provider-operation inspector returned `unsupported` and the snapshot path stopped before runtime/Router probes. T21.6.3.5.23 later superseded that composition with a distinct Host synchronous completion witness; provider-native inspection remains unsupported and is not impersonated.
+- The current snapshot path remains diagnostic/read-only, not an approval authority. It can only produce positive Local Docker evidence when an exact Host receipt is `returned/succeeded` and independent immutable runtime plus effective-route postconditions pass.
 - No live deployment/provider mutation, runtime stop, traffic switch, Router/HAProxy selector change, journal phase change, active-pointer update or reconciliation approval was performed.
 
 
@@ -793,6 +793,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 新增 `tests/test_deployment_reconciliation_completion.py` 覆盖两种正向 action receipt 与拒绝矩阵。该子步尚未接入 evidence collector / source authenticator / Host snapshot reader；未启用任何 reconciliation authority。待本地/CI 验收后再记录通过情况。
 
 
+
+### T21.6.3.5.23.2 — Distinct Host completion evidence in collector and contract（实现已接线）
+
+- Collector 构造必须且只能选择一种 operation completion source：provider-native `DeploymentProviderOperationInspector` 或 Host `LocalDockerSynchronousOperationCompletionInspector`；两种 source 类型不能混用。
+- 对 Host 模式，collector 校验 provider/project/environment/operation/action/source 精确匹配、completed_at freshness 和 snapshot-start boundary；随后仍独立读取 candidate/previous immutable runtime、health 与 live Router selector/effective route。
+- Evidence kind 独立使用 `host_synchronous_operation_completion`；contract/proposal 仅接受完整 provider-native evidence set 或完整 Host-completion evidence set，不接受混合证据集合。Host completion 只对 docker-local 有效。
+- 增加 collector 正向/时间边界测试，以及 proposal 的两种 operation 正向和混合证据拒绝测试。Provider-native live inspection 允许在 snapshot read start 之后发生；只有预先完成的 Host synchronous receipt 必须不晚于 read start。
+- 不改变 `LocalDockerProvider.inspect_operation()` 的 `unsupported` 语义，不增加任何 deployment mutation 或 approval capability。
 
 ### T21.6.3.5.23.3 — Local Docker Host snapshot wiring（实现已接线，CI 待验收）
 
