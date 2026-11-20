@@ -154,3 +154,8 @@ The repository now includes `runtime/local_docker_reconciliation_source_authenti
 
 Unit tests use injected Docker runners and do not constitute a real Docker daemon/TLS integration test. Local Docker still returns `unsupported` for provider operation inspection, so this Host reader cannot produce a positive reconciliation snapshot until that separate operation-status capability is supplied.
 
+
+
+## Local Docker synchronous completion alternative
+
+The companion decision record `docs/local-docker-synchronous-operation-completion.md` documents a bounded alternative for the synchronous Local Docker Router replacement adapter. It does **not** change `LocalDockerProvider.inspect_operation()`: that capability remains `unsupported`, because a Host method-return receipt is not a provider-native operation resource. The alternative uses a separately named Host synchronous completion witness plus independent exact runtime and route postconditions. It is design-only until T21.6.3.5.23 is implemented and accepted.

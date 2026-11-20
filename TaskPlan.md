@@ -771,3 +771,15 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Updated the design document. This is a diagnostic, read-only composition path only; it is not an approval authority and cannot emit positive Local Docker reconciliation evidence while provider operation inspection remains unsupported.
 - No live deployment/provider mutation, runtime stop, traffic switch, Router/HAProxy selector change, journal phase change, active-pointer update or reconciliation approval was performed.
 
+
+
+### T21.6.3.5.22 — Local Docker Host-synchronous operation completion proof design（2026-11-20，设计决策完成）
+
+- 完成对 Host call-receipt sidecar、`LocalDockerProvider.inspect_operation()` 和 `LocalDockerRouterReplacementProvider` 五个 replacement action 的同步边界审查，设计文档：[`docs/local-docker-synchronous-operation-completion.md`](docs/local-docker-synchronous-operation-completion.md)。
+- 决策：`LocalDockerProvider.inspect_operation()` 继续明确返回 `unsupported`；不把 Host receipt 伪装成 provider-native operation ID/API 结果。针对 docker-local 单独设计 Host synchronous completion witness，并使用独立的 `operation_completion` evidence 语义。
+- 第一版只接受 `abort_candidate` 与 `retire_previous` 的 exact-scope `returned/succeeded` receipt；根据 journal immutable IDs 重新计算 request digest，校验 action、scope、response digest、时间顺序和 freshness。缺失、started、indeterminate、failed、过期、future-dated、损坏或摘要不一致均 fail-closed。
+- Receipt 不能单独决定恢复；abort 仍必须同时证明 candidate immutable ID not-found、previous immutable ID verified/running/healthy 和 previous route verified；retire 仍必须同时证明 candidate healthy/effective route selected 和 previous exact immutable ID exited/dead。
+- 保持 Host receipt-only trust boundary 的诚实表述：不声称外部 provider operation 状态、分布式事务、抗 Host 管理员篡改或远端可信锚定。snapshot/read-only 路径不得初始化或修复 sidecar，不得执行任何 deployment/route/journal mutation。
+- 本节点仅完成设计，没有修改运行时代码，没有执行真实 Docker reconciliation，也没有启用 IdP、双人审批或 mutation authority。
+- 下一节点 T21.6.3.5.23：实现独立 Host completion contract/inspector、evidence/source binding 和只读 Host composition；覆盖 fake-store 拒绝矩阵及 Linux/Windows CI，再评估 disposable Docker Engine 正向证据。
+
