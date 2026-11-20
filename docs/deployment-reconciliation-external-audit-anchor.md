@@ -47,6 +47,8 @@ Public verify() and events() also require the local head to match the external c
 
 The local-ahead state is intentionally operationally inconvenient. An automatic "repair" that copies a local head into the external anchor could legitimize attacker-injected events. Recovery must verify the event history and remote checkpoint provenance under a documented operator procedure before updating the external anchor.
 
+The operational containment/classification process is documented in [deployment-reconciliation-audit-anchor-recovery-runbook.md](deployment-reconciliation-audit-anchor-recovery-runbook.md). The current repository intentionally has no general re-anchor/truncate repair command; ambiguous grants must be rendered non-consumable before approval service is reopened.
+
 ## Deployment limits
 
 The wrapper's coordination lock serializes processes sharing one Host filesystem. It is not a distributed transaction and does not make independent local ledgers multi-host safe. A multi-host deployment must use a shared transactional audit database or centralized append service together with an external trust root; the current wrapper will reject divergent hosts rather than merge their ledgers.
