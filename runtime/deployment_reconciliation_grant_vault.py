@@ -17,13 +17,14 @@ import os
 import re
 import secrets
 import stat
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Protocol
 
 from runtime.deployment_reconciliation_authority import (
     ReconciliationApprovalGrant,
+    ReconciliationApprovalGrantReference,
 )
 from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
@@ -85,24 +86,6 @@ class ReconciliationGrantProtector(Protocol):
     ) -> bytes:
         """Authenticate the context and decrypt the exact ciphertext envelope."""
         ...
-
-
-@dataclass(frozen=True)
-class ReconciliationApprovalGrantReference:
-    """Non-secret reference to one encrypted grant envelope."""
-
-    approval_id: str
-    envelope_sha256: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.approval_id, str) or not _APPROVAL_ID.fullmatch(
-            self.approval_id
-        ):
-            raise ValueError("approval_id is malformed")
-        if not isinstance(self.envelope_sha256, str) or not _SHA256.fullmatch(
-            self.envelope_sha256
-        ):
-            raise ValueError("envelope_sha256 must be a lowercase SHA-256 digest")
 
 
 class ReconciliationApprovalGrantVault:
@@ -437,13 +420,10 @@ class ReconciliationApprovalGrantVault:
             envelope_sha256=hashlib.sha256(raw).hexdigest(),
         )
 
-    def _read_envelope(
-        self, reference: ReconciliationApprovalGrantReference
-    ) -> tuple[bytes, dict[str, str], bytes]:
-        if not isinstance(reference, ReconciliationApprovalGrantReference):
-            raise TypeError("reference must be a ReconciliationApprovalGrantReference")
+    def _read_raw(self, approval_id: str) -> bytes:
+        """Read one private envelope without following symlinks."""
         self._validate_root()
-        path = self._path(reference.approval_id)
+        path = self._path(approval_id)
         if path.is_symlink():
             raise ReconciliationGrantVaultError(
                 "grant envelope must not be a symlink"
@@ -477,7 +457,7 @@ class ReconciliationApprovalGrantVault:
                             "grant envelope exceeds the size limit"
                         )
                     chunks.append(chunk)
-                raw = b"".join(chunks)
+                return b"".join(chunks)
             finally:
                 os.close(fd)
         except ReconciliationGrantVaultError:
@@ -486,6 +466,28 @@ class ReconciliationApprovalGrantVault:
             raise ReconciliationGrantVaultError(
                 "grant envelope is unavailable or could not be safely opened"
             ) from exc
+
+    def reference_for(self, approval_id: str) -> ReconciliationApprovalGrantReference:
+        """Rebuild a non-secret reference when a caller lost the return value.
+
+        The approval ID can be recovered from the approved audit event. The
+        caller must still load the grant and let the audit store validate the
+        token digest before attempting consumption.
+        """
+        raw = self._read_raw(approval_id)
+        reference = ReconciliationApprovalGrantReference(
+            approval_id=approval_id,
+            envelope_sha256=hashlib.sha256(raw).hexdigest(),
+        )
+        self._read_envelope(reference)
+        return reference
+
+    def _read_envelope(
+        self, reference: ReconciliationApprovalGrantReference
+    ) -> tuple[bytes, dict[str, str], bytes]:
+        if not isinstance(reference, ReconciliationApprovalGrantReference):
+            raise TypeError("reference must be a ReconciliationApprovalGrantReference")
+        raw = self._read_raw(reference.approval_id)
         if not secrets.compare_digest(
             hashlib.sha256(raw).hexdigest(), reference.envelope_sha256
         ):
@@ -522,7 +524,6 @@ class ReconciliationApprovalGrantVault:
                 "protected approval grant envelope is malformed"
             ) from exc
         return raw, context, ciphertext
-
     def load(
         self, reference: ReconciliationApprovalGrantReference
     ) -> ReconciliationApprovalGrant:
@@ -550,7 +551,7 @@ class ReconciliationApprovalGrantVault:
             raise ReconciliationGrantVaultError(
                 "decrypted approval grant does not match its protected scope"
             )
-        return grant
+        return replace(grant, storage_reference=reference)
 
     def delete(
         self, reference: ReconciliationApprovalGrantReference
