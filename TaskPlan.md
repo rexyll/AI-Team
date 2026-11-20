@@ -809,3 +809,12 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Snapshot reader 将开始读取的时间传入 evidence collector；completion receipt 必须不晚于 snapshot read start，避免在一次 snapshot 中接受读取开始之后才写入的 completion record。
 - Snapshot reader fake collector、Host 边界注释与 TaskPlan 已同步。当前仅接线只读 snapshot；未执行真实 Docker positive evidence read、未引入 mutation/approval/IdP。
 - 待 CI 验收 collector alternative tests、source authenticator、Host wiring 与 Linux/Windows behavior；若失败先修复并重新跑 CI。
+
+
+### T21.6.3.5.23.4 — Disposable Docker Engine positive Host-completion snapshot smoke（实现已接入 CI，待验收）
+
+- 扩展 `scripts/local_docker_router_replacement_live_smoke.py` 新故障模式 `retire_history_commit_failure`：执行真实 blue/green replacement；真实 Docker/HAProxy `retire_previous` 必须返回 succeeded，并由 Host sidecar 持久化 exact `returned/succeeded` receipt；之后只注入 `history.mark_stopped()` 持久化失败，令 journal 进入 `needs_reconciliation`。
+- 正向快照使用 Host 正式入口 `DeploymentHostRuntime.build_reconciliation_snapshot_reader()` 和 `read_current_snapshot(..., "confirm_previous_retired")`，而非 fake collector；校验四类 evidence：Host synchronous completion、candidate live route、candidate healthy runtime、previous exact immutable runtime exited/dead。
+- 验证 snapshot journal revision fence、receipt completed_at 不晚于 snapshot read start、candidate active pointer/HAProxy selector/effective runtime ID 保持不变；不执行自动 reconciliation、rollback、selector/pointer/journal mutation。
+- CI 在 disposable Docker Engine job 内显式把该 job 的 daemon ID provision 为本次测试 Host pin，并上传 artifact `router-host-synchronous-completion-snapshot-evidence`。真实生产 Host 仍必须通过独立 operator 配置 pin；本测试不改变其默认配置。
+- 仅在全部证据通过后，smoke cleanup 才清除自己创建的临时 containers/network/images；若证据失败则保留资源供诊断。跨平台 Python regression 和 Docker Engine live test 待 CI 运行验收。

@@ -318,6 +318,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Live Host synchronous completion snapshot after real previous retirement
+        env:
+          AI_TEAM_ROUTER_REPLACEMENT_FAULT_MODE: retire_history_commit_failure
+          AI_TEAM_ROUTER_REPLACEMENT_EVIDENCE_PATH: ${{ runner.temp }}/ai-team-router-host-completion-snapshot.json
+        run: |
+          # This ephemeral CI job explicitly provisions the Docker daemon identity
+          # as the Host pin for this disposable integration test.
+          export AI_TEAM_DOCKER_EXPECTED_DAEMON_ID="$(docker info --format '{{.ID}}')"
+          test -n "$AI_TEAM_DOCKER_EXPECTED_DAEMON_ID"
+          python -m scripts.local_docker_router_replacement_live_smoke
+
+      - name: Upload Host synchronous completion snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-host-synchronous-completion-snapshot-evidence
+          path: "${{ runner.temp }}/ai-team-router-host-completion-snapshot.json"
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Upload live Router replacement evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -30,6 +30,9 @@ from unittest.mock import patch
 
 from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_host import DeploymentHostRuntime
+from runtime.deployment_reconciliation_completion import (
+    LocalDockerSynchronousOperationCompletionInspector,
+)
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentRecord,
@@ -409,6 +412,7 @@ def run_live_smoke() -> dict[str, Any]:
     if fault_mode not in {
         "", "applied_timeout", "previous_identity_mismatch",
         "nonzero_scur", "held_tcp_connection", "crash_after_switch",
+        "retire_history_commit_failure",
     }:
         raise ValueError("unsupported Router replacement fault injection mode")
     fault_state: dict[str, Any] = {
@@ -684,6 +688,204 @@ def run_live_smoke() -> dict[str, Any]:
         replacement_manager = HostDeploymentReplacementManager(
             replacement_provider, history
         )
+        if fault_mode == "retire_history_commit_failure":
+            # Exercise the exact post-provider/pre-journal crash boundary without
+            # faking the Docker retirement itself: Docker stop + immutable-ID
+            # inspect must really succeed and the Host call receipt must be
+            # durably returned/succeeded before this injected history commit fails.
+            real_mark_stopped = history.mark_stopped
+            mark_stopped_calls: list[str] = []
+
+            def fail_history_mark_stopped(record):
+                mark_stopped_calls.append(record.deployment_id)
+                raise OSError(
+                    "injected Host history commit failure after successful retire_previous"
+                )
+
+            history.mark_stopped = fail_history_mark_stopped
+            try:
+                replacement = replacement_manager.replace(request, candidate)
+            finally:
+                history.mark_stopped = real_mark_stopped
+
+            operation_id = replacement.operation_id
+            if not operation_id:
+                raise RuntimeError("retirement persistence fault did not produce an operation ID")
+            journal = history.get_replacement(operation_id)
+            previous_record = history.get(previous_id)
+            candidate_record = history.get(candidate_id)
+            if (
+                replacement.status != "needs_reconciliation"
+                or replacement.phase != "needs_reconciliation"
+                or journal is None
+                or journal.phase != "needs_reconciliation"
+                or mark_stopped_calls != [previous_id]
+                or previous_record is None
+                or previous_record.status != "running"
+                or candidate_record is None
+                or candidate_record.status != "running"
+                or not journal.previous_runtime_id
+                or not journal.candidate_runtime_id
+                or candidate_record.container_id != journal.candidate_runtime_id
+            ):
+                raise RuntimeError(
+                    "injected retirement history-commit boundary did not preserve the expected journal/runtime state"
+                )
+
+            active = history.active_deployment(
+                provider="docker-local",
+                project=scope.project,
+                environment=scope.environment,
+            )
+            if active is None or active.deployment_id != candidate_id:
+                raise RuntimeError(
+                    "candidate active pointer was not retained after previous runtime retirement"
+                )
+
+            candidate_runtime = provider.inspect_runtime_identity(
+                candidate_id, journal.candidate_runtime_id
+            )
+            previous_runtime = provider.inspect_runtime_identity(
+                previous_id, journal.previous_runtime_id
+            )
+            if not (
+                candidate_runtime.status == "verified"
+                and candidate_runtime.identity_match
+                and candidate_runtime.observed_runtime_id == journal.candidate_runtime_id
+                and candidate_runtime.runtime_state == "running"
+                and candidate_runtime.health_status == "healthy"
+                and previous_runtime.status == "verified"
+                and previous_runtime.identity_match
+                and previous_runtime.observed_runtime_id == journal.previous_runtime_id
+                and previous_runtime.runtime_state in {"exited", "dead"}
+            ):
+                raise RuntimeError(
+                    "live immutable runtime inspections did not prove healthy candidate and retired previous"
+                )
+
+            operation_context = replacement_provider._operations.get(operation_id)
+            app_b_id = journal.candidate_runtime_id
+            app_b_owned = bool(
+                operation_context
+                and operation_context.get("app_ensure_status") == "created"
+            )
+            if not app_b_owned or app_b_id == app_a_id:
+                raise RuntimeError(
+                    "candidate runtime ownership/immutable identity was not verified for cleanup"
+                )
+
+            host = DeploymentHostRuntime(
+                history.path,
+                provider=provider,
+                create_if_missing=False,
+            )
+            snapshot_reader = host.build_reconciliation_snapshot_reader(operation_id)
+            snapshot = snapshot_reader.read_current_snapshot(
+                operation_id, "confirm_previous_retired"
+            )
+            completion = LocalDockerSynchronousOperationCompletionInspector(
+                history.path.with_name(
+                    f"{history.path.stem}.provider-operations.sqlite3"
+                ),
+                max_evidence_age_seconds=120,
+            ).inspect_completion(
+                snapshot.record,
+                "confirm_previous_retired",
+                not_after=snapshot.receipt.read_started_at,
+            )
+            evidence_by_kind = {item.kind: item for item in snapshot.evidence}
+            expected_kinds = {
+                "host_synchronous_operation_completion",
+                "candidate_route_readback",
+                "candidate_health",
+                "previous_runtime_retirement",
+            }
+            if (
+                snapshot.record.phase != "needs_reconciliation"
+                or set(evidence_by_kind) != expected_kinds
+                or completion.action != "retire_previous"
+                or completion.result_status != "succeeded"
+                or completion.operation_id != operation_id
+                or completion.completed_at > snapshot.receipt.read_started_at
+                or evidence_by_kind["host_synchronous_operation_completion"].source
+                != "docker-local-host-call-receipts"
+                or evidence_by_kind["candidate_route_readback"].observed_runtime_id
+                != journal.candidate_runtime_id
+                or evidence_by_kind["candidate_health"].subject_runtime_id
+                != journal.candidate_runtime_id
+                or evidence_by_kind["previous_runtime_retirement"].subject_runtime_id
+                != journal.previous_runtime_id
+                or snapshot.receipt.journal_revision_before
+                != snapshot.receipt.journal_revision_after
+            ):
+                raise RuntimeError(
+                    "Host snapshot did not return the exact successful-retire completion and live postcondition evidence"
+                )
+
+            router_record = history.get_traffic_router(scope)
+            selector = _runtime_selector(provider, router_id)
+            effective_target = replacement_provider.read_traffic_target(request)
+            if (
+                router_record is None
+                or selector != "slot_b"
+                or effective_target != journal.candidate_runtime_id
+            ):
+                raise RuntimeError(
+                    "Router selector/effective target changed or does not select the candidate"
+                )
+
+            evidence["checks"]["host_synchronous_completion_snapshot"] = {
+                "status": "verified",
+                "fault_mode": "retire_history_commit_failure",
+                "injected_boundary": "retire_previous returned succeeded and Host receipt was persisted; history.mark_stopped then raised",
+                "operation_id": operation_id,
+                "journal_phase": snapshot.record.phase,
+                "journal_revision": snapshot.receipt.journal_revision_after,
+                "snapshot_reader_id": snapshot.receipt.reader_id,
+                "snapshot_started_at": snapshot.receipt.read_started_at,
+                "snapshot_completed_at": snapshot.receipt.read_completed_at,
+                "snapshot_evidence_digest": snapshot.receipt.evidence_digest,
+                "completion": {
+                    "action": completion.action,
+                    "result_status": completion.result_status,
+                    "completion_type": completion.completion_type,
+                    "started_at": completion.started_at,
+                    "completed_at": completion.completed_at,
+                    "request_digest_sha256": completion.request_digest_sha256,
+                    "response_digest_sha256": completion.response_digest_sha256,
+                    "source_id": completion.source_id,
+                },
+                "evidence": [
+                    {
+                        "kind": item.kind,
+                        "source": item.source,
+                        "observed_at": item.observed_at,
+                        "digest_sha256": item.digest_sha256,
+                        "subject_runtime_id": item.subject_runtime_id,
+                        "observed_runtime_id": item.observed_runtime_id,
+                    }
+                    for item in snapshot.evidence
+                ],
+                "candidate_runtime": {
+                    "runtime_id": candidate_runtime.observed_runtime_id,
+                    "state": candidate_runtime.runtime_state,
+                    "health": candidate_runtime.health_status,
+                },
+                "previous_runtime": {
+                    "runtime_id": previous_runtime.observed_runtime_id,
+                    "state": previous_runtime.runtime_state,
+                },
+                "active_deployment_id": active.deployment_id,
+                "router_registry_active_slot": router_record.active_slot,
+                "router_live_selector": selector,
+                "router_effective_runtime_id": effective_target,
+                "history_mark_stopped_attempts": len(mark_stopped_calls),
+                "automatic_reconciliation_executed": False,
+            }
+            evidence["status"] = "fault_injection_verified"
+            completed = True
+            return evidence
+
         if fault_mode == "crash_after_switch":
             crash_message, crash_wait_status = _kill_replacement_child_after_switch(
                 replacement_manager,
