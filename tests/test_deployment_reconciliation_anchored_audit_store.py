@@ -3,6 +3,8 @@ from __future__ import annotations
 from hashlib import sha256
 
 from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+import sqlite3
 
 import pytest
 
@@ -332,3 +334,109 @@ def test_external_anchor_requires_exact_stable_ledger_identity(tmp_path):
     anchor.ledger_id = "test-audit-ledger-other"
     with pytest.raises(ReconciliationAuditAnchorError, match="identity changed"):
         store.verify()
+
+
+class _SQLiteProcessHeadAnchor:
+    """Test-only cross-process CAS anchor stored outside the audit directory."""
+
+    ledger_id = "process-test-audit-ledger"
+
+    def __init__(self, database_path, *, provision=False):
+        self.database_path = str(database_path)
+        if provision:
+            with sqlite3.connect(self.database_path, timeout=10) as connection:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS audit_head "
+                    "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
+                    "sequence INTEGER NOT NULL, event_digest TEXT NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO audit_head "
+                    "(singleton, sequence, event_digest) VALUES (1, 0, ?)",
+                    (_ZERO_DIGEST,),
+                )
+                connection.commit()
+
+    def read_head(self):
+        with sqlite3.connect(self.database_path, timeout=10) as connection:
+            row = connection.execute(
+                "SELECT sequence, event_digest FROM audit_head WHERE singleton=1"
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("test external anchor was not provisioned")
+        return ReconciliationAuditHead(row[0], row[1])
+
+    def compare_and_set(self, expected, replacement):
+        with sqlite3.connect(self.database_path, timeout=10) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT sequence, event_digest FROM audit_head WHERE singleton=1"
+            ).fetchone()
+            if row != (expected.sequence, expected.event_digest):
+                connection.rollback()
+                return False
+            cursor = connection.execute(
+                "UPDATE audit_head SET sequence=?, event_digest=? "
+                "WHERE singleton=1 AND sequence=? AND event_digest=?",
+                (
+                    replacement.sequence,
+                    replacement.event_digest,
+                    expected.sequence,
+                    expected.event_digest,
+                ),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+            return True
+
+
+def _append_anchored_event_from_process(root, database_path, index, queue):
+    try:
+        anchor = _SQLiteProcessHeadAnchor(database_path)
+        store = ExternallyAnchoredReconciliationAuditStore(
+            root,
+            anchor=anchor,
+            expected_ledger_id=anchor.ledger_id,
+        )
+        event = _record(store, index)
+        queue.put(("success", event.sequence))
+    except Exception as exc:
+        queue.put(("error", type(exc).__name__, str(exc)))
+
+
+def test_anchored_store_serializes_spawned_process_writers_and_remote_cas(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    audit_root = tmp_path / "shared-audit"
+    anchor_db = tmp_path / "external-anchor" / "checkpoint.sqlite"
+    anchor_db.parent.mkdir(parents=True)
+    anchor = _SQLiteProcessHeadAnchor(anchor_db, provision=True)
+
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_append_anchored_event_from_process,
+            args=(str(audit_root), str(anchor_db), index, queue),
+        )
+        for index in range(1, 5)
+    ]
+    for process in processes:
+        process.start()
+
+    outcomes = [queue.get(timeout=30) for _ in processes]
+    for process in processes:
+        process.join(timeout=30)
+        assert process.exitcode == 0
+
+    assert [item[0] for item in outcomes] == ["success"] * 4
+    assert sorted(item[1] for item in outcomes) == [1, 2, 3, 4]
+
+    reopened = ExternallyAnchoredReconciliationAuditStore(
+        audit_root,
+        anchor=anchor,
+        expected_ledger_id=anchor.ledger_id,
+    )
+    events = reopened.events()
+    assert [item.sequence for item in events] == [1, 2, 3, 4]
+    assert reopened.verify() == anchor.read_head()
