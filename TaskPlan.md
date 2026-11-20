@@ -861,23 +861,23 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 架构文档：docs/deployment-reconciliation-grant-vault.md；Host adapter contract 同步更新。
 - 生产阻塞仍包括真实 IdP/HostAuthenticator、具体 KMS/SecretStore adapter 与 key lifecycle、外部 trusted audit-head anchor、生产 Docker daemon pin/socket ACL 或 TLS，以及可能的多机共享事务服务。
 
-### T21.6.3.5.26 — Grant restore / ambiguous audit-append recovery（实现与测试完成，最新 CI 待最终验收）
+### T21.6.3.5.26 — Grant restore / ambiguous audit-append recovery（实现、回归与全量 CI 验收通过）
 
 - 新增 restore_grant(approval_id)：从 vault 恢复 reference/ciphertext，并要求 append-only audit ledger 中恰好存在一条 proposed 与一条 approved 事件且顺序正确；验证 requester/approver actors、完整 provider/project/environment/journal/deployment/runtime scope、proposal/evidence/token digests 与 expiry。
 - 若存在 reconciliation_approval_consumption_started、consumed 或 rejected 事件，则 grant 已 claim/terminal，restore fail-closed；之后 consume() 仍执行原子 one-use claim 和 fresh snapshot read。
 - 修正 ambiguous audit append 行为：若 audit append 调用报错，不再删除可能已经对应 durable approved event 的 ciphertext。重启后以 audit ledger 为最终依据；若 approval event 没有 commit，密文 orphan 不会被 restore，且只能在 expiry 后由后续受控清理处理。
 - 新增测试：模拟 audit approved event 已 durable append、调用方却丢失确认；通过新 Host authority/vault 实例恢复 grant 并成功走原 audit one-use consumption。另验证 consumed grant 无法恢复。
 - 中间 run 44740304375 曾因 failing fake vault 未实现新加入的 reference_for protocol method 导致一项 regression 测试失败；fake adapter 已补齐。修正后的完整 run 44740311121 在 f54a303 上通过（Regression、Security、Windows、Coverage、Docker Engine 全部 success）。此 run 尚早于本节 restore_grant 崩溃恢复新增代码。
-- 本节实现提交 d3cd142，崩溃恢复测试提交 a44fa91；后续 protocol/documentation 收口提交 8992b95、bdea26a、f54a303，restore crash-window hardening 为 6d2402b，global approval-ID uniqueness regression 为 25c39e7。restore_grant 现在扫描完整审计链，拒绝跨 operation 重复 approval ID，避免向调用方释放最终会被 consume 拒绝的 grant。最新 HEAD CI run 44759256777 正在执行，不能提前将本节记作最终验收通过。
+- 本节实现提交 d3cd142，崩溃恢复测试提交 a44fa91；后续 protocol/documentation 收口提交 8992b95、bdea26a、f54a303，restore crash-window hardening 为 6d2402b，global approval-ID uniqueness regression 为 25c39e7。restore_grant 扫描完整审计链，拒绝跨 operation 重复 approval ID。最终 HEAD df47eef 的 CI run 44761231004 整体 success：Regression 3,294 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,274 passed / 14 skipped、82%，所有模块 coverage floors 通过；Docker Engine job success。
 
-### T21.6.3.5.27 — 真实 Host completion snapshot + vault integration regression baseline（已由前置版本通过；最新 HEAD 复验中）
+### T21.6.3.5.27 — 真实 Host completion snapshot + vault integration regression baseline（最新 HEAD df47eef 验收通过）
 
-- 上一已完整通过 run 44739304119（HEAD a72a7ace）证明 authority→vault 接线未破坏真实 Docker Host snapshot：Regression 3,282 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,262 passed / 14 skipped、82% coverage、所有模块 floor 通过；Docker Engine job success。
-- 该 run 的 router-host-synchronous-completion-snapshot-evidence artifact ID 14629289438 已下载核验：retire_previous completion succeeded，source docker-local-host-call-receipts；receipt 在 snapshot read start 前完成；四种 evidence 均存在；candidate running/healthy 且 Router effective target 匹配；previous immutable runtime exited；journal 保持 needs_reconciliation；automatic_reconciliation_executed=false；smoke 资源全部清理。
+- 最新完整 run 44761231004（HEAD df47eef）重新通过 authority→vault 集成与真实 Docker Host snapshot：Regression 3,294 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,274 passed / 14 skipped、82% coverage，所有模块 floor 通过，Docker Engine job success。
+- 最新 run 44761231004 的 router-host-synchronous-completion-snapshot-evidence artifact ID 14641846777 已下载并解析 JSON 核验：top-level status=fault_injection_verified、snapshot status=verified；retire_previous completion succeeded，source=docker-local-host-call-receipts，completed_at=2026-11-20T15:21:28.053249Z，snapshot_started_at=2026-11-20T15:21:28.084186Z；四种 evidence 全部存在；candidate running/healthy 且 Router effective runtime 匹配；previous immutable runtime exited；journal 保持 needs_reconciliation；automatic_reconciliation_executed=false；本次 smoke containers、network 和 images 全部 removed。
 - 此正向证据只覆盖 disposable Docker Engine 与 Host read-only diagnostic snapshot，不代表真实 IdP/KMS/SecretStore 已接入，也不授予 production approval 或 reconciliation mutation。
 
 
-### T21.6.3.5.28 — Provider-neutral external audit-head anchor wrapper（接口与 fail-closed store 完成；真实外部服务待接入）
+### T21.6.3.5.28 — Provider-neutral external audit-head anchor wrapper（接口、组合测试和全量 CI 验收通过；真实外部服务待接入）
 
 - 新增 runtime/deployment_reconciliation_anchored_audit_store.py：定义 ReconciliationAuditHeadAnchor 的 read_head + durable compare_and_set 合约，以及 ExternallyAnchoredReconciliationAuditStore。
 - wrapper 可作为 DurableReconciliationAuditStore 子类注入现有 ReconciliationApprovalAuthority，不改变其 audit API。record/append/begin_approval_consumption/finish_approval_consumption 每次只允许 append 一个 event，并要求 local head 与 remote checkpoint 精确一致。
@@ -886,4 +886,4 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 外部 anchor 必须在第一条 audit event 之前由 operator/adapter 显式 provision genesis（sequence 0 / zero digest）；adapter 必须在线性化 durable CAS 和 remote retention 方面满足生产要求。当前仅提供 provider-neutral contract 与 in-memory test fake，不选择 AWS/Azure/GCP/数据库/SaaS 供应商。
 - 同 Host lock 仅串行本机进程；多 Host independent local ledger 不属于该 wrapper 的安全支持范围，必须用 shared transactional audit store/centralized append service。
 - 测试覆盖 append/head advancement、tampering、foreign genesis、CAS conflict/local-ahead fail-closed、lost CAS acknowledgement、跨实例并发写入，以及 approval consumption start/finish 都必须外部锚定；另加 ReconciliationApprovalAuthority 组合测试，确认 proposed、approved、consumption-start、consumed 四条审计写入均通过远端 CAS。
-- 代码提交 9e4a071；测试提交 64c4dfe、064afad、631abfa、05c37c1、f4cd4e5；文档 docs/deployment-reconciliation-external-audit-anchor.md，Host contract 与 grant vault 文档已同步加入链接。05c37c1 的并发测试夹具已由 f4cd4e5 修正索引。最终 CI 需以包含该修正的最新 HEAD run 为准。
+- 代码提交 9e4a071；测试提交 64c4dfe、064afad、631abfa、470bf7c、05c37c1、f4cd4e5；锁文件 owner/hard-link 检查提交 df47eef。文档 docs/deployment-reconciliation-external-audit-anchor.md，Host contract 与 grant vault 文档已同步。最新 HEAD run 44761231004 全部 CI jobs success；anchor 的 CAS/lost-ack/tamper/genesis/local-ahead/跨实例并发及 Approval Authority 四事件组合回归均通过。
