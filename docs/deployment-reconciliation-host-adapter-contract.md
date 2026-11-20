@@ -91,15 +91,25 @@ Any missing receipt, untrusted reader/source, changed journal revision, changed 
 
 This contract adds no deployment provider mutation, rollback, journal phase transition, active-pointer update, Router selector update or runtime lifecycle action. Consuming an approval returns an approved proposal; it does not execute it.
 
-## 6. Production integration still required
+## 6. Protected approval grant custody
 
-The repository now contains a concrete Local Docker `DeploymentHostRuntime.build_reconciliation_snapshot_reader(operation_id)` and has accepted a real, disposable Docker Engine positive snapshot (CI [44734988946](https://github.com/rexyll/AI-Team/actions/runs/44734988946), artifact `14628606633`). This is a read-only diagnostic reader, not a production-configured approval authority. The Host completion receipt is explicitly distinct from provider-native operation inspection; `LocalDockerProvider.inspect_operation()` remains `unsupported`.
+The Host may inject a KMS/SecretStore-backed grant vault into ReconciliationApprovalAuthority. The provider-neutral custody contract is documented in [deployment-reconciliation-grant-vault.md](deployment-reconciliation-grant-vault.md) and implemented by runtime/deployment_reconciliation_grant_vault.py.
 
-The repository still contains no configured production IdP or production `HostAuthenticator`. Before production reconciliation approval/use:
+The vault contract requires authenticated encryption through an external protector. Its encryption context binds purpose/schema, approval ID, operation ID, provider/project/environment, expiry, proposal digest and evidence digest. The local envelope stores ciphertext plus non-secret scope metadata only. No software-key fallback exists. POSIX directory/file ownership and permissions are checked; Windows NTFS ACL enforcement remains an operator responsibility.
+
+When configured, approval issuance persists the encrypted grant before appending reconciliation_approved. A vault/KMS failure results in a rejected approval with no approved audit event. If the audit append returns an ambiguous error, the ciphertext is retained because the event may have committed. restore_grant(approval_id) reconstructs the reference and only returns the grant when the append-only audit ledger contains exactly one matching proposed/approved pair, matching actors/scope/digests/token/expiry, and no consumption-start/consumed/rejected event. consume() independently performs the atomic one-use claim and a fresh Host snapshot read. This recovery path does not execute reconciliation.
+
+The fake protector used by tests is explicitly non-cryptographic and demonstrates serialization/context/failure semantics only. There is not yet a real production KMS/SecretStore adapter. The vault contract is therefore not evidence that production bearer grants are cryptographically protected until an actual external protector is provisioned and reviewed.
+
+## 7. Production integration still required
+
+The repository contains a concrete Local Docker DeploymentHostRuntime.build_reconciliation_snapshot_reader(operation_id) and has repeatedly accepted a real, disposable Docker Engine positive snapshot (latest verified run [44739304119](https://github.com/rexyll/AI-Team/actions/runs/44739304119), artifact [router-host-synchronous-completion-snapshot-evidence](https://github.com/rexyll/AI-Team/actions/runs/44739304119/artifacts/14629289438)). This is a read-only diagnostic reader, not a production-configured approval authority. The Host completion receipt is explicitly distinct from provider-native operation inspection; LocalDockerProvider.inspect_operation() remains unsupported.
+
+Before production reconciliation approval/use:
 
 - Select the organization's actual IdP and implement provider-specific proof validation for issuer, signature/credential, explicit audience, nonce/replay, purpose, operation and scope.
+- Implement and provision the real KMS/SecretStore protector, including key lifecycle, envelope encryption if required, rotation, backup/recovery, access policy and audit. The vault's POSIX checks do not enforce Windows NTFS ACLs.
 - Provision and protect the production Docker daemon pin and transport (Host OS socket ACL or authenticated Docker TLS); configure the production Router/HAProxy read sources and Host receipt-store ownership/ACLs.
-- Protect a restorable bearer grant outside the audit ledger with the Host's KMS/SecretStore; the ledger intentionally stores only the token digest.
 - For multi-host Hosts, replace the same-host file-lock claim path with a transactional shared database/unique constraint or centralized approval service.
 - Anchor the audit head in an external trusted system and define remote retention.
 
