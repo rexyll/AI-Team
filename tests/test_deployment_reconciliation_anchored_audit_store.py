@@ -337,6 +337,7 @@ def test_external_anchor_requires_exact_stable_ledger_identity(tmp_path):
         expected_ledger_id="test-audit-ledger",
     )
     anchor.ledger_id = "test-audit-ledger-other"
+    assert store.inspect_anchor_state().status == "identity_mismatch"
     with pytest.raises(ReconciliationAuditAnchorError, match="identity changed"):
         store.verify()
 
