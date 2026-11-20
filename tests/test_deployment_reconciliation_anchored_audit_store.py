@@ -343,30 +343,40 @@ def test_external_anchor_requires_exact_stable_ledger_identity(tmp_path):
 
 
 class _SQLiteProcessHeadAnchor:
-    """Test-only cross-process CAS anchor stored outside the audit directory."""
+    """Test-only namespaced cross-process CAS anchor stored outside the audit directory."""
 
-    ledger_id = "process-test-audit-ledger"
+    DEFAULT_LEDGER_ID = "process-test-audit-ledger"
 
-    def __init__(self, database_path, *, provision=False):
+    def __init__(
+        self,
+        database_path,
+        *,
+        ledger_id=DEFAULT_LEDGER_ID,
+        provision=False,
+    ):
+        if not isinstance(ledger_id, str) or not ledger_id.strip():
+            raise ValueError("test ledger_id must be a non-empty string")
         self.database_path = str(database_path)
+        self.ledger_id = ledger_id
         if provision:
             with sqlite3.connect(self.database_path, timeout=10) as connection:
                 connection.execute(
                     "CREATE TABLE IF NOT EXISTS audit_head "
-                    "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
-                    "sequence INTEGER NOT NULL, event_digest TEXT NOT NULL)"
+                    "(ledger_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, "
+                    "event_digest TEXT NOT NULL)"
                 )
                 connection.execute(
                     "INSERT OR IGNORE INTO audit_head "
-                    "(singleton, sequence, event_digest) VALUES (1, 0, ?)",
-                    (_ZERO_DIGEST,),
+                    "(ledger_id, sequence, event_digest) VALUES (?, 0, ?)",
+                    (self.ledger_id, _ZERO_DIGEST),
                 )
                 connection.commit()
 
     def read_head(self):
         with sqlite3.connect(self.database_path, timeout=10) as connection:
             row = connection.execute(
-                "SELECT sequence, event_digest FROM audit_head WHERE singleton=1"
+                "SELECT sequence, event_digest FROM audit_head WHERE ledger_id=?",
+                (self.ledger_id,),
             ).fetchone()
         if row is None:
             raise RuntimeError("test external anchor was not provisioned")
@@ -376,17 +386,19 @@ class _SQLiteProcessHeadAnchor:
         with sqlite3.connect(self.database_path, timeout=10) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT sequence, event_digest FROM audit_head WHERE singleton=1"
+                "SELECT sequence, event_digest FROM audit_head WHERE ledger_id=?",
+                (self.ledger_id,),
             ).fetchone()
             if row != (expected.sequence, expected.event_digest):
                 connection.rollback()
                 return False
             cursor = connection.execute(
                 "UPDATE audit_head SET sequence=?, event_digest=? "
-                "WHERE singleton=1 AND sequence=? AND event_digest=?",
+                "WHERE ledger_id=? AND sequence=? AND event_digest=?",
                 (
                     replacement.sequence,
                     replacement.event_digest,
+                    self.ledger_id,
                     expected.sequence,
                     expected.event_digest,
                 ),
@@ -585,3 +597,71 @@ def test_anchor_inspection_reports_external_anchor_unavailable(tmp_path):
     assert inspection.status == "anchor_unavailable"
     assert inspection.local_head == ReconciliationAuditHead(0, _ZERO_DIGEST)
     assert inspection.anchor_error == "ReconciliationAuditAnchorError"
+
+
+def test_sqlite_anchor_checkpoint_survives_client_recreation_and_rejects_stale_cas(
+    tmp_path,
+):
+    database = tmp_path / "external" / "checkpoint.sqlite"
+    database.parent.mkdir(parents=True)
+    first_client = _SQLiteProcessHeadAnchor(database, provision=True)
+    genesis = first_client.read_head()
+    committed = ReconciliationAuditHead(1, "a" * 64)
+
+    assert first_client.compare_and_set(genesis, committed)
+
+    reopened_client = _SQLiteProcessHeadAnchor(database)
+    assert reopened_client.read_head() == committed
+    assert not reopened_client.compare_and_set(
+        genesis, ReconciliationAuditHead(1, "b" * 64)
+    )
+    assert reopened_client.read_head() == committed
+
+
+def test_sqlite_anchor_namespaces_are_isolated_by_ledger_id(tmp_path):
+    database = tmp_path / "external" / "checkpoint.sqlite"
+    database.parent.mkdir(parents=True)
+    ledger_a = _SQLiteProcessHeadAnchor(
+        database, ledger_id="tenant-a/production", provision=True
+    )
+    ledger_b = _SQLiteProcessHeadAnchor(
+        database, ledger_id="tenant-b/production", provision=True
+    )
+    genesis_a = ledger_a.read_head()
+    genesis_b = ledger_b.read_head()
+    advanced_a = ReconciliationAuditHead(1, "a" * 64)
+
+    assert ledger_a.compare_and_set(genesis_a, advanced_a)
+    assert ledger_a.read_head() == advanced_a
+    assert ledger_b.read_head() == genesis_b
+
+    store_b = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit-b",
+        anchor=ledger_b,
+        expected_ledger_id="tenant-b/production",
+    )
+    assert store_b.verify() == genesis_b
+    assert store_b.inspect_anchor_state().status == "anchored"
+
+
+def test_sqlite_anchor_cas_is_linearizable_across_independent_clients(tmp_path):
+    database = tmp_path / "external" / "checkpoint.sqlite"
+    database.parent.mkdir(parents=True)
+    provisioner = _SQLiteProcessHeadAnchor(database, provision=True)
+    expected = provisioner.read_head()
+    clients = [_SQLiteProcessHeadAnchor(database) for _ in range(2)]
+    replacements = [
+        ReconciliationAuditHead(1, "a" * 64),
+        ReconciliationAuditHead(1, "b" * 64),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(
+            executor.map(
+                lambda pair: pair[0].compare_and_set(expected, pair[1]),
+                zip(clients, replacements),
+            )
+        )
+
+    assert sorted(outcomes) == [False, True]
+    assert provisioner.read_head() in replacements
