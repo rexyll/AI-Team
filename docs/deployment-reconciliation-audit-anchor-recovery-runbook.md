@@ -20,7 +20,7 @@ Capture the following in a restricted incident bundle:
 
 - A byte-for-byte copy of the complete local deployment-reconciliation-audit.jsonl file, its SHA-256, file size, timestamps, owner/mode, and the exact Host software commit.
 - A copy of the audit directory metadata and lock-file metadata. Do not modify the source files to make the copy.
-- The external anchor's read-only checkpoint response: sequence, digest, service/version identifier, request/correlation ID, and trusted timestamp. Preserve the anchor service's own audit/retention record for the read.
+- The external anchor's read-only checkpoint response: immutable ledger_id/namespace, configured expected_ledger_id, sequence, digest, service/version identifier, request/correlation ID, and trusted timestamp. Confirm the adapter identity and remote storage key refer to the same environment/project ledger. Preserve the anchor service's own audit/retention record for the read.
 - Host service logs surrounding the last successful and failed audit operation, including approval ID/operation ID where available and whether local append/fsync and external CAS were attempted.
 - A byte-for-byte restricted backup of encrypted grant-vault envelopes and metadata. Do not decrypt/export bearer tokens for routine diagnosis.
 - Relevant IdP/KMS/SecretStore access/audit logs from the same time window, when those systems are configured.
@@ -74,7 +74,7 @@ If no reviewed, tested repair path applies, keep the authority disabled and pres
 Before re-enabling even read-only approval diagnostics:
 
 1. Verify the complete local hash chain from genesis.
-2. Verify that the local head equals the external checkpoint exactly.
+2. Verify that the local head equals the external checkpoint exactly and the adapter's immutable ledger_id equals the independently configured expected_ledger_id.
 3. Verify that the anchor is reading from the intended environment/ledger identity and that its durable CAS/retention guarantees are restored.
 4. Review every approval ID in the affected suffix for global uniqueness and ensure any ambiguous grant is rejected/burned or requires fresh dual approval.
 5. Verify that restored grant-vault envelopes match their exact audit approval and that claimed/consumed/rejected grants cannot be restored.
