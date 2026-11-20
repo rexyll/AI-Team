@@ -310,3 +310,37 @@ def test_proposal_rejects_mixed_native_and_host_completion_evidence():
     )
     with pytest.raises(ValueError, match="evidence kinds"):
         replace(valid, evidence=mixed)
+
+
+def test_host_completion_evidence_is_restricted_to_local_docker_and_exact_source():
+    valid = proposal()
+    converted = (
+        replace(
+            valid.evidence[0],
+            kind="host_synchronous_operation_completion",
+            source="docker-local-host-call-receipts",
+        ),
+        *valid.evidence[1:],
+    )
+    wrong_source = (
+        replace(converted[0], source="untrusted-host-receipts"),
+        *converted[1:],
+    )
+    with pytest.raises(ValueError, match="configured Local Docker receipt source"):
+        replace(valid, evidence=wrong_source)
+
+    cloud_record = journal(provider="cloud-provider")
+    cloud_proposal = proposal(
+        record=cloud_record,
+        approval=approval(provider="cloud-provider"),
+    )
+    cloud_evidence = (
+        replace(
+            cloud_proposal.evidence[0],
+            kind="host_synchronous_operation_completion",
+            source="docker-local-host-call-receipts",
+        ),
+        *cloud_proposal.evidence[1:],
+    )
+    with pytest.raises(ValueError, match="restricted to docker-local"):
+        replace(cloud_proposal, evidence=cloud_evidence)

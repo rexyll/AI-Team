@@ -373,6 +373,21 @@ class ReconciliationProposal:
         ) | {"host_synchronous_operation_completion"}
         if set(kinds) not in (required, host_completion_required):
             raise ValueError("evidence kinds do not satisfy the resolution policy")
+        if set(kinds) == host_completion_required:
+            if approval.provider != "docker-local":
+                raise ValueError(
+                    "Host synchronous completion evidence is restricted to docker-local"
+                )
+            if (
+                next(
+                    item for item in self.evidence
+                    if item.kind == "host_synchronous_operation_completion"
+                ).source
+                != "docker-local-host-call-receipts"
+            ):
+                raise ValueError(
+                    "Host synchronous completion evidence must use the configured Local Docker receipt source"
+                )
         by_kind = {item.kind: item for item in self.evidence}
         candidate = self.record.candidate_runtime_id
         previous = self.record.previous_runtime_id
