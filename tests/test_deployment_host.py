@@ -8,6 +8,20 @@ import pytest
 
 from runtime.deployment_history import DeploymentHistoryStore
 from runtime.deployment_host import DeploymentHostRuntime
+from runtime.deployment_reconciliation_anchored_audit_store import (
+    ExternallyAnchoredReconciliationAuditStore,
+    ReconciliationAuditAnchorError,
+)
+from runtime.deployment_reconciliation_audit_store import (
+    ReconciliationAuditHead,
+    _ZERO_DIGEST,
+)
+from runtime.deployment_reconciliation_grant_vault import (
+    ReconciliationApprovalGrantVault,
+)
+from runtime.deployment_reconciliation_snapshot_reader import (
+    ReconciliationSnapshotReadError,
+)
 from runtime.deployment_provider import (
     DeploymentArtifact,
     DeploymentRecord,
@@ -434,3 +448,115 @@ def test_host_snapshot_reader_requires_operator_pinned_daemon_identity(
 
     assert runner.calls == []
 
+
+
+class _HostTestAuditAnchor:
+    ledger_id = "tenant/demo/staging/reconciliation"
+
+    def __init__(self, *, unavailable=False):
+        self.head = ReconciliationAuditHead(0, _ZERO_DIGEST)
+        self.unavailable = unavailable
+        self.read_calls = 0
+        self.cas_calls = 0
+
+    def read_head(self):
+        self.read_calls += 1
+        if self.unavailable:
+            raise OSError("test anchor unavailable")
+        return self.head
+
+    def compare_and_set(self, expected, replacement):
+        self.cas_calls += 1
+        if self.head != expected:
+            return False
+        self.head = replacement
+        return True
+
+
+class _HostTestGrantProtector:
+    """Non-cryptographic test double; production uses an external KMS adapter."""
+
+    def seal(self, plaintext, *, encryption_context):
+        return plaintext
+
+    def unseal(self, ciphertext, *, encryption_context):
+        return ciphertext
+
+
+class _HostTestAuthenticator:
+    def authenticate(self, challenge, response):
+        raise AssertionError("factory construction must not authenticate operators")
+
+
+def test_host_builds_operation_scoped_approval_authority_from_explicit_trust_roots(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_needs_reconciliation(path)
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=runner),
+    )
+    monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "a" * 64)
+    anchor = _HostTestAuditAnchor()
+
+    authority = host.build_reconciliation_approval_authority(
+        "startup-operation-001",
+        authenticator=_HostTestAuthenticator(),
+        audit_anchor=anchor,
+        expected_ledger_id=anchor.ledger_id,
+        grant_protector=_HostTestGrantProtector(),
+        trusted_issuers=frozenset({"https://idp.example.test"}),
+        trusted_authentication_methods=frozenset({"oidc-challenge"}),
+        authentication_audience="urn:ai-team:reconciliation:test",
+    )
+
+    assert isinstance(authority._audit, ExternallyAnchoredReconciliationAuditStore)
+    assert isinstance(authority._grant_vault, ReconciliationApprovalGrantVault)
+    assert authority._snapshot_reader.reader_id == (
+        "docker-local-deployment-host-snapshot-reader"
+    )
+    assert anchor.read_calls == 1
+    assert anchor.cas_calls == 0
+    assert runner.calls == []
+
+    with pytest.raises(
+        ReconciliationSnapshotReadError, match="scoped to a different"
+    ):
+        authority._snapshot_reader.read_current_snapshot(
+            "another-operation",
+            "abort_candidate",
+        )
+    assert runner.calls == []
+
+
+def test_host_approval_authority_factory_fails_closed_before_vault_creation_when_anchor_unavailable(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "host" / "deployments.sqlite3"
+    _seed_needs_reconciliation(path)
+    runner = NoDockerCallsRunner()
+    host = DeploymentHostRuntime(
+        path,
+        provider=LocalDockerProvider(runner=runner),
+    )
+    monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "a" * 64)
+    anchor = _HostTestAuditAnchor(unavailable=True)
+
+    with pytest.raises(ReconciliationAuditAnchorError, match="external audit-head"):
+        host.build_reconciliation_approval_authority(
+            "startup-operation-001",
+            authenticator=_HostTestAuthenticator(),
+            audit_anchor=anchor,
+            expected_ledger_id=anchor.ledger_id,
+            grant_protector=_HostTestGrantProtector(),
+            trusted_issuers=frozenset({"https://idp.example.test"}),
+            trusted_authentication_methods=frozenset({"oidc-challenge"}),
+            authentication_audience="urn:ai-team:reconciliation:test",
+        )
+
+    assert anchor.read_calls == 1
+    assert anchor.cas_calls == 0
+    assert not path.with_name("deployments.reconciliation-grants").exists()
+    assert runner.calls == []
