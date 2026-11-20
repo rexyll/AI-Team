@@ -259,7 +259,7 @@ class ReconciliationApprovalGrantVault:
                 "grant expiry timestamp is invalid"
             ) from exc
         if self._now() >= expiry:
-            raise ReconciliationGrantVaultError("expired approval grants cannot be saved")
+            raise ReconciliationGrantVaultError("expired approval grants cannot be stored or restored")
         return {
             "purpose": "ai-team-reconciliation-approval-grant",
             "schema_version": str(_SCHEMA_VERSION),
