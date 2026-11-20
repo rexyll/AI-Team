@@ -205,9 +205,9 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
     authentication_audience = kwargs.pop(
         "authentication_audience", "urn:ai-team:deployment-reconciliation"
     )
-    audit_store = kwargs.pop(
-        "audit_store", DurableReconciliationAuditStore(tmp_path)
-    )
+    audit_store = kwargs.pop("audit_store", None)
+    if audit_store is None:
+        audit_store = DurableReconciliationAuditStore(tmp_path)
     return ReconciliationApprovalAuthority(
         authenticator=_Authenticator(principals),
         snapshot_reader=reader,
