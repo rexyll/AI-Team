@@ -24,7 +24,7 @@ from runtime.deployment_reconciliation_evidence_collector import (
 )
 from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 
-_DAEMON_ID = re.compile(r"^[0-9a-f]{64}$")
+_DAEMON_ID = re.compile(r"^[A-Za-z0-9]{12,128}$")
 _INFO_FORMAT = "{{.ID}}|{{.Name}}|{{.ServerVersion}}|{{.DockerRootDir}}"
 
 
@@ -52,7 +52,7 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
         if not isinstance(expected_daemon_id, str) or not _DAEMON_ID.fullmatch(
             expected_daemon_id
         ):
-            raise ValueError("expected_daemon_id must be a full lowercase Docker daemon ID")
+            raise ValueError("expected_daemon_id must be a full Docker daemon ID")
         if not isinstance(source_ids, Mapping) or set(source_ids) not in (
             {"runtime", "route"},
             {"provider_operation", "runtime", "route"},
