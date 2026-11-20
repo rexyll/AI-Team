@@ -152,17 +152,39 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
     def events(
         self, *, operation_id: str | None = None
     ):
-        """Return ledger events only while the complete local head is anchored."""
+        """Return one atomic local snapshot only while its head is externally anchored."""
+        if operation_id is not None and (
+            not isinstance(operation_id, str) or not operation_id.strip()
+        ):
+            raise ValueError("operation_id must be a non-empty string when provided")
         with self._anchor_lock():
             self._validate_anchor_lock_file()
             external_head = self._read_external_head()
             try:
-                DurableReconciliationAuditStore.verify(
-                    self, trusted_head=external_head
+                # Read and compare under one local process lock. Calling base
+                # verify() followed by base events() separately would permit a
+                # writer that bypasses this wrapper to append an unanchored
+                # event between those two snapshots.
+                with exclusive_process_lock(self.lock_path), self._lock:
+                    events = self._read_unlocked()
+                    local_head = (
+                        ReconciliationAuditHead(0, "0" * 64)
+                        if not events
+                        else ReconciliationAuditHead(
+                            events[-1].sequence, events[-1].event_digest
+                        )
+                    )
+                if local_head != external_head:
+                    raise ReconciliationAuditAnchorError(
+                        "local audit head does not match the external checkpoint"
+                    )
+                if operation_id is None:
+                    return events
+                return tuple(
+                    item for item in events if item.operation_id == operation_id
                 )
-                return DurableReconciliationAuditStore.events(
-                    self, operation_id=operation_id
-                )
+            except ReconciliationAuditAnchorError:
+                raise
             except Exception as exc:
                 raise ReconciliationAuditAnchorError(
                     "audit events are unavailable because the local head is not externally anchored"
