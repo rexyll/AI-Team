@@ -783,3 +783,12 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 本节点仅完成设计，没有修改运行时代码，没有执行真实 Docker reconciliation，也没有启用 IdP、双人审批或 mutation authority。
 - 下一节点 T21.6.3.5.23：实现独立 Host completion contract/inspector、evidence/source binding 和只读 Host composition；覆盖 fake-store 拒绝矩阵及 Linux/Windows CI，再评估 disposable Docker Engine 正向证据。
 
+
+
+### T21.6.3.5.23.1 — Host synchronous completion contract and read-only receipt inspector（2026-11-20）
+
+- 新增 `runtime/deployment_reconciliation_completion.py`：定义独立 `HostSynchronousOperationCompletion` 与 `LocalDockerSynchronousOperationCompletionInspector`。它不会复用或伪造 provider-native `ProviderOperationInspection`。
+- Inspector 只允许 docker-local + `needs_reconciliation` journal；按决策精确映射 `abort_candidate → abort_candidate`、`confirm_previous_retired → retire_previous`，从 journal immutable IDs 重算 request digest；只读打开已有 sidecar，要求 receipt 精确匹配 scope/action、`returned/succeeded`、SHA-256 摘要有效、时间戳有序且未过期。
+- 缺失/损坏 sidecar、missing row、started、indeterminate、failed、scope/action/digest 不匹配、缺失 immutable ID、过期/future 时间全部 fail-closed；不会初始化/修复数据库，不调用 Docker 或改变部署状态。
+- 新增 `tests/test_deployment_reconciliation_completion.py` 覆盖两种正向 action receipt 与拒绝矩阵。该子步尚未接入 evidence collector / source authenticator / Host snapshot reader；未启用任何 reconciliation authority。待本地/CI 验收后再记录通过情况。
+
