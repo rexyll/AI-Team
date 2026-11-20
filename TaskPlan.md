@@ -910,7 +910,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 文档 docs/deployment-reconciliation-external-audit-anchor.md 已同步说明 conformance coverage 和测试 fixture 的限制。测试提交 801c92d，文档提交 085e095。最新整合 HEAD ac00a6d 的 CI run 44775211266 全部 success：Regression 3,306 passed / 14 skipped（包含本节所有契约测试），Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,286 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job 所有步骤 success。SQLite 仍只作为测试 fixture，不是生产 trust root。
 
 
-### T21.6.3.5.31 — Host composition entry point for externally protected approval authority（实现与组合测试已提交，CI 待验收）
+### T21.6.3.5.31 — Host composition entry point for externally protected approval authority（实现、组合测试与全量 CI 验收通过）
 
 - 新增 DeploymentHostRuntime.build_reconciliation_approval_authority()，将 Local Docker operation-scoped snapshot reader、ReconciliationApprovalAuthority、ExternallyAnchoredReconciliationAuditStore 与 ReconciliationApprovalGrantVault 组合为一个 Host factory。
 - 所有安全依赖均显式必填：HostAuthenticator、ReconciliationAuditHeadAnchor、expected_ledger_id、ReconciliationGrantProtector、trusted_issuers、trusted_authentication_methods 和 authentication_audience。没有默认 IdP/KMS/audit anchor，没有 software-key 或 local-audit fallback。
@@ -918,4 +918,4 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 工厂按 history 数据库同目录派生私有 audit/grant 子目录；audit store 构建后先只读 verify external checkpoint 与本地 head，再创建 grant vault。若 external anchor 不可用/identity 不匹配，工厂 fail-closed，且不创建 grant vault。
 - Factory construction 不执行 Docker 命令、不调用 authenticator、不写 audit event、不初始化/推进远端 checkpoint，也不执行 reconciliation。返回的 authority 只负责双人审批与 one-use proposal consumption；不存在部署 mutation executor。
 - 新增 Host integration tests：验证所有 trust roots 注入、head verify only、grant vault 创建、operation scope guard、无 Docker/auth/CAS side effects；并验证 anchor unavailable 时在 grant vault 创建前拒绝。
-- 实现提交 147a6d2，Host tests 提交 017b4bb，文档提交 85bf70b；最新 HEAD 完整 CI 待验收。真实 production IdP/KMS/anchor provider 仍未接入，必须由部署方选择/配置并经过独立安全审查。
+- 实现提交 147a6d2，Host tests 提交 017b4bb，文档提交 85bf70b。最新整合 HEAD ea57b2a 的 CI run 44777299030 全部 success：Regression 3,308 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,288 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job all steps success。该 run 的 Host snapshot artifact 14650816938 再次确认 `retire_previous / succeeded`、四类 evidence、candidate healthy/running、previous exited、journal `needs_reconciliation`、`automatic_reconciliation_executed=false`。真实 production IdP/KMS/anchor provider 仍未接入，必须由部署方选择/配置并经过独立安全审查。
