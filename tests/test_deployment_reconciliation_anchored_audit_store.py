@@ -264,3 +264,37 @@ def test_anchored_store_serializes_concurrent_writers_across_instances(tmp_path)
     assert anchor.head.sequence == 4
     assert stores[0].verify() == anchor.head
     assert len(stores[0].events()) == 4
+
+
+def test_anchored_events_reject_a_local_append_that_bypasses_the_wrapper(tmp_path):
+    anchor = _MemoryHeadAnchor()
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit", anchor=anchor
+    )
+    first = _record(store, 1)
+    assert store.events() == (first,)
+
+    # Simulate an accidental direct use of the base store API. The appended
+    # event is durable locally but was not checkpointed by the external anchor.
+    bypassed = DurableReconciliationAuditStore.record(
+        store,
+        action="reconciliation_proposed",
+        actor=_principal("bypass"),
+        approval_id="approval-bypass",
+        operation_id="operation-bypass",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        candidate_runtime_id="b" * 64,
+        previous_runtime_id="a" * 64,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+    )
+    assert bypassed.sequence == 2
+    assert anchor.head.sequence == 1
+
+    with pytest.raises(ReconciliationAuditAnchorError):
+        store.events()
