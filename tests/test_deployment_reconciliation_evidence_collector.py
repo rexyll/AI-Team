@@ -759,3 +759,25 @@ def test_host_synchronous_completion_must_precede_snapshot_start(tmp_path):
         )
     assert runtime.calls == []
     assert route.calls == []
+
+
+def test_provider_native_live_observation_may_follow_snapshot_read_start():
+    record = _record()
+    candidate = _runtime(
+        record, record.target_deployment_id, record.candidate_runtime_id,
+        status="not_found",
+    )
+    collector, runtime, route, _ = _collector(record, candidate=candidate)
+
+    evidence = collector.collect_current_evidence(
+        record,
+        "abort_candidate",
+        snapshot_started_at="2026-11-19T09:59:50Z",
+    )
+
+    assert any(item.kind == "provider_operation_inspection" for item in evidence)
+    assert runtime.calls == [
+        (record.target_deployment_id, record.candidate_runtime_id),
+        (record.previous_deployment_id, record.previous_runtime_id),
+    ]
+    assert route.calls == ["replace-001"]
