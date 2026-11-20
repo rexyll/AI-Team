@@ -24,7 +24,9 @@ from runtime.deployment_reconciliation_evidence_collector import (
 )
 from runtime.local_docker_provider import DockerCommandResult, LocalDockerProvider
 
-_DAEMON_ID = re.compile(r"^[A-Za-z0-9]{12,128}$")
+_DAEMON_ID = re.compile(
+    r"^(?:[A-Za-z0-9]{12,128}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$"
+)
 _INFO_FORMAT = "{{.ID}}|{{.Name}}|{{.ServerVersion}}|{{.DockerRootDir}}"
 
 
