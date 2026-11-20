@@ -111,6 +111,6 @@ Before production reconciliation approval/use:
 - Implement and provision the real KMS/SecretStore protector, including key lifecycle, envelope encryption if required, rotation, backup/recovery, access policy and audit. The vault's POSIX checks do not enforce Windows NTFS ACLs.
 - Provision and protect the production Docker daemon pin and transport (Host OS socket ACL or authenticated Docker TLS); configure the production Router/HAProxy read sources and Host receipt-store ownership/ACLs.
 - For multi-host Hosts, replace the same-host file-lock claim path with a transactional shared database/unique constraint or centralized approval service.
-- Anchor the audit head in an external trusted system and define remote retention.
+- Provision a real external audit-head anchor and remote retention adapter. The provider-neutral CAS wrapper contract is documented in [deployment-reconciliation-external-audit-anchor.md](deployment-reconciliation-external-audit-anchor.md); the current in-memory test anchor is not a production trust root. Multi-host operation still requires a shared transactional audit service, not independent local ledgers.
 
 No provider-specific secrets, issuer URLs, client IDs or credentials should be committed to this repository. Until these integrations and deployment-specific trust configuration exist, the accepted snapshot remains diagnostic evidence; no production identity verification or reconciliation mutation is authorized.
