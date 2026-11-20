@@ -93,12 +93,14 @@ This contract adds no deployment provider mutation, rollback, journal phase tran
 
 ## 6. Production integration still required
 
-The repository currently contains no configured production IdP, no production `HostAuthenticator`, and no production `ReconciliationSnapshotReader` implementing the mapping above. Before production use:
+The repository now contains a concrete Local Docker `DeploymentHostRuntime.build_reconciliation_snapshot_reader(operation_id)` and has accepted a real, disposable Docker Engine positive snapshot (CI [44734988946](https://github.com/rexyll/AI-Team/actions/runs/44734988946), artifact `14628606633`). This is a read-only diagnostic reader, not a production-configured approval authority. The Host completion receipt is explicitly distinct from provider-native operation inspection; `LocalDockerProvider.inspect_operation()` remains `unsupported`.
 
-- Select the organization's actual IdP and implement its provider-specific proof validation.
-- Select and document the durable journal, provider inspection and traffic-route sources; implement the revision fence and required evidence mapping against them.
+The repository still contains no configured production IdP or production `HostAuthenticator`. Before production reconciliation approval/use:
+
+- Select the organization's actual IdP and implement provider-specific proof validation for issuer, signature/credential, explicit audience, nonce/replay, purpose, operation and scope.
+- Provision and protect the production Docker daemon pin and transport (Host OS socket ACL or authenticated Docker TLS); configure the production Router/HAProxy read sources and Host receipt-store ownership/ACLs.
 - Protect a restorable bearer grant outside the audit ledger with the Host's KMS/SecretStore; the ledger intentionally stores only the token digest.
 - For multi-host Hosts, replace the same-host file-lock claim path with a transactional shared database/unique constraint or centralized approval service.
 - Anchor the audit head in an external trusted system and define remote retention.
 
-No provider-specific secrets, issuer URLs, client IDs or credentials should be committed to this repository. Until these integrations and deployment-specific trust configuration exist, the code is a tested security contract, not production identity or evidence verification.
+No provider-specific secrets, issuer URLs, client IDs or credentials should be committed to this repository. Until these integrations and deployment-specific trust configuration exist, the accepted snapshot remains diagnostic evidence; no production identity verification or reconciliation mutation is authorized.
