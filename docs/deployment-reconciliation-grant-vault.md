@@ -44,7 +44,7 @@ If KMS protection or durable vault storage fails, the authority records a reject
 
 After a Host restart, the caller can invoke restore_grant(approval_id). The authority asks the vault to rebuild a reference and decrypt the envelope, then verifies all of the following against the append-only audit history:
 
-- exactly one reconciliation_proposed and one reconciliation_approved event exist;
+- the approval ID is globally unique across the complete verified audit chain, with exactly one reconciliation_proposed and one reconciliation_approved event;
 - the proposal precedes the approval;
 - operation/project/environment, journal phase, deployment IDs and immutable runtime IDs match the grant exactly;
 - requester and approver identities match the two audit actors;
