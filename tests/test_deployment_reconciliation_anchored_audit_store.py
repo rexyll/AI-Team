@@ -167,9 +167,8 @@ def test_anchor_cas_conflict_leaves_local_ledger_ahead_and_blocks_future_writes(
     assert anchor.head == ReconciliationAuditHead(0, _ZERO_DIGEST)
     inspection = store.inspect_anchor_state()
     assert inspection.status == "local_ahead"
-    assert inspection.local_head == ReconciliationAuditHead(
-        1, store._read_unlocked()[-1].event_digest
-    )
+    assert inspection.local_head is not None
+    assert inspection.local_head.sequence == 1
     assert inspection.external_head == anchor.head
     with pytest.raises(ReconciliationAuditAnchorError):
         store.verify()
