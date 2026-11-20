@@ -513,6 +513,59 @@ def test_anchor_inspection_reports_same_sequence_fork_and_invalid_local_chain(
     assert invalid_inspection.local_error is not None
 
 
+def test_anchor_identity_drift_during_read_fails_closed(tmp_path):
+    class _DriftingReadAnchor(_MemoryHeadAnchor):
+        def read_head(self):
+            head = super().read_head()
+            self.ledger_id = "other-ledger-during-read"
+            return head
+
+    from runtime.deployment_reconciliation_anchored_audit_store import (
+        ReconciliationAuditAnchorIdentityError,
+    )
+
+    anchor = _DriftingReadAnchor()
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "read-drift",
+        anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
+    )
+
+    with pytest.raises(ReconciliationAuditAnchorIdentityError):
+        store.verify()
+    assert store.inspect_anchor_state().status == "identity_mismatch"
+
+
+def test_anchor_identity_drift_during_cas_fails_closed_after_local_append(tmp_path):
+    class _DriftingCasAnchor(_MemoryHeadAnchor):
+        def compare_and_set(self, expected, replacement):
+            result = super().compare_and_set(expected, replacement)
+            self.ledger_id = "other-ledger-during-cas"
+            return result
+
+    from runtime.deployment_reconciliation_anchored_audit_store import (
+        ReconciliationAuditAnchorIdentityError,
+    )
+
+    anchor = _DriftingCasAnchor()
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "cas-drift",
+        anchor=anchor,
+        expected_ledger_id="test-audit-ledger",
+    )
+
+    with pytest.raises(ReconciliationAuditAnchorIdentityError):
+        _record(store, 1)
+
+    # Local append and remote side effect are not rewritten or re-anchored.
+    # The changed namespace makes the store permanently fail closed until an
+    # operator establishes which external ledger was actually touched.
+    inspection = store.inspect_anchor_state()
+    assert inspection.status == "identity_mismatch"
+    assert inspection.local_head == anchor.head
+    assert inspection.local_head.sequence == 1
+
+
 def test_anchor_inspection_reports_external_anchor_unavailable(tmp_path):
     class _UnavailableAnchor:
         ledger_id = "test-audit-ledger"
