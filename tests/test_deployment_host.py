@@ -355,7 +355,7 @@ def test_host_rejects_invalid_pinned_docker_daemon_id_without_docker_io(
     )
     monkeypatch.setenv("AI_TEAM_DOCKER_EXPECTED_DAEMON_ID", "mutable-docker-context")
 
-    with pytest.raises(ValueError, match="full lowercase Docker daemon ID"):
+    with pytest.raises(ValueError, match="full Docker daemon ID"):
         host.build_reconciliation_source_authenticator()
 
     assert runner.calls == []
