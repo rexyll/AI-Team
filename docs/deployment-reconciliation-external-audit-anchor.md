@@ -13,10 +13,13 @@ The wrapper covers the authority's full audit write path: proposal, approval, co
 
 ## External anchor contract
 
-An adapter must provide:
+An adapter must expose one immutable ledger namespace and provide:
 
-- read_head() -> ReconciliationAuditHead
-- compare_and_set(expected, replacement) -> bool
+- ledger_id -> string: stable opaque identifier for this exact audit ledger, bound to its deployment environment/project namespace;
+- read_head() -> ReconciliationAuditHead;
+- compare_and_set(expected, replacement) -> bool.
+
+The Host configuration must pass the independently provisioned expected_ledger_id into ExternallyAnchoredReconciliationAuditStore. Construction rejects a missing/mismatched identifier, and each remote-head read rechecks that the adapter identity has not changed. The provider adapter must also bind its remote key/database row to this same identifier; echoing a caller-supplied value without enforcing the remote namespace is not sufficient.
 
 The adapter must store its checkpoint outside the writable audit directory, provide durable and linearizable compare-and-set semantics, authenticate the Host, and fail closed when its checkpoint is absent or unavailable. It must not silently initialize or reset a ledger. Production provisioning must explicitly initialize the external checkpoint to sequence 0 with the all-zero digest before the first audit event.
 
