@@ -1697,3 +1697,86 @@ def test_approval_authority_anchors_proposal_approval_and_consumption_events(
         "reconciliation_approval_consumption_started",
         "reconciliation_approval_consumed",
     ]
+
+
+def test_anchored_authority_restores_grant_after_ambiguous_approved_event(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    anchor = _MemoryHeadAnchorForAuthority()
+    audit_root = tmp_path / "audit"
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    audit = ExternallyAnchoredReconciliationAuditStore(
+        audit_root, anchor=anchor
+    )
+    authority = _authority(
+        audit_root,
+        principals,
+        snapshot_reader=reader,
+        audit_store=audit,
+        grant_vault=vault,
+    )
+    record = authority._record
+
+    def _append_then_lose_approval_ack(**kwargs):
+        result = record(**kwargs)
+        if kwargs["action"] == "reconciliation_approved":
+            raise OSError("simulated lost caller acknowledgement after remote CAS")
+        return result
+
+    authority._record = _append_then_lose_approval_ack
+
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be durably recorded"
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+    assert anchor.head.sequence == 2
+    assert [
+        item.action for item in audit.events(operation_id=proposal.record.operation_id)
+    ] == ["reconciliation_proposed", "reconciliation_approved"]
+
+    restarted_vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    restarted_audit = ExternallyAnchoredReconciliationAuditStore(
+        audit_root, anchor=anchor
+    )
+    restarted_authority = _authority(
+        audit_root,
+        principals,
+        snapshot_reader=reader,
+        audit_store=restarted_audit,
+        grant_vault=restarted_vault,
+    )
+    approved_event = restarted_audit.events(
+        operation_id=proposal.record.operation_id
+    )[-1]
+    grant = restarted_authority.restore_grant(approved_event.approval_id)
+
+    assert grant.storage_reference is not None
+    assert restarted_authority.consume(grant).record == proposal.record
+    assert anchor.head.sequence == 4
+    assert restarted_audit.verify() == anchor.head
+    assert [
+        item.action
+        for item in restarted_audit.events(
+            operation_id=proposal.record.operation_id
+        )
+    ] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+        "reconciliation_approval_consumed",
+    ]
