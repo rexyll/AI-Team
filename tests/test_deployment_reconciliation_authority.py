@@ -1364,3 +1364,102 @@ def test_protected_grant_vault_rejects_expired_grant_and_deletes_terminal_envelo
     clock.value += timedelta(minutes=10)
     with pytest.raises(ReconciliationGrantVaultError, match="expired"):
         vault.save(grant)
+
+
+def test_authority_persists_grant_before_approved_audit_and_restores_after_restart(
+    tmp_path,
+):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants",
+        protector=protector,
+        clock=_Clock(),
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+
+    assert grant.storage_reference is not None
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+    ]
+
+    reopened_vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants",
+        protector=protector,
+        clock=_Clock(),
+    )
+    recovered_reference = reopened_vault.reference_for(
+        grant.proposal.approval.approval_id
+    )
+    assert recovered_reference == grant.storage_reference
+    restored_grant = reopened_vault.load(recovered_reference)
+    restored_authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+    )
+
+    assert restored_grant.storage_reference == recovered_reference
+    assert restored_authority.consume(restored_grant).record == proposal.record
+    final_events = restored_authority._audit.events(
+        operation_id=proposal.record.operation_id
+    )
+    assert final_events[-1].action == "reconciliation_approval_consumed"
+
+
+def test_authority_does_not_append_approved_event_when_grant_vault_fails(tmp_path):
+    class _FailingGrantVault:
+        def save(self, grant):
+            raise OSError("KMS unavailable")
+
+        def load(self, reference):
+            raise AssertionError("load must not be called")
+
+        def delete(self, reference):
+            raise AssertionError("delete must not be called")
+
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    authority = _authority(
+        tmp_path,
+        {
+            "requester-proof": _principal("alice"),
+            "approver-proof": _principal("bob"),
+        },
+        snapshot_reader=reader,
+        grant_vault=_FailingGrantVault(),
+    )
+
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be durably protected"
+    ):
+        authority.authorize_proposal(
+            proposal,
+            requester_response="requester-proof",
+            approver_response="approver-proof",
+        )
+
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert [event.action for event in events] == [
+        "reconciliation_proposed",
+        "reconciliation_rejected",
+    ]
+    assert all(event.approval_token_digest is None for event in events)
