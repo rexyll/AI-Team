@@ -826,3 +826,13 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 修正 `LocalDockerReconciliationEvidenceSourceAuthenticator`：接受 12–128 位完整字母数字 Docker daemon ID，仍对 Host pin 与每次实时读取的 daemon ID 做精确、区分大小写匹配；不使用响应自证，不放宽 provider/project/environment/source role 绑定。
 - 增加原生 Docker ID 格式正向测试；原有非法格式、daemon mismatch 与异常输出测试保留。
 - 代码已提交 `main`；等待 Regression、Security、Coverage、Windows 与 Docker Engine live smoke 全套 CI 验收。此前 live smoke 的真实 Docker 容器已因前置身份格式拒绝而保留在 disposable runner；GitHub runner 生命周期结束后自动销毁，不涉及用户主机。
+
+
+### T21.6.3.5.23.6 — UUID-form Docker Engine daemon identity support
+
+- The next disposable Docker Engine run exposed the actual CI daemon ID shape: a canonical UUID (`2e9a7954-494c-4cfc-bff9-50a0425c70dc`), not the alphanumeric-only form accepted by the initial 23.5 correction.
+- Updated the Host authenticator to accept either 12–128 character alphanumeric IDs or canonical 8-4-4-4-12 hexadecimal UUIDs. Host pin comparison remains exact and case-sensitive; provider/project/environment/source-role binding is unchanged.
+- Added a regression test for the observed UUID form, retaining the native alphanumeric ID test and malformed/mismatch fail-closed tests.
+- Removed temporary CI diagnostics that printed the ephemeral daemon ID. The disposable live smoke still provisions the exact ID returned by `docker info` as its Host pin; production pin configuration remains operator-managed.
+- The preceding CI run verified Windows smoke, Python regression (3,274 passed, 14 skipped), security regression (275 passed, 9 skipped), and coverage; only the live snapshot step failed at Host authenticator construction. The new UUID path awaits full CI and live positive-snapshot acceptance.
+- No production Host pin, reconciliation authority, rollback capability, traffic selector, deployment pointer, or journal mutation policy was changed.
