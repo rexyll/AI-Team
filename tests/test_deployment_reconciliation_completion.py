@@ -188,8 +188,8 @@ def test_inspector_rejects_wrong_scope_and_action(tmp_path):
 @pytest.mark.parametrize(
     ("clock_offset", "message"),
     [
-        (timedelta(minutes=10), "future-dated"),
-        (-timedelta(minutes=10), "stale"),
+        (-timedelta(minutes=10), "future-dated"),
+        (timedelta(minutes=10), "stale"),
     ],
 )
 def test_inspector_rejects_future_or_stale_receipts(tmp_path, clock_offset, message):
