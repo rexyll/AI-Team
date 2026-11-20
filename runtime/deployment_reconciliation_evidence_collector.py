@@ -148,9 +148,10 @@ class DecisionSpecificReconciliationEvidenceCollector:
     """Collect exact evidence for abort or retirement confirmation decisions.
 
     Required providers are injected independently so their source identities
-    can be pinned and authenticated by the Host. The provider operation check
-    is performed first and is mandatory for both decisions. A Host call receipt
-    is never used as a replacement for that provider-owned inspection API.
+    can be pinned and authenticated by the Host. Exactly one operation proof is
+    required: a provider-native operation inspection, or (for Local Docker only)
+    a separately typed Host synchronous completion witness. Both paths still
+    require independent live runtime and route postconditions.
     """
 
     def __init__(
@@ -570,13 +571,6 @@ class DecisionSpecificReconciliationEvidenceCollector:
             )
         else:
             operation_observation = self._validate_provider_operation(record, operation)
-            if snapshot_started_at is not None and (
-                _parse_timestamp(operation_observation.inspected_at, "provider operation observation")
-                > _parse_timestamp(snapshot_started_at, "snapshot read start")
-            ):
-                raise ReconciliationEvidenceCollectionError(
-                    "provider operation observation occurred after the snapshot read started"
-                )
             operation_item = self._make_evidence(
                 kind="provider_operation_inspection",
                 role="provider_operation",
