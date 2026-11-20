@@ -56,6 +56,10 @@ class ReconciliationAuditAnchorConflict(ReconciliationAuditAnchorError):
     """The external checkpoint did not advance to the exact new local head."""
 
 
+class ReconciliationAuditAnchorIdentityError(ReconciliationAuditAnchorError):
+    """The external anchor adapter is bound to a different audit ledger namespace."""
+
+
 @dataclass(frozen=True)
 class ReconciliationAuditAnchorInspection:
     """Read-only comparison of one local chain head and its external checkpoint."""
@@ -68,6 +72,7 @@ class ReconciliationAuditAnchorInspection:
         "forked",
         "local_invalid",
         "anchor_unavailable",
+        "identity_mismatch",
     ]
     local_head: ReconciliationAuditHead | None
     external_head: ReconciliationAuditHead | None
@@ -116,7 +121,7 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
             or not anchor_ledger_id.strip()
             or anchor_ledger_id != expected_ledger_id
         ):
-            raise ReconciliationAuditAnchorError(
+            raise ReconciliationAuditAnchorIdentityError(
                 "external audit anchor ledger identity does not match expected_ledger_id"
             )
         super().__init__(root)
@@ -134,7 +139,7 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
     def _read_external_head(self) -> ReconciliationAuditHead:
         current_ledger_id = getattr(self._anchor, "ledger_id", None)
         if current_ledger_id != self._expected_ledger_id:
-            raise ReconciliationAuditAnchorError(
+            raise ReconciliationAuditAnchorIdentityError(
                 "external audit anchor ledger identity changed after configuration"
             )
         try:
@@ -186,8 +191,12 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
 
             external_head = None
             anchor_error = None
+            identity_mismatch = False
             try:
                 external_head = self._read_external_head()
+            except ReconciliationAuditAnchorIdentityError as exc:
+                anchor_error = type(exc).__name__
+                identity_mismatch = True
             except Exception as exc:
                 anchor_error = type(exc).__name__
 
@@ -198,7 +207,9 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
             except Exception as exc:
                 local_error = type(exc).__name__
 
-            if anchor_error is not None:
+            if identity_mismatch:
+                status = "identity_mismatch"
+            elif anchor_error is not None:
                 status = "anchor_unavailable"
             elif local_error is not None or local_head is None:
                 status = "local_invalid"
