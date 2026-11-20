@@ -327,6 +327,9 @@ jobs:
           # as the Host pin for this disposable integration test.
           export AI_TEAM_DOCKER_EXPECTED_DAEMON_ID="$(docker info --format '{{.ID}}')"
           test -n "$AI_TEAM_DOCKER_EXPECTED_DAEMON_ID"
+          daemon_id_length="${#AI_TEAM_DOCKER_EXPECTED_DAEMON_ID}"
+          if [[ "$AI_TEAM_DOCKER_EXPECTED_DAEMON_ID" =~ ^[A-Za-z0-9]{12,128}$ ]]; then daemon_id_alnum= true; else daemon_id_alnum=false; fi
+          printf 'Docker daemon identity diagnostic: length=%s alphanumeric_format=%s\n' "$daemon_id_length" "$daemon_id_alnum"
           python -m scripts.local_docker_router_replacement_live_smoke
 
       - name: Upload Host synchronous completion snapshot evidence
