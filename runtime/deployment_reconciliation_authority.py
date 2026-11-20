@@ -744,6 +744,10 @@ class ReconciliationApprovalAuthority:
                     raise TypeError(
                         "grant vault returned an invalid storage reference"
                     )
+                if storage_reference.approval_id != approval_id:
+                    raise ValueError(
+                        "grant vault reference does not match the issued approval ID"
+                    )
                 expires = datetime.fromisoformat(
                     approval.expires_at.replace("Z", "+00:00")
                 ).astimezone(timezone.utc)
@@ -752,7 +756,10 @@ class ReconciliationApprovalAuthority:
                         "approval expired while the protected grant was being stored"
                     )
             except Exception as exc:
-                if storage_reference is not None:
+                if (
+                    storage_reference is not None
+                    and storage_reference.approval_id == approval_id
+                ):
                     try:
                         self._grant_vault.delete(storage_reference)
                     except Exception:
