@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol, TypeVar
+from typing import Callable, Literal, Protocol, TypeVar
 
 from runtime.deployment_reconciliation_audit_store import (
     DurableReconciliationAuditStore,
@@ -53,6 +54,25 @@ class ReconciliationAuditAnchorError(RuntimeError):
 
 class ReconciliationAuditAnchorConflict(ReconciliationAuditAnchorError):
     """The external checkpoint did not advance to the exact new local head."""
+
+
+@dataclass(frozen=True)
+class ReconciliationAuditAnchorInspection:
+    """Read-only comparison of one local chain head and its external checkpoint."""
+
+    ledger_id: str
+    status: Literal[
+        "anchored",
+        "local_ahead",
+        "local_behind",
+        "forked",
+        "local_invalid",
+        "anchor_unavailable",
+    ]
+    local_head: ReconciliationAuditHead | None
+    external_head: ReconciliationAuditHead | None
+    local_error: str | None = None
+    anchor_error: str | None = None
 
 
 _Result = TypeVar("_Result")
@@ -152,6 +172,53 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
             )
         if os.name == "posix":
             os.chmod(self.anchor_lock_path, 0o600)
+
+    def inspect_anchor_state(self) -> ReconciliationAuditAnchorInspection:
+        """Diagnose local/remote head drift without exposing events or mutating either side.
+
+        This method is intended for operator investigation. It does not repair,
+        truncate, re-anchor, or make an unanchored ledger readable through
+        events(). Error fields contain exception class names only, not remote
+        provider messages that could include sensitive configuration details.
+        """
+        with self._anchor_lock():
+            self._validate_anchor_lock_file()
+
+            external_head = None
+            anchor_error = None
+            try:
+                external_head = self._read_external_head()
+            except Exception as exc:
+                anchor_error = type(exc).__name__
+
+            local_head = None
+            local_error = None
+            try:
+                local_head = DurableReconciliationAuditStore.verify(self)
+            except Exception as exc:
+                local_error = type(exc).__name__
+
+            if anchor_error is not None:
+                status = "anchor_unavailable"
+            elif local_error is not None or local_head is None:
+                status = "local_invalid"
+            elif local_head == external_head:
+                status = "anchored"
+            elif local_head.sequence > external_head.sequence:
+                status = "local_ahead"
+            elif local_head.sequence < external_head.sequence:
+                status = "local_behind"
+            else:
+                status = "forked"
+
+            return ReconciliationAuditAnchorInspection(
+                ledger_id=self._expected_ledger_id,
+                status=status,
+                local_head=local_head,
+                external_head=external_head,
+                local_error=local_error,
+                anchor_error=anchor_error,
+            )
 
     def verify(
         self,
