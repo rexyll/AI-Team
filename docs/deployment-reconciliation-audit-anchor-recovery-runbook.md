@@ -31,6 +31,8 @@ Record all timestamps with timezone/UTC and keep the original bundle immutable.
 
 Let L be the locally verified audit head and R the independently read external checkpoint.
 
+The read-only store diagnostic `inspect_anchor_state()` can report the current classification without exposing event payloads or mutating the ledger. Record its returned ledger ID, local head, external head and status in the incident bundle. A runtime adapter identity mismatch is classified separately from an unavailable anchor service.
+
 ### L == R
 
 The checkpoint and ledger currently agree. This does not prove that no earlier request failed; inspect service logs and pending grant records before reopening the approval path.
