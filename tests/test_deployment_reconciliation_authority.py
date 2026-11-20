@@ -11,6 +11,9 @@ from threading import Event
 import pytest
 
 from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
+from runtime.deployment_reconciliation_anchored_audit_store import (
+    ExternallyAnchoredReconciliationAuditStore,
+)
 from runtime.deployment_reconciliation_authority import (
     ReconciliationApprovalAuthority,
     ReconciliationApprovalGrant,
@@ -202,6 +205,9 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
     authentication_audience = kwargs.pop(
         "authentication_audience", "urn:ai-team:deployment-reconciliation"
     )
+    audit_store = kwargs.pop(
+        "audit_store", DurableReconciliationAuditStore(tmp_path)
+    )
     return ReconciliationApprovalAuthority(
         authenticator=_Authenticator(principals),
         snapshot_reader=reader,
@@ -210,7 +216,7 @@ def _authority(tmp_path, principals, *, clock=None, snapshot_reader=None, **kwar
         trusted_snapshot_readers=trusted_snapshot_readers,
         trusted_evidence_sources=trusted_evidence_sources,
         authentication_audience=authentication_audience,
-        audit_store=DurableReconciliationAuditStore(tmp_path),
+        audit_store=audit_store,
         clock=clock or _Clock(),
         **kwargs,
     )
@@ -1624,3 +1630,70 @@ def test_authority_restore_rejects_approval_id_reused_in_another_operation(tmp_p
         ReconciliationAuthorizationError, match="could not be restored"
     ):
         authority.restore_grant(grant.proposal.approval.approval_id)
+
+
+class _MemoryHeadAnchorForAuthority:
+    def __init__(self):
+        from runtime.deployment_reconciliation_audit_store import (
+            ReconciliationAuditHead,
+            _ZERO_DIGEST,
+        )
+
+        self.head = ReconciliationAuditHead(0, _ZERO_DIGEST)
+
+    def read_head(self):
+        return self.head
+
+    def compare_and_set(self, expected, replacement):
+        if self.head != expected:
+            return False
+        self.head = replacement
+        return True
+
+
+def test_approval_authority_anchors_proposal_approval_and_consumption_events(
+    tmp_path,
+):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    anchor = _MemoryHeadAnchorForAuthority()
+    audit_store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit", anchor=anchor
+    )
+    vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants",
+        protector=_TestGrantProtector(),
+        clock=_Clock(),
+    )
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        audit_store=audit_store,
+        grant_vault=vault,
+    )
+
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    assert anchor.head.sequence == 2
+
+    consumed = authority.consume(grant)
+    assert consumed.record == proposal.record
+    assert anchor.head.sequence == 4
+    assert audit_store.verify() == anchor.head
+    assert [
+        event.action
+        for event in audit_store.events(operation_id=proposal.record.operation_id)
+    ] == [
+        "reconciliation_proposed",
+        "reconciliation_approved",
+        "reconciliation_approval_consumption_started",
+        "reconciliation_approval_consumed",
+    ]
