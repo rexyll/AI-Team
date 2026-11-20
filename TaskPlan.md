@@ -893,18 +893,18 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 代码提交 9e4a071；测试提交 64c4dfe、064afad、631abfa、470bf7c、05c37c1、f4cd4e5；锁文件 owner/hard-link 检查提交 df47eef。文档 docs/deployment-reconciliation-external-audit-anchor.md，Host contract 与 grant vault 文档已同步；新增 docs/deployment-reconciliation-audit-anchor-recovery-runbook.md，明确 local/remote head mismatch 的冻结、证据保全、分类与人工双人审批恢复门槛，不提供自动 re-anchor/truncate。代码与测试最终通过 run 44763443862（HEAD ce050d9）：Regression 3,295 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,275 passed / 14 skipped、82%，所有 module floors passed，Docker Engine all steps success。该 run 同时包含 events() 原子快照读取、bypass append 拒绝、anchor+vault ambiguous-ack 跨重启恢复集成测试。
 
 
-### T21.6.3.5.29 — 外部 audit anchor I/O 期间 ledger identity 稳定性复核（实现与回归已提交，CI 待验收）
+### T21.6.3.5.29 — 外部 audit anchor I/O 期间 ledger identity 稳定性复核（实现、测试与全量 CI 验收通过）
 
 - 收紧 runtime/deployment_reconciliation_anchored_audit_store.py：抽出 _assert_anchor_identity()，除了构造时检查 expected_ledger_id，现在每次 read_head() 前后、compare_and_set() 前后都复核同一个 immutable ledger_id。
 - 若 read_head 或 CAS I/O 期间 namespace 漂移，立即抛出 ReconciliationAuditAnchorIdentityError；不将其降级为普通 anchor unavailable，也不继续向新 namespace 读取或尝试补偿。CAS 已产生的副作用保持原状，store 继续 fail-closed，必须通过 incident runbook 人工调查。
 - 新增两项测试：read_head 在返回过程中改变 ledger_id；CAS 已执行后改变 ledger_id。分别验证 verify/append 拒绝及 inspect_anchor_state 分类为 identity_mismatch。
 - 同步更新 docs/deployment-reconciliation-external-audit-anchor.md，明确身份检查在远端 I/O 两侧执行。
-- 实现提交 8fde6e1，测试提交 df30555，文档提交 82063c1。前置 HEAD a079b630（run 44767875515）整体 CI 已全部 success；本节变更尚待最新 HEAD 完整 CI 验收。未接入真实外部 anchor 服务，未选择任何云供应商，不允许自动 re-anchor、truncate 或 reconciliation mutation。
+- 实现提交 8fde6e1，测试提交 df30555，文档提交 82063c1。最新整合 HEAD ac00a6d 的 CI run 44775211266 全部 success：Regression 3,306 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,286 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job 所有步骤 success。未接入真实外部 anchor 服务，未选择任何云供应商，不允许自动 re-anchor、truncate 或 reconciliation mutation。
 
 
-### T21.6.3.5.30 — External anchor adapter contract conformance and namespace isolation（实现与测试已提交，CI 待验收）
+### T21.6.3.5.30 — External anchor adapter contract conformance and namespace isolation（实现、测试与全量 CI 验收通过）
 
 - 将 tests/test_deployment_reconciliation_anchored_audit_store.py 中的 SQLite test-only anchor 改为按 ledger_id 分区；独立 adapter instance 可针对同一外部 checkpoint 重建客户端，且不同 namespace 的 head 不互相影响。
 - 新增契约测试：CAS 更新在新客户端实例中仍可读取；旧 expected head 的 stale CAS 必须失败且不覆盖新 head；不同 ledger_id 的更新隔离；两个独立客户端并发竞争同一 expected head 时恰好一个 CAS 返回成功。
 - 保留原有 4-process spawn 并发测试，继续验证 same-host lock + remote CAS 组合能保持 audit sequence 连续。SQLite fixture 明确仅是测试后端，不是生产外部 trust root，不代表跨组织权限隔离、服务端 SLA 或异地灾备。
-- 文档 docs/deployment-reconciliation-external-audit-anchor.md 已同步说明 conformance coverage 和测试 fixture 的限制。测试提交 801c92d，文档提交 085e095；最新 HEAD 的完整 CI 待验收。
+- 文档 docs/deployment-reconciliation-external-audit-anchor.md 已同步说明 conformance coverage 和测试 fixture 的限制。测试提交 801c92d，文档提交 085e095。最新整合 HEAD ac00a6d 的 CI run 44775211266 全部 success：Regression 3,306 passed / 14 skipped（包含本节所有契约测试），Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,286 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job 所有步骤 success。SQLite 仍只作为测试 fixture，不是生产 trust root。
