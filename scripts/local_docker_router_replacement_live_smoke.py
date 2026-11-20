@@ -2193,9 +2193,14 @@ def main() -> int:
         and evidence.get("checks", {}).get("switch_crash_recovery_inventory", {}).get("status") == "verified"
         and evidence.get("cleanup", {}).get("status") == "preserved"
     )
+    host_completion_snapshot_pass = (
+        evidence.get("status") == "fault_injection_verified"
+        and evidence.get("checks", {}).get("host_synchronous_completion_snapshot", {}).get("status") == "verified"
+        and evidence.get("cleanup", {}).get("status") == "removed"
+    )
     return 0 if (
         normal_pass or identity_mismatch_pass or nonzero_scur_pass
-        or held_tcp_pass or switch_crash_pass
+        or held_tcp_pass or switch_crash_pass or host_completion_snapshot_pass
     ) else 1
 
 
