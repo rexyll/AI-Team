@@ -61,7 +61,7 @@ The operational containment/classification process is documented in [deployment-
 The wrapper's coordination lock serializes processes sharing one Host filesystem. It is not a distributed transaction and does not make independent local ledgers multi-host safe. A multi-host deployment must use a shared transactional audit database or centralized append service together with an external trust root; the current wrapper will reject divergent hosts rather than merge their ledgers.
 The regression suite exercises this same-Host coordination path with four spawned processes sharing a local ledger and a SQLite compare-and-set test anchor stored outside the ledger directory. The SQLite fake verifies process-level lock/CAS ordering only; it is not a production anchor provider or a multi-host service.
 
-The test anchor is an in-memory fake. It verifies CAS ordering, lost acknowledgements, local tampering, genesis mismatch and fail-closed local-ahead behavior. It is not a durable or secure production anchor. No AWS, Azure, GCP, HSM, database or SaaS provider is selected by this change.
+The test suite uses both an in-memory fake and a SQLite-backed test-only adapter. The SQLite fixture is stored outside the audit directory and verifies checkpoint visibility across client recreation, stale-CAS rejection, namespace isolation by ledger_id, atomic competition between independent clients, and spawned-process writes. It is still a test fixture: it does not provide an independently administered trust root, production access control, remote retention, or a production durability/SLA guarantee. No AWS, Azure, GCP, HSM, database or SaaS provider is selected by this change.
 
 ## Authorization boundary
 
