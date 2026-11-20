@@ -41,6 +41,8 @@ For each event append, including proposal/approval records and the approval-cons
 
 Public verify() and events() also require the local head to match the external checkpoint before exposing audit state. The same wrapper covers record(), append(), begin_approval_consumption() and finish_approval_consumption() so approval issuance and one-use claims cannot bypass anchoring when this store is injected into the authority.
 
+For operator diagnostics, inspect_anchor_state() performs a read-only comparison and returns only the ledger ID, local/external heads, a classification (anchored, local_ahead, local_behind, forked, local_invalid, anchor_unavailable, or identity_mismatch), and exception class names. It does not return event payloads or attempt repair/CAS. Normal events() remains fail-closed unless the exact heads match.
+
 ## Fail-closed behavior
 
 - External anchor unavailable before append: do not append.
