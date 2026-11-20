@@ -19,6 +19,8 @@ An adapter must expose one immutable ledger namespace and provide:
 - read_head() -> ReconciliationAuditHead;
 - compare_and_set(expected, replacement) -> bool.
 
+`ExternallyAnchoredReconciliationAuditStore` requires `expected_ledger_id` at construction and compares it exactly with the adapter's immutable `ledger_id`. The adapter identity is checked again before each external-head read. This is a configuration guard; the production adapter must enforce the same ledger ID as the actual remote key/database namespace and must not merely echo a caller-provided value.
+
 The Host configuration must pass the independently provisioned expected_ledger_id into ExternallyAnchoredReconciliationAuditStore. Construction rejects a missing/mismatched identifier, and each remote-head read rechecks that the adapter identity has not changed. The provider adapter must also bind its remote key/database row to this same identifier; echoing a caller-supplied value without enforcing the remote namespace is not sufficient.
 
 The adapter must store its checkpoint outside the writable audit directory, provide durable and linearizable compare-and-set semantics, authenticate the Host, and fail closed when its checkpoint is absent or unavailable. It must not silently initialize or reset a ledger. Production provisioning must explicitly initialize the external checkpoint to sequence 0 with the all-zero digest before the first audit event.
@@ -55,6 +57,7 @@ The operational containment/classification process is documented in [deployment-
 ## Deployment limits
 
 The wrapper's coordination lock serializes processes sharing one Host filesystem. It is not a distributed transaction and does not make independent local ledgers multi-host safe. A multi-host deployment must use a shared transactional audit database or centralized append service together with an external trust root; the current wrapper will reject divergent hosts rather than merge their ledgers.
+The regression suite exercises this same-Host coordination path with four spawned processes sharing a local ledger and a SQLite compare-and-set test anchor stored outside the ledger directory. The SQLite fake verifies process-level lock/CAS ordering only; it is not a production anchor provider or a multi-host service.
 
 The test anchor is an in-memory fake. It verifies CAS ordering, lost acknowledgements, local tampering, genesis mismatch and fail-closed local-ahead behavior. It is not a durable or secure production anchor. No AWS, Azure, GCP, HSM, database or SaaS provider is selected by this change.
 
