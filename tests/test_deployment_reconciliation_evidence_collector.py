@@ -629,7 +629,8 @@ def test_host_synchronous_completion_is_a_distinct_evidence_path(tmp_path):
     }
     digest = provider_operation_request_digest(**scope, binding=binding)
     receipt_path = tmp_path / "provider-operations.sqlite3"
-    store = DurableProviderOperationReceiptStore(receipt_path, clock=_Clock())
+    receipt_clock = _Clock("2026-11-19T09:59:55Z")
+    store = DurableProviderOperationReceiptStore(receipt_path, clock=receipt_clock)
     store.begin_operation(**scope, request_digest_sha256=digest)
     store.record_result(
         **scope,
@@ -641,7 +642,7 @@ def test_host_synchronous_completion_is_a_distinct_evidence_path(tmp_path):
         ),
     )
     inspector = LocalDockerSynchronousOperationCompletionInspector(
-        receipt_path, clock=_Clock()
+        receipt_path, clock=receipt_clock
     )
     runtime = _RuntimeInspector({
         (record.target_deployment_id, record.candidate_runtime_id): _runtime(
