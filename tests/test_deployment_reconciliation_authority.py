@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -24,6 +26,11 @@ from runtime.deployment_reconciliation_contract import (
     ReconciliationSnapshotReadReceipt,
 )
 from runtime.deployment_replacement import ReplacementJournalRecord
+from runtime.deployment_reconciliation_grant_vault import (
+    ReconciliationApprovalGrantReference,
+    ReconciliationApprovalGrantVault,
+    ReconciliationGrantVaultError,
+)
 
 
 class _Clock:
@@ -1216,3 +1223,157 @@ def test_approval_consumption_allows_fresh_timestamps_when_semantic_evidence_is_
         ("replace-001", "abort_candidate"),
         ("replace-001", "abort_candidate"),
     ]
+
+
+class _TestGrantProtector:
+    """Non-cryptographic test double; production must inject a real KMS adapter."""
+
+    @staticmethod
+    def _context_digest(encryption_context):
+        canonical = json.dumps(
+            dict(encryption_context),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest().encode("ascii")
+
+    def seal(self, plaintext, *, encryption_context):
+        return (
+            self._context_digest(encryption_context)
+            + b"."
+            + base64.b64encode(plaintext)
+        )
+
+    def unseal(self, ciphertext, *, encryption_context):
+        context_digest, encoded = ciphertext.split(b".", 1)
+        if context_digest != self._context_digest(encryption_context):
+            raise ValueError("test protector encryption context mismatch")
+        return base64.b64decode(encoded, validate=True)
+
+
+def _approved_grant(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    return proposal, reader, principals, authority, grant
+
+
+def test_protected_grant_vault_restores_grant_across_vault_instances(tmp_path):
+    _, reader, principals, _, grant = _approved_grant(tmp_path)
+    protector = _TestGrantProtector()
+    root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        root, protector=protector, clock=_Clock()
+    )
+
+    reference = vault.save(grant)
+    encrypted_file = root / f"{reference.approval_id}.grant"
+
+    assert grant.token.encode("utf-8") not in encrypted_file.read_bytes()
+    assert vault.load(reference) == grant
+    restored_vault = ReconciliationApprovalGrantVault(
+        root, protector=protector, clock=_Clock()
+    )
+    restored = restored_vault.load(reference)
+    restored_authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+    )
+
+    assert restored == grant
+    assert restored_authority.consume(restored).record == grant.proposal.record
+    assert [
+        item.action
+        for item in restored_authority._audit.events(
+            operation_id=grant.proposal.record.operation_id
+        )
+    ][-1] == "reconciliation_approval_consumed"
+
+
+def test_protected_grant_vault_binds_ciphertext_to_scope_context(tmp_path):
+    _, _, _, _, grant = _approved_grant(tmp_path)
+    root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        root, protector=_TestGrantProtector(), clock=_Clock()
+    )
+    reference = vault.save(grant)
+    path = root / f"{reference.approval_id}.grant"
+    outer = json.loads(path.read_text(encoding="utf-8"))
+    outer["context"]["project"] = "different-project"
+    tampered = json.dumps(
+        outer, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    path.write_bytes(tampered)
+    tampered_reference = ReconciliationApprovalGrantReference(
+        approval_id=reference.approval_id,
+        envelope_sha256=hashlib.sha256(tampered).hexdigest(),
+    )
+
+    with pytest.raises(
+        ReconciliationGrantVaultError, match="rejected the ciphertext or context"
+    ):
+        vault.load(tampered_reference)
+
+
+def test_protected_grant_vault_rejects_changed_envelope_and_duplicate_save(tmp_path):
+    _, _, _, _, grant = _approved_grant(tmp_path)
+    root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        root, protector=_TestGrantProtector(), clock=_Clock()
+    )
+    reference = vault.save(grant)
+
+    with pytest.raises(ReconciliationGrantVaultError, match="already stored"):
+        vault.save(grant)
+
+    path = root / f"{reference.approval_id}.grant"
+    path.write_bytes(path.read_bytes() + b" ")
+    with pytest.raises(ReconciliationGrantVaultError, match="durable reference"):
+        vault.load(reference)
+
+
+def test_protected_grant_vault_rejects_expired_grant_and_deletes_terminal_envelope(
+    tmp_path,
+):
+    clock = _Clock()
+    _, _, _, _, grant = _approved_grant(tmp_path)
+    root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        root, protector=_TestGrantProtector(), clock=clock
+    )
+    reference = vault.save(grant)
+
+    vault.delete(reference)
+    with pytest.raises(ReconciliationGrantVaultError, match="unavailable"):
+        vault.load(reference)
+
+    new_reference = vault.save(
+        replace(
+            grant,
+            proposal=replace(
+                grant.proposal,
+                approval=replace(
+                    grant.proposal.approval,
+                    approval_id=grant.proposal.approval.approval_id + "_expired",
+                    expires_at="2026-11-18T09:59:59Z",
+                ),
+            ),
+        )
+    ) if False else None
+    clock.value += timedelta(minutes=10)
+    with pytest.raises(ReconciliationGrantVaultError, match="expired"):
+        vault.save(grant)
