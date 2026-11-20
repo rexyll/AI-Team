@@ -165,6 +165,12 @@ def test_anchor_cas_conflict_leaves_local_ledger_ahead_and_blocks_future_writes(
 
     # The append is not rolled back or silently re-anchored.
     assert anchor.head == ReconciliationAuditHead(0, _ZERO_DIGEST)
+    inspection = store.inspect_anchor_state()
+    assert inspection.status == "local_ahead"
+    assert inspection.local_head == ReconciliationAuditHead(
+        1, store._read_unlocked()[-1].event_digest
+    )
+    assert inspection.external_head == anchor.head
     with pytest.raises(ReconciliationAuditAnchorError):
         store.verify()
     with pytest.raises(ReconciliationAuditAnchorError):
@@ -440,3 +446,89 @@ def test_anchored_store_serializes_spawned_process_writers_and_remote_cas(tmp_pa
     events = reopened.events()
     assert [item.sequence for item in events] == [1, 2, 3, 4]
     assert reopened.verify() == anchor.read_head()
+
+
+def test_anchor_inspection_reports_anchored_and_local_behind_states(tmp_path):
+    anchored = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "anchored",
+        anchor=_MemoryHeadAnchor(),
+        expected_ledger_id="test-audit-ledger",
+    )
+    assert anchored.inspect_anchor_state().status == "anchored"
+
+    external = ReconciliationAuditHead(2, "f" * 64)
+    behind = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "behind",
+        anchor=_MemoryHeadAnchor(external),
+        expected_ledger_id="test-audit-ledger",
+    )
+    inspection = behind.inspect_anchor_state()
+    assert inspection.status == "local_behind"
+    assert inspection.local_head == ReconciliationAuditHead(0, _ZERO_DIGEST)
+    assert inspection.external_head == external
+
+
+def test_anchor_inspection_reports_same_sequence_fork_and_invalid_local_chain(
+    tmp_path,
+):
+    fork_anchor = _MemoryHeadAnchor(ReconciliationAuditHead(1, "f" * 64))
+    forked = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "forked",
+        anchor=fork_anchor,
+        expected_ledger_id="test-audit-ledger",
+    )
+    common = dict(
+        actor=_principal("fork-writer"),
+        approval_id="approval-fork",
+        operation_id="operation-fork",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="candidate",
+        previous_deployment_id="previous",
+        candidate_runtime_id="b" * 64,
+        previous_runtime_id="a" * 64,
+        proposal_digest="c" * 64,
+        evidence_digest="d" * 64,
+    )
+    DurableReconciliationAuditStore.record(
+        forked, action="reconciliation_proposed", **common
+    )
+    fork_inspection = forked.inspect_anchor_state()
+    assert fork_inspection.status == "forked"
+    assert fork_inspection.local_head.sequence == 1
+    assert fork_inspection.external_head == fork_anchor.head
+
+    invalid_anchor = _MemoryHeadAnchor()
+    invalid = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "invalid",
+        anchor=invalid_anchor,
+        expected_ledger_id="test-audit-ledger",
+    )
+    invalid.path.write_text('{"truncated":', encoding="utf-8")
+    invalid_inspection = invalid.inspect_anchor_state()
+    assert invalid_inspection.status == "local_invalid"
+    assert invalid_inspection.local_head is None
+    assert invalid_inspection.local_error is not None
+
+
+def test_anchor_inspection_reports_external_anchor_unavailable(tmp_path):
+    class _UnavailableAnchor:
+        ledger_id = "test-audit-ledger"
+
+        def read_head(self):
+            raise OSError("external anchor unavailable")
+
+        def compare_and_set(self, expected, replacement):
+            raise AssertionError("CAS must not be called during inspection")
+
+    store = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit",
+        anchor=_UnavailableAnchor(),
+        expected_ledger_id="test-audit-ledger",
+    )
+    inspection = store.inspect_anchor_state()
+    assert inspection.status == "anchor_unavailable"
+    assert inspection.local_head == ReconciliationAuditHead(0, _ZERO_DIGEST)
+    assert inspection.anchor_error == "ReconciliationAuditAnchorError"
