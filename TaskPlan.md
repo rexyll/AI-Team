@@ -875,3 +875,15 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 上一已完整通过 run 44739304119（HEAD a72a7ace）证明 authority→vault 接线未破坏真实 Docker Host snapshot：Regression 3,282 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,262 passed / 14 skipped、82% coverage、所有模块 floor 通过；Docker Engine job success。
 - 该 run 的 router-host-synchronous-completion-snapshot-evidence artifact ID 14629289438 已下载核验：retire_previous completion succeeded，source docker-local-host-call-receipts；receipt 在 snapshot read start 前完成；四种 evidence 均存在；candidate running/healthy 且 Router effective target 匹配；previous immutable runtime exited；journal 保持 needs_reconciliation；automatic_reconciliation_executed=false；smoke 资源全部清理。
 - 此正向证据只覆盖 disposable Docker Engine 与 Host read-only diagnostic snapshot，不代表真实 IdP/KMS/SecretStore 已接入，也不授予 production approval 或 reconciliation mutation。
+
+
+### T21.6.3.5.28 — Provider-neutral external audit-head anchor wrapper（接口与 fail-closed store 完成；真实外部服务待接入）
+
+- 新增 runtime/deployment_reconciliation_anchored_audit_store.py：定义 ReconciliationAuditHeadAnchor 的 read_head + durable compare_and_set 合约，以及 ExternallyAnchoredReconciliationAuditStore。
+- wrapper 可作为 DurableReconciliationAuditStore 子类注入现有 ReconciliationApprovalAuthority，不改变其 audit API。record/append/begin_approval_consumption/finish_approval_consumption 每次只允许 append 一个 event，并要求 local head 与 remote checkpoint 精确一致。
+- append 顺序：获取同 Host coordination lock → 读取 remote head → 验证 local head == remote → local append/fsync → 读取新 local head → remote CAS(old,new) → reread remote 并确认精确相同。events()/verify() 也只在 exact head match 时允许读取。
+- 明确 fail-closed：若 local append 已成功但 remote CAS 冲突/未确认，不 truncate/rollback local ledger、不自动把远端 checkpoint 前移；local-ahead 状态会阻断后续 reads/writes，等待 operator 调查。若 CAS 客户端丢失成功确认，则 reread remote；只有 remote 已精确等于 new head 才接受成功。
+- 外部 anchor 必须在第一条 audit event 之前由 operator/adapter 显式 provision genesis（sequence 0 / zero digest）；adapter 必须在线性化 durable CAS 和 remote retention 方面满足生产要求。当前仅提供 provider-neutral contract 与 in-memory test fake，不选择 AWS/Azure/GCP/数据库/SaaS 供应商。
+- 同 Host lock 仅串行本机进程；多 Host independent local ledger 不属于该 wrapper 的安全支持范围，必须用 shared transactional audit store/centralized append service。
+- 测试覆盖 append/head advancement、tampering、foreign genesis、CAS conflict/local-ahead fail-closed、lost CAS acknowledgement，以及 approval consumption start/finish 都必须外部锚定。
+- 代码提交 9e4a071；测试提交 64c4dfe、064afad、631abfa；文档 docs/deployment-reconciliation-external-audit-anchor.md，Host contract 与 grant vault 文档已同步加入链接。最新 CI 仍在执行，验收状态以新 HEAD run 44760119869 之后的最终结果为准。
