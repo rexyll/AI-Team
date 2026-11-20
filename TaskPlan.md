@@ -818,3 +818,11 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 验证 snapshot journal revision fence、receipt completed_at 不晚于 snapshot read start、candidate active pointer/HAProxy selector/effective runtime ID 保持不变；不执行自动 reconciliation、rollback、selector/pointer/journal mutation。
 - CI 在 disposable Docker Engine job 内显式把该 job 的 daemon ID provision 为本次测试 Host pin，并上传 artifact `router-host-synchronous-completion-snapshot-evidence`。真实生产 Host 仍必须通过独立 operator 配置 pin；本测试不改变其默认配置。
 - 仅在全部证据通过后，smoke cleanup 才清除自己创建的临时 containers/network/images；若证据失败则保留资源供诊断。跨平台 Python regression 和 Docker Engine live test 待 CI 运行验收。
+
+
+### T21.6.3.5.23.5 — Native Docker Engine daemon identity format correction
+
+- 新增 live Host completion snapshot 首轮失败已定位：Docker CLI `docker info --format '{{.ID}}'` 返回 Docker Engine 原生 daemon ID（可为字母数字形式），但 Host authenticator 错误地要求 64 位小写十六进制；失败发生在 evidence collection 前，故不能视为 snapshot 逻辑失败或成功。
+- 修正 `LocalDockerReconciliationEvidenceSourceAuthenticator`：接受 12–128 位完整字母数字 Docker daemon ID，仍对 Host pin 与每次实时读取的 daemon ID 做精确、区分大小写匹配；不使用响应自证，不放宽 provider/project/environment/source role 绑定。
+- 增加原生 Docker ID 格式正向测试；原有非法格式、daemon mismatch 与异常输出测试保留。
+- 代码已提交 `main`；等待 Regression、Security、Coverage、Windows 与 Docker Engine live smoke 全套 CI 验收。此前 live smoke 的真实 Docker 容器已因前置身份格式拒绝而保留在 disposable runner；GitHub runner 生命周期结束后自动销毁，不涉及用户主机。
