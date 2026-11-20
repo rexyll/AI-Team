@@ -891,3 +891,12 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Ledger namespace hardening：ReconciliationAuditHeadAnchor 必须暴露 immutable `ledger_id`，wrapper 构造时必填 `expected_ledger_id` 并精确匹配；每次读取 external head 都复核 ledger_id 没有变化。测试验证配置到其他环境 ledger 或运行期 identity 漂移时 fail-closed；代码提交 889d973，测试提交 4e2abd1、009f89c，文档提交 aae2aaa。
 - Cross-process CAS test：新增 SQLite test-only anchor（数据库位于 audit ledger 目录之外）和 4 个 Python spawn processes 并发追加测试；验证同一 Host 的 OS-level coordination lock 与 remote CAS 联合保持 sequence 1–4 连续、最终 local/remote head 一致。该 fake 仅用于进程并发测试，不是生产 anchor adapter；测试提交 0e433ae。
 - 代码提交 9e4a071；测试提交 64c4dfe、064afad、631abfa、470bf7c、05c37c1、f4cd4e5；锁文件 owner/hard-link 检查提交 df47eef。文档 docs/deployment-reconciliation-external-audit-anchor.md，Host contract 与 grant vault 文档已同步；新增 docs/deployment-reconciliation-audit-anchor-recovery-runbook.md，明确 local/remote head mismatch 的冻结、证据保全、分类与人工双人审批恢复门槛，不提供自动 re-anchor/truncate。代码与测试最终通过 run 44763443862（HEAD ce050d9）：Regression 3,295 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,275 passed / 14 skipped、82%，所有 module floors passed，Docker Engine all steps success。该 run 同时包含 events() 原子快照读取、bypass append 拒绝、anchor+vault ambiguous-ack 跨重启恢复集成测试。
+
+
+### T21.6.3.5.29 — 外部 audit anchor I/O 期间 ledger identity 稳定性复核（实现与回归已提交，CI 待验收）
+
+- 收紧 runtime/deployment_reconciliation_anchored_audit_store.py：抽出 _assert_anchor_identity()，除了构造时检查 expected_ledger_id，现在每次 read_head() 前后、compare_and_set() 前后都复核同一个 immutable ledger_id。
+- 若 read_head 或 CAS I/O 期间 namespace 漂移，立即抛出 ReconciliationAuditAnchorIdentityError；不将其降级为普通 anchor unavailable，也不继续向新 namespace 读取或尝试补偿。CAS 已产生的副作用保持原状，store 继续 fail-closed，必须通过 incident runbook 人工调查。
+- 新增两项测试：read_head 在返回过程中改变 ledger_id；CAS 已执行后改变 ledger_id。分别验证 verify/append 拒绝及 inspect_anchor_state 分类为 identity_mismatch。
+- 同步更新 docs/deployment-reconciliation-external-audit-anchor.md，明确身份检查在远端 I/O 两侧执行。
+- 实现提交 8fde6e1，测试提交 df30555，文档提交 82063c1。前置 HEAD a079b630（run 44767875515）整体 CI 已全部 success；本节变更尚待最新 HEAD 完整 CI 验收。未接入真实外部 anchor 服务，未选择任何云供应商，不允许自动 re-anchor、truncate 或 reconciliation mutation。
