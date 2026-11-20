@@ -1361,19 +1361,6 @@ def test_protected_grant_vault_rejects_expired_grant_and_deletes_terminal_envelo
     with pytest.raises(ReconciliationGrantVaultError, match="unavailable"):
         vault.load(reference)
 
-    new_reference = vault.save(
-        replace(
-            grant,
-            proposal=replace(
-                grant.proposal,
-                approval=replace(
-                    grant.proposal.approval,
-                    approval_id=grant.proposal.approval.approval_id + "_expired",
-                    expires_at="2026-11-18T09:59:59Z",
-                ),
-            ),
-        )
-    ) if False else None
     clock.value += timedelta(minutes=10)
     with pytest.raises(ReconciliationGrantVaultError, match="expired"):
         vault.save(grant)
