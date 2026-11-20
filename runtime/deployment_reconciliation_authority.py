@@ -797,13 +797,11 @@ class ReconciliationApprovalAuthority:
                 approval_expires_at=approval.expires_at,
             )
         except Exception as exc:
-            if storage_reference is not None:
-                try:
-                    self._grant_vault.delete(storage_reference)
-                except Exception:
-                    # The orphaned ciphertext has no approved audit event and
-                    # cannot be consumed; it expires and can be swept later.
-                    pass
+            # Audit append errors can be ambiguous: the event may have reached
+            # durable storage even when the caller did not receive confirmation.
+            # Keep the encrypted envelope so restore_grant() can reconcile the
+            # audit ledger with the vault after restart. If no approved event
+            # exists, the orphaned ciphertext is not consumable and expires.
             raise ReconciliationAuthorizationError(
                 "approval could not be durably recorded"
             ) from exc
@@ -953,4 +951,125 @@ class ReconciliationApprovalAuthority:
                 ) from audit_exc
             raise ReconciliationAuthorizationError(
                 "approval consumption failed closed"
+            ) from exc
+
+
+    def restore_grant(
+        self, approval_id: str
+    ) -> ReconciliationApprovalGrant:
+        """Restore a protected grant only when its exact approval is durable.
+
+        This resolves a Host crash after the encrypted envelope was written and
+        the approval audit event may have committed, but before the API returned
+        its reference. The append-only audit ledger is authoritative: a
+        ciphertext without exactly one matching proposed/approved event pair is
+        never returned. Any consumption-start, consumed or rejected event burns
+        the grant and requires a fresh dual approval.
+        """
+        if self._grant_vault is None:
+            raise ReconciliationAuthorizationError(
+                "a configured protected grant vault is required for restoration"
+            )
+        if not isinstance(approval_id, str) or not _GRANT_APPROVAL_ID.fullmatch(
+            approval_id
+        ):
+            raise ValueError("approval_id is malformed")
+        try:
+            reference = self._grant_vault.reference_for(approval_id)
+            if (
+                not isinstance(reference, ReconciliationApprovalGrantReference)
+                or reference.approval_id != approval_id
+            ):
+                raise ValueError("grant vault returned an invalid approval reference")
+            grant = self._grant_vault.load(reference)
+            if not isinstance(grant, ReconciliationApprovalGrant):
+                raise ValueError("grant vault returned an invalid grant")
+            if grant.storage_reference != reference:
+                raise ValueError("restored grant is not bound to its storage reference")
+
+            proposal = grant.proposal
+            approval = proposal.approval
+            record = proposal.record
+            if approval.approval_id != approval_id:
+                raise ValueError("restored grant approval ID does not match")
+            evidence_digest = self._evidence_digest(proposal)
+            proposal_digest = self._proposal_digest(proposal, evidence_digest)
+            if (
+                not secrets.compare_digest(evidence_digest, grant.evidence_digest)
+                or not secrets.compare_digest(proposal_digest, grant.proposal_digest)
+            ):
+                raise ValueError("restored grant digest does not match its proposal")
+
+            token_digest = hashlib.sha256(grant.token.encode("utf-8")).hexdigest()
+            events = self._audit.events(operation_id=record.operation_id)
+            proposed = [
+                item for item in events
+                if item.approval_id == approval_id
+                and item.action == "reconciliation_proposed"
+            ]
+            approved = [
+                item for item in events
+                if item.approval_id == approval_id
+                and item.action == "reconciliation_approved"
+            ]
+            if len(proposed) != 1 or len(approved) != 1:
+                raise ValueError(
+                    "durable proposal/approval audit history is missing or ambiguous"
+                )
+            proposed_event, approved_event = proposed[0], approved[0]
+            if proposed_event.sequence >= approved_event.sequence:
+                raise ValueError("approval audit events are out of order")
+
+            scope = {
+                "approval_id": approval_id,
+                "operation_id": record.operation_id,
+                "provider": record.provider,
+                "project": record.project,
+                "environment": record.environment,
+                "journal_phase": record.phase,
+                "target_deployment_id": record.target_deployment_id,
+                "previous_deployment_id": record.previous_deployment_id,
+                "candidate_runtime_id": record.candidate_runtime_id or "",
+                "previous_runtime_id": record.previous_runtime_id or "",
+                "proposal_digest": grant.proposal_digest,
+                "evidence_digest": grant.evidence_digest,
+            }
+            for event in (proposed_event, approved_event):
+                if any(getattr(event, name) != value for name, value in scope.items()):
+                    raise ValueError("durable audit scope does not match restored grant")
+
+            if (
+                proposed_event.actor != approval.requested_by
+                or approved_event.actor != approval.approved_by
+                or approved_event.approval_token_digest is None
+                or not secrets.compare_digest(
+                    approved_event.approval_token_digest, token_digest
+                )
+                or approved_event.approval_expires_at != approval.expires_at
+            ):
+                raise ValueError(
+                    "durable approval actor, token or expiry does not match restored grant"
+                )
+
+            terminal_or_claimed = [
+                item for item in events
+                if item.approval_id == approval_id
+                and item.action in {
+                    "reconciliation_approval_consumption_started",
+                    "reconciliation_approval_consumed",
+                    "reconciliation_rejected",
+                }
+            ]
+            if terminal_or_claimed:
+                raise ValueError("approval grant is already claimed or terminal")
+
+            expiry = datetime.fromisoformat(
+                approval.expires_at.replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+            if self._now() >= expiry:
+                raise ValueError("approval grant has expired")
+            return grant
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "protected approval grant could not be restored from durable approval history"
             ) from exc
