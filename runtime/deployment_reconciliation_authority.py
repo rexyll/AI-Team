@@ -233,10 +233,13 @@ class ReconciliationApprovalAuthority:
     receipt supplied by the caller is never treated as source proof. There is
     intentionally no username/password or CLI-string fallback. The audit ledger
     stores only a token digest and fences grant claims across
-    processes. The caller must protect and durably retain the bearer capability
-    if it needs to restore that grant after restart. A started-but-unfinished
-    claim is terminal and requires a fresh dual approval. This class never
-    executes or schedules a reconciliation action.
+    processes. When a Host grant vault is injected, the encrypted grant is
+    persisted before the approved audit event is appended; the returned grant
+    carries a non-secret storage reference for later restoration. Without a
+    vault, the caller remains responsible for protecting and retaining the
+    bearer capability. A started-but-unfinished claim is terminal and requires
+    a fresh dual approval. This class never executes or schedules a
+    reconciliation action.
     """
 
     def __init__(
@@ -749,6 +752,13 @@ class ReconciliationApprovalAuthority:
                         "approval expired while the protected grant was being stored"
                     )
             except Exception as exc:
+                if storage_reference is not None:
+                    try:
+                        self._grant_vault.delete(storage_reference)
+                    except Exception:
+                        # An unapproved orphaned ciphertext cannot be consumed;
+                        # its expiry bounds retention if cleanup is unavailable.
+                        pass
                 self._record(
                     action="reconciliation_rejected",
                     actor=approver,
