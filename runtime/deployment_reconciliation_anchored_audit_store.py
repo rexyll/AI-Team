@@ -113,7 +113,13 @@ class ExternallyAnchoredReconciliationAuditStore(DurableReconciliationAuditStore
         if (
             self.anchor_lock_path.is_symlink()
             or not stat.S_ISREG(metadata.st_mode)
-            or (os.name == "posix" and metadata.st_nlink != 1)
+            or (
+                os.name == "posix"
+                and (
+                    metadata.st_nlink != 1
+                    or metadata.st_uid != os.getuid()
+                )
+            )
         ):
             raise ReconciliationAuditAnchorError(
                 "external-anchor coordination lock is not a trusted regular file"
