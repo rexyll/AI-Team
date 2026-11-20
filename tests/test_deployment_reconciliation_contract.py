@@ -279,3 +279,34 @@ def test_evidence_digest_is_stable_across_fresh_reads_but_binds_semantic_changes
         changed
     )
 
+
+
+@pytest.mark.parametrize("operation", ["abort_candidate", "confirm_previous_retired"])
+def test_proposal_accepts_host_synchronous_completion_evidence_as_distinct_alternative(operation):
+    valid = proposal(operation)
+    converted = (
+        replace(
+            valid.evidence[0],
+            kind="host_synchronous_operation_completion",
+            source="docker-local-host-call-receipts",
+        ),
+        *valid.evidence[1:],
+    )
+    result = replace(valid, evidence=converted)
+    assert result.evidence[0].kind == "host_synchronous_operation_completion"
+    assert result.approval.operation == operation
+
+
+def test_proposal_rejects_mixed_native_and_host_completion_evidence():
+    valid = proposal("abort_candidate")
+    mixed = (
+        valid.evidence[0],
+        replace(
+            valid.evidence[1],
+            kind="host_synchronous_operation_completion",
+            source="docker-local-host-call-receipts",
+        ),
+        *valid.evidence[2:],
+    )
+    with pytest.raises(ValueError, match="evidence kinds"):
+        replace(valid, evidence=mixed)

@@ -104,7 +104,7 @@ class LocalDockerSynchronousOperationCompletionInspector:
     provider-issued operation resource exists.
     """
 
-    name = "docker-local-host-call-receipts"
+    name = "docker-local"
     source_id = _SOURCE_ID
 
     def __init__(

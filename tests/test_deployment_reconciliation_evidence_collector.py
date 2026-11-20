@@ -7,7 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 from runtime.deployment_provider import DeploymentRuntimeInspection
-from runtime.deployment_provider_operation_ledger import ProviderOperationInspection
+from runtime.deployment_provider import DeploymentOperationResult
+from runtime.deployment_provider_operation_ledger import (
+    DurableProviderOperationReceiptStore,
+    ProviderOperationInspection,
+    provider_operation_request_digest,
+)
+from runtime.deployment_reconciliation_completion import (
+    LocalDockerSynchronousOperationCompletionInspector,
+)
 from runtime.deployment_reconciliation_contract import reconciliation_evidence_digest
 from runtime.deployment_reconciliation_evidence_collector import (
     DecisionSpecificReconciliationEvidenceCollector,
@@ -602,3 +610,151 @@ def test_source_authentication_must_postdate_the_observation_it_authenticates():
     assert runtime.calls == []
     assert route.calls == []
 
+
+
+def test_host_synchronous_completion_is_a_distinct_evidence_path(tmp_path):
+    record = _record()
+    action = "abort_candidate"
+    binding = {
+        "candidate_deployment_id": record.target_deployment_id,
+        "candidate_runtime_id": record.candidate_runtime_id,
+        "previous_runtime_id": record.previous_runtime_id,
+    }
+    scope = {
+        "provider": record.provider,
+        "project": record.project,
+        "environment": record.environment,
+        "operation_id": record.operation_id,
+        "operation_name": action,
+    }
+    digest = provider_operation_request_digest(**scope, binding=binding)
+    receipt_path = tmp_path / "provider-operations.sqlite3"
+    store = DurableProviderOperationReceiptStore(receipt_path, clock=_Clock())
+    store.begin_operation(**scope, request_digest_sha256=digest)
+    store.record_result(
+        **scope,
+        result=DeploymentOperationResult(
+            operation=action,
+            status="succeeded",
+            provider=record.provider,
+            message="abort completed",
+        ),
+    )
+    inspector = LocalDockerSynchronousOperationCompletionInspector(
+        receipt_path, clock=_Clock()
+    )
+    runtime = _RuntimeInspector({
+        (record.target_deployment_id, record.candidate_runtime_id): _runtime(
+            record, record.target_deployment_id, record.candidate_runtime_id,
+            status="not_found",
+        ),
+        (record.previous_deployment_id, record.previous_runtime_id): _runtime(
+            record, record.previous_deployment_id, record.previous_runtime_id,
+        ),
+    })
+    route = _RouteInspector(
+        SimpleNamespace(
+            provider=record.provider,
+            project=record.project,
+            environment=record.environment,
+        ),
+        _route(record, record.previous_runtime_id),
+    )
+    auth = _SourceAuthenticator()
+    collector = DecisionSpecificReconciliationEvidenceCollector(
+        provider_operation_inspector=None,
+        host_synchronous_completion_inspector=inspector,
+        runtime_inspector=runtime,
+        route_inspector=route,
+        source_authenticator=auth,
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-daemon",
+            "route": "router-haproxy-admin",
+        },
+        max_evidence_age_seconds=120,
+        clock=_Clock(),
+    )
+
+    evidence = collector.collect_current_evidence(
+        record, "abort_candidate"
+    )
+
+    assert {item.kind for item in evidence} == {
+        "host_synchronous_operation_completion",
+        "candidate_absence",
+        "previous_runtime_inspection",
+        "previous_route_readback",
+    }
+    assert evidence[0].source == "docker-local-host-call-receipts"
+    assert auth.calls[0][0:2] == (
+        "provider_operation", "docker-local-host-call-receipts"
+    )
+    assert runtime.calls == [
+        (record.target_deployment_id, record.candidate_runtime_id),
+        (record.previous_deployment_id, record.previous_runtime_id),
+    ]
+
+
+def test_host_synchronous_completion_must_precede_snapshot_start(tmp_path):
+    record = _record()
+    action = "abort_candidate"
+    binding = {
+        "candidate_deployment_id": record.target_deployment_id,
+        "candidate_runtime_id": record.candidate_runtime_id,
+        "previous_runtime_id": record.previous_runtime_id,
+    }
+    scope = {
+        "provider": record.provider,
+        "project": record.project,
+        "environment": record.environment,
+        "operation_id": record.operation_id,
+        "operation_name": action,
+    }
+    store = DurableProviderOperationReceiptStore(
+        tmp_path / "provider-operations.sqlite3", clock=_Clock()
+    )
+    store.begin_operation(
+        **scope,
+        request_digest_sha256=provider_operation_request_digest(
+            **scope, binding=binding
+        ),
+    )
+    store.record_result(
+        **scope,
+        result=DeploymentOperationResult(
+            operation=action, status="succeeded", provider=record.provider,
+            message="receipt after snapshot start",
+        ),
+    )
+    inspector = LocalDockerSynchronousOperationCompletionInspector(
+        tmp_path / "provider-operations.sqlite3", clock=_Clock()
+    )
+    runtime = _RuntimeInspector({})
+    route = _RouteInspector(
+        SimpleNamespace(provider=record.provider,project=record.project,environment=record.environment),
+        _route(record, record.previous_runtime_id),
+    )
+    collector = DecisionSpecificReconciliationEvidenceCollector(
+        host_synchronous_completion_inspector=inspector,
+        runtime_inspector=runtime,
+        route_inspector=route,
+        source_authenticator=_SourceAuthenticator(),
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-daemon",
+            "route": "router-haproxy-admin",
+        },
+        max_evidence_age_seconds=120,
+        clock=_Clock(),
+    )
+    with pytest.raises(
+        ReconciliationEvidenceCollectionError, match="completion inspection failed"
+    ):
+        collector.collect_current_evidence(
+            record,
+            "abort_candidate",
+            snapshot_started_at="2026-11-19T09:59:59Z",
+        )
+    assert runtime.calls == []
+    assert route.calls == []
