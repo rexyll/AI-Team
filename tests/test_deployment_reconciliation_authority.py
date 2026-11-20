@@ -1567,3 +1567,60 @@ def test_authority_refuses_to_restore_a_claimed_or_consumed_grant(tmp_path):
         ReconciliationAuthorizationError, match="could not be restored"
     ):
         restarted_authority.restore_grant(grant.proposal.approval.approval_id)
+
+
+def test_authority_restore_rejects_approval_id_reused_in_another_operation(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault = ReconciliationApprovalGrantVault(
+        tmp_path / "protected-grants",
+        protector=protector,
+        clock=_Clock(),
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    common = dict(
+        approval_id=grant.proposal.approval.approval_id,
+        operation_id="other-operation",
+        provider="docker-local",
+        project="other-project",
+        environment="staging",
+        journal_phase="needs_reconciliation",
+        target_deployment_id="other-candidate",
+        previous_deployment_id="other-previous",
+        candidate_runtime_id="c" * 64,
+        previous_runtime_id="d" * 64,
+        proposal_digest="e" * 64,
+        evidence_digest="f" * 64,
+    )
+    authority._audit.record(
+        action="reconciliation_proposed",
+        actor=_principal("other-requester"),
+        **common,
+    )
+    authority._audit.record(
+        action="reconciliation_approved",
+        actor=_principal("other-approver"),
+        **common,
+        approval_token_digest=hashlib.sha256(b"other-token").hexdigest(),
+        approval_expires_at="2026-11-18T10:05:00Z",
+    )
+
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be restored"
+    ):
+        authority.restore_grant(grant.proposal.approval.approval_id)
