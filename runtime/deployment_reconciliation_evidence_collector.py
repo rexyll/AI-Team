@@ -396,7 +396,6 @@ class DecisionSpecificReconciliationEvidenceCollector:
             )
         return observation
 
-    @staticmethod
     def _validate_host_synchronous_completion(
         self,
         record: ReplacementJournalRecord,
@@ -440,6 +439,7 @@ class DecisionSpecificReconciliationEvidenceCollector:
         )
         return observation
 
+    @staticmethod
     def _validate_runtime_scope(
         observation: DeploymentRuntimeInspection,
         *,
