@@ -164,3 +164,104 @@ def test_source_authenticator_rejects_provider_role_wrong_source_and_bad_scope()
         )
 
     assert runner.calls == []
+
+
+def test_host_receipt_source_is_authenticated_without_docker_io(tmp_path):
+    path = tmp_path / "provider-operations.sqlite3"
+    path.write_bytes(b"existing sqlite bytes")
+    if __import__("os").name == "posix":
+        path.chmod(0o600)
+    runner = _Runner(DockerCommandResult(0, _identity(), ""))
+    provider = LocalDockerProvider(runner)
+    authenticator = LocalDockerReconciliationEvidenceSourceAuthenticator(
+        provider,
+        expected_daemon_id="a" * 64,
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-local-daemon-runtime",
+            "route": "docker-local-daemon-router",
+        },
+        operation_receipt_store_path=path,
+        clock=_Clock(),
+    )
+    receipt = authenticator.authenticate_source(
+        role="provider_operation",
+        source_id="docker-local-host-call-receipts",
+        provider="docker-local",
+        project="demo",
+        environment="staging",
+        response_digest_sha256="b" * 64,
+        observed_at="2026-11-19T09:59:55Z",
+    )
+    assert receipt.role == "provider_operation"
+    assert receipt.source_id == "docker-local-host-call-receipts"
+    assert len(receipt.endpoint_identity_digest_sha256) == 64
+    assert runner.calls == []
+
+
+def test_host_receipt_source_rejects_permissive_posix_file_mode(tmp_path):
+    import os
+
+    if os.name != "posix":
+        pytest.skip("POSIX file mode contract")
+    path = tmp_path / "provider-operations.sqlite3"
+    path.write_bytes(b"existing sqlite bytes")
+    path.chmod(0o644)
+    authenticator = LocalDockerReconciliationEvidenceSourceAuthenticator(
+        LocalDockerProvider(_Runner(DockerCommandResult(0, _identity(), ""))),
+        expected_daemon_id="a" * 64,
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-local-daemon-runtime",
+            "route": "docker-local-daemon-router",
+        },
+        operation_receipt_store_path=path,
+        clock=_Clock(),
+    )
+    with pytest.raises(ReconciliationEvidenceCollectionError, match="permissions"):
+        authenticator.authenticate_source(
+            role="provider_operation",
+            source_id="docker-local-host-call-receipts",
+            provider="docker-local",
+            project="demo",
+            environment="staging",
+            response_digest_sha256="b" * 64,
+            observed_at="2026-11-19T09:59:55Z",
+        )
+
+
+def test_host_receipt_source_requires_matching_config_and_existing_file(tmp_path):
+    path = tmp_path / "missing.sqlite3"
+    provider = LocalDockerProvider(_Runner(DockerCommandResult(0, _identity(), "")))
+    with pytest.raises(ValueError, match="configured together"):
+        LocalDockerReconciliationEvidenceSourceAuthenticator(
+            provider,
+            expected_daemon_id="a" * 64,
+            source_ids={
+                "provider_operation": "docker-local-host-call-receipts",
+                "runtime": "docker-local-daemon-runtime",
+                "route": "docker-local-daemon-router",
+            },
+            clock=_Clock(),
+        )
+    authenticator = LocalDockerReconciliationEvidenceSourceAuthenticator(
+        provider,
+        expected_daemon_id="a" * 64,
+        source_ids={
+            "provider_operation": "docker-local-host-call-receipts",
+            "runtime": "docker-local-daemon-runtime",
+            "route": "docker-local-daemon-router",
+        },
+        operation_receipt_store_path=path,
+        clock=_Clock(),
+    )
+    with pytest.raises(ReconciliationEvidenceCollectionError, match="unavailable"):
+        authenticator.authenticate_source(
+            role="provider_operation",
+            source_id="docker-local-host-call-receipts",
+            provider="docker-local",
+            project="demo",
+            environment="staging",
+            response_digest_sha256="b" * 64,
+            observed_at="2026-11-19T09:59:55Z",
+        )

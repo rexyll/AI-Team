@@ -3,15 +3,18 @@
 This adapter authenticates runtime/route observations against an operator-pinned
 Docker daemon ID. Docker CLI transport authentication (local socket ACL or the
 configured Docker TLS context) remains part of the Host operating environment.
-The adapter does not claim provider-operation inspection; LocalDockerProvider
-continues to return unsupported for that separate capability.
+A separately configured Host receipt source is authenticated only as a local
+Host trust-boundary observation, never as provider-native operation inspection.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat as stat_module
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Mapping
 
 from runtime.deployment_reconciliation_evidence_collector import (
@@ -41,6 +44,7 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
         *,
         expected_daemon_id: str,
         source_ids: Mapping[str, str],
+        operation_receipt_store_path: str | Path | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if not isinstance(provider, LocalDockerProvider):
@@ -49,15 +53,27 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
             expected_daemon_id
         ):
             raise ValueError("expected_daemon_id must be a full lowercase Docker daemon ID")
-        if not isinstance(source_ids, Mapping) or set(source_ids) != {"runtime", "route"}:
-            raise ValueError("source_ids must define runtime and route")
+        if not isinstance(source_ids, Mapping) or set(source_ids) not in (
+            {"runtime", "route"},
+            {"provider_operation", "runtime", "route"},
+        ):
+            raise ValueError("source_ids must define runtime/route and optional provider_operation")
         if any(not isinstance(v, str) or not v.strip() for v in source_ids.values()):
-            raise ValueError("runtime and route source IDs must be non-empty")
+            raise ValueError("configured source IDs must be non-empty")
+        if ("provider_operation" in source_ids) != (operation_receipt_store_path is not None):
+            raise ValueError(
+                "provider_operation source ID and receipt store path must be configured together"
+            )
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
         self.provider = provider
         self.expected_daemon_id = expected_daemon_id
         self.source_ids = dict(source_ids)
+        self.operation_receipt_store_path = (
+            Path(operation_receipt_store_path).expanduser().resolve()
+            if operation_receipt_store_path is not None
+            else None
+        )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def _now(self) -> str:
@@ -121,10 +137,14 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
         response_digest_sha256: str,
         observed_at: str,
     ) -> ReconciliationEvidenceSourceAuthentication:
-        """Return a response-bound source receipt for runtime or route reads."""
-        if role not in {"runtime", "route"}:
+        """Authenticate pinned Docker observations or the local Host receipt store."""
+        if role == "provider_operation" and self.operation_receipt_store_path is None:
             raise ReconciliationEvidenceCollectionError(
-                "Local Docker cannot authenticate provider-operation inspection"
+                "Local Docker cannot authenticate provider-operation inspection without a Host receipt store"
+            )
+        if role not in self.source_ids:
+            raise ReconciliationEvidenceCollectionError(
+                "Local Docker source role is not configured by the Host"
             )
         if provider != self.provider.name:
             raise ReconciliationEvidenceCollectionError(
@@ -147,7 +167,6 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
             raise ReconciliationEvidenceCollectionError(
                 "Docker source scope must include project and environment"
             )
-        # Validate the observation timestamp before authorizing its source.
         try:
             observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
         except (AttributeError, ValueError) as exc:
@@ -157,6 +176,57 @@ class LocalDockerReconciliationEvidenceSourceAuthenticator:
         if observed.tzinfo is None or observed.utcoffset() is None:
             raise ReconciliationEvidenceCollectionError(
                 "Docker source observation timestamp must be timezone-aware"
+            )
+
+        if role == "provider_operation":
+            receipt_path = self.operation_receipt_store_path
+            if receipt_path is None:
+                raise ReconciliationEvidenceCollectionError(
+                    "Local Docker Host receipt store is not configured"
+                )
+            try:
+                metadata = receipt_path.stat()
+            except OSError as exc:
+                raise ReconciliationEvidenceCollectionError(
+                    "Host provider-call receipt store is unavailable"
+                ) from exc
+            if not receipt_path.is_file():
+                raise ReconciliationEvidenceCollectionError(
+                    "Host provider-call receipt source is not a regular file"
+                )
+            if os.name == "posix" and stat_module.S_IMODE(metadata.st_mode) & 0o077:
+                raise ReconciliationEvidenceCollectionError(
+                    "Host provider-call receipt store permissions are too broad"
+                )
+            endpoint_identity = hashlib.sha256(
+                json.dumps(
+                    {
+                        "source_kind": "host-local-provider-call-receipt-store",
+                        "provider": provider,
+                        "path": str(receipt_path),
+                        "device": metadata.st_dev,
+                        "inode": metadata.st_ino,
+                        "mode": stat_module.S_IMODE(metadata.st_mode),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            return ReconciliationEvidenceSourceAuthentication(
+                role=role,
+                source_id=source_id,
+                provider=provider,
+                project=project,
+                environment=environment,
+                response_digest_sha256=response_digest_sha256,
+                endpoint_identity_digest_sha256=endpoint_identity,
+                authenticated_at=self._now(),
+            )
+
+        if role not in {"runtime", "route"}:
+            raise ReconciliationEvidenceCollectionError(
+                "unsupported Local Docker source role"
             )
 
         daemon_id, name, server_version, docker_root_dir = self._read_daemon_identity()
