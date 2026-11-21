@@ -257,6 +257,16 @@ class ReconciliationApprovalGrantVault(Protocol):
         """Delete a grant envelope after terminal handling or failed issuance."""
         ...
 
+    def list_references(
+        self,
+    ) -> tuple[ReconciliationApprovalGrantReference, ...]:
+        """Enumerate private envelope references without decrypting payloads."""
+        ...
+
+    def inspect(self, reference: ReconciliationApprovalGrantReference):
+        """Authenticate a grant envelope and return non-secret scope metadata."""
+        ...
+
 
 class ReconciliationApprovalAuthority:
     """Issue and consume exact-scope two-person approvals through a Host IdP.
@@ -336,7 +346,10 @@ class ReconciliationApprovalAuthority:
             raise TypeError("a DurableReconciliationAuditStore is required")
         if grant_vault is not None and any(
             not callable(getattr(grant_vault, method, None))
-            for method in ("save", "load", "reference_for", "delete")
+            for method in (
+                "save", "load", "reference_for", "delete",
+                "list_references", "inspect",
+            )
         ):
             raise TypeError(
                 "grant_vault must provide durable save, load and delete methods"
@@ -1259,7 +1272,19 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "a protected grant vault is required for terminal cleanup"
             )
-        inventory = self.inspect_grant_vault()
+        try:
+            # Keep the exact file-digest references used for the subsequent
+            # deletes. Re-enumerating after inspection could delete a replaced
+            # envelope that was never authenticated by inspect().
+            references = {
+                reference.approval_id: reference
+                for reference in self._grant_vault.list_references()
+            }
+            inventory = self.inspect_grant_vault()
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "terminal grant cleanup could not build an authenticated inventory"
+            ) from exc
         terminal_ids = {
             item.approval_id for item in inventory if item.status == "terminal"
         }
@@ -1270,16 +1295,6 @@ class ReconciliationApprovalAuthority:
                 failed_approval_ids=(),
                 retained=inventory,
             )
-
-        try:
-            references = {
-                reference.approval_id: reference
-                for reference in self._grant_vault.list_references()
-            }
-        except Exception as exc:
-            raise ReconciliationAuthorizationError(
-                "protected grant references could not be re-enumerated for cleanup"
-            ) from exc
 
         removed: list[str] = []
         failed: list[str] = []
