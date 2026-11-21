@@ -1071,21 +1071,6 @@ class ReconciliationApprovalAuthority:
 
         now = self._now()
         inventory: list[ReconciliationGrantVaultInventoryItem] = []
-        scope_fields = (
-            "approval_id",
-            "operation_id",
-            "provider",
-            "project",
-            "environment",
-            "journal_phase",
-            "target_deployment_id",
-            "previous_deployment_id",
-            "candidate_runtime_id",
-            "previous_runtime_id",
-            "proposal_digest",
-            "evidence_digest",
-        )
-
         for reference, inspected in inspections:
             approval_id = inspected.approval_id
             detail = "audit and encrypted grant scope are consistent"
