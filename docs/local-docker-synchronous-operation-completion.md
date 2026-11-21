@@ -1,6 +1,6 @@
 # Local Docker 同步操作完成证明设计
 
-> 状态：设计决策完成；实现与 CI 验收尚未开始。  
+> 状态：设计决策、实现、只读 Host 组合接线与 disposable Docker Engine 正向快照验收均已完成；生产信任根集成仍受 T21.6.3.5.24 门禁约束。  
 > 日期：2026-11-20  
 > 适用范围：仅 `docker-local` + `LocalDockerRouterReplacementProvider`。
 
@@ -107,7 +107,7 @@ receipt 中的响应摘要来自 `DeploymentOperationResult` 的有界、脱敏�
 - 不为云 Provider、异步 Provider 或其他 adapter 提供 Host synchronous completion 兜底；
 - 不把本机 Host receipt sidecar描述成 provider-owned durable operation API。
 
-**下一实施节点**为 T21.6.3.5.23：实现独立 Host synchronous completion contract/inspector、source binding、evidence 类型与 Host 只读组合接线；先通过 fake-store/fake-inspector 的完整拒绝矩阵，再由 Linux/Windows CI 验收。只有该节点通过后，才评估是否进行 disposable Docker Engine 的正向 reconciliation evidence 验收。真实 IdP、双人审批和任何 reconciliation mutation 仍保持关闭。
+**历史节点说明：** 本节最初提出的 T21.6.3.5.23 contract、inspector、source binding、Host 只读组合接线和 disposable Docker Engine 正向快照验收现已完成（详见下方 Implementation and acceptance status）。当前后续工作不是继续扩展本地同步 receipt，而是执行 T21.6.3.5.24 生产信任根门禁；部署方输入项与 Go/No-Go 证据见 [生产 Reconciliation 信任根部署输入清单](reconciliation-production-trust-root-input-checklist.md)。在真实 IdP、KMS/SecretStore、外部 Anchor 和 Host transport/ACL 完成部署级验收前，生产审批与 mutation 仍保持关闭。
 
 
 ## Implementation and acceptance status (2026-11-20)
