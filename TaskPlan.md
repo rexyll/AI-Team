@@ -959,10 +959,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 安全边界：该验收只证明 disposable Docker Engine 的 Host completion receipts、只读 snapshot 与生命周期故障边界；不代表真实生产 IdP、KMS/SecretStore、外部 audit anchor provider 已接入，不授予 production approval，也不启用 reconciliation mutation。
 
 
-### T21.6.3.5.35 — Production trust-root deployment input checklist and documentation drift repair（文档交付完成；CI 验收待本提交流水线）
+### T21.6.3.5.35 — Production trust-root deployment input checklist and documentation drift repair（文档交付与 CI #1233 全量验收通过）
 
 - 复核 T21.6.3.5.24–.34 及当前 IdP、grant vault、external audit anchor、Docker Host adapter 契约：接口和测试边界已明确，但缺少一份供部署负责人填写的集中式非秘密输入清单，无法安全启动 provider-specific adapter 工作。
 - 新增 `docs/reconciliation-production-trust-root-input-checklist.md`：集中记录部署范围、单机/多机拓扑、IdP、KMS/SecretStore、外部 Anchor、Docker daemon/transport、Router/HAProxy read sources、本机存储 ACL、责任人，以及各信任根的 staging 正反向证据与 G0–G4 Go/No-Go 顺序。
 - 清单不选择任何 IdP/KMS/Anchor 产品，不要求把内部密钥或令牌写入仓库；明确多 Host 当前不受本机文件锁实现支持，必须另行建设共享事务 audit/claim 机制。G3 仅为 production-authenticated read-only dual-approval dry-run；G4 mutation executor 仍是独立设计与授权范围。
 - 修正 `docs/local-docker-synchronous-operation-completion.md` 的历史状态漂移：顶部不再宣称实现尚未开始；将过期的 T21.6.3.5.23“下一实施节点”改为已完成节点与当前 .24 生产门禁的准确引用。未更改任何 runtime、approval、audit、Docker 或 mutation 代码。
-- 当前提交触发全量 CI；待流水线通过后补录具体 run、测试数量与结果。真实生产信任根未接入，不执行审批或 deployment mutation。
+- 完整 CI 验收：[CI #1233](https://github.com/rexyll/AI-Team/actions/runs/44925536294)，HEAD `8046c3b`，overall=success；Windows toolchain/adapter E2E 7 passed，Regression 3,321 passed / 14 skipped，Security 275 passed / 9 skipped，Coverage 3,301 passed / 14 skipped、TOTAL 82%，所有配置的 module coverage floors 满足；Docker Engine Host job 27/27 steps success。
+- Docker Engine 故障注入 artifact 已生成并上传：Host snapshot `router-host-synchronous-completion-snapshot-evidence`（ID `14716085131`），switch-crash recovery（ID `14716090049`），held-TCP drain timeout（ID `14715518260`），nonzero-scur drain timeout（ID `14715493406`），Runtime API ambiguous-write（ID `14715293992`），immutable identity mismatch（ID `14715269229`），另有 Router bootstrap/lifecycle/routed-app/replacement 和 coverage/e2e artifacts。
+- Host snapshot artifact 已下载并解析：top-level `fault_injection_verified`、snapshot `verified`；fault mode=`retire_history_commit_failure`，注入边界为 `retire_previous` 返回 succeeded 且 Host receipt 已持久化后，`history.mark_stopped` 抛错。receipt completed_at=`2026-11-21T16:43:10.077100Z`，snapshot_started_at=`2026-11-21T16:43:10.126676Z`（间隔约 49.576 ms），snapshot_completed_at=`2026-11-21T16:43:10.687712Z`。
+- 四类 evidence 完整：`host_synchronous_operation_completion`、`candidate_route_readback`、`candidate_health`、`previous_runtime_retirement`。candidate runtime `6d80ed51…` 为 healthy/running，Router registry/live selector 均为 `slot_b` 且 effective runtime 精确匹配 candidate；previous immutable runtime `c367f0df…` 为 exited。journal 保持 `needs_reconciliation`，`automatic_reconciliation_executed=false`；本次 disposable smoke 自有 candidate/previous/Router containers、network 和两份 images 全部 removed。
+- 生产边界不变：CI 使用 disposable Docker Engine 和 runner 自有 daemon pin；不能据此声称生产 IdP、KMS/SecretStore、外部审计 anchor、Host socket ACL/TLS 或多 Host shared transaction service 已接入。没有执行 reconciliation、rollback、selector/pointer/journal mutation 或 reservation release。
