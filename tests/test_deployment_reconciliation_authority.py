@@ -1777,9 +1777,12 @@ def test_anchored_authority_restores_grant_after_ambiguous_approved_event(tmp_pa
         operation_id=proposal.record.operation_id
     )[-1]
     grant = restarted_authority.restore_grant(approved_event.approval_id)
+    envelope = vault_root / f"{grant.storage_reference.approval_id}.grant"
+    assert envelope.is_file()
 
     assert grant.storage_reference is not None
     assert restarted_authority.consume(grant).record == proposal.record
+    assert not envelope.exists()
     assert anchor.head.sequence == 4
     assert restarted_audit.verify() == anchor.head
     assert [
@@ -1888,3 +1891,59 @@ def test_terminal_audit_is_not_reversed_when_grant_envelope_cleanup_fails(tmp_pa
         ReconciliationAuthorizationError, match="could not be restored"
     ):
         authority.restore_grant(reference.approval_id)
+
+
+def test_unconfirmed_external_terminal_checkpoint_does_not_retire_grant_envelope(
+    tmp_path,
+):
+    class _TerminalCasFailureAnchor(_MemoryHeadAnchorForAuthority):
+        def compare_and_set(self, expected, replacement):
+            if replacement.sequence == 4:
+                return False
+            return super().compare_and_set(expected, replacement)
+
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    anchor = _TerminalCasFailureAnchor()
+    audit_root = tmp_path / "audit"
+    audit = ExternallyAnchoredReconciliationAuditStore(
+        audit_root,
+        anchor=anchor,
+        expected_ledger_id="terminal-cas-failure-ledger",
+    )
+    authority = _authority(
+        audit_root,
+        principals,
+        snapshot_reader=reader,
+        audit_store=audit,
+        grant_vault=vault,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    envelope = vault_root / f"{grant.storage_reference.approval_id}.grant"
+    assert anchor.head.sequence == 2
+    assert envelope.is_file()
+
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="could not be finalized|consumption failed",
+    ):
+        authority.consume(grant)
+
+    # The terminal event could not be remotely confirmed. The authority must
+    # not delete the encrypted grant, and the anchor remains at the last
+    # confirmed consumption-start event.
+    assert anchor.head.sequence == 3
+    assert envelope.is_file()
