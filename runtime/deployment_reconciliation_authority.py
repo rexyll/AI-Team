@@ -203,6 +203,35 @@ class ReconciliationApprovalGrant:
     )
 
 
+@dataclass(frozen=True)
+class ReconciliationGrantVaultInventoryItem:
+    """Non-secret classification of one authenticated grant envelope."""
+
+    approval_id: str
+    operation_id: str
+    expires_at: str
+    status: Literal[
+        "active",
+        "claimed",
+        "terminal",
+        "expired_approved",
+        "pending_orphan",
+        "expired_orphan",
+        "ambiguous",
+    ]
+    detail: str
+
+
+@dataclass(frozen=True)
+class ReconciliationGrantVaultCleanupReport:
+    """Read-only inventory plus terminal-only deletion results."""
+
+    scanned: int
+    removed_approval_ids: tuple[str, ...]
+    failed_approval_ids: tuple[str, ...]
+    retained: tuple[ReconciliationGrantVaultInventoryItem, ...]
+
+
 class ReconciliationApprovalGrantVault(Protocol):
     """External KMS-backed custody adapter; no software-key fallback is allowed."""
 
@@ -998,6 +1027,282 @@ class ReconciliationApprovalAuthority:
         self._retire_terminal_grant_envelope(grant)
         return proposal
 
+
+
+
+    def inspect_grant_vault(
+        self,
+    ) -> tuple[ReconciliationGrantVaultInventoryItem, ...]:
+        """Classify grant envelopes against the complete verified audit chain.
+
+        The audit store's events() method must return the entire locally valid
+        chain, and an externally anchored store additionally requires exact
+        remote-head equality. Unknown, duplicated, out-of-order or mismatched
+        history is classified as ambiguous and is never eligible for cleanup.
+        """
+        if self._grant_vault is None:
+            raise ReconciliationAuthorizationError(
+                "a protected grant vault is required for grant inventory"
+            )
+        try:
+            events = self._audit.events()
+            references = self._grant_vault.list_references()
+            inspections = [
+                (reference, self._grant_vault.inspect(reference))
+                for reference in references
+            ]
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "grant inventory could not verify the complete audit chain and protected envelopes"
+            ) from exc
+
+        now = self._now()
+        inventory: list[ReconciliationGrantVaultInventoryItem] = []
+        scope_fields = (
+            "approval_id",
+            "operation_id",
+            "provider",
+            "project",
+            "environment",
+            "journal_phase",
+            "target_deployment_id",
+            "previous_deployment_id",
+            "candidate_runtime_id",
+            "previous_runtime_id",
+            "proposal_digest",
+            "evidence_digest",
+        )
+
+        for reference, inspected in inspections:
+            approval_id = inspected.approval_id
+            detail = "audit and encrypted grant scope are consistent"
+            status: Literal[
+                "active",
+                "claimed",
+                "terminal",
+                "expired_approved",
+                "pending_orphan",
+                "expired_orphan",
+                "ambiguous",
+            ] = "ambiguous"
+            try:
+                if reference.approval_id != approval_id:
+                    raise ValueError("vault reference approval ID mismatch")
+                expires_value = datetime.fromisoformat(
+                    inspected.expires_at.replace("Z", "+00:00")
+                )
+                if expires_value.tzinfo is None or expires_value.utcoffset() is None:
+                    raise ValueError("grant expiry has no timezone")
+                expired = now >= expires_value.astimezone(timezone.utc)
+
+                related = [item for item in events if item.approval_id == approval_id]
+                proposed = [
+                    item for item in related
+                    if item.action == "reconciliation_proposed"
+                ]
+                approved = [
+                    item for item in related
+                    if item.action == "reconciliation_approved"
+                ]
+                started = [
+                    item for item in related
+                    if item.action == "reconciliation_approval_consumption_started"
+                ]
+                consumed = [
+                    item for item in related
+                    if item.action == "reconciliation_approval_consumed"
+                ]
+                rejected = [
+                    item for item in related
+                    if item.action == "reconciliation_rejected"
+                ]
+                known = proposed + approved + started + consumed + rejected
+                if len(known) != len(related):
+                    raise ValueError("approval ID has unexpected audit actions")
+                if (
+                    len(proposed) > 1
+                    or len(approved) > 1
+                    or len(started) > 1
+                    or len(consumed) > 1
+                    or len(rejected) > 1
+                ):
+                    raise ValueError("approval ID has duplicate audit events")
+
+                scope = {
+                    "approval_id": inspected.approval_id,
+                    "operation_id": inspected.operation_id,
+                    "provider": inspected.provider,
+                    "project": inspected.project,
+                    "environment": inspected.environment,
+                    "journal_phase": inspected.journal_phase,
+                    "target_deployment_id": inspected.target_deployment_id,
+                    "previous_deployment_id": inspected.previous_deployment_id,
+                    "candidate_runtime_id": inspected.candidate_runtime_id,
+                    "previous_runtime_id": inspected.previous_runtime_id,
+                    "proposal_digest": inspected.proposal_digest,
+                    "evidence_digest": inspected.evidence_digest,
+                }
+
+                def matches_scope(event) -> bool:
+                    return all(
+                        getattr(event, name) == value
+                        for name, value in scope.items()
+                    )
+
+                if approved:
+                    if len(proposed) != 1:
+                        raise ValueError("approved grant has no unique proposal event")
+                    proposal_event, approval_event = proposed[0], approved[0]
+                    if (
+                        proposal_event.sequence >= approval_event.sequence
+                        or not matches_scope(proposal_event)
+                        or not matches_scope(approval_event)
+                        or proposal_event.actor != inspected.requested_by
+                        or approval_event.actor != inspected.approved_by
+                        or approval_event.approval_token_digest is None
+                        or not secrets.compare_digest(
+                            approval_event.approval_token_digest,
+                            inspected.token_digest,
+                        )
+                        or approval_event.approval_expires_at != inspected.expires_at
+                    ):
+                        raise ValueError("approved event does not match grant payload")
+
+                    terminals = consumed + rejected
+                    if started:
+                        if (
+                            not matches_scope(started[0])
+                            or started[0].sequence <= approval_event.sequence
+                            or started[0].actor != approval_event.actor
+                        ):
+                            raise ValueError("consumption-start event does not match approval")
+                        if not terminals:
+                            status = "claimed"
+                            detail = "consumption has started but no terminal event exists; retain for incident review"
+                        elif len(terminals) == 1:
+                            terminal = terminals[0]
+                            if (
+                                terminal.sequence <= started[0].sequence
+                                or not matches_scope(terminal)
+                                or terminal.actor != started[0].actor
+                            ):
+                                raise ValueError("terminal event does not match claim")
+                            status = "terminal"
+                            detail = "approval has a verified terminal audit event"
+                        else:
+                            raise ValueError("approval has multiple terminal events")
+                    elif terminals:
+                        raise ValueError("terminal event exists without a consumption claim")
+                    elif expired:
+                        status = "expired_approved"
+                        detail = "approved grant expired without a consumption claim; retained conservatively"
+                    else:
+                        status = "active"
+                        detail = "approved grant remains within its TTL"
+                else:
+                    if started or consumed:
+                        raise ValueError("unapproved grant has consumption history")
+                    if rejected:
+                        if (
+                            len(proposed) != 1
+                            or rejected[0].sequence <= proposed[0].sequence
+                            or not matches_scope(proposed[0])
+                            or not matches_scope(rejected[0])
+                        ):
+                            raise ValueError("rejected issuance does not match its proposal")
+                        status = "terminal"
+                        detail = "issuance was durably rejected and no approval was issued"
+                    elif proposed:
+                        if len(proposed) != 1 or not matches_scope(proposed[0]):
+                            raise ValueError("pending proposal does not match encrypted grant")
+                        status = "expired_orphan" if expired else "pending_orphan"
+                        detail = (
+                            "expired orphan has no approved audit event"
+                            if expired
+                            else "grant has no approved audit event yet"
+                        )
+                    elif not related:
+                        status = "expired_orphan" if expired else "pending_orphan"
+                        detail = (
+                            "expired orphan has no audit history"
+                            if expired
+                            else "grant has no audit history"
+                        )
+                    else:
+                        raise ValueError("grant has an ambiguous unapproved audit history")
+            except Exception as exc:
+                status = "ambiguous"
+                detail = type(exc).__name__
+
+            inventory.append(
+                ReconciliationGrantVaultInventoryItem(
+                    approval_id=approval_id,
+                    operation_id=inspected.operation_id,
+                    expires_at=inspected.expires_at,
+                    status=status,
+                    detail=detail,
+                )
+            )
+        return tuple(inventory)
+
+    def cleanup_terminal_grant_envelopes(
+        self,
+    ) -> ReconciliationGrantVaultCleanupReport:
+        """Retry cleanup only for grants with a fully verified terminal audit state.
+
+        Expired approved grants without a claim, claimed-but-unfinished grants,
+        pending/orphan grants and ambiguous records are retained. In particular,
+        this method never infers safety from expiry alone for an approval that
+        was issued. It also never changes the audit chain or remote checkpoint.
+        """
+        if self._grant_vault is None:
+            raise ReconciliationAuthorizationError(
+                "a protected grant vault is required for terminal cleanup"
+            )
+        inventory = self.inspect_grant_vault()
+        terminal_ids = {
+            item.approval_id for item in inventory if item.status == "terminal"
+        }
+        if not terminal_ids:
+            return ReconciliationGrantVaultCleanupReport(
+                scanned=len(inventory),
+                removed_approval_ids=(),
+                failed_approval_ids=(),
+                retained=inventory,
+            )
+
+        try:
+            references = {
+                reference.approval_id: reference
+                for reference in self._grant_vault.list_references()
+            }
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "protected grant references could not be re-enumerated for cleanup"
+            ) from exc
+
+        removed: list[str] = []
+        failed: list[str] = []
+        for approval_id in sorted(terminal_ids):
+            reference = references.get(approval_id)
+            if reference is None:
+                failed.append(approval_id)
+                continue
+            try:
+                self._grant_vault.delete(reference)
+                removed.append(approval_id)
+            except Exception:
+                failed.append(approval_id)
+
+        retained = tuple(
+            item for item in inventory if item.approval_id not in terminal_ids
+        )
+        return ReconciliationGrantVaultCleanupReport(
+            scanned=len(inventory),
+            removed_approval_ids=tuple(removed),
+            failed_approval_ids=tuple(failed),
+            retained=retained,
+        )
 
     def restore_grant(
         self, approval_id: str
