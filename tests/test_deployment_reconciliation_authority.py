@@ -1457,6 +1457,12 @@ def test_authority_does_not_append_approved_event_when_grant_vault_fails(tmp_pat
         def delete(self, reference):
             raise AssertionError("delete must not be called")
 
+        def list_references(self):
+            raise AssertionError("list_references must not be called")
+
+        def inspect(self, reference):
+            raise AssertionError("inspect must not be called")
+
     proposal = _proposal()
     reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
     authority = _authority(
