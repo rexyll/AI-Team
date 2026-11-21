@@ -17,7 +17,7 @@ import os
 import re
 import secrets
 import stat
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Protocol
@@ -58,6 +58,28 @@ _CONTEXT_KEYS = frozenset(
 
 class ReconciliationGrantVaultError(RuntimeError):
     """A protected grant cannot be safely stored, restored, or removed."""
+
+
+@dataclass(frozen=True)
+class ReconciliationApprovalGrantInspection:
+    """Non-secret, authenticated summary used for conservative vault cleanup."""
+
+    approval_id: str
+    operation_id: str
+    provider: str
+    project: str
+    environment: str
+    journal_phase: str
+    target_deployment_id: str
+    previous_deployment_id: str
+    candidate_runtime_id: str
+    previous_runtime_id: str
+    expires_at: str
+    proposal_digest: str
+    evidence_digest: str
+    token_digest: str
+    requested_by: AuthenticatedPrincipal
+    approved_by: AuthenticatedPrincipal
 
 
 class ReconciliationGrantProtector(Protocol):
@@ -203,7 +225,12 @@ class ReconciliationApprovalGrantVault:
             ReconciliationApprovalGrantVault._canonical(payload)
         ).hexdigest()
 
-    def _validate_grant(self, grant: ReconciliationApprovalGrant) -> dict[str, str]:
+    def _validate_grant(
+        self,
+        grant: ReconciliationApprovalGrant,
+        *,
+        require_unexpired: bool = True,
+    ) -> dict[str, str]:
         approval_id = self._approval_id(grant)
         proposal = grant.proposal
         approval = proposal.approval
@@ -234,15 +261,20 @@ class ReconciliationApprovalGrantVault:
                 "grant proposal digest does not match its proposal"
             )
         try:
-            expiry = datetime.fromisoformat(
+            expiry_value = datetime.fromisoformat(
                 approval.expires_at.replace("Z", "+00:00")
-            ).astimezone(timezone.utc)
+            )
+            if expiry_value.tzinfo is None or expiry_value.utcoffset() is None:
+                raise ValueError("grant expiry must include a timezone")
+            expiry = expiry_value.astimezone(timezone.utc)
         except (AttributeError, ValueError) as exc:
             raise ReconciliationGrantVaultError(
                 "grant expiry timestamp is invalid"
             ) from exc
-        if self._now() >= expiry:
-            raise ReconciliationGrantVaultError("expired approval grants cannot be stored or restored")
+        if require_unexpired and self._now() >= expiry:
+            raise ReconciliationGrantVaultError(
+                "expired approval grants cannot be stored or restored"
+            )
         return {
             "purpose": "ai-team-reconciliation-approval-grant",
             "schema_version": str(_SCHEMA_VERSION),
@@ -524,6 +556,82 @@ class ReconciliationApprovalGrantVault:
                 "protected approval grant envelope is malformed"
             ) from exc
         return raw, context, ciphertext
+    def list_references(self) -> tuple[ReconciliationApprovalGrantReference, ...]:
+        """List authenticated file references without decrypting grant payloads.
+
+        A malformed, unsafe or unreadable .grant entry aborts the inventory;
+        cleanup callers must not silently skip files they cannot classify.
+        """
+        self._validate_root()
+        references = []
+        try:
+            entries = sorted(self.root.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            raise ReconciliationGrantVaultError(
+                "grant vault inventory could not be enumerated"
+            ) from exc
+        for entry in entries:
+            if not entry.name.endswith(self.FILE_SUFFIX):
+                continue
+            approval_id = entry.name[: -len(self.FILE_SUFFIX)]
+            try:
+                references.append(self.reference_for(approval_id))
+            except Exception as exc:
+                raise ReconciliationGrantVaultError(
+                    "grant vault inventory contains an unsafe or malformed envelope"
+                ) from exc
+        return tuple(references)
+
+    def inspect(
+        self, reference: ReconciliationApprovalGrantReference
+    ) -> ReconciliationApprovalGrantInspection:
+        """Authenticate and inspect a grant without returning its bearer token."""
+        _, context, ciphertext = self._read_envelope(reference)
+        try:
+            plaintext = self._protector.unseal(
+                ciphertext, encryption_context=context
+            )
+        except Exception as exc:
+            raise ReconciliationGrantVaultError(
+                "external grant protector rejected the ciphertext or context"
+            ) from exc
+        if not isinstance(plaintext, bytes) or not plaintext:
+            raise ReconciliationGrantVaultError(
+                "external grant protector returned invalid plaintext"
+            )
+        if len(plaintext) > _MAX_ENVELOPE_BYTES:
+            raise ReconciliationGrantVaultError(
+                "decrypted approval grant exceeds the size limit"
+            )
+        grant = self._decode_grant(plaintext)
+        expected_context = self._validate_grant(
+            grant, require_unexpired=False
+        )
+        if expected_context != context:
+            raise ReconciliationGrantVaultError(
+                "decrypted approval grant does not match its protected scope"
+            )
+        approval = grant.proposal.approval
+        record = grant.proposal.record
+        return ReconciliationApprovalGrantInspection(
+            approval_id=approval.approval_id,
+            operation_id=record.operation_id,
+            provider=record.provider,
+            project=record.project,
+            environment=record.environment,
+            journal_phase=record.phase,
+            target_deployment_id=record.target_deployment_id,
+            previous_deployment_id=record.previous_deployment_id,
+            candidate_runtime_id=record.candidate_runtime_id or "",
+            previous_runtime_id=record.previous_runtime_id or "",
+            expires_at=approval.expires_at,
+            proposal_digest=grant.proposal_digest,
+            evidence_digest=grant.evidence_digest,
+            token_digest=hashlib.sha256(grant.token.encode("utf-8")).hexdigest(),
+            requested_by=approval.requested_by,
+            approved_by=approval.approved_by,
+        )
+
     def load(
         self, reference: ReconciliationApprovalGrantReference
     ) -> ReconciliationApprovalGrant:
