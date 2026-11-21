@@ -14,15 +14,15 @@ import re
 import secrets
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
-from runtime.deployment_reconciliation_grant_maintenance import (
-    ReconciliationGrantVaultCleanupReport,
-    ReconciliationGrantVaultInventoryItem,
-    ReconciliationGrantVaultMaintenance,
-    ReconciliationGrantVaultMaintenanceError,
-)
+
+if TYPE_CHECKING:
+    from runtime.deployment_reconciliation_grant_maintenance import (
+        ReconciliationGrantVaultCleanupReport,
+        ReconciliationGrantVaultInventoryItem,
+    )
 from runtime.deployment_reconciliation_contract import (
     AuthenticatedPrincipal,
     ReconciliationEvidence,
@@ -1026,6 +1026,11 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "a protected grant vault is required for grant inventory"
             )
+        from runtime.deployment_reconciliation_grant_maintenance import (
+            ReconciliationGrantVaultMaintenance,
+            ReconciliationGrantVaultMaintenanceError,
+        )
+
         try:
             maintenance = ReconciliationGrantVaultMaintenance(
                 audit_store=self._audit,
@@ -1044,6 +1049,11 @@ class ReconciliationApprovalAuthority:
             raise ReconciliationAuthorizationError(
                 "a protected grant vault is required for terminal cleanup"
             )
+        from runtime.deployment_reconciliation_grant_maintenance import (
+            ReconciliationGrantVaultMaintenance,
+            ReconciliationGrantVaultMaintenanceError,
+        )
+
         try:
             maintenance = ReconciliationGrantVaultMaintenance(
                 audit_store=self._audit,
