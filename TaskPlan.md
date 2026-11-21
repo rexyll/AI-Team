@@ -934,13 +934,15 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 本节验收只证明 Host grant lifecycle 与现有只读 reconciliation authority 的安全存储/终态退役，不提供部署动作执行器，也不启用生产 mutation。真实生产 IdP、KMS/SecretStore、外部 audit anchor 服务仍须部署方配置并独立审查。
 
 
-### T21.6.3.5.33 — Authenticated grant-vault inventory and terminal-only cleanup（实现、文档与测试已提交，CI 待验收）
+### T21.6.3.5.33 — Authenticated grant-vault inventory and terminal-only cleanup（实现与测试已提交，最新 HEAD CI 待最终验收）
 
-- 新增 ReconciliationApprovalGrantVault.list_references() 与 inspect()：枚举 .grant 文件时拒绝不安全/畸形条目；inspect() 通过外部 protector unseal 和原始 AAD context 验证 payload，校验 proposal/evidence digest、expiry 和 scope，只返回非秘密元数据与 token digest，不暴露 bearer token。
-- _validate_grant() 支持仅供只读 inspection 使用的 require_unexpired=False，并新增明确的 timezone-aware expiry 检查；正常 save/load 仍拒绝过期 grant。
-- 新增 ReconciliationApprovalAuthority.inspect_grant_vault()：先读取完整 audit events（若使用外部 wrapper，必须 local head == external checkpoint），再交叉校验 approval ID 全局唯一性、operation/project/environment、journal/deployment/runtime scope、proposal/evidence/token digest、expiry、actor 与事件顺序；输出 active、claimed、terminal、expired_approved、pending_orphan、expired_orphan、ambiguous 分类。
-- 新增 cleanup_terminal_grant_envelopes()：只重试删除完整匹配的 terminal event sequence（proposed → approved → consumption-start → consumed/rejected），或确认未产生 approved event 的 durable issuance rejection。绝不因 expiry 单独删除已 approved 的 grant；claimed-but-unfinished、expired approved、pending/orphan 和 ambiguous envelopes 全部保留，供 operator review。
-- cleanup 先确认全链可读、外部 anchor 精确匹配，并持有检查时取得的 content-addressed reference；文件若在 inspection 后被替换，delete() 的 digest check 会拒绝删除。外部 anchor unavailable/local-ahead、payload/AAD 校验失败、重复/乱序 audit events 均在删除前 fail-closed。
-- 测试覆盖：terminal delete 首次失败后可由 audit-verified cleanup 重试；active 与 claimed grant 保留；expired orphan 无 approved audit event 时仅分类、不自动删除；现有 terminal cleanup CAS 未确认保护测试仍保留。
-- 代码提交 d30bb25、8b60789、b7d4175、a49791c、a69b980；测试提交 7e84b7a；文档提交 69c85d6、41d895d。当前 main CI run 44889434079（HEAD 83f11f5）正在执行，最终通过与否待完整 Regression/Security/Windows/Coverage/Docker jobs 结束后记录。
-- 安全边界：cleanup 只删除 grant ciphertext，不 append/改写 audit chain、不修复或推进 external checkpoint、不改变 journal/Router/active pointer/reservation/runtime；没有生产 IdP/KMS/外部 anchor provider 被假设或启用。
+- 新增 ReconciliationApprovalGrantVault.list_references() 与 inspect()：枚举 .grant 文件时拒绝不安全/畸形条目；inspect() 使用外部 protector unseal 和原始 AAD context 验证 payload，校验 proposal/evidence digest、expiry、scope，只返回非秘密元数据与 token digest，不暴露 bearer token。
+- _validate_grant() 支持只读 inspection 的 require_unexpired=False，并强制 grant expiry 必须 timezone-aware；正常 save/load 仍拒绝过期 grant。
+- 新增 ReconciliationApprovalAuthority.inspect_grant_vault()：先读取完整 audit events（anchored store 必须 local head == external checkpoint），再交叉校验全局 approval ID 唯一性、operation/project/environment、journal/deployment/runtime scope、proposal/evidence/token digest、expiry、requester/approver actors 与事件顺序；分类 active、claimed、terminal、expired_approved、pending_orphan、expired_orphan、ambiguous。
+- 新增 cleanup_terminal_grant_envelopes()：只重试删除完整匹配的 terminal event sequence（proposed → approved → consumption-start → consumed/rejected），或确认未产生 approved event 的 durable issuance rejection。绝不因 expiry 单独删除已 approved grant；claimed-but-unfinished、expired approved、pending/orphan、ambiguous envelope 一律保留。
+- Cleanup 先取得 content-addressed references，并将同一批 references 传给 authenticated inspection；随后 delete() 再次核对原始 envelope digest，防止 inspection 与删除间文件替换。若 audit anchor unavailable/local-ahead、payload/AAD 校验失败、actor/scope 不匹配、事件重复/乱序，inventory 在删除前 fail-closed。
+- ReconciliationGrantVaultCleanupReport.retained 包含所有仍存在的 envelope，包括删除失败的 terminal 项；失败 ID 同时列入 failed_approval_ids，不得从 operator inventory 隐去。
+- 测试覆盖 terminal delete 首次失败后 cleanup 重试；active/claimed/expired-approved/expired-orphan 保留；外部 audit head mismatch 时不触发任何删除；issuance rejection 的 actor 与 grant 中 approver 不匹配时分类为 ambiguous；terminal delete failure 会同时报告 failed + retained。
+- 代码提交 d30bb25、8b60789、b7d4175、a49791c、a69b980、68d42cb；测试提交 7e84b7a、4007efa、8e41085；文档提交 69c85d6、41d895d、fae25f4。
+- 安全边界：cleanup 只删除 grant ciphertext，不 append/改写 audit chain、不修复/推进 external checkpoint、不改变 journal/Router/active pointer/reservation/runtime；没有生产 IdP/KMS/外部 anchor provider 被假设或启用。
+- 最新候选 HEAD 由当前提交与 TaskPlan 文档组成；等其最新 GitHub Actions Regression/Security/Windows/Coverage/Docker jobs 全部成功后，再标记本节验收通过。
