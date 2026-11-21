@@ -932,3 +932,15 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 最新整合 HEAD 463ff84 的 CI run [44888323048](https://github.com/rexyll/AI-Team/actions/runs/44888323048) 全部通过：Regression 3,311 passed / 14 skipped；Security 275 passed / 9 skipped；Windows E2E 7 passed；Coverage 3,291 passed / 14 skipped、82%，所有 module coverage floors passed；Docker Engine job 27 steps 全 success。
 - 同 run artifact [router-host-synchronous-completion-snapshot-evidence](https://github.com/rexyll/AI-Team/actions/runs/44888323048/artifacts/14701077417) 已下载并解析：top-level status=fault_injection_verified，snapshot=verified；retire_previous result=succeeded，source=docker-local-host-call-receipts；completed_at=2026-11-21T09:16:48.448069Z，snapshot_started_at=2026-11-21T09:16:48.512150Z（receipt 提前约 64 ms）；四类 evidence 齐全；candidate healthy/running，route read-back 指向 candidate；previous immutable runtime exited；journal 仍为 needs_reconciliation；automatic_reconciliation_executed=false；smoke containers/network/images 全部 removed。
 - 本节验收只证明 Host grant lifecycle 与现有只读 reconciliation authority 的安全存储/终态退役，不提供部署动作执行器，也不启用生产 mutation。真实生产 IdP、KMS/SecretStore、外部 audit anchor 服务仍须部署方配置并独立审查。
+
+
+### T21.6.3.5.33 — Authenticated grant-vault inventory and terminal-only cleanup（实现、文档与测试已提交，CI 待验收）
+
+- 新增 ReconciliationApprovalGrantVault.list_references() 与 inspect()：枚举 .grant 文件时拒绝不安全/畸形条目；inspect() 通过外部 protector unseal 和原始 AAD context 验证 payload，校验 proposal/evidence digest、expiry 和 scope，只返回非秘密元数据与 token digest，不暴露 bearer token。
+- _validate_grant() 支持仅供只读 inspection 使用的 require_unexpired=False，并新增明确的 timezone-aware expiry 检查；正常 save/load 仍拒绝过期 grant。
+- 新增 ReconciliationApprovalAuthority.inspect_grant_vault()：先读取完整 audit events（若使用外部 wrapper，必须 local head == external checkpoint），再交叉校验 approval ID 全局唯一性、operation/project/environment、journal/deployment/runtime scope、proposal/evidence/token digest、expiry、actor 与事件顺序；输出 active、claimed、terminal、expired_approved、pending_orphan、expired_orphan、ambiguous 分类。
+- 新增 cleanup_terminal_grant_envelopes()：只重试删除完整匹配的 terminal event sequence（proposed → approved → consumption-start → consumed/rejected），或确认未产生 approved event 的 durable issuance rejection。绝不因 expiry 单独删除已 approved 的 grant；claimed-but-unfinished、expired approved、pending/orphan 和 ambiguous envelopes 全部保留，供 operator review。
+- cleanup 先确认全链可读、外部 anchor 精确匹配，并持有检查时取得的 content-addressed reference；文件若在 inspection 后被替换，delete() 的 digest check 会拒绝删除。外部 anchor unavailable/local-ahead、payload/AAD 校验失败、重复/乱序 audit events 均在删除前 fail-closed。
+- 测试覆盖：terminal delete 首次失败后可由 audit-verified cleanup 重试；active 与 claimed grant 保留；expired orphan 无 approved audit event 时仅分类、不自动删除；现有 terminal cleanup CAS 未确认保护测试仍保留。
+- 代码提交 d30bb25、8b60789、b7d4175、a49791c、a69b980；测试提交 7e84b7a；文档提交 69c85d6、41d895d。当前 main CI run 44889434079（HEAD 83f11f5）正在执行，最终通过与否待完整 Regression/Security/Windows/Coverage/Docker jobs 结束后记录。
+- 安全边界：cleanup 只删除 grant ciphertext，不 append/改写 audit chain、不修复或推进 external checkpoint、不改变 journal/Router/active pointer/reservation/runtime；没有生产 IdP/KMS/外部 anchor provider 被假设或启用。
