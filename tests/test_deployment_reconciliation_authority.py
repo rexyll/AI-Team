@@ -10,7 +10,11 @@ from threading import Event
 
 import pytest
 
-from runtime.deployment_reconciliation_audit_store import DurableReconciliationAuditStore
+from runtime.deployment_reconciliation_audit_store import (
+    DurableReconciliationAuditStore,
+    ReconciliationAuditHead,
+    _ZERO_DIGEST,
+)
 from runtime.deployment_reconciliation_anchored_audit_store import (
     ExternallyAnchoredReconciliationAuditStore,
 )
@@ -2208,3 +2212,89 @@ def test_grant_vault_inventory_marks_wrong_actor_rejection_ambiguous(tmp_path):
     assert report.removed_approval_ids == ()
     assert report.retained[0].status == "ambiguous"
     assert (vault_root / f"{reference.approval_id}.grant").is_file()
+
+
+def test_grant_vault_cleanup_retains_expired_approved_grant_without_terminal_claim(
+    tmp_path,
+):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    clock = _Clock()
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=clock
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+        clock=clock,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    envelope = vault_root / f"{grant.proposal.approval.approval_id}.grant"
+    assert envelope.is_file()
+
+    clock.value += timedelta(minutes=10)
+    inventory = authority.inspect_grant_vault()
+    assert len(inventory) == 1
+    assert inventory[0].status == "expired_approved"
+
+    report = authority.cleanup_terminal_grant_envelopes()
+    assert report.removed_approval_ids == ()
+    assert report.retained[0].status == "expired_approved"
+    assert envelope.is_file()
+
+
+def test_grant_vault_cleanup_fails_closed_when_external_audit_head_is_unanchored(
+    tmp_path,
+):
+    _, reader, principals, _, grant = _approved_grant(tmp_path)
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=_TestGrantProtector(), clock=_Clock()
+    )
+    reference = vault.save(grant)
+    anchor = _MemoryHeadAnchorForAuthority()
+    # The local audit chain contains the proposed and approved events, while
+    # this test-only remote checkpoint remains at genesis.
+    audit = ExternallyAnchoredReconciliationAuditStore(
+        tmp_path / "audit",
+        anchor=anchor,
+        expected_ledger_id=anchor.ledger_id,
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        audit_store=audit,
+        grant_vault=vault,
+    )
+    delete_calls = []
+    real_delete = vault.delete
+
+    def _track_delete(candidate):
+        delete_calls.append(candidate)
+        return real_delete(candidate)
+
+    vault.delete = _track_delete
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="terminal grant cleanup could not build an authenticated inventory",
+    ):
+        authority.cleanup_terminal_grant_envelopes()
+
+    assert delete_calls == []
+    assert (
+        vault_root / f"{reference.approval_id}.grant"
+    ).is_file()
+    assert audit.inspect_anchor_state().status == "local_ahead"
