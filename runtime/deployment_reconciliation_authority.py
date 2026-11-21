@@ -1045,6 +1045,8 @@ class ReconciliationApprovalAuthority:
 
     def inspect_grant_vault(
         self,
+        *,
+        _references: tuple[ReconciliationApprovalGrantReference, ...] | None = None,
     ) -> tuple[ReconciliationGrantVaultInventoryItem, ...]:
         """Classify grant envelopes against the complete verified audit chain.
 
@@ -1059,7 +1061,11 @@ class ReconciliationApprovalAuthority:
             )
         try:
             events = self._audit.events()
-            references = self._grant_vault.list_references()
+            references = (
+                tuple(self._grant_vault.list_references())
+                if _references is None
+                else tuple(_references)
+            )
             inspections = [
                 (reference, self._grant_vault.inspect(reference))
                 for reference in references
@@ -1206,6 +1212,8 @@ class ReconciliationApprovalAuthority:
                             or rejected[0].sequence <= proposed[0].sequence
                             or not matches_scope(proposed[0])
                             or not matches_scope(rejected[0])
+                            or proposed[0].actor != inspected.requested_by
+                            or rejected[0].actor != inspected.approved_by
                         ):
                             raise ValueError("rejected issuance does not match its proposal")
                         status = "terminal"
@@ -1265,7 +1273,9 @@ class ReconciliationApprovalAuthority:
                 reference.approval_id: reference
                 for reference in self._grant_vault.list_references()
             }
-            inventory = self.inspect_grant_vault()
+            inventory = self.inspect_grant_vault(
+                _references=tuple(references.values())
+            )
         except Exception as exc:
             raise ReconciliationAuthorizationError(
                 "terminal grant cleanup could not build an authenticated inventory"
@@ -1294,8 +1304,12 @@ class ReconciliationApprovalAuthority:
             except Exception:
                 failed.append(approval_id)
 
+        # Report every envelope that remains on disk, including terminal
+        # records whose delete failed; callers must be able to reconcile the
+        # report with the next authenticated vault inventory.
+        removed_set = set(removed)
         retained = tuple(
-            item for item in inventory if item.approval_id not in terminal_ids
+            item for item in inventory if item.approval_id not in removed_set
         )
         return ReconciliationGrantVaultCleanupReport(
             scanned=len(inventory),
