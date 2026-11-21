@@ -1426,12 +1426,21 @@ def test_authority_persists_grant_before_approved_audit_and_restores_after_resta
         grant.proposal.approval.approval_id
     )
 
+    envelope_path = (
+        tmp_path / "protected-grants" / f"{recovered_reference.approval_id}.grant"
+    )
+    assert envelope_path.is_file()
     assert restored_grant.storage_reference == recovered_reference
     assert restored_authority.consume(restored_grant).record == proposal.record
     final_events = restored_authority._audit.events(
         operation_id=proposal.record.operation_id
     )
     assert final_events[-1].action == "reconciliation_approval_consumed"
+    assert not envelope_path.exists()
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be restored"
+    ):
+        restored_authority.restore_grant(recovered_reference.approval_id)
 
 
 def test_authority_does_not_append_approved_event_when_grant_vault_fails(tmp_path):
@@ -1784,3 +1793,94 @@ def test_anchored_authority_restores_grant_after_ambiguous_approved_event(tmp_pa
         "reconciliation_approval_consumption_started",
         "reconciliation_approval_consumed",
     ]
+
+
+def test_terminal_rejection_retires_protected_grant_envelope(tmp_path):
+    proposal = _proposal()
+
+    class _FailingSnapshotReader:
+        reader_id = "test-terminal-reject-reader"
+
+        def read_current_snapshot(self, operation_id, operation):
+            raise RuntimeError("snapshot source unavailable")
+
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=_FailingSnapshotReader(),
+        grant_vault=vault,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    envelope = vault_root / f"{grant.proposal.approval.approval_id}.grant"
+    assert envelope.is_file()
+
+    with pytest.raises(
+        ReconciliationAuthorizationError,
+        match="trusted current journal/evidence snapshot read failed",
+    ):
+        authority.consume(grant)
+
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert events[-1].action == "reconciliation_rejected"
+    assert not envelope.exists()
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be restored"
+    ):
+        authority.restore_grant(grant.proposal.approval.approval_id)
+
+
+def test_terminal_audit_is_not_reversed_when_grant_envelope_cleanup_fails(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+    grant = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    reference = grant.storage_reference
+    envelope = vault_root / f"{reference.approval_id}.grant"
+
+    def _fail_delete(_reference):
+        raise OSError("simulated protected-store cleanup outage")
+
+    vault.delete = _fail_delete
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="terminally recorded.*cleanup failed"
+    ):
+        authority.consume(grant)
+
+    events = authority._audit.events(operation_id=proposal.record.operation_id)
+    assert events[-1].action == "reconciliation_approval_consumed"
+    assert envelope.is_file()
+    with pytest.raises(
+        ReconciliationAuthorizationError, match="could not be restored"
+    ):
+        authority.restore_grant(reference.approval_id)
