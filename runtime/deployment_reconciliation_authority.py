@@ -807,6 +807,29 @@ class ReconciliationApprovalAuthority:
             ) from exc
         return replace(grant, storage_reference=storage_reference)
 
+    def _retire_terminal_grant_envelope(
+        self, grant: ReconciliationApprovalGrant
+    ) -> None:
+        """Delete encrypted grant bytes only after the terminal audit event is durable."""
+        if self._grant_vault is None:
+            return
+        reference = grant.storage_reference
+        approval_id = grant.proposal.approval.approval_id
+        if (
+            not isinstance(reference, ReconciliationApprovalGrantReference)
+            or reference.approval_id != approval_id
+        ):
+            raise ReconciliationAuthorizationError(
+                "approval is terminal but its protected grant reference is missing or mismatched"
+            )
+        try:
+            self._grant_vault.delete(reference)
+        except Exception as exc:
+            raise ReconciliationAuthorizationError(
+                "approval is terminally recorded in the audit ledger, but encrypted grant cleanup failed; "
+                "do not retry or re-approve until the retained envelope is reviewed"
+            ) from exc
+
     def consume(
         self,
         grant: ReconciliationApprovalGrant,
@@ -848,6 +871,15 @@ class ReconciliationApprovalAuthority:
             )
 
         approval = proposal.approval
+        if self._grant_vault is not None and (
+            not isinstance(
+                grant.storage_reference, ReconciliationApprovalGrantReference
+            )
+            or grant.storage_reference.approval_id != approval.approval_id
+        ):
+            raise ReconciliationAuthorizationError(
+                "grant is not bound to the configured protected approval vault"
+            )
         token_digest = hashlib.sha256(grant.token.encode("utf-8")).hexdigest()
         try:
             self._audit.begin_approval_consumption(
@@ -931,7 +963,6 @@ class ReconciliationApprovalAuthority:
                 action="reconciliation_approval_consumed",
                 recorded_at=self._iso(self._now()),
             )
-            return proposal
         except ReconciliationAuthorizationError:
             try:
                 reject_claim()
@@ -940,6 +971,10 @@ class ReconciliationApprovalAuthority:
                     "approval validation failed and its rejection could not be finalized; "
                     "the durable consumption claim remains fail-closed"
                 ) from audit_exc
+            try:
+                self._retire_terminal_grant_envelope(grant)
+            except ReconciliationAuthorizationError:
+                raise
             raise
         except Exception as exc:
             try:
@@ -949,9 +984,19 @@ class ReconciliationApprovalAuthority:
                     "approval consumption failed and its rejection could not be finalized; "
                     "the durable consumption claim remains fail-closed"
                 ) from audit_exc
+            try:
+                self._retire_terminal_grant_envelope(grant)
+            except ReconciliationAuthorizationError:
+                raise
             raise ReconciliationAuthorizationError(
                 "approval consumption failed closed"
             ) from exc
+
+        # This runs outside the validation exception handlers: once the
+        # consumed event is durably anchored, a vault cleanup error must not
+        # append a second terminal event or attempt to reject the claim.
+        self._retire_terminal_grant_envelope(grant)
+        return proposal
 
 
     def restore_grant(
