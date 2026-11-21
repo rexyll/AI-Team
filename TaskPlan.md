@@ -921,11 +921,14 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 实现提交 147a6d2，Host tests 提交 017b4bb，文档提交 85bf70b。最新整合 HEAD ea57b2a 的 CI run 44777299030 全部 success：Regression 3,308 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,288 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job all steps success。该 run 的 Host snapshot artifact 14650816938 再次确认 `retire_previous / succeeded`、四类 evidence、candidate healthy/running、previous exited、journal `needs_reconciliation`、`automatic_reconciliation_executed=false`。真实 production IdP/KMS/anchor provider 仍未接入，必须由部署方选择/配置并经过独立安全审查。
 
 
-### T21.6.3.5.32 — Terminal approval grant envelope retirement（实现和回归测试已提交，最新 CI 待验收）
+### T21.6.3.5.32 — Terminal approval grant envelope retirement（实现、故障边界测试与全量 CI 验收通过）
 
 - 闭合 grant vault 生命周期：当 authority 将消费结果写入 reconciliation_approval_consumed 或 reconciliation_rejected，并且 audit store（若使用外部 wrapper 则包括远端 CAS 确认）返回成功后，才调用 vault.delete() 删除对应加密 envelope。
 - 绝不在 consumption-start、snapshot 校验中、或 terminal audit append/CAS 结果不确定时删除密文；因此 crash/ambiguous append 仍保留审计恢复依据。
 - 配置 grant vault 的 authority 在消费前必须验证 grant.storage_reference 类型正确且 approval_id 精确匹配，避免错误引用导致跨审批误删。
 - 若 terminal audit 已确认但文件删除失败，返回明确错误，指出 approval 已 terminal、不可重试；审计链阻止 restore_grant() 重放，残留密文等待 operator review。该情况不能伪装成普通“消费失败”，也不能尝试追加第二个 terminal 事件。
-- 新增测试覆盖：跨 Host restart 成功消费且 terminal event 外部 CAS 确认后 envelope 被删除且不可 restore；snapshot read 失败产生 durable rejection 后 envelope 被删除；vault.delete 故障时 terminal audit 保留、envelope 不被错误删除、restore 仍 fail-closed；若 terminal event 的外部 CAS 未确认，则不删除 envelope，local-ahead 状态保持 fail-closed。
-- 初始 run 44887774248 的一项失败来自 rejection 测试夹具在 authorize 阶段即注入故障 snapshot reader，导致 grant 未签发；已修正为先正常签发再仅在 consume 阶段注入读取失败。代码提交 1cdce35，测试提交 1b3c945、a08b01c、8002b3f，grant vault 文档更新提交 80df025。最新测试提交的 CI 正在执行，未完成前不能标记验收通过。
+- 测试覆盖：跨 Host restart 成功消费且 terminal event 外部 CAS 确认后 envelope 被删除且不可 restore；snapshot read 失败产生 durable rejection 后 envelope 被删除；vault.delete 故障时 terminal audit 保留、envelope 不被错误删除、restore 仍 fail-closed；若 terminal event 的外部 CAS 未确认，则不删除 envelope，local-ahead 状态保持 fail-closed。
+- 测试夹具修正记录：初次 rejection reader 过早在 authorize 阶段故障，改为 grant 正常签发后仅在 consume 阶段失败；随后 CAS failure fake 使用了不匹配的 expected_ledger_id，改为读取同一 fake anchor 的 ledger_id。没有放宽生产代码 trust-boundary。代码提交 1cdce35，测试提交 1b3c945、a08b01c、8002b3f、463ff84；grant vault 文档更新提交 80df025。
+- 最新整合 HEAD 463ff84 的 CI run [44888323048](https://github.com/rexyll/AI-Team/actions/runs/44888323048) 全部通过：Regression 3,311 passed / 14 skipped；Security 275 passed / 9 skipped；Windows E2E 7 passed；Coverage 3,291 passed / 14 skipped、82%，所有 module coverage floors passed；Docker Engine job 27 steps 全 success。
+- 同 run artifact [router-host-synchronous-completion-snapshot-evidence](https://github.com/rexyll/AI-Team/actions/runs/44888323048/artifacts/14701077417) 已下载并解析：top-level status=fault_injection_verified，snapshot=verified；retire_previous result=succeeded，source=docker-local-host-call-receipts；completed_at=2026-11-21T09:16:48.448069Z，snapshot_started_at=2026-11-21T09:16:48.512150Z（receipt 提前约 64 ms）；四类 evidence 齐全；candidate healthy/running，route read-back 指向 candidate；previous immutable runtime exited；journal 仍为 needs_reconciliation；automatic_reconciliation_executed=false；smoke containers/network/images 全部 removed。
+- 本节验收只证明 Host grant lifecycle 与现有只读 reconciliation authority 的安全存储/终态退役，不提供部署动作执行器，也不启用生产 mutation。真实生产 IdP、KMS/SecretStore、外部 audit anchor 服务仍须部署方配置并独立审查。
