@@ -919,3 +919,13 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Factory construction 不执行 Docker 命令、不调用 authenticator、不写 audit event、不初始化/推进远端 checkpoint，也不执行 reconciliation。返回的 authority 只负责双人审批与 one-use proposal consumption；不存在部署 mutation executor。
 - 新增 Host integration tests：验证所有 trust roots 注入、head verify only、grant vault 创建、operation scope guard、无 Docker/auth/CAS side effects；并验证 anchor unavailable 时在 grant vault 创建前拒绝。
 - 实现提交 147a6d2，Host tests 提交 017b4bb，文档提交 85bf70b。最新整合 HEAD ea57b2a 的 CI run 44777299030 全部 success：Regression 3,308 passed / 14 skipped，Security 275 passed / 9 skipped，Windows E2E 7 passed，Coverage 3,288 passed / 14 skipped、82%，所有 module floors passed，Docker Engine job all steps success。该 run 的 Host snapshot artifact 14650816938 再次确认 `retire_previous / succeeded`、四类 evidence、candidate healthy/running、previous exited、journal `needs_reconciliation`、`automatic_reconciliation_executed=false`。真实 production IdP/KMS/anchor provider 仍未接入，必须由部署方选择/配置并经过独立安全审查。
+
+
+### T21.6.3.5.32 — Terminal approval grant envelope retirement（实现和回归测试已提交，最新 CI 待验收）
+
+- 闭合 grant vault 生命周期：当 authority 将消费结果写入 reconciliation_approval_consumed 或 reconciliation_rejected，并且 audit store（若使用外部 wrapper 则包括远端 CAS 确认）返回成功后，才调用 vault.delete() 删除对应加密 envelope。
+- 绝不在 consumption-start、snapshot 校验中、或 terminal audit append/CAS 结果不确定时删除密文；因此 crash/ambiguous append 仍保留审计恢复依据。
+- 配置 grant vault 的 authority 在消费前必须验证 grant.storage_reference 类型正确且 approval_id 精确匹配，避免错误引用导致跨审批误删。
+- 若 terminal audit 已确认但文件删除失败，返回明确错误，指出 approval 已 terminal、不可重试；审计链阻止 restore_grant() 重放，残留密文等待 operator review。该情况不能伪装成普通“消费失败”，也不能尝试追加第二个 terminal 事件。
+- 新增测试覆盖：跨 Host restart 成功消费后 envelope 被删除且不可 restore；snapshot read 失败产生 durable rejection 后 envelope 被删除；vault.delete 故障时 terminal audit 保留、envelope 不被错误删除、restore 仍 fail-closed。
+- 代码提交 1cdce35，测试提交 1b3c945，grant vault 文档更新提交 80df025。最新 CI run 44887774248（代码 HEAD 1b3c945）正在执行，完成后再决定是否通过验收；不得将此前 6d98a0d 的绿色 CI 作为本节新代码的验收结果。
