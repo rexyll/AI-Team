@@ -934,7 +934,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 本节验收只证明 Host grant lifecycle 与现有只读 reconciliation authority 的安全存储/终态退役，不提供部署动作执行器，也不启用生产 mutation。真实生产 IdP、KMS/SecretStore、外部 audit anchor 服务仍须部署方配置并独立审查。
 
 
-### T21.6.3.5.33 — Authenticated grant-vault inventory and terminal-only cleanup（实现与测试已提交，最新 HEAD CI 待最终验收）
+### T21.6.3.5.33 — Authenticated grant-vault inventory and terminal-only cleanup（实现、故障边界测试与全量 CI 验收通过）
 
 - 新增 ReconciliationApprovalGrantVault.list_references() 与 inspect()：枚举 .grant 文件时拒绝不安全/畸形条目；inspect() 使用外部 protector unseal 和原始 AAD context 验证 payload，校验 proposal/evidence digest、expiry、scope，只返回非秘密元数据与 token digest，不暴露 bearer token。
 - _validate_grant() 支持只读 inspection 的 require_unexpired=False，并强制 grant expiry 必须 timezone-aware；正常 save/load 仍拒绝过期 grant。
@@ -943,6 +943,7 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - Cleanup 先取得 content-addressed references，并将同一批 references 传给 authenticated inspection；随后 delete() 再次核对原始 envelope digest，防止 inspection 与删除间文件替换。若 audit anchor unavailable/local-ahead、payload/AAD 校验失败、actor/scope 不匹配、事件重复/乱序，inventory 在删除前 fail-closed。
 - ReconciliationGrantVaultCleanupReport.retained 包含所有仍存在的 envelope，包括删除失败的 terminal 项；失败 ID 同时列入 failed_approval_ids，不得从 operator inventory 隐去。
 - 测试覆盖 terminal delete 首次失败后 cleanup 重试；active/claimed/expired-approved/expired-orphan 保留；外部 audit head mismatch 时不触发任何删除；issuance rejection 的 actor 与 grant 中 approver 不匹配时分类为 ambiguous；terminal delete failure 会同时报告 failed + retained。
-- 代码提交 d30bb25、8b60789、b7d4175、a49791c、a69b980、68d42cb；测试提交 7e84b7a、4007efa、8e41085；文档提交 69c85d6、41d895d、fae25f4。
+- 代码提交 d30bb25、8b60789、b7d4175、a49791c、a69b980、68d42cb；测试提交 7e84b7a、4007efa、8e41085；文档提交 69c85d6、41d895d、fae25f4；TaskPlan 同步提交 0f5c85c。
+- 最新整合 HEAD 0f5c85c 的 CI run [44889904594](https://github.com/rexyll/AI-Team/actions/runs/44889904594) 全部通过：Regression 3,317 passed / 14 skipped；Security 275 passed / 9 skipped；Windows E2E 7 passed；Coverage 3,297 passed / 14 skipped、82%，所有 module coverage floors passed；Docker Engine job 27 steps 全 success。
+- 同 run artifact [router-host-synchronous-completion-snapshot-evidence](https://github.com/rexyll/AI-Team/actions/runs/44889904594/artifacts/14700584741) 已下载并解析：top-level status=fault_injection_verified，snapshot=verified；retire_previous result=succeeded，source=docker-local-host-call-receipts；completed_at=2026-11-21T09:36:36.374919Z，snapshot_started_at=2026-11-21T09:36:36.416488Z（receipt 提前约 41.6 ms）；四类 evidence 齐全；candidate healthy/running，route read-back 指向 candidate；previous immutable runtime exited；journal 仍为 needs_reconciliation；automatic_reconciliation_executed=false；smoke containers/network/images 全部 removed。
 - 安全边界：cleanup 只删除 grant ciphertext，不 append/改写 audit chain、不修复/推进 external checkpoint、不改变 journal/Router/active pointer/reservation/runtime；没有生产 IdP/KMS/外部 anchor provider 被假设或启用。
-- 最新候选 HEAD 由当前提交与 TaskPlan 文档组成；等其最新 GitHub Actions Regression/Security/Windows/Coverage/Docker jobs 全部成功后，再标记本节验收通过。
