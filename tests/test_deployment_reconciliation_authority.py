@@ -1813,10 +1813,13 @@ def test_terminal_rejection_retires_protected_grant_envelope(tmp_path):
         "requester-proof": _principal("alice"),
         "approver-proof": _principal("bob"),
     }
+    valid_reader = _SnapshotReader(
+        _current_snapshot(proposal.record, proposal.evidence)
+    )
     authority = _authority(
         tmp_path / "audit",
         principals,
-        snapshot_reader=_FailingSnapshotReader(),
+        snapshot_reader=valid_reader,
         grant_vault=vault,
     )
     grant = authority.authorize_proposal(
@@ -1824,6 +1827,7 @@ def test_terminal_rejection_retires_protected_grant_envelope(tmp_path):
         requester_response="requester-proof",
         approver_response="approver-proof",
     )
+    authority._snapshot_reader = _FailingSnapshotReader()
     envelope = vault_root / f"{grant.proposal.approval.approval_id}.grant"
     assert envelope.is_file()
 
