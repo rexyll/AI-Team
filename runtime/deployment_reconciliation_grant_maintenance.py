@@ -16,9 +16,6 @@ from typing import Literal
 from runtime.deployment_reconciliation_audit_store import (
     DurableReconciliationAuditStore,
 )
-from runtime.deployment_reconciliation_authority import (
-    ReconciliationApprovalGrantReference,
-)
 from runtime.deployment_reconciliation_grant_vault import (
     ReconciliationApprovalGrantVault,
 )
@@ -101,7 +98,7 @@ class ReconciliationGrantVaultMaintenance:
     def inspect_grant_vault(
         self,
         *,
-        _references: tuple[ReconciliationApprovalGrantReference, ...] | None = None,
+        _references: tuple[object, ...] | None = None,
     ) -> tuple[ReconciliationGrantVaultInventoryItem, ...]:
         """Classify envelopes against the complete verified audit chain.
 
