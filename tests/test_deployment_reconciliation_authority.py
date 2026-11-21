@@ -1918,7 +1918,7 @@ def test_unconfirmed_external_terminal_checkpoint_does_not_retire_grant_envelope
     audit = ExternallyAnchoredReconciliationAuditStore(
         audit_root,
         anchor=anchor,
-        expected_ledger_id="terminal-cas-failure-ledger",
+        expected_ledger_id=anchor.ledger_id,
     )
     authority = _authority(
         audit_root,
