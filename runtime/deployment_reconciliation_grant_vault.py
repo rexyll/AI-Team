@@ -557,10 +557,11 @@ class ReconciliationApprovalGrantVault:
             ) from exc
         return raw, context, ciphertext
     def list_references(self) -> tuple[ReconciliationApprovalGrantReference, ...]:
-        """List authenticated file references without decrypting grant payloads.
+        """List content-addressed file references without decrypting payloads.
 
         A malformed, unsafe or unreadable .grant entry aborts the inventory;
         cleanup callers must not silently skip files they cannot classify.
+        KMS authentication is performed separately by inspect().
         """
         self._validate_root()
         references = []
