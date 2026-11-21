@@ -1900,12 +1900,20 @@ def test_terminal_audit_is_not_reversed_when_grant_envelope_cleanup_fails(tmp_pa
     ):
         authority.restore_grant(reference.approval_id)
 
-    vault.delete = real_delete
     report = authority.cleanup_terminal_grant_envelopes()
     assert report.scanned == 1
-    assert report.removed_approval_ids == (reference.approval_id,)
-    assert report.failed_approval_ids == ()
-    assert report.retained == ()
+    assert report.removed_approval_ids == ()
+    assert report.failed_approval_ids == (reference.approval_id,)
+    assert len(report.retained) == 1
+    assert report.retained[0].approval_id == reference.approval_id
+    assert report.retained[0].status == "terminal"
+    assert envelope.exists()
+
+    vault.delete = real_delete
+    retried = authority.cleanup_terminal_grant_envelopes()
+    assert retried.removed_approval_ids == (reference.approval_id,)
+    assert retried.failed_approval_ids == ()
+    assert retried.retained == ()
     assert not envelope.exists()
 
 
@@ -2143,4 +2151,60 @@ def test_grant_vault_cleanup_retains_expired_orphan_without_approved_audit_event
     report = authority.cleanup_terminal_grant_envelopes()
     assert report.removed_approval_ids == ()
     assert report.retained[0].status == "expired_orphan"
+    assert (vault_root / f"{reference.approval_id}.grant").is_file()
+
+
+def test_grant_vault_inventory_marks_wrong_actor_rejection_ambiguous(tmp_path):
+    _, _, principals, _, grant = _approved_grant(tmp_path)
+    proposal = grant.proposal
+    record = proposal.record
+    approval = proposal.approval
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=_TestGrantProtector(), clock=_Clock()
+    )
+    reference = vault.save(grant)
+    audit = DurableReconciliationAuditStore(tmp_path / "audit")
+    scope = dict(
+        approval_id=approval.approval_id,
+        operation_id=record.operation_id,
+        provider=record.provider,
+        project=record.project,
+        environment=record.environment,
+        journal_phase=record.phase,
+        target_deployment_id=record.target_deployment_id,
+        previous_deployment_id=record.previous_deployment_id,
+        candidate_runtime_id=record.candidate_runtime_id or "",
+        previous_runtime_id=record.previous_runtime_id or "",
+        proposal_digest=grant.proposal_digest,
+        evidence_digest=grant.evidence_digest,
+    )
+    audit.record(
+        action="reconciliation_proposed",
+        actor=approval.requested_by,
+        **scope,
+    )
+    audit.record(
+        action="reconciliation_rejected",
+        actor=_principal("unexpected-third-party"),
+        **scope,
+    )
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=_SnapshotReader(
+            _current_snapshot(record, proposal.evidence)
+        ),
+        audit_store=audit,
+        grant_vault=vault,
+    )
+
+    inventory = authority.inspect_grant_vault()
+    assert len(inventory) == 1
+    assert inventory[0].approval_id == reference.approval_id
+    assert inventory[0].status == "ambiguous"
+
+    report = authority.cleanup_terminal_grant_envelopes()
+    assert report.removed_approval_ids == ()
+    assert report.retained[0].status == "ambiguous"
     assert (vault_root / f"{reference.approval_id}.grant").is_file()
