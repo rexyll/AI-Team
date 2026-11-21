@@ -38,6 +38,9 @@ from runtime.deployment_reconciliation_grant_vault import (
     ReconciliationApprovalGrantVault,
     ReconciliationGrantProtector,
 )
+from runtime.deployment_reconciliation_grant_maintenance import (
+    ReconciliationGrantVaultMaintenance,
+)
 from runtime.deployment_reconciliation_snapshot_reader import (
     DeploymentHistoryReconciliationSnapshotReader,
     ReconciliationSnapshotReadError,
@@ -455,6 +458,59 @@ class DeploymentHostRuntime:
             challenge_ttl_seconds=challenge_ttl_seconds,
             evidence_max_age_seconds=evidence_max_age_seconds,
             snapshot_read_max_duration_seconds=snapshot_read_max_duration_seconds,
+            grant_vault=grant_vault,
+        )
+
+    def build_reconciliation_grant_vault_maintenance(
+        self,
+        *,
+        audit_anchor: ReconciliationAuditHeadAnchor,
+        expected_ledger_id: str,
+        grant_protector: ReconciliationGrantProtector,
+    ) -> ReconciliationGrantVaultMaintenance:
+        """Build a local Host maintenance service for protected grant inventory.
+
+        Unlike the approval authority factory, this operation does not require
+        an IdP, an operation ID, a snapshot reader or Docker daemon access.
+        It only composes the externally anchored audit store and the KMS-backed
+        grant vault, verifies the current anchor read-only, and returns a
+        service that classifies envelopes and deletes only audit-proven
+        terminal grants. Callers must expose this method only within a trusted
+        local Host maintenance boundary protected by OS/service ACLs.
+        """
+        if audit_anchor is None or not callable(
+            getattr(audit_anchor, "read_head", None)
+        ) or not callable(getattr(audit_anchor, "compare_and_set", None)):
+            raise TypeError("an explicit external audit-head anchor is required")
+        if grant_protector is None or not callable(
+            getattr(grant_protector, "seal", None)
+        ) or not callable(getattr(grant_protector, "unseal", None)):
+            raise TypeError(
+                "an explicit external KMS/SecretStore grant protector is required"
+            )
+
+        audit_root = self.history_path.with_name(
+            f"{self.history_path.stem}.reconciliation-audit"
+        )
+        audit_store = ExternallyAnchoredReconciliationAuditStore(
+            audit_root,
+            anchor=audit_anchor,
+            expected_ledger_id=expected_ledger_id,
+        )
+        # Require the operator-provisioned checkpoint to match before even
+        # constructing the vault. This reads the anchor but never initializes
+        # or advances it.
+        audit_store.verify()
+
+        grant_root = self.history_path.with_name(
+            f"{self.history_path.stem}.reconciliation-grants"
+        )
+        grant_vault = ReconciliationApprovalGrantVault(
+            grant_root,
+            protector=grant_protector,
+        )
+        return ReconciliationGrantVaultMaintenance(
+            audit_store=audit_store,
             grant_vault=grant_vault,
         )
 
