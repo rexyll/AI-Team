@@ -35,6 +35,8 @@ The vault can enumerate .grant references and inspect each envelope by performin
 
 The authority inventory cross-checks each inspected envelope against the complete verified audit chain. It classifies envelopes as active, claimed, terminal, expired_approved, pending_orphan, expired_orphan or ambiguous. Duplicate IDs, scope/token/expiry mismatches, unexpected actions or event-order errors are classified as ambiguous and are not eligible for cleanup.
 
+The authority verifies the requester/approver audit actors for both approved grants and issuance rejections. Cleanup uses the same content-addressed references for unseal/inspection and the later delete; if an envelope changes between those steps, the vault's digest check rejects the delete. A report includes failed terminal deletions in both failed_approval_ids and retained, so a still-present envelope is never omitted from the operator inventory. An unavailable or mismatched external audit checkpoint prevents inventory completion and therefore prevents every delete.
+
 The retryable cleanup routine deletes only envelopes with a fully matching terminal audit sequence (proposed → approved → consumption-start → consumed/rejected), or a durably recorded issuance rejection before any approval was issued. It retains:
 - approved but unclaimed grants, including expired approvals;
 - claims that have started but have no terminal event;
