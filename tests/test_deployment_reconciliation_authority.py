@@ -1881,6 +1881,8 @@ def test_terminal_audit_is_not_reversed_when_grant_envelope_cleanup_fails(tmp_pa
     reference = grant.storage_reference
     envelope = vault_root / f"{reference.approval_id}.grant"
 
+    real_delete = vault.delete
+
     def _fail_delete(_reference):
         raise OSError("simulated protected-store cleanup outage")
 
@@ -1897,6 +1899,14 @@ def test_terminal_audit_is_not_reversed_when_grant_envelope_cleanup_fails(tmp_pa
         ReconciliationAuthorizationError, match="could not be restored"
     ):
         authority.restore_grant(reference.approval_id)
+
+    vault.delete = real_delete
+    report = authority.cleanup_terminal_grant_envelopes()
+    assert report.scanned == 1
+    assert report.removed_approval_ids == (reference.approval_id,)
+    assert report.failed_approval_ids == ()
+    assert report.retained == ()
+    assert not envelope.exists()
 
 
 def test_unconfirmed_external_terminal_checkpoint_does_not_retire_grant_envelope(
@@ -1953,3 +1963,93 @@ def test_unconfirmed_external_terminal_checkpoint_does_not_retire_grant_envelope
     # confirmed consumption-start event.
     assert anchor.head.sequence == 3
     assert envelope.is_file()
+
+
+def test_grant_vault_inventory_retains_active_and_claimed_envelopes(tmp_path):
+    proposal = _proposal()
+    reader = _SnapshotReader(_current_snapshot(proposal.record, proposal.evidence))
+    protector = _TestGrantProtector()
+    vault_root = tmp_path / "protected-grants"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=protector, clock=_Clock()
+    )
+    principals = {
+        "requester-proof": _principal("alice"),
+        "approver-proof": _principal("bob"),
+    }
+    authority = _authority(
+        tmp_path / "audit",
+        principals,
+        snapshot_reader=reader,
+        grant_vault=vault,
+    )
+    active = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    claimed = authority.authorize_proposal(
+        proposal,
+        requester_response="requester-proof",
+        approver_response="approver-proof",
+    )
+    authority._audit.begin_approval_consumption(
+        approval_id=claimed.proposal.approval.approval_id,
+        token_digest=hashlib.sha256(claimed.token.encode("utf-8")).hexdigest(),
+        proposal_digest=claimed.proposal_digest,
+        evidence_digest=claimed.evidence_digest,
+        approval_expires_at=claimed.proposal.approval.expires_at,
+        requester=claimed.proposal.approval.requested_by,
+        approver=claimed.proposal.approval.approved_by,
+    )
+
+    inventory = authority.inspect_grant_vault()
+    states = {item.approval_id: item.status for item in inventory}
+    assert states == {
+        active.proposal.approval.approval_id: "active",
+        claimed.proposal.approval.approval_id: "claimed",
+    }
+
+    report = authority.cleanup_terminal_grant_envelopes()
+    assert report.removed_approval_ids == ()
+    assert {item.status for item in report.retained} == {"active", "claimed"}
+    assert (
+        vault_root / f"{active.proposal.approval.approval_id}.grant"
+    ).is_file()
+    assert (
+        vault_root / f"{claimed.proposal.approval.approval_id}.grant"
+    ).is_file()
+
+
+def test_grant_vault_cleanup_retains_expired_orphan_without_approved_audit_event(
+    tmp_path,
+):
+    _, reader, principals, _, grant = _approved_grant(tmp_path)
+    clock = _Clock()
+    vault_root = tmp_path / "orphan-vault"
+    vault = ReconciliationApprovalGrantVault(
+        vault_root, protector=_TestGrantProtector(), clock=clock
+    )
+    reference = vault.save(grant)
+
+    # Model a crash-created envelope not accompanied by its own audit history.
+    empty_audit = DurableReconciliationAuditStore(tmp_path / "empty-audit")
+    clock.value += timedelta(minutes=10)
+    authority = _authority(
+        tmp_path / "empty-audit",
+        principals,
+        snapshot_reader=reader,
+        audit_store=empty_audit,
+        grant_vault=vault,
+        clock=clock,
+    )
+
+    inventory = authority.inspect_grant_vault()
+    assert len(inventory) == 1
+    assert inventory[0].approval_id == reference.approval_id
+    assert inventory[0].status == "expired_orphan"
+
+    report = authority.cleanup_terminal_grant_envelopes()
+    assert report.removed_approval_ids == ()
+    assert report.retained[0].status == "expired_orphan"
+    assert (vault_root / f"{reference.approval_id}.grant").is_file()
