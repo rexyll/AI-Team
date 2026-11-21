@@ -29,6 +29,20 @@ On POSIX, the vault requires a service-account-owned directory with no group/oth
 
 The module does not currently validate Windows NTFS ACLs. On Windows, the Host deployment service must provision a dedicated service account and restrictive directory/file ACLs. A production deployment must not treat the POSIX checks as evidence of Windows ACL enforcement.
 
+## Vault inventory and terminal-only cleanup
+
+The vault can enumerate .grant references and inspect each envelope by performing KMS/SecretStore unseal with the original authenticated context. The inspection result contains only non-secret scope, expiry, actor snapshots and the bearer-token digest; it never returns the bearer token.
+
+The authority inventory cross-checks each inspected envelope against the complete verified audit chain. It classifies envelopes as active, claimed, terminal, expired_approved, pending_orphan, expired_orphan or ambiguous. Duplicate IDs, scope/token/expiry mismatches, unexpected actions or event-order errors are classified as ambiguous and are not eligible for cleanup.
+
+The retryable cleanup routine deletes only envelopes with a fully matching terminal audit sequence (proposed → approved → consumption-start → consumed/rejected), or a durably recorded issuance rejection before any approval was issued. It retains:
+- approved but unclaimed grants, including expired approvals;
+- claims that have started but have no terminal event;
+- unapproved/pending or expired orphan envelopes;
+- every ambiguous or unverifiable envelope.
+
+Expiry alone is not used to delete an approval that was issued. This conservative rule avoids racing with a delayed Host issuance/consumption process or destroying evidence from a claimed-but-unfinished approval. Operators can inspect the inventory and use the audit-anchor recovery runbook for unresolved orphan/claimed records. If the external audit anchor is unavailable or local/remote heads diverge, the inventory call fails before any deletion. Cleanup never changes the audit chain, remote checkpoint, deployment journal or runtime state.
+
 ## Issuance and recovery ordering
 
 When a vault is injected into ReconciliationApprovalAuthority, issuance order is:
