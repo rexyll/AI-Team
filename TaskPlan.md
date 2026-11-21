@@ -927,5 +927,5 @@ Git process execution audit adds local/worktree checks for `core.askPass` and `c
 - 绝不在 consumption-start、snapshot 校验中、或 terminal audit append/CAS 结果不确定时删除密文；因此 crash/ambiguous append 仍保留审计恢复依据。
 - 配置 grant vault 的 authority 在消费前必须验证 grant.storage_reference 类型正确且 approval_id 精确匹配，避免错误引用导致跨审批误删。
 - 若 terminal audit 已确认但文件删除失败，返回明确错误，指出 approval 已 terminal、不可重试；审计链阻止 restore_grant() 重放，残留密文等待 operator review。该情况不能伪装成普通“消费失败”，也不能尝试追加第二个 terminal 事件。
-- 新增测试覆盖：跨 Host restart 成功消费后 envelope 被删除且不可 restore；snapshot read 失败产生 durable rejection 后 envelope 被删除；vault.delete 故障时 terminal audit 保留、envelope 不被错误删除、restore 仍 fail-closed。
-- 代码提交 1cdce35，测试提交 1b3c945，grant vault 文档更新提交 80df025。最新 CI run 44887774248（代码 HEAD 1b3c945）正在执行，完成后再决定是否通过验收；不得将此前 6d98a0d 的绿色 CI 作为本节新代码的验收结果。
+- 新增测试覆盖：跨 Host restart 成功消费且 terminal event 外部 CAS 确认后 envelope 被删除且不可 restore；snapshot read 失败产生 durable rejection 后 envelope 被删除；vault.delete 故障时 terminal audit 保留、envelope 不被错误删除、restore 仍 fail-closed；若 terminal event 的外部 CAS 未确认，则不删除 envelope，local-ahead 状态保持 fail-closed。
+- 初始 run 44887774248 的一项失败来自 rejection 测试夹具在 authorize 阶段即注入故障 snapshot reader，导致 grant 未签发；已修正为先正常签发再仅在 consume 阶段注入读取失败。代码提交 1cdce35，测试提交 1b3c945、a08b01c、8002b3f，grant vault 文档更新提交 80df025。最新测试提交的 CI 正在执行，未完成前不能标记验收通过。
